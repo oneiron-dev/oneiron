@@ -76,12 +76,15 @@ pub struct HookRecallArgs {
     pub common: HookCommonArgs,
 
     /// The vault's origin. This pins it: without it the hook binds the pin in
-    /// `hook.toml`, else a running local vault, else starts one.
+    /// `hook.toml`, else a running local vault, else the hosted vault
+    /// `oneiron hosted` selected, else starts one.
     #[arg(long)]
     pub url: Option<String>,
 
-    /// The agent credential `token agent --out` wrote. Without it the hook
-    /// binds a vault but recalls nothing.
+    /// The agent credential `token agent --out` wrote, for a pinned or local
+    /// vault. Without it the hook binds such a vault but recalls nothing. A
+    /// selected hosted vault's recall runs as the credential its selection
+    /// names, never this one.
     #[arg(long, value_name = "FILE")]
     pub credential_file: Option<PathBuf>,
 

@@ -11,12 +11,16 @@
 //! ([`WindowPadForm::Carrier`], KEEP TODAY).
 //!
 //! `header ‖ payload ‖ refs ‖ capsule`, the header [`WINDOW_PAD_HEADER_BYTES`]
-//! long. The payload rides the first frame whole, so a frame's release
-//! judges all of it; the refs and capsule that do not fit after it follow in
+//! long. A payload that fits rides the first frame whole, so a frame's
+//! release judges all of it; what does not fit after the header follows in
 //! order on the same socket as `WINDOW_PAD_PART` frames
-//! (`[envelope id:32][offset:8 BE][bytes]`, the id the header's BLAKE3). The
-//! header has its own allowance over the frame floor, so an update that fit
-//! one frame before still does.
+//! (`[envelope id:32][offset:8 BE][bytes]`, the id the header's BLAKE3, the
+//! offset counted from the header's end): the refs and capsule, and the rest
+//! of a payload past one frame, such as a replacement or a catch-up whose
+//! window outgrew the floor (FIX 8247). Its receiver joins every part and
+//! checks the payload against the header's digest before it reads any of it.
+//! The header has its own allowance over the frame floor, so an update that
+//! fit one frame before still does.
 //!
 //! A receiver answers with its receipt ([`WindowPadReceipt`]): the digests,
 //! recipient and position the envelope bound, and whether the pads it owed
@@ -376,14 +380,15 @@ impl WindowPadEnvelope {
     }
 
     /// The frames this envelope goes as under `sub_tag` for `window_key`: the
-    /// first holds the header and the whole payload, within the frame floor
-    /// and the header's allowance; each `WINDOW_PAD_PART` after it as much of
-    /// the rest as a frame holds.
+    /// first holds the header and as much of the payload and the rest as the
+    /// frame floor and the header's allowance hold, the whole payload whenever
+    /// it fits; each `WINDOW_PAD_PART` after it as much of what is left as a
+    /// frame holds, a payload past one frame included (FIX 8247).
     ///
     /// # Errors
     ///
-    /// A sub-tag of another kind, an invalid key, fields that do not hold
-    /// together, or a payload no frame held before.
+    /// A sub-tag of another kind, an invalid key, or fields that do not hold
+    /// together or pass a length field.
     pub fn encode_frames(
         &self,
         window_key: &str,
@@ -396,36 +401,41 @@ impl WindowPadEnvelope {
         let header = self.header()?;
         let tail = self.tail();
         let lead = 3 + key.len();
-        let first = lead + WINDOW_PAD_HEADER_BYTES + self.payload.len();
-        let room = (MAX_ENCODED_FRAME_BYTES + WINDOW_PAD_HEADER_BYTES)
-            .checked_sub(first)
-            .ok_or(TransportError::FrameTooLarge {
-                size: first,
-                max: MAX_ENCODED_FRAME_BYTES + WINDOW_PAD_HEADER_BYTES,
-            })?;
-        let inline = tail.len().min(room);
-        let mut frames = vec![frame(
-            key,
-            sub_tag,
-            &[&header[..], &self.payload[..], &tail[..inline]],
-        )];
+        // The payload and the tail go end to end after the header.
+        let body = self.payload.len() + tail.len();
+        let inline = body.min(MAX_ENCODED_FRAME_BYTES - lead);
+        let [payload, rest] = body_slices(&self.payload, &tail, 0, inline);
+        let mut frames = vec![frame(key, sub_tag, &[&header[..], payload, rest])];
         let id = blake3::hash(&header);
         let step = MAX_ENCODED_FRAME_BYTES - lead - PART_LEAD;
         let mut offset = inline;
-        for chunk in tail[inline..].chunks(step) {
+        while offset < body {
+            let end = body.min(offset + step);
+            let [payload, rest] = body_slices(&self.payload, &tail, offset, end);
             frames.push(frame(
                 key,
                 window_sub_tags::WINDOW_PAD_PART,
                 &[
                     &id.as_bytes()[..],
                     &(offset as u64).to_be_bytes()[..],
-                    chunk,
+                    payload,
+                    rest,
                 ],
             ));
-            offset += chunk.len();
+            offset = end;
         }
         Ok(frames)
     }
+}
+
+/// The bytes of `payload ‖ tail` from `start` to `end`, as the part of each
+/// they hold.
+fn body_slices<'a>(payload: &'a [u8], tail: &'a [u8], start: usize, end: usize) -> [&'a [u8]; 2] {
+    let split = payload.len();
+    [
+        &payload[start.min(split)..end.min(split)],
+        &tail[start.max(split) - split..end.max(split) - split],
+    ]
 }
 
 /// `[TAG_WINDOW_SYNC][key length][key][sub_tag]` and `parts`, end to end.
@@ -501,7 +511,8 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
 ///
 /// # Errors
 ///
-/// A frame payload that is no envelope's first frame.
+/// A frame payload that is no envelope's first frame, or one whose payload
+/// continues in parts: no first frame alone judges that one.
 pub fn window_pad_frame_payload(frame: &[u8]) -> Result<([u8; 32], &[u8], bool), TransportError> {
     let header = Header::read(frame)?;
     let total = header
@@ -515,6 +526,15 @@ pub fn window_pad_frame_payload(frame: &[u8]) -> Result<([u8; 32], &[u8], bool),
         &frame[WINDOW_PAD_HEADER_BYTES..header.head()],
         frame.len() < total,
     ))
+}
+
+/// The id of the envelope whose first frame `frame` is, read from its header
+/// alone: how a sender finds the whole payload it made for a first frame
+/// whose payload continues in parts (FIX 8247).
+pub fn window_pad_frame_id(frame: &[u8]) -> Option<[u8; 32]> {
+    Header::read(frame)
+        .ok()
+        .map(|_| *blake3::hash(&frame[..WINDOW_PAD_HEADER_BYTES]).as_bytes())
 }
 
 /// The envelope id a `WINDOW_PAD_PART` frame names.

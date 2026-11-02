@@ -48,6 +48,7 @@ pub use self::panel_spec::{
     decode_lead_panel_spec, encode_lead_panel_spec, load_lead_panel_spec, persist_lead_panel_spec,
     plan_lead_panel_tasks, validate_lead_panel_spec,
 };
+pub(crate) use self::resolution::resolve_context_spec_in_txn;
 pub use self::resolution::{
     CONTEXT_PROJECTION_ANCESTOR_CHECK, CONTEXT_SPEC_MEMORY_SCAN_LIMIT, ContextResolutionRequest,
     ResolvedContextProjection, WorkflowOutputContextRef, resolve_context_spec,

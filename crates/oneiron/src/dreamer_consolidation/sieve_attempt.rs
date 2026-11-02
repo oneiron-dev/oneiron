@@ -44,15 +44,21 @@ impl ConsolidationExecutor<'_> {
                 return self.run_sieve_window_audit(attempt, ctx, window).await;
             }
         };
-        if let Some(completed_units) =
+        if let Some((completed_units, step_hashes)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes,
+            });
         }
         if sieve::rung_superseded(ctx.vault, &input)?
             || (!input.audit && input.span.owed.is_empty())
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let Some(evidence) = sieve::rung_evidence(ctx.vault, &input)? else {
             // The source may be withheld temporarily. Keep the job and queue
@@ -63,6 +69,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: Vec::new(),
             });
         };
         let mut charges = StepChargeTally::default();
@@ -150,9 +157,12 @@ impl ConsolidationExecutor<'_> {
                 })
                 .await;
             // Every generation that finished is spent, whatever the rung's
-            // outcome.
+            // outcome. A tally the record cannot take settles with that
+            // error instead of leaving the attempt uncharged (FIX 11554).
             for (hash, usage) in &read.steps {
-                charges.record_terminal(ctx.vault, attempt_id, *hash, usage)?;
+                if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    return super::residency::spent_or_deferred(error, ctx, &charges);
+                }
             }
             let decisions = match read.outcome {
                 Ok(SieveRungOutcome::Decided(decisions)) => decisions,
@@ -199,12 +209,24 @@ impl ConsolidationExecutor<'_> {
             reading = match pack.reading(&decisions) {
                 Some(reading) => reading,
                 // A question left unanswered, or a confidence outside the
-                // integer percent, is a refused reading: its memos go, so the
-                // retry asks the model again (FIX 7218, 7431); the paid
-                // receipts stay.
+                // integer percent, is a refused reading: its memos and charge
+                // marks go together in one write, so the retry asks the model
+                // again and its paid answers are tallied once as fresh steps
+                // (FIX 7218, 7431, 7489); the refused calls' units stay in
+                // this park's spend.
                 None => {
+                    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
+                    if let Err(error) = ctx.vault.with_write_txn_grouped(|wtxn| {
+                        for (hash, _) in &read.steps {
+                            store.forget_step_charge_in_txn(wtxn, attempt_id, hash)?;
+                            crate::llm::forget_step_memo_in_txn(ctx.vault, wtxn, attempt_id, hash)?;
+                        }
+                        Ok(())
+                    }) {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
                     for (hash, _) in &read.steps {
-                        crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)?;
+                        charges.step_hashes.retain(|kept| *kept != *hash);
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));
                 }
@@ -264,6 +286,7 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
@@ -271,6 +294,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

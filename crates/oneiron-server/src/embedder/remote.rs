@@ -2,9 +2,12 @@
 use super::admitted::AdmittedRequests;
 use super::endpoint::HttpEmbedder;
 use super::local::evidence::RunProfile;
-use crate::config::{EmbedderConfig, remote_embedder::EgressPolicy};
-use oneiron::embed::{EgressDecision, EgressPredicate, PendingEmbeddingInput, RemoteRung};
-use oneiron::llm::run_admission::RunReceiptSink;
+use crate::config::EmbedderConfig;
+use crate::config::remote_embedder::{EgressPolicy, RemoteEvidenceRule};
+use oneiron::embed::{
+    EgressDecision, EgressPredicate, EmbedderLocality, PendingEmbeddingInput, RemoteRung,
+};
+use oneiron::llm::run_admission::{RunReceiptSink, offer_id, offer_place};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -31,20 +34,25 @@ impl RungHold {
         named_transform: Option<&str>,
         named_profile: Option<&serde_json::Value>,
     ) -> bool {
-        let measured_profile = |profile: &serde_json::Value| {
-            serde_json::from_value::<RunProfile>(profile.clone())
-                .is_ok_and(|profile| profile.is_measured())
-        };
         named_model.is_none_or(|named| named == model_id)
             && named_transform.is_none_or(|named| Some(named) == self.transform.as_deref())
-            && (!self.measured || named_profile.is_none_or(measured_profile))
+            && (!self.measured || named_profile.is_none_or(names_measured_profile))
     }
 }
 
-struct ConfiguredEgress {
+/// Whether `profile`, as an answer names it, is a measured run profile ([`RunProfile`]).
+fn names_measured_profile(profile: &serde_json::Value) -> bool {
+    serde_json::from_value::<RunProfile>(profile.clone()).is_ok_and(|profile| profile.is_measured())
+}
+
+/// The owner's egress rule as a remote rung reads it: which rows may leave, and what the
+/// rung's answers must show (FIX 9488).
+#[derive(Debug)]
+pub(crate) struct ConfiguredEgress {
     allow: HashSet<oneiron::EntityId>,
     deny: HashSet<oneiron::EntityId>,
     allow_all: bool,
+    remote_evidence: Option<RemoteEvidenceRule>,
 }
 impl ConfiguredEgress {
     fn new(policy: &EgressPolicy) -> oneiron::Result<Self> {
@@ -60,7 +68,24 @@ impl ConfiguredEgress {
                 .map(|id| oneiron::EntityId::from_hex(id))
                 .collect::<oneiron::Result<_>>()?,
             allow_all: policy.allow_all,
+            remote_evidence: policy.remote_evidence,
         })
+    }
+
+    /// Whether an answer that names `profile` meets the owner's evidence rule (FIX 9488):
+    /// [`RemoteEvidenceRule::MeasuredProfile`] asks, where the model's measured floors hold,
+    /// for a named profile that is the measured one. No rule asks nothing.
+    pub(crate) fn admits_profile(
+        &self,
+        profile: Option<&serde_json::Value>,
+        measured_floors: bool,
+    ) -> bool {
+        match self.remote_evidence {
+            None => true,
+            Some(RemoteEvidenceRule::MeasuredProfile) => {
+                !measured_floors || profile.is_some_and(names_measured_profile)
+            }
+        }
     }
 }
 impl EgressPredicate for ConfiguredEgress {
@@ -73,6 +98,23 @@ impl EgressPredicate for ConfiguredEgress {
             EgressDecision::NoVerdict
         }
     }
+}
+
+/// The per-row egress list `primary`'s remote rung configures, if it
+/// configures one: the one host verdict on which rows may leave for a model
+/// off this device, which the GPU pool's batches are judged by too
+/// (FIX 9486). With `None`, the world release alone judges a pod's rows.
+pub(crate) fn configured_egress(
+    primary: &EmbedderConfig,
+) -> oneiron::Result<Option<Arc<dyn EgressPredicate>>> {
+    let Some(policy) = primary
+        .remote
+        .as_ref()
+        .and_then(|remote| remote.egress.as_ref())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(ConfiguredEgress::new(policy)?)))
 }
 
 /// The remote rung `primary` configures, if any. Its answers are held to the
@@ -102,14 +144,33 @@ pub(crate) fn build_remote_rung_with_broker(
     let policy = config.egress.as_ref().ok_or_else(|| {
         oneiron::Error::InvalidConfig("remote rung missing egress predicate".into())
     })?;
+    // One rule judges which rows the rung is sent and what its answers show (FIX 9488).
+    let egress = Arc::new(ConfiguredEgress::new(policy)?);
     let embedder = HttpEmbedder::with_broker(&config.endpoint_config(primary), broker)?;
-    embedder.hold_as_rung(hold);
+    embedder.hold_as_rung(hold, Arc::clone(&egress));
     embedder.pay_through(Arc::new(AdmittedRequests::unmetered(
         config,
         oneiron::embed::Embedder::locality(&*embedder),
         receipts,
     )?));
-    let mut rung = RemoteRung::new(embedder, Arc::new(ConfiguredEgress::new(policy)?));
+    let mut rung = RemoteRung::new(embedder, egress);
     rung.lease_duration_ms = config.lease_ms;
+    // The rung's full `model@place` route id (FIX 11768 seam for L05),
+    // minted through the one producer from its space id and its
+    // endpoint's origin — the same resolution the ladder's doors judge. A
+    // rung whose id cannot be minted carries none, and no ordered world
+    // admits it.
+    if let (Ok(model), Ok(url)) = (
+        oneiron::ModelId::new(oneiron::embed::Embedder::model_id(&*rung.embedder)),
+        reqwest::Url::parse(&config.endpoint),
+    ) {
+        let locality = match oneiron::embed::Embedder::locality(&*rung.embedder) {
+            EmbedderLocality::OnDevice => oneiron::ModelLocality::OnDevice,
+            EmbedderLocality::OwnerServer => oneiron::ModelLocality::OwnServer,
+            EmbedderLocality::ThirdParty => oneiron::ModelLocality::ThirdParty,
+        };
+        let place = offer_place(locality, &url.origin().ascii_serialization());
+        rung.offer_id = Some(offer_id(&model, &place));
+    }
     Ok(Some(rung))
 }

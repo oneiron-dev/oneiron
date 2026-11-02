@@ -187,7 +187,7 @@ pub(super) fn decode_optional_memory_profile(value: &Value) -> Result<OptionalMe
             validate_text_field(
                 family,
                 AGENT_REF_KEY_MAX_BYTES,
-                "optional_memory family names must be non-empty and at most 256 bytes",
+                "optional_memory family names must be non-empty",
             )?;
             if previous.is_some_and(|previous| previous >= family) {
                 return Err(invalid(

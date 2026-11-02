@@ -7,27 +7,94 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::task_verb::sdk::EmptyRequest;
+use oneiron::task_verb::sdk::{ConnectAccepted, ConnectGrant, EmptyRequest, Offer};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
 use crate::owner::hooked_row;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/federation/connect", get(identity))
-        .route("/federation/connect/grants", post(mint_grant))
-        .route("/federation/connect/offer", post(offer))
-        .route("/federation/connect/accept", post(accept))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/connect",
+                summary: "This vault's id and host key, what a peer's owner names to offer it a pact.",
+                row: None,
+            },
+            get(identity),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/grants",
+                summary: "Mints the guest grant a Connect with a peer vault governs: named local worlds, read and propose only, inside the vault's Connect guest ceiling. Inert until the pact is Active.",
+                row: None,
+            },
+            post(mint_grant),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/offer",
+                summary: "This host's signed half of a new pact with a peer vault, for the owner to carry to the peer.",
+                row: None,
+            },
+            post(offer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/connect/accept",
+                summary: "Logs the Connect the peer's half signs and answers this host's half of the same pact.",
+                row: None,
+            },
+            post(accept),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/grants`'s body
+/// (FIX 11611): [`MintConnectGrant`].
+pub(crate) fn mint_grant_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<MintConnectGrant>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/grants`'s answer
+/// (FIX 11611): [`ConnectGrant`].
+pub(crate) fn connect_grant_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectGrant>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/offer`'s body
+/// (FIX 11611): [`OfferConnect`].
+pub(crate) fn offer_connect_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OfferConnect>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/offer`'s answer
+/// (FIX 11611): this host's signed half, [`Offer`].
+pub(crate) fn connect_offer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Offer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/accept`'s body
+/// (FIX 11611): [`AcceptConnect`].
+pub(crate) fn accept_connect_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AcceptConnect>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/accept`'s answer
+/// (FIX 11611): [`ConnectAccepted`].
+pub(crate) fn connect_accepted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectAccepted>()
 }
 
 /// `GET /v1/owner/federation/connect`: this vault's id and host key, what a
@@ -53,10 +120,10 @@ async fn identity(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
 async fn mint_grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<MintConnectGrant>, JsonRejection>,
+    payload: OwnerJsonBody<MintConnectGrant>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let minted = blocking(move || {
         hooked_row(
             server.vault(),
@@ -75,10 +142,10 @@ async fn mint_grant(
 async fn offer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<OfferConnect>, JsonRejection>,
+    payload: OwnerJsonBody<OfferConnect>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let offer = blocking(move || {
         hooked_row(
             server.vault(),
@@ -97,10 +164,10 @@ async fn offer(
 async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AcceptConnect>, JsonRejection>,
+    payload: OwnerJsonBody<AcceptConnect>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let accepted = blocking(move || {
         hooked_row(
             server.vault(),

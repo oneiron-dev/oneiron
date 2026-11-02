@@ -7,6 +7,7 @@ mod actor_erase;
 mod authorize;
 mod connector;
 mod custody;
+mod detector_corpus;
 mod export;
 mod promotion;
 mod target;
@@ -24,6 +25,8 @@ pub(crate) use actor_erase::{
 };
 pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
+pub use custody::stream::{CheckpointFileStream, CheckpointStream};
+pub use detector_corpus::DetectorCorpusRef;
 pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
@@ -91,6 +94,13 @@ impl ExportCheck {
             && self
                 .question_check
                 .is_none_or(|check| check.finite && check.tokens_match && check.passed)
+            // A question head serves only once the host reproduced its
+            // receipt (FIX 7568); a missing check is a failed one.
+            && (self.question_check.is_none()
+                || self
+                    .candle_parity
+                    .as_ref()
+                    .is_some_and(CandleParityCheck::passed))
     }
 }
 

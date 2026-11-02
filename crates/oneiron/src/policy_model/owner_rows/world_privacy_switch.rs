@@ -32,7 +32,7 @@ use crate::{EntityId, Vault};
 const WORLD_PRIVACY_CHANGED: &str = "policy.world_privacy.changed";
 
 /// One change of a world's settings, in revision order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorldPrivacyReceipt {
     pub receipt_id: String,

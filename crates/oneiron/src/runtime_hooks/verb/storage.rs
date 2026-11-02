@@ -43,6 +43,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::code_run::{
@@ -58,14 +59,18 @@ use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
 use crate::side_table::{RoutedDbs, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::SessionStoreView;
+use crate::task_verb::{
+    SessionAskParts, SessionAskRecord, TaskAskAnswer, TaskAskStatus, TaskAskWord,
+};
 use crate::work_line::TaskWorkTurn;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
 
 mod named_pause;
 mod room_pause;
+mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
 pub(crate) use room_pause::RoomHookCall;
@@ -128,7 +133,7 @@ enum HooksTarget<'s> {
 /// [`VerbHookPre`]: the runs it holds, what it notes beside them, and the
 /// in-memory keep's key when it ran on one, so a post on another thread
 /// finds the same store.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SessionCarry {
     key: Option<SessionHookKey>,
     runs: Vec<HeldRun>,
@@ -137,7 +142,7 @@ pub(crate) struct SessionCarry {
 
 /// One run as a session keeps it: its receipt and its saved copy under its
 /// run key, and what the call's answer says of it, but for its receipt.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HeldRun {
     pub(super) key: RunKey,
     pub(super) receipt: ReceiptRecord,
@@ -180,7 +185,7 @@ impl HookRecordsKept {
 
 /// What a session-only call with no room overlay keeps its hook records
 /// under (Engine 10-19): its session, or the process.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum SessionHookKey {
     /// A session, by its registry key and when it was entered: a ref
     /// entered again keeps apart.
@@ -227,6 +232,8 @@ struct Kept {
     overlay: Arc<SessionOverlay>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
+    /// Their typed questions, answers and settlements, by group (FIX 10087).
+    ask_records: HashMap<EntityId, SessionAskRecord>,
 }
 
 /// A paused call as the keep holds it, with when its ask paused it and when
@@ -328,30 +335,6 @@ impl SessionHookKeep {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(key);
-    }
-
-    /// Saves the call `invocation`'s hook ask paused under `key`, over any
-    /// earlier one: false, saving nothing, once its session is closing or
-    /// gone.
-    pub(super) fn save_ask(
-        &self,
-        vault: &Vault,
-        key: &SessionHookKey,
-        invocation: [u8; 16],
-        ask: SessionVerbAsk,
-    ) -> bool {
-        let paused_at = vault.store.clock.now_recorded_at();
-        self.with_live(vault, key, |kept| {
-            kept.asks.insert(
-                invocation,
-                KeptAsk {
-                    ask,
-                    paused_at,
-                    used_at: None,
-                },
-            );
-        })
-        .is_some()
     }
 
     /// The call `invocation`'s hook ask paused under `key`, if this process
@@ -479,6 +462,7 @@ impl SessionHookKeep {
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
             asks: HashMap::new(),
+            ask_records: HashMap::new(),
         })))
     }
 }

@@ -51,6 +51,8 @@ impl Vault {
             Ok(outcome)
         });
         self.store.flush_legal_hold_refusals_settled();
+        // A fence its actor scrub committed reaches key custody now (FIX 11211).
+        self.store.journal_staged_fence_facts();
         let outcome = applied?;
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
@@ -84,6 +86,16 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+        // A Grant this replica holds, live or as a deleted shell, that its
+        // peer deleted (a user delete or a hard erase, never an archive)
+        // stays known withdrawn here, judged by its stored type alone
+        // (FIX-LIST 5107).
+        let decoded = decode_tombstone_value(raw_value);
+        if decoded.is_hard()
+            || decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete)
+        {
+            crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, wtxn, *id)?;
+        }
         let applied = self.replay_tombstone_effects_in_txn(wtxn, id, raw_value)?;
         self.reconcile_identity_topology_after_delete_in_txn(wtxn, id)?;
         Ok(applied)
@@ -253,7 +265,9 @@ impl Vault {
             // Cleanup's rows that name it go, as the registry's tear takes
             // them on every other erase (FIX 7517).
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+            // A replayed erase holds no owner act here: the machine that made
+            // it carries its custody revokes (FIX 11883).
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, None)?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -268,10 +282,23 @@ impl Vault {
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents) =
-            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        let (_existed, citing) =
-            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref(), true)?;
+            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
+        let (_existed, citing) = self.purge_entity_active_store_in_txn(
+            wtxn,
+            id,
+            decoded.request_id.as_ref(),
+            true,
+            None,
+        )?;
         changed_documents.extend(citing);
+        // The replay reserves no topology delete, so the purge kept the
+        // checkpoint payload leaves; the tombstone's own reason settles them.
+        crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            decoded.reason,
+        )?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.

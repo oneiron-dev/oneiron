@@ -175,6 +175,15 @@ const WIDEN_INTENT_REFS: &[RefPath] = &[
     ref_path!(declined.by),
 ];
 
+/// The structural references a frozen callable case keeps (FIX 12093): its receipt, the revision
+/// that answered, its caller and its source rows. Its arguments and answer stay under the sweep.
+const CALLABLE_CASE_REFS: &[RefPath] = &[
+    ref_path!(receipt),
+    ref_path!(version),
+    ref_path!(caller.actor),
+    ref_path!(source_rows),
+];
+
 /// Every declared table: the restore-class census walks it, and so does a
 /// left shared vault's purge (`store::local_replica`, `sync`-only).
 pub(crate) fn declared() -> impl Iterator<Item = &'static SideTableDecl> {

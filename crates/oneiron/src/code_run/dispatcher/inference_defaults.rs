@@ -47,22 +47,22 @@ impl HostSelfDispatcher<'_> {
                 // WILL-PLAN L13 row 01: a host-authenticated owner's proof
                 // holds in this same transaction, beside the Auto ceiling
                 // above, and the owner's act is recorded with the table it
-                // replaces.
-                if let Some(owner) = self.owner_proof {
-                    let actor = crate::dreamer_runner::maintenance::validate_owner_in_txn(
-                        vault, txn, owner,
-                    )?;
-                    let prior = crate::llm::read_effective_defaults(&vault.store, txn)?;
-                    crate::policy_setting_doors::record_policy_setting_act_in_txn(
-                        vault,
-                        txn,
-                        crate::policy_setting_doors::PolicySetting::InferenceDefaults,
-                        actor,
-                        self.owner_surface,
-                        prior.table(),
-                    )?;
-                }
-                Ok(())
+                // replaces; the setter signs it after its own put (FIX 4624).
+                let Some(owner) = self.owner_proof else {
+                    return Ok(None);
+                };
+                let actor =
+                    crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, txn, owner)?;
+                let prior = crate::llm::read_effective_defaults(&vault.store, txn)?;
+                crate::policy_setting_doors::record_policy_setting_act_in_txn(
+                    vault,
+                    txn,
+                    crate::policy_setting_doors::PolicySetting::InferenceDefaults,
+                    actor,
+                    self.owner_surface,
+                    prior.table(),
+                    &next,
+                )
             })?;
         }
         let active = vault.purpose_default_table()?;

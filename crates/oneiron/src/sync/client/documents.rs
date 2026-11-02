@@ -20,23 +20,19 @@ impl SyncClient {
             }
             _ => {}
         }
-        // On a federation lane a document frame is a peer's text: the peer's
-        // grant must still stand, and the row the text belongs to must be one
-        // this vault already admitted through the window gate (OF-149).
-        if let Some(peer) = &self.config.federation_peer {
-            peer.revalidate(&self.vault)
-                .map_err(super::federated::map_federated_admission_err)?;
-            if !self.vault.entity_exists(&frame.entity).map_err(storage)? {
-                return Err(TransportError::InvalidPayload(
-                    "federation document for a row this vault has not admitted",
-                ));
-            }
-        }
+        // On a federation lane a document frame is a peer's text: its write is
+        // admitted in the writer that lands it (FIX 8861), on a row this vault
+        // already admitted through the window gate (OF-149).
+        let federated = self.config.federation_peer.as_ref();
+        let refused = |error: crate::Error| match federated {
+            Some(_) => super::federated::map_federated_admission_err(error),
+            None => storage(error),
+        };
         let doc = self
             .manager
             .documents()
             .open(frame.entity)
-            .map_err(storage)?;
+            .map_err(refused)?;
         if doc.is_note().map_err(storage)? {
             if self.config.note_session.is_none() || !self.note_session_bound {
                 return Err(TransportError::InvalidPayload(
@@ -92,7 +88,18 @@ impl SyncClient {
                 Ok(Vec::new())
             }
             document_sub_tags::STATE | document_sub_tags::UPDATE => {
-                doc.import(frame.kind, frame.payload).map_err(storage)?;
+                match federated {
+                    Some(peer) => doc.import_admitted(frame.kind, frame.payload, |txn| {
+                        peer.admit_document_write_in_txn(
+                            &self.vault,
+                            txn,
+                            frame.entity,
+                            self.home_peer,
+                        )
+                    }),
+                    None => doc.import(frame.kind, frame.payload),
+                }
+                .map_err(refused)?;
                 let mut out = vec![
                     transport::encode_document(
                         frame.entity,
@@ -101,8 +108,9 @@ impl SyncClient {
                     )
                     .into_result()?,
                 ];
-                // Text a device-only world keeps here stays journaled; each
-                // reply loop asks again right before its send.
+                // Text a device-only world keeps here, or a federation peer may
+                // not read now, stays journaled; each reply loop asks again
+                // right before its send.
                 out.extend(
                     doc.pending_frames()
                         .map_err(storage)?

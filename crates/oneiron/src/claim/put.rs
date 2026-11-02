@@ -54,6 +54,11 @@ impl Vault {
         let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
+        // The approval's commit carries its consolidation debt (FIX 9598).
+        if !approved.is_empty() {
+            let now = self.store.clock.now_recorded_at();
+            crate::store::owe_claim_vad_in_txn(&self.store, &mut wtxn, &approved, now)?;
+        }
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -99,6 +104,11 @@ impl Vault {
             && !self.owner_reads_edge_subject_in(wtxn, &body.subject)?
         {
             return Err(Error::EntityNotFound);
+        }
+        // A projector-only `comm.*` head lands as the projector's source
+        // event in this same `wtxn`; the projector mints the head.
+        if crate::comm::route_projector_only_comm_put_in_txn(self, wtxn, id, body)? {
+            return Ok(());
         }
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }

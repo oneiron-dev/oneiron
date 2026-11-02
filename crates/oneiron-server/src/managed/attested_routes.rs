@@ -159,6 +159,8 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/saved-queries/{query_ref}/members"),
     // The model routes, and of the media routes those that carry no upload.
     ("PUT", "/v1/llm/defaults"),
+    ("GET", "/v1/llm/defaults/proposals"),
+    ("POST", "/v1/llm/defaults/proposals/{proposal}"),
     ("POST", "/v1/llm/generate"),
     ("POST", "/v1/llm/stream"),
     ("POST", "/v1/llm/decision_read"),
@@ -169,6 +171,7 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/v1/ai/options"),
     ("POST", "/v1/ai/quota/{question}"),
     ("DELETE", "/v1/ai/video/{job}"),
+    ("GET", "/v1/ai/voices/{voice_id}"),
     ("DELETE", "/v1/ai/voices/{voice_id}/targets/{target}"),
     ("POST", "/v1/ai/anonymous-chat"),
     ("POST", "/v1/chat/completions"),

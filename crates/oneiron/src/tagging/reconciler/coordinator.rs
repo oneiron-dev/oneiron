@@ -11,7 +11,9 @@ use super::claim::{ClaimHold, HeldSet, PreparedCall};
 use crate::Vault;
 use crate::embed::EmbedderLocality;
 use crate::error::{Error, Result};
-use crate::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork};
+use crate::memory::extraction::{
+    EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionEncoder, ExtractionWork,
+};
 use crate::tagging::marker::TaggingMarkerConfig;
 use crate::tagging::trace::{TaggingOutcome, TaggingTrace};
 
@@ -147,6 +149,9 @@ impl std::fmt::Debug for PreparedTagging {
 pub struct TaggingReconciler {
     pub(super) vault: Arc<Vault>,
     pub(super) encoder: Arc<dyn ExtractionEncoder>,
+    /// Who its calls are made for: the vault's own background tagging,
+    /// whose calls a host's dispatcher shares its room by (FIX 9519).
+    pub(super) caller: ExtractionCaller,
     pub(super) lease_owner: String,
     pub(super) batch_size: usize,
     pub(super) backoff: TaggingBackoff,
@@ -185,6 +190,7 @@ impl TaggingReconciler {
             ));
         }
         Ok(Self {
+            caller: ExtractionCaller::vault(&vault),
             vault,
             encoder,
             lease_owner: DEFAULT_LEASE_OWNER.to_owned(),
@@ -233,6 +239,13 @@ impl TaggingReconciler {
     pub fn with_lease_owner(mut self, lease_owner: impl Into<String>) -> Self {
         self.lease_owner = lease_owner.into();
         self
+    }
+
+    /// Who its calls are made for, for a host that claims its dispatcher's
+    /// room itself ([`Self::prepare_next`], FIX 9519).
+    #[must_use]
+    pub fn caller(&self) -> &ExtractionCaller {
+        &self.caller
     }
 
     /// Claims and settles up to the batch size of ready markers, after
@@ -299,13 +312,17 @@ impl TaggingReconciler {
     }
 
     /// The upkeep a pass starts with, reading `paused` before each of its
-    /// units (FIX 6902): the start scan while it has not run to its end,
+    /// units (FIX 6902): the tag passes a physical tear left owed are marked
+    /// (FIX 6262); then the start scan while it has not run to its end,
     /// else the hand-back of every held marker no preparation, call or
     /// settlement owns; then the trace history's trimming and expiry.
     /// `Ok(true)` when `paused` cut it short: what it did not reach waits for
     /// the next upkeep. A host driving the staged API runs it between its
     /// rounds, under its admission.
     pub fn upkeep_until_paused(&self, paused: &dyn Fn() -> bool) -> Result<bool> {
+        if crate::tagging::owed::pay_owed_tag_passes(&self.vault, paused)? {
+            return Ok(true);
+        }
         let cut_short = if self.stale_scanned.load(Ordering::Acquire) {
             self.return_unsettled(paused)?
         } else {
@@ -356,6 +373,11 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         prepared.trace.call_micros = Some(u64::try_from(timing.as_micros()).unwrap_or(u64::MAX));
         prepared.trace.execution = attempt.execution;
-        self.settle_called(prepared, Ok(attempt.result))
+        let called = if attempt.panicked {
+            Err(Box::new("the worker panicked") as Box<dyn std::any::Any + Send>)
+        } else {
+            Ok(attempt.result)
+        };
+        self.settle_called(prepared, called)
     }
 }

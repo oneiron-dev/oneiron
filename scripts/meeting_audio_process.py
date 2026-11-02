@@ -15,8 +15,12 @@ import time
 import uuid
 
 CODE_FILES = {"meeting-audio-worker.py", "meeting-audio-native.py", "meeting_audio_runtime.py", "meeting_audio_process.py", "meeting_audio_ctc.py"}
-PROTOCOL = "oneiron.meeting_audio.host.v1"
+PROTOCOL = "oneiron.meeting_audio.host.v2"
 # No request, reply, audio, code file or profile is refused by its size (Rule 5).
+# How often a port call still within its profile's bound tells its bridge so,
+# which the host reads as progress (CALLS, FIX 3765). The port's own bound,
+# `timeout_seconds` without output, judges a stall; no cap bounds a long one.
+PROGRESS_EVERY_SECONDS = 30
 
 
 def sha(data):
@@ -28,7 +32,7 @@ def validate_spec(spec, error):
     if (not isinstance(spec, dict) or set(spec) != fields or spec["backend"] != "process"
             or any(not isinstance(spec[k], str) or not Path(spec[k]).is_absolute() for k in ["interpreter", "script", "profile"])
             or not isinstance(spec["python_version"], str) or not spec["python_version"].strip()
-            or type(spec["timeout_seconds"]) is not int or not 1 <= spec["timeout_seconds"] <= 7200
+            or type(spec["timeout_seconds"]) is not int or spec["timeout_seconds"] < 1
             or not isinstance(spec["code_sha256"], dict) or set(spec["code_sha256"]) != CODE_FILES
             or Path(spec["script"]).name != "meeting-audio-worker.py"):
         raise error("InvalidProcessRuntimeProfile")
@@ -53,12 +57,14 @@ def check_files(spec, error):
         raise error("ProcessProfileDigestMismatch")
 
 
-def exchange(command, request, timeout, error):
+def exchange(command, request, idle, error, progress=None):
+    """Runs one port call while it writes within `idle` seconds of its last
+    output; `progress` is told every PROGRESS_EVERY_SECONDS meanwhile."""
     if os.name != "posix":
         raise error("ProcessPlatformUnsupported")
     environment = dict(os.environ)
     environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1", PYANNOTE_METRICS_ENABLED="0", PYTHONDONTWRITEBYTECODE="1")
-    deadline = time.monotonic() + timeout
+    last_output = time.monotonic()
     output = bytearray()
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                           env=environment, start_new_session=True) as child:
@@ -69,10 +75,13 @@ def exchange(command, request, timeout, error):
                     selector.register(stream, event)
                 sent = 0
                 while selector.get_map():
-                    remaining = deadline - time.monotonic()
+                    remaining = last_output + idle - time.monotonic()
                     if remaining <= 0:
-                        raise error("ProcessPortTimedOut")
-                    for key, _ in selector.select(remaining):
+                        raise error("ProcessPortStalled")
+                    ready = selector.select(min(remaining, PROGRESS_EVERY_SECONDS))
+                    if not ready and progress is not None:
+                        progress()
+                    for key, _ in ready:
                         if key.fileobj is child.stdin:
                             try:
                                 sent += os.write(child.stdin.fileno(), request[sent:sent + 65536])
@@ -88,10 +97,11 @@ def exchange(command, request, timeout, error):
                                 child.stdout.close()
                             else:
                                 output.extend(data)
+                                last_output = time.monotonic()
             try:
-                child.wait(timeout=max(0.001, deadline - time.monotonic()))
+                child.wait(timeout=max(0.001, last_output + idle - time.monotonic()))
             except subprocess.TimeoutExpired:
-                raise error("ProcessPortTimedOut") from None
+                raise error("ProcessPortStalled") from None
             return child.returncode, bytes(output)
         finally:
             if child.poll() is None:
@@ -102,7 +112,7 @@ def exchange(command, request, timeout, error):
                 child.wait()
 
 
-def call(spec, stage, operation, body, options, error, parse):
+def call(spec, stage, operation, body, options, error, parse, progress=None):
     check_files(spec, error)
     if stage not in {"alignment", "diarization"}:
         raise error("InvalidProcessRequest")
@@ -112,7 +122,7 @@ def call(spec, stage, operation, body, options, error, parse):
     encoded = json.dumps(header, ensure_ascii=False, allow_nan=False).encode()
     command = [spec["interpreter"], "-I", "-B", spec["script"], "--stage", stage, "--runtime-profile", spec["profile"],
                "--runtime-profile-sha256", spec["profile_sha256"]]
-    status, output = exchange(command, encoded + b"\n" + body, spec["timeout_seconds"], error)
+    status, output = exchange(command, encoded + b"\n" + body, spec["timeout_seconds"], error, progress)
     try:
         line, separator, trailing = output.partition(b"\n")
         reply = parse(line)

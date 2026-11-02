@@ -35,6 +35,11 @@ pub(crate) struct EmbedderReport {
     /// Why dense recall does not run now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reason: Option<String>,
+    /// What the owner should know about a model that serves: its hub ref
+    /// now names another commit than the vault's pinned one, which keeps
+    /// serving until `reembed` (FIX 9489).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) warning: Option<String>,
 }
 
 /// What `[embedder]` asks for.
@@ -100,6 +105,7 @@ impl EmbedderReport {
             loaded,
             dense,
             reason,
+            warning: None,
         }
     }
 
@@ -117,6 +123,7 @@ impl EmbedderReport {
             loaded: None,
             dense: "not_observed",
             reason: Some(reason.to_owned()),
+            warning: None,
         }
     }
 }

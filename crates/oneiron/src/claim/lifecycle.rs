@@ -17,18 +17,12 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
+use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
 
 mod materialization;
-
-/// Bound on the supersession-chain walk behind the write-verb validity guard
-/// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
-/// a single corrupt-but-acyclic chain can demand. Real revision chains are
-/// short, so a walk this deep is evidence of a damaged graph, not of long
-/// history, and it ends in a typed refusal rather than an unbounded traversal.
-const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
 
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
@@ -46,14 +40,18 @@ pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &st
 #[derive(Clone, Copy)]
 enum SupersedeClose<'a> {
     Direct(Option<crate::WriteActor>),
-    Granted(Option<&'a crate::llm::BoundedAutoChecker>),
+    /// A deferred grant's close: its checker, and the settlement door's
+    /// verified actor, which the close names (FIX 11039).
+    Granted {
+        checker: Option<&'a crate::llm::BoundedAutoChecker>,
+        actor: Option<crate::WriteActor>,
+    },
 }
 
 impl SupersedeClose<'_> {
     fn actor(self) -> Option<crate::WriteActor> {
         match self {
-            Self::Direct(actor) => actor,
-            Self::Granted(_) => None,
+            Self::Direct(actor) | Self::Granted { actor, .. } => actor,
         }
     }
 }
@@ -207,15 +205,20 @@ impl Vault {
     /// typed errors. The successor is never chosen by iteration order, and the
     /// ref is never a hex fallback: a hex id is not resolvable at the public
     /// short-ref doors, so emitting one would hand the caller a token it
-    /// cannot re-get with.
+    /// cannot re-get with. An acyclic chain is walked to its head however
+    /// long (FIX 8662): each hop only feeds the advisory
+    /// [`EngineScan::TimelineRecords`] check of `target`'s chain.
     fn successor_chain_head_short_ref_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         target: &EntityId,
     ) -> Result<String> {
+        let scope = target.as_bytes();
+        let mut count = ScanCount::start(&self.store, rtxn, EngineScan::TimelineRecords, scope)?;
         let mut head = *target;
         let mut visited = HashSet::from([head]);
-        for _ in 0..MAX_SUPERSESSION_CHAIN_WALK {
+        let found = loop {
+            count.row();
             let next = match self.supersession_successors_in(rtxn, &head)?.as_slice() {
                 // Nothing newer. Only a node that ENDED its own lifecycle can
                 // be its own terminal head: a retracted claim was withdrawn
@@ -225,23 +228,24 @@ impl Vault {
                 // incident edges with it), so there is no head to name —
                 // answering with the node's own ref would hand the caller back
                 // the very token it already knows is stale.
-                [] => return self.terminal_head_short_ref_in(rtxn, &head),
+                [] => break self.terminal_head_short_ref_in(rtxn, &head),
                 [only] => *only,
                 // Two successors mean two terminal heads. There is no
                 // principled choice between them, so the walk refuses rather
                 // than taking whichever the index yielded first.
                 _ => {
-                    return Err(Error::InvariantViolation(
+                    break Err(Error::InvariantViolation(
                         "supersession chain branches: a claim has more than one superseding successor",
                     ));
                 }
             };
             if !visited.insert(next) {
-                return Err(Error::Registry(RegistryError::CycleDetected));
+                break Err(Error::Registry(RegistryError::CycleDetected));
             }
             head = next;
-        }
-        Err(Error::IndexOverflow("supersession chain walk"))
+        };
+        count.defer(&self.store);
+        found
     }
 
     /// The public ref of a chain node that has no successor — but only when
@@ -287,22 +291,19 @@ impl Vault {
     /// The CLAIM entities that supersede `id`, resolved through the inbound
     /// `Supersedes` index. Every candidate is grounded — a dangling edge, a
     /// non-CLAIM node, or an undecodable body is corruption, never a skip.
+    /// Every inbound edge is read (FIX 11033): the count only feeds the
+    /// advisory EdgePeerRows check.
     fn supersession_successors_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
+        let (direction, kind) = (EdgeDirection::In, EdgeKind::Supersedes);
+        let scope = [&[direction as u8][..], id.as_bytes(), &[kind as u8][..]].concat();
+        let mut count = ScanCount::start(&self.store, rtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut successors = Vec::new();
-        for entry in self.port_edges(
-            rtxn,
-            id,
-            EdgeDirection::In,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if successors.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("supersedes successors"));
-            }
+        for entry in self.port_edges(rtxn, id, direction, Some(kind), None)? {
+            count.row();
             let successor = entry?.target;
             let raw = self
                 .port_entity_record(rtxn, &successor)?
@@ -318,6 +319,7 @@ impl Vault {
             decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             successors.push(successor);
         }
+        count.defer(&self.store);
         Ok(successors)
     }
 
@@ -458,8 +460,9 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
+        actor: Option<crate::WriteActor>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
-        let close = SupersedeClose::Granted(checker);
+        let close = SupersedeClose::Granted { checker, actor };
         self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
     }
 
@@ -481,7 +484,7 @@ impl Vault {
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
         let staged = super::deferred::load(self, &*wtxn, new_id)?;
-        if matches!(close, SupersedeClose::Granted(_)) {
+        if matches!(close, SupersedeClose::Granted { .. }) {
             let Some(super::deferred::DeferredAction::Supersede { old, .. }) =
                 staged.map(|row| row.action)
             else {
@@ -512,12 +515,9 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
-        if now < old_header.occurred_start {
-            return Err(Error::InvalidTimeRange {
-                start: old_header.occurred_start,
-                end: now,
-            });
-        }
+        // A claim superseded before its occurred start closes at that start
+        // (FIX 9726); the supersession itself keeps the real `now`.
+        let closed_end = now.max(old_header.occurred_start);
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -539,7 +539,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
                     start: old_header.occurred_start,
-                    end: now,
+                    end: closed_end,
                 },
                 learned_at: old_header.learned_at,
                 data,
@@ -557,13 +557,25 @@ impl Vault {
                 provenance: None,
             },
         ];
+        // The close names its door's actor and time (FIX 8655, 10044, 10045).
         let (binding, transition) =
-            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
+            crate::batch::ClaimMaterialization::verified_lifecycle_closed_by(
+                &self.store,
+                &*wtxn,
+                &ops[0],
+                close.actor(),
+                now,
+            )?;
         let decision = match (close, binding) {
-            (SupersedeClose::Granted(Some(checker)), Some(binding)) => self
-                .apply_checked_deferred_closure_in_txn(
-                    wtxn, ops, binding, transition, &old_body, checker,
-                )?,
+            (
+                SupersedeClose::Granted {
+                    checker: Some(checker),
+                    ..
+                },
+                Some(binding),
+            ) => self.apply_checked_deferred_closure_in_txn(
+                wtxn, ops, binding, transition, &old_body, checker,
+            )?,
             (_, binding) => {
                 self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
                 None
@@ -752,8 +764,15 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
+        // The close names its door's actor and time (FIX 8655, 10044, 10045).
         let (binding, transition) =
-            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
+            crate::batch::ClaimMaterialization::verified_lifecycle_closed_by(
+                &self.store,
+                &*wtxn,
+                &ops[0],
+                actor,
+                now,
+            )?;
 
         let mut write_receipt = None;
         if consent_receipt.is_none() {
@@ -812,24 +831,22 @@ impl Vault {
         {
             return Ok(false);
         }
+        // Every Supersedes out-edge of `new_id` is read until the `old_id`
+        // link (FIX 11015): the count only feeds the advisory EdgePeerRows
+        // check.
+        let direction = EdgeDirection::Out;
+        let kind = EdgeKind::Supersedes;
+        let scope = [&[direction as u8][..], new_id.as_bytes(), &[kind as u8][..]].concat();
+        let mut count = ScanCount::start(&self.store, &*wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut linked = false;
-        let mut seen = 0usize;
-        for entry in self.port_edges(
-            &*wtxn,
-            new_id,
-            EdgeDirection::Out,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if seen >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("superseded claims"));
-            }
-            seen += 1;
+        for entry in self.port_edges(&*wtxn, new_id, direction, Some(kind), None)? {
+            count.row();
             if entry?.target == *old_id {
                 linked = true;
                 break;
             }
         }
+        count.defer(&self.store);
         if !linked {
             return Ok(false);
         }

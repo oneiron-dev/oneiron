@@ -125,6 +125,11 @@ impl AttemptQueue<'_> {
         let outcome = self.abandon_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: an abandoned row's job notice commits here, outside
+        // any owner scope, so this door sends the signal itself.
+        if matches!(outcome, AbandonOutcome::Abandoned(_)) {
+            self.store.notify_notification_updates();
+        }
         Ok(outcome)
     }
 

@@ -182,9 +182,12 @@ pub(super) struct EarlyStamps {
 }
 
 /// Holds `stamps` under the sender's `lane` and the `grant` it sent them
-/// under, out of the admitted document ([`copy_admitted_edges`]). When
-/// `capped`, a stamp past the sender's caps is refused with typed evidence,
-/// and the rest of the update is admitted as it would be without it.
+/// under, out of the admitted document ([`copy_admitted_edges`]). Every
+/// stamp is kept with its grant and arrival, and waits for its row or its
+/// retirement (FIX 8890, 8566, 8731). When `capped`, a stamp past the
+/// sender's row or lane counts is a typed observation, logged, never dropped
+/// or quarantined; the rest of the update is admitted as it would be without
+/// it.
 #[cfg(feature = "sync")]
 pub(super) fn hold_stamps(
     vault: &Vault,
@@ -198,7 +201,6 @@ pub(super) fn hold_stamps(
     }
     let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
-        let mut refused = quarantine::TerminalRejectionBatch::new(window_key.as_str());
         for stamp in stamps {
             let hold = facet_read::park_stamp(
                 &vault.store,
@@ -208,18 +210,16 @@ pub(super) fn hold_stamps(
                 &stamp.value,
                 (now, capped),
             )?;
-            if hold == facet_read::Hold::SenderFull {
-                let full =
-                    Error::Sync(crate::error::SyncError::HeldFacetStampsFull { src: stamp.src });
-                refused.push(
-                    QuarantineContainer::Edges,
-                    &stamp.key(),
-                    &full,
-                    &stamp.value,
+            if hold != facet_read::Hold::Held {
+                tracing::info!(
+                    window = %window_key.as_str(),
+                    stamp = %stamp.key(),
+                    crossing = ?hold,
+                    "federation facet stamp passed its sender's held counts; it is held all the same"
                 );
             }
         }
-        refused.commit_in_txn(vault, wtxn, now)
+        Ok(())
     })
 }
 

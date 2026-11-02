@@ -1,16 +1,18 @@
 //! The Kotlin `EmbeddedVault`'s context pack, text search and graph reads,
 //! lowered to the same core reads the C ABI's `oneiron_vault_context_pack`,
 //! `_search_text`, `_targets`, `_sources`, `_subtree` and `_ancestors` run.
-//! Reads are the same on every vault, bound or not.
+//! A vault bound to an off-record session reads its room over base while
+//! the room is live, as the N-API and C bindings do (FIX 10759, FIX 11586);
+//! every other vault reads base.
 
 use std::sync::MutexGuard;
 
 use jni::JNIEnv;
 use jni::objects::{JFloatArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jobjectArray, jsize, jstring};
-use oneiron::{EdgeKind, EntityId, PackFormat, ScoredEntity};
+use oneiron::{ContextPackBuilder, EdgeKind, EntityId, PackFormat, ScoredEntity};
 
-use super::{MAX_SEARCH_LIMIT, NativeVault, display, float_values, run, scored_array};
+use super::{NativeVault, display, float_values, run, scored_array};
 
 impl NativeVault {
     /// A context pack over `text` and `vector`, at most `limit` items, as
@@ -24,25 +26,40 @@ impl NativeVault {
     ) -> Result<String, String> {
         let limit = search_limit(limit)?;
         // The limit caps the pack itself, as the C ABI's does.
-        let mut builder = self
-            .vault
-            .context_pack()
-            .format(pack_format(format))
-            .limit(limit);
-        if let Some(text) = text {
-            builder = builder.search_text(text, limit);
-        }
-        if let Some(vector) = vector {
-            builder = builder.search_vector(vector, limit);
-        }
-        let pack = builder.run_serialized().map_err(display)?;
+        let format = pack_format(format);
+        let pack = self.pack_bytes(|builder| {
+            let mut builder = builder.format(format).limit(limit);
+            if let Some(text) = text {
+                builder = builder.search_text(text, limit);
+            }
+            if let Some(vector) = vector {
+                builder = builder.search_vector(vector, limit);
+            }
+            builder
+        })?;
         String::from_utf8(pack).map_err(display)
+    }
+
+    /// The serialized context pack `configure` builds.
+    fn pack_bytes(
+        &self,
+        configure: impl for<'b> Fn(ContextPackBuilder<'b>) -> ContextPackBuilder<'b>,
+    ) -> Result<Vec<u8>, String> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_context_pack(configure).map_err(display),
+            None => configure(self.vault.context_pack())
+                .run_serialized()
+                .map_err(display),
+        }
     }
 
     /// The `limit` best BM25 text matches for `query`.
     fn search_text(&self, query: &str, limit: jint) -> Result<Vec<ScoredEntity>, String> {
         let limit = search_limit(limit)?;
-        self.vault.search_text(query, limit).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_text(query, limit).map_err(display),
+            None => self.vault.search_text(query, limit).map_err(display),
+        }
     }
 
     /// The peers of `id` over `kind` edges, filtered to `peer_type` when
@@ -62,34 +79,38 @@ impl NativeVault {
         let peer_type = peer_type
             .map(|peer_type| u8::try_from(peer_type).map_err(display))
             .transpose()?;
-        let peers = if inbound {
-            self.vault.sources(&id, kind, peer_type)
-        } else {
-            self.vault.targets(&id, kind, peer_type)
-        };
-        peers.map_err(display)
+        match (self.session_memory(), inbound) {
+            (Some(memory), true) => memory.raw_sources(&id, kind, peer_type).map_err(display),
+            (Some(memory), false) => memory.raw_targets(&id, kind, peer_type).map_err(display),
+            (None, true) => self.vault.sources(&id, kind, peer_type).map_err(display),
+            (None, false) => self.vault.targets(&id, kind, peer_type).map_err(display),
+        }
     }
 
     /// The `ChildOf` descendants of `root` to `max_depth`, each with its depth.
     fn subtree(&self, root: &str, max_depth: jint) -> Result<Vec<(EntityId, u32)>, String> {
         let root = EntityId::from_hex(root).map_err(display)?;
         let max_depth = u32::try_from(max_depth).map_err(display)?;
-        self.vault.subtree(&root, max_depth).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_subtree(&root, max_depth).map_err(display),
+            None => self.vault.subtree(&root, max_depth).map_err(display),
+        }
     }
 
     /// The `ChildOf` ancestors of `node`, nearest first.
     fn ancestors(&self, node: &str) -> Result<Vec<EntityId>, String> {
         let node = EntityId::from_hex(node).map_err(display)?;
-        self.vault.ancestors(&node).map_err(display)
+        match self.session_memory() {
+            Some(memory) => memory.raw_ancestors(&node).map_err(display),
+            None => self.vault.ancestors(&node).map_err(display),
+        }
     }
 }
 
-/// A search limit of at most [`MAX_SEARCH_LIMIT`].
-fn search_limit(limit: jint) -> Result<usize, String> {
-    usize::try_from(limit)
-        .ok()
-        .filter(|limit| *limit <= MAX_SEARCH_LIMIT)
-        .ok_or_else(|| format!("search limit {limit} is not within 0..={MAX_SEARCH_LIMIT}"))
+/// A search limit as the engine's row count: any `jint` from zero up, served
+/// whole; a negative one names no count.
+pub(super) fn search_limit(limit: jint) -> Result<usize, String> {
+    usize::try_from(limit).map_err(|_| format!("search limit {limit} is negative"))
 }
 
 /// The pack format `format` names, JSON when it names none, as the C ABI

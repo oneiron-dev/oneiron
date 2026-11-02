@@ -60,19 +60,41 @@ impl SymbolLease {
 }
 
 /// A declaration's symbols and lifetime, as every declaring door checks them.
+/// Its symbol count and longest symbol are observed where it is kept
+/// (FIX 9938), never refused: the declaration is retained whole.
 fn validate_declaration(symbols: &BTreeSet<String>, ttl_seconds: u64) -> Result<()> {
-    if ttl_seconds == 0
-        || symbols.is_empty()
-        || symbols.len() > 4096
-        || symbols
-            .iter()
-            .any(|s| s.trim().is_empty() || s.len() > 1024)
-    {
+    if ttl_seconds == 0 || symbols.is_empty() || symbols.iter().any(|s| s.trim().is_empty()) {
         return Err(Error::InvalidConfig(
             "invalid symbol declaration".to_owned(),
         ));
     }
     Ok(())
+}
+
+/// `symbols`' count and its longest symbol, each against its scan row: what
+/// a declaration once refused past is observed in its own write. A
+/// threshold row that does not read skips the observation, never the write.
+fn observe_declaration(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    symbols: &BTreeSet<String>,
+) {
+    let longest = symbols.iter().map(String::len).max().unwrap_or(0);
+    for (scan, rows) in [
+        (
+            crate::scan_check::EngineScan::DeclaredSymbols,
+            symbols.len(),
+        ),
+        (crate::scan_check::EngineScan::DeclaredSymbolBytes, longest),
+    ] {
+        if let Ok(mut count) =
+            crate::scan_check::ScanCount::start(store, txn, scan, task.as_bytes())
+        {
+            count.rows(rows);
+            count.defer(store);
+        }
+    }
 }
 
 fn load(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId) -> Result<Option<SymbolLease>> {
@@ -134,6 +156,7 @@ impl Vault {
                 ));
             }
             let blockers = blockers(&self.store, txn, task, &symbols, now)?;
+            observe_declaration(&self.store, txn, task, &symbols);
             let lease = SymbolLease {
                 task_ref: task.to_hex(),
                 holder_ref: holder.to_hex(),

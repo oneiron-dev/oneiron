@@ -3,17 +3,13 @@
 //! door is [`Memory::read_agent_diary`]: the caller's `diary.read` Grants
 //! decide which entries it gets, an agent that reviews answers the reason
 //! first, and a person reads with their authentication. This file is the
-//! row's wire: its bounded input, and the door's outcome as a closed DTO a
+//! row's wire: its input, and the door's outcome as a closed DTO a
 //! remote client decodes.
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{DiaryReadOutcome, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
-
-/// The longest reason a diary read states, in bytes; the gate holds the same
-/// bound.
-const DIARY_QUERY_REASON_MAX_BYTES: usize = 512;
 
 /// `self.memory.diary.query`'s input: whose diary, and the one-line reason
 /// the read states.
@@ -22,24 +18,18 @@ const DIARY_QUERY_REASON_MAX_BYTES: usize = 512;
 pub struct DiaryQueryRequest {
     /// Whose diary, as 32 hex.
     pub agent: String,
-    /// Why the caller reads; the agent sees it. One line of at most 512
-    /// bytes.
+    /// Why the caller reads; the agent sees it. One non-empty line.
     pub reason: String,
 }
 
 impl DiaryQueryRequest {
-    /// Refuses an agent that is not an entity id, and a reason that is empty,
-    /// longer than 512 bytes or more than one line.
+    /// Refuses an agent that is not an entity id, and a reason that is empty
+    /// or more than one line.
     pub fn validate(&self) -> MemoryResult<()> {
         self.agent_id()?;
         let reason = self.reason.trim();
-        if reason.is_empty()
-            || reason.len() > DIARY_QUERY_REASON_MAX_BYTES
-            || reason.contains(['\n', '\r'])
-        {
-            return Err(MemoryError::bad_request(
-                "reason is one non-empty line of at most 512 bytes",
-            ));
+        if reason.is_empty() || reason.contains(['\n', '\r']) {
+            return Err(MemoryError::bad_request("reason is one non-empty line"));
         }
         Ok(())
     }

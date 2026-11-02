@@ -9,11 +9,10 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::Result;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::decision::{AnswerContract, cut_text, fit_state};
 use crate::skill_optimize::{HeldOutReplayNotes, JudgeRubric};
 
-use super::{ask, decided_score};
+use super::{ask, decided_score, put_rubric};
 
 /// One reserved receipt's response as the host read it, whole: the task its
 /// run was given and what it answered. Never its status, verdict, success
@@ -81,12 +80,7 @@ fn score_state(response: &SkillReplayResponse, rubric: Option<&JudgeRubric>) -> 
             "response": cut_text(&response.response, cut),
         });
         if let Some(rubric) = rubric {
-            state["judge_rubric"] = json!(rubric.text);
-            state["judge_rubric_pin"] = json!({
-                "skill": rubric.skill.to_hex(),
-                "version": rubric.version,
-                "digest": bytes_to_hex_lower(&rubric.digest),
-            });
+            put_rubric(&mut state, rubric, None);
         }
         if let Some(bytes) = cut {
             state["cut_at_bytes"] = json!(bytes);

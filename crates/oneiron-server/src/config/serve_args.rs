@@ -111,8 +111,8 @@ pub struct ServeArgs {
     /// null}` or with a capability slip's 32-byte binding seed as an array of
     /// 32 numbers, then EOF. Read once, before the vault opens, by managed and
     /// plain serve, `oneiron backup` and a restore where no vault is yet;
-    /// never argv, the environment or a file. Without it the door is not
-    /// called.
+    /// never argv, the environment or a file, and on Linux not a named FIFO
+    /// either (FIX 11068). Without it the door is not called.
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
@@ -245,6 +245,12 @@ pub struct ServeArgs {
     #[arg(long = "seal-key-file")]
     pub seal_key_file: Option<PathBuf>,
 
+    /// Managed mode: this vault's e-sign seal key in secret custody, by its
+    /// record's handle, in place of `--seal-key-file`; its chain stays
+    /// `--seal-chain-file` (`ONEIRON_SEAL_KEY_HANDLE`, FIX 1297).
+    #[arg(long = "seal-key-handle")]
+    pub seal_key_handle: Option<String>,
+
     /// Managed mode: the seal key's certificate chain, an absolute path to
     /// its PEM file, the signer first (`ONEIRON_SEAL_CHAIN`).
     #[arg(long = "seal-chain-file")]
@@ -279,6 +285,14 @@ pub struct ServeArgs {
     /// path there); without it no outbox runs and the intents stay queued.
     #[arg(long = "esign-delivery-outbox-dir")]
     pub esign_delivery_outbox_dir: Option<PathBuf>,
+
+    /// The operator's cloud registration pins (G7): a public JSON file, an
+    /// absolute path, naming the issuer, the audience and the issuer's RSA
+    /// signing keys the native client trusts and nothing else. Self-hosted
+    /// or managed alike; without it, or with one that does not validate,
+    /// cloud registration alone reports not configured.
+    #[arg(long = "cloud-registration-pins")]
+    pub cloud_registration_pins: Option<PathBuf>,
 
     /// The directory the vault hands conversation text toward training the
     /// models Oneiron ships through (OF-420, "Learn from my conversations"),
@@ -514,7 +528,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_frame_size: Option<usize>,
 
-    /// Maximum CRDT update payload in bytes.
+    /// Maximum CRDT update bytes in one received frame or part; default the
+    /// 8 MiB frame floor (L14 s45 10:34).
     #[arg(long)]
     pub max_update_payload: Option<usize>,
 

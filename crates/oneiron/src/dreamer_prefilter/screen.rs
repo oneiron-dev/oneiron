@@ -182,7 +182,7 @@ pub(crate) fn prefilter_partition_input(
 /// unusable.
 pub(crate) fn prefilter_partition_input_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     turns: &[WorkingSetTurn],
 ) -> Result<PrefilterScreen> {
     let config = vault.prefilter_config_in_txn(txn)?;

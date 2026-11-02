@@ -22,6 +22,13 @@ export type OpenOptions = {
    * `"phone"`. Never read off the operating system.
    */
   deviceClass?: "computer" | "phone"
+  /**
+   * Holds this install's host root as the vault's checkpoint signer for the
+   * handle's life (FIX 5343): the device sync's steady pass attests with it
+   * the images its home writes. Only {@link Oneiron.openWithHostRoot} reads
+   * it; omitted is `false`. A secret that went unused is never held.
+   */
+  holdCheckpointRootSigner?: boolean
 }
 
 /**
@@ -55,6 +62,26 @@ export type EngineOptions = {
   memoryBytes?: number
   /** CPU time per second, in milliseconds; omitted is unbounded. */
   cpuMillisPerSecond?: number
+}
+
+/** One header of a request to the embedded engine or of its reply (FIX 4895). */
+export type EngineHeader = { name: string; value: Uint8Array }
+
+/** One request the app sends its embedded engine: the request a socket's client sends, bringing its own auth. */
+export type EngineRequest = {
+  method: string
+  /** The path and query, e.g. `/v1/core/health`. */
+  path: string
+  headers?: EngineHeader[]
+  body?: Uint8Array
+}
+
+/** The engine's whole reply to one request. A 4xx or 5xx status is a reply, not an error. */
+export type EngineReply = {
+  status: number
+  /** Every header the reply carried, repeats included. */
+  headers: EngineHeader[]
+  body: Uint8Array
 }
 
 /** An authority key's signature suite. */
@@ -166,6 +193,16 @@ export type WitnessTurn = {
   occurredAt?: number
   /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
+  /** The records this reply names as cited or created, judged by the engine under the writer's own read; omitted means it asserts nothing. */
+  assertions?: WitnessAssertions
+}
+
+/** The records one witnessed reply names. A supplied assertion is the engine's input, never proof of creation: a `created` record whose birth does not prove the writer made it is recorded `creation_not_proven`. */
+export type WitnessAssertions = {
+  /** Records the reply cites. */
+  cited: RecordRef[]
+  /** Records the reply reports it created. */
+  created: RecordRef[]
 }
 
 /** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
@@ -184,6 +221,17 @@ export type WitnessReceipt = {
   messageShortIds: string[]
   /** Facade write marker; always begins `witness:`. */
   receiptRef: string
+  /** What the wake this turn owes its actor's armed programs came to; absent when it owes none. */
+  wakeOutcome?: TurnProgramWakeOutcome
+}
+
+/** What a landed turn's program wake came to. The turn is accepted either way. */
+export type TurnProgramWakeOutcome = {
+  outcome: "not_armed" | "evaluated" | "unpersisted"
+  /** Wakes this landing recorded, when `evaluated`; zero is no failure. */
+  newlyRecorded?: number
+  /** Why no wake was recorded, when `unpersisted`. */
+  reason?: "no_authority" | "storage_failure"
 }
 
 /** One claim to commit. `approval` is deliberately not settable by callers. */
@@ -199,6 +247,8 @@ export type ClaimInput = {
   /** One of `user_stated`, `observed`, `inferred`, `imported`, `tool_output`, `generated`. */
   source: string
   worldRef?: string
+  /** RELATIONSHIP refs: omitted means all relationships, `[]` the explicit empty set. */
+  relationshipRef?: string[]
   scope?: unknown
   /** Unix seconds. */
   validFrom?: number
@@ -234,6 +284,8 @@ export type RecallScope = {
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
   kinds?: string[]
+  /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
+  projectRefs?: string[]
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
@@ -276,6 +328,10 @@ export type RecallOptions = {
   media?: RecallMedia
   /** The affect the query is asked in; omitted, recall ranks as before. */
   queryAffect?: QueryAffect
+  /** The token budget `format`'s rendering is cut to; 0 renders it uncut. Omitted, the window budget of `readerAgentRef`'s memory profile, else 4,000. */
+  tokenBudget?: number
+  /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
+  readerAgentRef?: string
 }
 
 /** Where one recalled item came from. */
@@ -384,11 +440,13 @@ export type RetrievalMeta = {
 /** A full-vault render in one of the five pack serialization formats. */
 /** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
 export type MemoryExport = { format: string; archive: string; digest: string }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {
-  /** Admitted entity type bytes; absent means every registered type. */
-  entityTypes?: number[]
+  /** Admitted entity types as registry kinds (`CLAIM`, `MESSAGE`, ...); absent means every registered type. */
+  entityTypes?: string[]
   maxSensitivityBand: number
   includeStale: boolean
   minConfidence: number

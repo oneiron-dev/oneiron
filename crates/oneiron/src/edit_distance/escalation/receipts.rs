@@ -68,8 +68,10 @@ pub(crate) fn escalation_receipts(
     }
     for entry in STANDING_POLICY.iter_from(&vault.store, &rtxn, &[])? {
         let (_, row) = entry?;
-        for record in standing_policy_receipt_records(&row) {
-            retain_projected(query, &mut out, record);
+        for policy in row.superseded.iter().chain(std::iter::once(&row)) {
+            for record in standing_policy_receipt_records(policy) {
+                retain_projected(query, &mut out, record);
+            }
         }
     }
     Ok(out)
@@ -166,6 +168,14 @@ fn standing_policy_receipt_record(
             FIELD_ESCALATION_BAND_CEILING.to_owned(),
             ceiling.to_string(),
         );
+    }
+    if matches!(status, StandingPolicyStatus::Accepted) {
+        if let Some(accepted_by) = &row.accepted_by {
+            fields.insert("answerer".to_owned(), accepted_by.clone());
+        }
+        if let Some(decision_ref) = &row.decision_ref {
+            fields.insert("decision_ref".to_owned(), decision_ref.clone());
+        }
     }
     ReceiptRecord {
         receipt_id: format!(

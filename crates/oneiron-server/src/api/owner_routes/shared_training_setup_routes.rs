@@ -23,12 +23,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, put};
 use oneiron::error::RecordError;
 use oneiron::federation::{
     SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion,
@@ -36,10 +34,10 @@ use oneiron::federation::{
 use oneiron::world_keys::PolicyRevision;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
-use super::{OwnerReply, blocking};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -51,11 +49,30 @@ const SETUP_READS: CoreScope = CoreScope::Read;
 /// engine then judges who may.
 const SETUP_ACTS: CoreScope = CoreScope::Write;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/conversation-learning/setup", get(view).put(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/setup",
+                summary: "A shared vault's one training question, asked once at setup, for its admin (its live owner, or an owner or admin holding the workspace-settings power): state unshared, pending (question_ref, 64 hex, and created_at) or answered (on, answered_by, setting_act, setting_revision and answered_at), with the setting's current revision as seen. A pending question reads the same until it is answered; reading consumes nothing. A counted admin choice made through PUT /conversation-learning since it was asked reads as its answer.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning/setup",
+                summary: "The vault's admin answers the setup training question: body {question_ref, on, seen}, all required (a body missing one is a 400). Yes turns the setting on with people not allowed to opt out; no signs it off; the question is answered in the same commit. The same answer again returns the recorded one and signs nothing; a different one is refused (409) as already answered, and PUT /conversation-learning changes the setting from then on. A stale seen (64 hex) is a conflict and leaves the question pending; anyone else is refused.",
+                row: None,
+            },
+            put(answer),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerSetup {
     /// The pending question's `question_ref`, as 64 hex. Required.
@@ -68,7 +85,7 @@ struct AnswerSetup {
 }
 
 /// Where the setup question stands, with the setting's current revision.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum SetupReply {
     /// The vault was never shared: there is no setup question.
@@ -132,6 +149,18 @@ fn setup_reply(question: &SharedTrainingSetupQuestion) -> SetupReply {
     }
 }
 
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/setup`'s body (FIX 11611):
+/// [`AnswerSetup`].
+pub(crate) fn answer_setup_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerSetup>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/setup`'s answer (FIX 11611):
+/// [`SetupReply`].
+pub(crate) fn setup_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetupReply>()
+}
+
 /// The engine's typed refusals as the caller's: a stale `seen` is a change
 /// since their review; a question the vault does not hold is a bad request;
 /// a caller who is no admin, a vault never shared, a question already
@@ -169,12 +198,13 @@ async fn view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerSetup>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerSetup>,
 ) -> OwnerReply<SetupReply> {
     let person = holder(&auth, &server, SETUP_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SetupReply> {
         let given = SharedTrainingSetupAnswer {
             question_ref: parse_revision("question_ref", &body.question_ref)?,

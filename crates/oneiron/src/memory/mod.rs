@@ -55,6 +55,7 @@ mod dreamer_revert;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
@@ -66,6 +67,7 @@ mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
+mod chat_composer;
 pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
@@ -82,6 +84,9 @@ mod entity_erase;
 pub mod erase_sweep;
 mod export;
 mod export_audit;
+mod export_kept;
+// FIX 11176: a kept export read and let go through verbs.
+mod export_transfer_read;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
@@ -117,6 +122,7 @@ mod search_temporal;
 mod search_vector;
 mod session_reads;
 mod session_writes;
+mod shape_card_doors;
 mod shape_doors;
 mod signal_extraction;
 mod structural;
@@ -143,21 +149,21 @@ pub use archive_delete_wire::{
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_doors::{AssetIngestReceipt, AssetIngestRequest, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
-    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
-    pull_image, resolve_audio_ref, resolve_image_ref,
+    AssetConsumer, HydratedAsset, ImageHandle, ImagePick, ImageViewRequest, LandedImage,
+    PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset, pull_image,
+    resolve_audio_ref, resolve_image_ref,
 };
-pub(crate) use asset_resolve::{asset_audio_in_lane, asset_image_in_lane};
+pub(crate) use asset_resolve::{
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
     require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
-pub use chat::{
-    ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
-    ChatScope, ComposedChatAnswer,
-};
+pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
+pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
 };
@@ -174,7 +180,11 @@ pub use claims::{
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
     CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
+    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason, SettleWarning, SettleWarningCode,
+};
+pub use conflict_settle::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
+    read_dreamer_candidate_decisions_as,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{
@@ -193,20 +203,26 @@ pub use dreamer::{
 };
 pub use dreamer_wake_read::{
     ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
-    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView,
-    DreamerWakeHeaderView, DreamerWakeLeaseView, DreamerWakeLiveCallView, DreamerWakeLiveView,
-    DreamerWakeResumeView, DreamerWakeView,
+    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
+    DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
+    DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
 pub use export::{
-    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, MemoryExport, MemoryExportReceipt,
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportAnswer, ExportDelivery, ExportDigest,
+    ExportOptions, ExportTransfer, MemoryExport, MemoryExportReceipt,
 };
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
     turn_thread_root,
+};
+pub use export_kept::KeptExportLapse;
+pub use export_transfer_read::{
+    EXPORT_TRANSFER_READ_BYTES, ExportTransferPiece, ExportTransferReadRequest,
+    ExportTransferReleaseRequest, ExportTransferReleased,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
@@ -226,13 +242,14 @@ pub use oneiron_contracts::memory::{
     MemoryWrongRoot,
 };
 pub use people_verbs::{
-    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
-    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
+    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
+    PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
-    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
-    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionGrantState, PluginSectionInstallOutcome, PluginSectionListRequest,
+    PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
@@ -259,9 +276,9 @@ pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
-    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, OutboundDraftInput, OutboundIntentReceipt,
-    OutboundScheduleContext,
+    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,
+    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, OutboundDraftInput,
+    OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
@@ -300,6 +317,9 @@ pub use search_vector::{
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
 };
+pub use shape_card_doors::{
+    ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
+};
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
@@ -314,6 +334,7 @@ pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolv
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
+pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -324,13 +345,22 @@ pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
-    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
+    StreamSyncVisibility,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn,
+    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
-pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use witness::{
+    TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
+};
+pub(crate) use witness::{
+    erase_birth_reply_assertions_in_txn, erase_reply_assertions_in_txn,
+    erase_turn_wake_label_in_txn, reply_assertions_opaque_owners, reply_assertions_owners,
+    reply_assertions_scan, reply_assertions_stub, turn_wake_outcome_in_txn,
+};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};

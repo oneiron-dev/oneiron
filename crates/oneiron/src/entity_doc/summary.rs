@@ -1,6 +1,7 @@
 //! Scope-summary documents: retained derivations, purpose and editor `keep` memo.
 
 use super::document::{map_get_bytes, map_insert_bytes};
+use super::prose_admission::{SUMMARY_ROW, admit_landed_as};
 use super::{DocAuthorization, EntityDoc, TextField, storage};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, EntityStoreRead, TombstoneStoreRead};
@@ -94,11 +95,16 @@ pub(crate) fn birth_summary_in_txn(
         .map_err(|_| super::invalid("summary purpose encoding"))?;
     let derivation = rmp_serde::to_vec_named(&metadata.derivation)
         .map_err(|_| super::invalid("summary derivation encoding"))?;
-    let doc = EntityDoc::open_initialized(
+    // A SUMMARY its writing door already stamped keeps that birth on its
+    // document's birth commit (FIX 10929).
+    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &entity)?;
+    // The birth commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
+    let doc = EntityDoc::open_initialized_born(
         loro::LoroDoc::new(),
         entity,
         &text,
-        actor,
+        (actor, stamp),
         at,
         |doc| {
             EntityDoc::replace_metadata(doc, &record_metadata)?;
@@ -111,7 +117,7 @@ pub(crate) fn birth_summary_in_txn(
             map_insert_bytes(&meta, "keep", &keep)?;
             map_insert_bytes(&meta, "derivation", &derivation)
         },
-        None,
+        born.as_ref().map(|birth| &birth.made_by),
     )?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
     crate::federation::record_scope::restamp_document_pointer(
@@ -132,6 +138,7 @@ pub(crate) fn birth_summary_in_txn(
         field,
         generation: 0,
         pending: 0,
+        birth_frontier: None,
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)
 }
@@ -169,8 +176,10 @@ impl Vault {
             let keep = super::metadata::encode_value(&keep_value)?;
             let before = doc.doc.oplog_vv();
             super::forks::bind_actor(self, txn, &doc, actor, at)?;
+            // The memo's commit names the actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
             map_insert_bytes(&doc.doc.get_map("meta"), "keep", &keep)?;
-            super::document::stamp(&doc.doc, actor, at, "summary_keep")?;
+            super::document::stamp(&doc.doc, stamp, at, "summary_keep")?;
             storage::persist(self, txn, summary, &mut head, &doc, Some(&before))
         })
     }
@@ -239,7 +248,7 @@ pub(crate) fn open_summary_proposal(
         .entity_docs
         .lock()
         .map_err(|_| super::invalid("document registry poisoned"))?;
-    let bundle = vault.try_with_write_txn_grouped(|txn| {
+    let (bundle, landed) = vault.try_with_write_txn_grouped(|txn| {
         vault.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
         let mut admitted = sources.clone();
         admitted.push(request.entity);
@@ -268,13 +277,14 @@ pub(crate) fn open_summary_proposal(
                 return Err(Error::ConcurrentWrite("summary keep memo changed").into());
             }
         }
-        let mut bundle = super::forks::open_proposal_in_txn(
+        let (mut bundle, landed) = super::forks::open_proposal_in_txn(
             vault,
             txn,
             &proposal,
             std::slice::from_ref(request),
             authorization,
             vault.now_recorded_at(),
+            &sources,
         )?;
         let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
         for record in &mut bundle.forks {
@@ -298,9 +308,13 @@ pub(crate) fn open_summary_proposal(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
         }
-        Ok::<_, crate::memory::MemoryError>(bundle)
+        Ok::<_, crate::memory::MemoryError>((bundle, landed))
     })?;
     registry.clear();
+    drop(registry);
+    // The change's prose, read under the caller's own handle once it has
+    // landed (FIX 1227).
+    admit_landed_as(memory, SUMMARY_ROW, &landed);
     memory.produced_from(sources);
     Ok(bundle)
 }

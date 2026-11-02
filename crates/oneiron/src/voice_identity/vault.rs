@@ -20,7 +20,7 @@ use super::storage_admission::{
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentRequest,
     VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintRecordV1, VoiceResolvedSegment,
-    VoiceSessionRosterV1, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
+    VoiceSessionRosterV1, VoiceSpeakerDeparture, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
 
 /// An event ID names one immutable decision. Only the first insertion may
@@ -139,6 +139,16 @@ impl Vault {
             if let Some(relationship_ref) = request.relationship_ref.as_ref() {
                 require_relationship_entity(store, wtxn, relationship_ref)?;
             }
+            // Its world from where its sources sit (FIX 10215), and the law it
+            // is made under, never a refusal (FIX 10218).
+            let world_ref = super::recognition::resolve_print_world_in(self, wtxn, request)?;
+            let third_party = is_contact_enrollment
+                || !crate::policy_model::owners_in_txn(self, wtxn)?.contains(&subject);
+            let legal = super::enrollment_law::admit_enrollment_law(
+                &request.legal,
+                &request.consent_event_ref,
+                third_party,
+            );
 
             let previous = read_active_print(store, wtxn, &subject)?;
             delete_voice_prints_in_txn(store, wtxn, &subject)?;
@@ -148,6 +158,10 @@ impl Vault {
                 contact_ref: request.contact_ref,
                 relationship_ref: request.relationship_ref,
                 consent_event_ref: request.consent_event_ref.clone(),
+                world_ref,
+                // The enrolled purpose alone (FIX 10217).
+                consented_purposes: vec![request.purpose.clone()],
+                legal,
                 space: request.space.clone(),
                 centroid: centroid.clone(),
                 sample_ids: sample_ids.clone(),
@@ -170,6 +184,13 @@ impl Vault {
                 let digest = sample_digest(&subject, &sample.sample_id);
                 SAMPLE.put(store, wtxn, &digest, sample)?;
             }
+            // The owner's typed question a third party's print owes, kept with
+            // it (FIX 10789). An ask, never a block: a question that does not
+            // queue leaves the print as it is.
+            if let Err(error) = super::print_ask::queue_print_owner_ask_in_txn(self, wtxn, &record)
+            {
+                tracing::warn!(kind = ?error.kind(), "a voice print's owner question was not queued");
+            }
             Ok(record)
         })
     }
@@ -179,7 +200,9 @@ impl Vault {
     /// Enrolled principals are matched first and removed; only what is left
     /// enters residual clustering; invite elimination then names at most one
     /// unambiguous remainder. The stored roster carries labels, scores, and
-    /// evidence — never an embedding vector.
+    /// evidence — never an embedding vector. A partial run keeps every
+    /// speaker an earlier run of the session heard; an authoritative
+    /// whole-recording run keeps only the speakers it heard (FIX 1522).
     pub fn resolve_voice_segments(
         &self,
         request: &VoiceMatchRequest,
@@ -189,9 +212,10 @@ impl Vault {
 
         let rtxn = self.store.env.read_txn()?;
         let candidates = load_match_candidates(
-            &self.store,
+            self,
             &rtxn,
             &request.space_id,
+            &request.purpose,
             self.now_recorded_at(),
         )?;
         drop(rtxn);
@@ -303,8 +327,24 @@ impl Vault {
         // two runs never mint the same revision for different placements.
         self.with_write_txn_grouped(|wtxn| {
             let mut roster = roster;
-            if let Some(prior) = ROSTER.get(&self.store, wtxn, &digest)? {
-                carry_unheard_speakers(&mut roster, &prior);
+            let heard = roster.segments.len();
+            let prior = ROSTER.get(&self.store, wtxn, &digest)?;
+            if let Some(prior) = &prior
+                && !request.coverage.retires_unheard()
+            {
+                carry_unheard_speakers(&mut roster, prior);
+            }
+            // Every print the roster places a speaker by, this run's and the
+            // carried ones, checked again in the write under this request's
+            // purpose: a stale result is never kept (FIX 10217, FIX 10219).
+            super::recognition::recheck_roster_evidence_in(
+                self,
+                wtxn,
+                &mut roster,
+                heard,
+                &request.purpose,
+            )?;
+            if let Some(prior) = prior {
                 roster.roster_revision = if placements(&roster) == placements(&prior) {
                     prior.roster_revision
                 } else {
@@ -316,6 +356,47 @@ impl Vault {
             }
             ROSTER.put(&self.store, wtxn, &digest, &roster)?;
             Ok(roster)
+        })
+    }
+
+    /// The owner's departure act for one speaker of a voice session (FIX
+    /// 1522): every placement of `speaker_key`, which the caller names,
+    /// leaves `voice_session_ref`'s roster, and the roster's revision moves.
+    /// A later run that hears the speaker places it again. A session with no
+    /// roster, or a speaker it holds no placement of, departs no one: the
+    /// receipt says so and nothing is written.
+    pub fn depart_voice_speaker(
+        &self,
+        voice_session_ref: &str,
+        speaker_key: &str,
+    ) -> Result<VoiceSpeakerDeparture> {
+        require_non_empty(voice_session_ref, "voice_session_ref")?;
+        require_non_empty(speaker_key, "speaker_key")?;
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        self.with_write_txn_grouped(|wtxn| {
+            let mut departure = VoiceSpeakerDeparture {
+                voice_session_ref: voice_session_ref.to_owned(),
+                speaker_key: speaker_key.to_owned(),
+                roster_revision: None,
+                removed_segments: 0,
+            };
+            let Some(mut roster) = ROSTER.get(&self.store, wtxn, &digest)? else {
+                return Ok(departure);
+            };
+            let held = roster.segments.len();
+            roster
+                .segments
+                .retain(|segment| segment.speaker_key != speaker_key);
+            departure.removed_segments = held - roster.segments.len();
+            if departure.removed_segments > 0 {
+                roster.roster_revision = roster
+                    .roster_revision
+                    .checked_add(1)
+                    .ok_or_else(|| invalid_voice("voice roster revision exhausted"))?;
+                ROSTER.put(&self.store, wtxn, &digest, &roster)?;
+            }
+            departure.roster_revision = Some(roster.roster_revision);
+            Ok(departure)
         })
     }
 
@@ -528,8 +609,9 @@ pub(crate) fn put_raw_voice_roster_for_test(
 }
 
 /// Silence removes no one (OF-365 ruling a): a speaker an earlier run of the
-/// session heard and this run did not stays on the roster, as last placed,
-/// until the session ends.
+/// session heard and this partial run did not stays on the roster, as last
+/// placed, until the session ends, an authoritative whole-recording run
+/// rules it out, or the owner's departure act retires it (FIX 1522).
 fn carry_unheard_speakers(roster: &mut VoiceSessionRosterV1, prior: &VoiceSessionRosterV1) {
     let heard: BTreeSet<String> = roster
         .segments

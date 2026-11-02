@@ -86,14 +86,17 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod codec;
+mod companion_bind;
 mod intent;
 mod records;
 mod runner;
+mod scrub;
 mod sharing;
 mod steps;
 mod work_companion;
 
 use codec::*;
+use companion_bind::*;
 use steps::*;
 
 pub use self::intent::CompanionChoice;
@@ -108,6 +111,10 @@ use self::records::{
 pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
+};
+pub(crate) use self::scrub::{
+    erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
+    erase_member_intent_actor_in_txn,
 };
 pub use self::sharing::{
     CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
@@ -145,7 +152,7 @@ pub use project::{
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchorLink,
     ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt,
     ProjectProofVersion, ProjectQuarantine, ProjectRecord, ProjectRole, ProjectRoom,
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
@@ -165,9 +172,10 @@ pub(crate) use project::{
     validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
-    PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,
-    check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
-    rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+    PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
+    capture_project_put, check_revision_put, is_project_revision_type, project_revision_type,
+    projects_touched_by_put, rebuild_project_revision_indexes, refresh_project_frontiers,
+    refuse_revision_delete,
 };
 #[cfg(feature = "sync")]
 pub(crate) use project::{
@@ -228,7 +236,7 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
-pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
+pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]

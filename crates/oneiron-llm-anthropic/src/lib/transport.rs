@@ -73,11 +73,17 @@ pub enum AnthropicMessagesTransportError {
 }
 
 impl From<AnthropicMessagesTransportError> for LlmError {
+    /// The connection and stream cuts are the retryable cut they always
+    /// were, now carrying their cause, so a result row or receipt names it.
     fn from(error: AnthropicMessagesTransportError) -> Self {
         match error {
             AnthropicMessagesTransportError::Timeout => RetryableLlmError::Timeout.into(),
-            AnthropicMessagesTransportError::StreamCut
-            | AnthropicMessagesTransportError::Connection => RetryableLlmError::StreamCut.into(),
+            AnthropicMessagesTransportError::Connection => {
+                RetryableLlmError::not_sent("connect", "connection failed").into()
+            }
+            AnthropicMessagesTransportError::StreamCut => {
+                RetryableLlmError::io_after_send("body read", "stream was cut").into()
+            }
             AnthropicMessagesTransportError::Server => RetryableLlmError::ServerError.into(),
         }
     }

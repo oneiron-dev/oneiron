@@ -113,16 +113,38 @@ impl AdmittedRequests {
 /// document batches are each admitted and settled, their rows written to
 /// `receipts`. It pays as the section says it is called: with the owner's
 /// own key when it names one, keyless on the owner's own device otherwise.
+/// It also keeps `receipts` on `http`, so the pods' door, built when the
+/// pool binds later, writes to the same sink.
 pub(super) fn pay_primary(
     http: &HttpEmbedder,
     config: &EmbedderConfig,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> oneiron::Result<()> {
+    http.keep_receipts(Arc::clone(&receipts));
     http.pay_through(Arc::new(AdmittedRequests::unmetered(
         &config.endpoint,
         http.locality(),
         receipts,
     )?));
+    Ok(())
+}
+
+/// Puts `http`'s pod document batches behind their own paid door, admitted
+/// as `pool`'s own key serves `model_key`, their rows written to
+/// `receipts`. Until this is called, pod batches ride the endpoint's door.
+pub(super) fn pay_pod_batches(
+    http: &HttpEmbedder,
+    pool: &crate::runtime::GpuPool,
+    model_key: &str,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> oneiron::Result<()> {
+    http.pay_pods_through(Arc::new(AdmittedRequests {
+        connector: pod_connector(pool, model_key)?,
+        // No host pushes a line yet, as the primary's: each request still
+        // takes its permit and writes its rows.
+        limit_units: u64::MAX,
+        receipts,
+    }));
     Ok(())
 }
 
@@ -154,6 +176,43 @@ fn connector(
             EmbedderLocality::OwnerServer => ModelLocality::OwnServer,
             EmbedderLocality::ThirdParty => ModelLocality::ThirdParty,
         },
+        payer: if custody == KeyCustody::Keyless {
+            Payer::Local
+        } else {
+            Payer::CustomerKey
+        },
+        credential_binding,
+        catalog_revision: None,
+        custody,
+        unit_cost: 1,
+        cost_unit: LeaseUnit::tokens(),
+        rates: Vec::new(),
+    })
+}
+
+/// The paid connector the pods' document batches are admitted as: the model
+/// they serve, at the pool's region. Pods with a key pay with the owner's
+/// own key: a vault secret's in the vault's custody (T0), sent by the
+/// credential broker, or an environment variable's, held in this process
+/// (T1). Ones without are the owner's own server.
+pub(super) fn pod_connector(
+    pool: &crate::runtime::GpuPool,
+    model_key: &str,
+) -> oneiron::Result<PaidConnector> {
+    let invalid = |what: &str| oneiron::Error::InvalidConfig(format!("embedder pods {what}"));
+    let origin = format!("gpu:{}", pool.region());
+    let route = OfferRoute::new("embedder", origin).map_err(|_| invalid("origin"))?;
+    let key_secret = pool.key_secret().map(|(name, _)| name);
+    let api_key_env = pool.api_key_env_name();
+    let (custody, credential_binding) = match (key_secret, api_key_env) {
+        (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
+        (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
+        (None, None) => (KeyCustody::Keyless, None),
+    };
+    Ok(PaidConnector {
+        connector: format!("embedder:{model_key}"),
+        route,
+        locality: ModelLocality::OwnServer,
         payer: if custody == KeyCustody::Keyless {
             Payer::Local
         } else {

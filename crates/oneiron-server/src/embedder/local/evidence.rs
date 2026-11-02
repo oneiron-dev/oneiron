@@ -10,7 +10,7 @@
 use oneiron::config::VectorEvidenceFloors;
 use serde::{Deserialize, Serialize};
 
-use super::model_manager::PINNED_MODELS;
+use super::model_manager::{PINNED_MODELS, ResolvedLocalRevision};
 use crate::config::{EmbedderAttention, EmbedderConfig, EmbedderOutputQuantization, EmbedderQuant};
 
 /// How a section runs its model, beyond what its transform says: each
@@ -71,6 +71,16 @@ pub(crate) fn measured_floors(
 /// Where vector evidence starts for a local section: its model's measured
 /// floors when it runs the shipped profile with no query prompt.
 pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceFloors> {
+    pinned_evidence_resolved(config, None)
+}
+
+/// [`pinned_evidence`] for the commit `resolved` names when it names one,
+/// else the configured revision: a ref that resolves to the shipped commit
+/// takes its measured floors.
+pub(crate) fn pinned_evidence_resolved(
+    config: &EmbedderConfig,
+    resolved: Option<&ResolvedLocalRevision>,
+) -> Option<VectorEvidenceFloors> {
     // The tokenizer strips what it encodes, so an instruction of blanks puts
     // the same tokens through the model as none.
     let unprompted = config
@@ -79,7 +89,11 @@ pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceF
         .map_or(config.query_prompt_name.is_none(), |instruction| {
             super::batcher::strip(instruction).is_empty()
         });
-    let files = format!("{}@{}", config.local.repo, config.local.revision);
+    let revision = resolved.map_or(
+        config.local.revision.as_str(),
+        ResolvedLocalRevision::commit,
+    );
+    let files = format!("{}@{}", config.local.repo, revision);
     measured_floors(&files, &RunProfile::of(config), unprompted)
 }
 

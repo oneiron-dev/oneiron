@@ -2,18 +2,20 @@
 //! `settle` chooses the existing completion or failure door for each outcome.
 //! The parent module keeps the claim, lease constants, and shared run state.
 
+use std::num::NonZeroU16;
+
 use super::{
     AgentDispatchStatus, AgentDispatcher, AttemptConfession, AttemptId, AttemptQueue,
     AttemptResultRef, BoundRun, Claimed, CodeRunReplayRecord, CompleteDreamerAttempt, DecisionHost,
     DetectorTier, DreamerParkCause, DreamerRunnerStore, DurableStepContext, EngineExecutorOutcome,
     EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureEscalationMode,
     FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot,
-    LEASE_OWNER, LlmError, OUTAGE_PARK_REASON, OutputContextEntry, ParkDreamerAttempt, PayerFault,
-    RUN_MAX_TRIES, RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
-    TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON, agent_dispatch_actor,
-    browser_workflow, open_trap, park_and_bind_wait_trap, park_for_payer, parks_on_outage,
-    parse_confession, register_wait, restore_output, run_continuation, trap_for_durable_wait,
-    trap_park_owner, unix_now,
+    LEASE_OWNER, LlmError, OutputContextEntry, ParkDreamerAttempt, PayerFault,
+    RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
+    TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON,
+    agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
+    park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
+    restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_now,
 };
 
 /// Settles the run's attempt: complete, parked on its wait or on a provider
@@ -65,9 +67,10 @@ pub(super) fn settle(
             tracing::info!(%error, attempt = ?attempt.id, "an agent run parks on a provider outage");
             DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
                 attempt_id: attempt.id,
-                reason: OUTAGE_PARK_REASON.to_owned(),
+                reason: outage_park_reason(error.provider_outage()),
                 cause: DreamerParkCause::ProviderUnavailable,
                 park_owner: LEASE_OWNER.to_owned(),
+                carried_spend: None,
                 now,
             })?;
             // FIX 2146: the outage counts once for the run's agent, here,
@@ -85,7 +88,7 @@ pub(super) fn settle(
         // neither fails nor spends a try, and goes on once they say yes.
         Err(EngineRunError::Payer(fault @ PayerFault::Needed { .. })) => {
             tracing::info!(%fault, attempt = ?attempt.id, "an agent run parks on its payer");
-            park_for_payer(vault, attempt.id, LEASE_OWNER, &fault, now)?;
+            park_for_payer(vault, attempt.id, LEASE_OWNER, &fault, None, now)?;
             return Ok(());
         }
         Err(error) => {
@@ -112,6 +115,17 @@ pub(super) fn settle(
         }
     };
     evidence.stable_reason = reason.to_owned();
+    // The run's consecutive-try cap (FIX 7748): the vault's resolved
+    // `resident_run_max_tries` row, else the shipped three when the row does
+    // not read. A policy read failure never refuses or stops the run.
+    let max_tries = match vault.resident_run_max_tries() {
+        Ok(tries) => NonZeroU16::new(tries.clamp(1, u64::from(u16::MAX)) as u16)
+            .expect("a clamped try cap stays nonzero"),
+        Err(error) => {
+            tracing::warn!(%error, attempt = ?attempt.id, "resident_run_max_tries_unresolved");
+            NonZeroU16::new(3).expect("three is nonzero")
+        }
+    };
     // Any other failure has no detector verdict, and the ladder never infers
     // one from prose: the run ends for a person to look at. Its checkpoint is
     // the start of the step that failed (FIX 3694), a ref of its own, never
@@ -139,7 +153,7 @@ pub(super) fn settle(
                 agent_ref: claimed.agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: RUN_MAX_TRIES,
+            max_consecutive_transients: max_tries,
             escalation_mode: FailureEscalationMode::Human,
             healer_slot: HealerSlot::Reserved,
         },
@@ -230,7 +244,7 @@ fn complete(
         })?;
     } else {
         // The run's durable result: the TASK's Done names it.
-        let output = AgentDispatcher::new(vault).attach_resident_run_result(
+        let output = AgentDispatcher::new(vault).attach_agent_run_result(
             attempt,
             LEASE_OWNER,
             &outcome.replay_record,
@@ -356,7 +370,7 @@ fn park_on_wait(
             vault,
             attempt_id: attempt.id,
             run_id: attempt.run_id.clone(),
-            envelope_actor: agent_dispatch_actor(&status.input)?,
+            envelope_actor: agent_dispatch_run_actor(&status.input, attempt.id)?,
             subject: parked.wait.wait_id,
             deadline: None,
             now_ms,
@@ -365,7 +379,7 @@ fn park_on_wait(
         parked.step_hash,
         "code-run wait",
     )?;
-    register_wait(vault, &trap, now_ms)?;
+    let registered = register_wait(vault, &trap, now_ms)?;
     // The park and its wake binding commit together: a stop between them
     // would leave a park no delivery wakes.
     park_and_bind_wait_trap(
@@ -375,11 +389,18 @@ fn park_on_wait(
             reason: WAITING_PARK_REASON.to_owned(),
             cause: DreamerParkCause::Signal,
             park_owner: trap_park_owner(&trap.trap_claim_id),
+            carried_spend: None,
             now,
         },
         &parked.key,
         &trap,
         now_ms,
     )?;
+    // A signal that landed before register_wait leaves the trap Sent: the
+    // delivering commit cannot wake that head again. Now that the park and
+    // binding exist, the shared sweep consumes it and queues this same try.
+    if registered == oneiron::llm::DreamerTrapState::Sent {
+        AgentDispatcher::new(vault).resume_signalled_runs(now_ms)?;
+    }
     Ok(())
 }

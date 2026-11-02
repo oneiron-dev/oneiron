@@ -103,13 +103,50 @@ impl Vault {
         let durable = scan_durable_send_receipts(self)?;
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
+        let durable_undecodable = durable.undecodable;
         scan.records.extend(durable.records);
+        scan.undecodable = scan.undecodable.saturating_add(durable_undecodable);
         scan.records.extend(super::direct_dispatch::receipts(self)?);
         scan.records.extend(dispatch_observations(self)?);
         scan.records
             .extend(scan_suppression_receipts(self)?.records);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
+    }
+
+    /// How many send receipt rows do not decode, for a `vault.receipts` page
+    /// of `kinds` (FIX 12044): none on the gate ledger or without `outbound`,
+    /// else the rows `durable_send_receipts` returns apart. A read error of
+    /// the table itself still fails.
+    pub(crate) fn undecodable_send_receipts_for_kinds(&self, kinds: &[String]) -> Result<u32> {
+        if !kinds
+            .iter()
+            .any(|kind| kind.trim() == ReceiptKind::Outbound.as_str())
+        {
+            return Ok(0);
+        }
+        durable_send_receipts(self)
+            .map(|(_, undecodable)| u32::try_from(undecodable.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Every outbound receipt whose id is `receipt_id`, read from the whole
+    /// of each source [`Self::scan_receipts`] reads, with no result limit: a
+    /// caller proving that one id names one receipt sees every receipt that
+    /// carries it, however many outbound receipts the vault holds.
+    pub(crate) fn outbound_receipts_with_id(&self, receipt_id: &str) -> Result<Vec<ReceiptRecord>> {
+        let mut matches = Vec::new();
+        // Each source is filtered as it is read, so no two sources are held whole at once.
+        let mut keep = |records: Vec<ReceiptRecord>| {
+            matches.extend(records.into_iter().filter(|receipt| {
+                receipt.receipt_kind == ReceiptKind::Outbound && receipt.receipt_id == receipt_id
+            }));
+        };
+        keep(scan_attempt_pack_receipts(self)?.records);
+        keep(scan_durable_send_receipts(self)?.records);
+        keep(super::direct_dispatch::receipts(self)?);
+        keep(dispatch_observations(self)?);
+        keep(scan_suppression_receipts(self)?.records);
+        Ok(matches)
     }
 
     /// Alias for callers that prefer verb-first query naming.
@@ -245,6 +282,7 @@ pub(super) fn collect_receipt_records(
         );
         records.extend(
             durable_send_receipts(vault)?
+                .0
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
@@ -333,12 +371,7 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
-        records.extend(identity_topology_receipts(
-            vault,
-            &rtxn,
-            query,
-            MAX_RECEIPT_QUERY_SCAN,
-        )?);
+        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -363,8 +396,8 @@ pub(super) fn collect_receipt_records(
         )?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
-    // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN
-    // bound as every other projector here.
+    // ledger. Shares the same read txn as every other projector here, and
+    // like them reads its source to the end.
     if query.includes_kind(ReceiptKind::CommitmentLifecycle) {
         records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
     }
@@ -396,12 +429,9 @@ pub(super) fn collect_receipt_records(
 /// `commitment.record` CLAIM in scan range (CMT-4, ONE-1541).
 ///
 /// Projection-first: there is no lifecycle store, so the terminal claim row is
-/// both the state and the receipt. The scan is bounded by
-/// [`MAX_RECEIPT_QUERY_SCAN`], and the invariant is bounded with it — within
-/// that many scanned CLAIM rows, a fulfilled/released/lapsed commitment cannot
-/// exist without its receipt. Vaults beyond the bound need the follow-up
-/// commitment-status receipt index; this projector does not imply whole-vault
-/// coverage.
+/// both the state and the receipt. The scan reads every CLAIM row (FIX 3582),
+/// so a fulfilled/released/lapsed commitment cannot exist without its
+/// receipt.
 ///
 /// `actor` is deliberately `None`. The status writer is not the moral author of
 /// a lapse (nothing happened — that IS the lapse), and the same-transaction
@@ -431,6 +461,25 @@ fn commitment_lifecycle_receipts(
             if body.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
                 return Ok(());
             }
+            // A commitment's receipt is projected once, under its first id,
+            // from the body at the head of its status chain; a later link of
+            // that chain is not a commitment of its own.
+            if vault.commitment_predecessor_in_txn(txn, &id)?.is_some() {
+                return Ok(());
+            }
+            let head = vault.commitment_head_in_txn(txn, &id)?;
+            let (body, header) = if head == id {
+                (body, header)
+            } else {
+                (
+                    vault
+                        .get_claim_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                    vault
+                        .entity_header_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                )
+            };
             // Past the exact predicate match the codec is authoritative, so a
             // malformed commitment body is corruption rather than a row to skip.
             let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(

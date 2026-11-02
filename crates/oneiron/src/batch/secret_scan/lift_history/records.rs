@@ -160,7 +160,7 @@ pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<D
 /// beside its marks, past the owner's rulings in the record; `true` when
 /// one was added.
 fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) -> Result<bool> {
-    let Some(known) = KnownValues::load_in_writer(&vault.store, txn)? else {
+    let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)? else {
         return Ok(false);
     };
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
@@ -187,9 +187,10 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let raw = vault.materialized_row_in_txn(txn, &id, raw)?;
-    // A record a writer has cleaned since the census read it is done.
+    // A record a writer has cleaned since the census read it is done; a
+    // file still settles a known-value hit (FIX 8647).
     let Some(reason) = hit(vault, txn, &id, &raw)? else {
-        return Ok(Done::Clean);
+        return remark(vault, txn, key);
     };
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("lift sweep entity header"))?;
@@ -198,7 +199,6 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     }
     // A record's prose lives in its document, whose history no door
     // rewrites: its keys are marked through the document's own door.
-    #[cfg(feature = "sync")]
     if header.entity_type != ENTITY_TYPE_NOTE
         && crate::entity_doc::has_record_head(&vault.store, txn, &id)?
     {

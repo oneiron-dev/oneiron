@@ -1,7 +1,7 @@
 //! The tested stack's per-member checks (moved from `reviewed_stack.rs`,
 //! G4 PR2): the tested change is exactly its immutable reviewed operation,
 //! its receipt binds it, and its document base has not moved.
-use super::proposal::{RepoProposal, invalid};
+use super::proposal::{RepoProposal, RepoProposalOperation, invalid};
 use super::snapshot::{StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind};
 use super::types::{RepoForkHash, RepoMutationOplogEntry};
 use crate::{
@@ -26,8 +26,8 @@ pub(super) fn require_candidate(
             "tested change is not exactly one reviewed proposal",
         ));
     }
-    if row.received_candidate().is_some() {
-        return require_received_candidate(row, candidate, snapshot);
+    if row.is_file_bundle() {
+        return require_bundle_candidate(row, candidate, snapshot);
     }
     let (path, content) = row.ordinary_file()?;
     if candidate.files.len() != 1 || candidate.files[0].metadata_edit.is_some() {
@@ -73,6 +73,22 @@ pub(super) fn snapshot_state_is(
     state.present == mode.is_some() && state.mode == mode
 }
 
+/// Whether the withheld snapshot `entry` is the present file `state`
+/// names, at its kept mode.
+fn withheld_state_is(
+    entry: Option<&StoredRepoSnapshotEntry>,
+    state: &crate::code_document::CodeFilePresence,
+) -> bool {
+    entry.is_some_and(|entry| {
+        let mode = if entry.executable {
+            0o100_755
+        } else {
+            0o100_644
+        };
+        state.present && state.mode == Some(mode)
+    })
+}
+
 /// The bytes a snapshot `entry` holds: a file's content, a symlink's
 /// target text, nothing when absent.
 fn snapshot_bytes(entry: Option<&StoredRepoSnapshotEntry>) -> Option<Vec<u8>> {
@@ -86,34 +102,42 @@ fn snapshot_bytes(entry: Option<&StoredRepoSnapshotEntry>) -> Option<Vec<u8>> {
     })
 }
 
-/// A received bundle's tested change is its whole reviewed file set, in
+/// A file bundle's tested change is its whole reviewed file set, in
 /// order: each path's reviewed bytes and state change, and the bytes and
 /// state the stack's snapshot holds there as the expected base. No file of
 /// it is a single-file surrogate.
-fn require_received_candidate(
+fn require_bundle_candidate(
     row: &RepoProposal,
     candidate: &crate::merge_queue::MergeProposal,
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
     if candidate.files.len() != row.files.len() || row.files.is_empty() {
-        return Err(invalid(
-            "tested change is not the received bundle's file set",
-        ));
+        return Err(invalid("tested change is not the bundle's file set"));
     }
     for (tested, reviewed) in candidate.files.iter().zip(&row.files) {
         let state = reviewed
             .metadata_edit
             .as_ref()
-            .ok_or(invalid("a received file carries its reviewed state change"))?;
+            .ok_or(invalid("a bundle file carries its reviewed state change"))?;
         let entry = snapshot
             .entries
             .iter()
             .find(|entry| entry.path == reviewed.path);
+        // A native remediation's file the snapshot withholds (FIX 7608
+        // slice 6): its kept mode is checked here, and its exact base
+        // bytes, which no snapshot holds, by the queue against the tested
+        // tree.
+        let withheld = matches!(row.operation, RepoProposalOperation::CommitFiles)
+            && entry.is_some_and(|entry| entry.kind == StoredRepoSnapshotEntryKind::Withheld);
+        let base_is = if withheld {
+            withheld_state_is(entry, &state.expected) && tested.expected.is_some()
+        } else {
+            snapshot_state_is(entry, &state.expected) && tested.expected == snapshot_bytes(entry)
+        };
         if tested.path != reviewed.path
             || tested.content != reviewed.content
             || tested.metadata_edit.as_ref() != Some(state)
-            || !snapshot_state_is(entry, &state.expected)
-            || tested.expected != snapshot_bytes(entry)
+            || !base_is
         {
             return Err(invalid(
                 "tested bytes differ from immutable reviewed operation",
@@ -150,8 +174,8 @@ pub(super) fn require_document_base(
 ) -> Result<()> {
     let repo = RepoRef::parse(&row.repo)?;
     let scope = super::oplog::repo_mutation_repo_key(&repo);
-    if row.received_candidate().is_some() {
-        return require_received_document_bases(vault, row, snapshot, &scope);
+    if row.is_file_bundle() {
+        return require_bundle_document_bases(vault, row, snapshot, &scope);
     }
     let (path, content) = row.ordinary_file()?;
     let old = snapshot
@@ -187,21 +211,18 @@ pub(super) fn require_document_base(
     }
 }
 
-/// The received bundle's read-only preflight: each file's document, when
-/// one lives at its path and no receipt of its operation landed yet, still
+/// A file bundle's read-only preflight: each file's document, when one
+/// lives at its path and no receipt of its operation landed yet, still
 /// holds the text the stack's snapshot holds there. The grouped ingress
 /// rechecks every file at execution.
-fn require_received_document_bases(
+fn require_bundle_document_bases(
     vault: &Vault,
     row: &RepoProposal,
     snapshot: &StoredRepoSnapshot,
     scope: &str,
 ) -> Result<()> {
-    for file in &row.files {
-        let source = file
-            .source_operation
-            .ok_or(invalid("a received file names its source operation"))?;
-        let operation = super::received_file::received_file_operation(row.id, source)?;
+    for (index, file) in row.files.iter().enumerate() {
+        let operation = row.file_operation(index)?;
         if vault.code_file_edit_receipt(operation)?.is_some()
             || vault.code_document_frontier(scope, &file.path)?.is_none()
         {

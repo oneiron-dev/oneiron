@@ -283,16 +283,18 @@ impl OverlayState {
 /// position staged beside a row (`record_scope::stage_session_position`), or
 /// a `FacetOf` edge, which a room stages only as a NOTE's birth facet, or a
 /// row's `made_by` birth and its born-from index row (FIX 4281; Engine
-/// 10-22: birth metadata never counts toward the room's byte limit). Its
-/// bytes stay outside the room's budget, so a room at its limit takes exactly
-/// the writes it took before rows carried positions or births; it still
-/// stages in the same segment as its row.
+/// 10-22: birth metadata never counts toward the room's byte limit), or the
+/// room's short-id ordinal (FIX 10102). Its bytes stay outside the room's
+/// budget, so a room at its limit takes exactly the writes it took before
+/// rows carried positions, births or an ordinal; it still stages in the same
+/// segment as its row.
 pub(super) fn unbudgeted_row(keyspace: OverlayKeyspace, key: &[u8]) -> bool {
     match keyspace {
         OverlayKeyspace::VaultMeta => [
             crate::side_table::SCOPE_RECORD.prefix,
             crate::side_table::PROVENANCE_ROW_BIRTH.prefix,
             crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER.prefix,
+            super::short_id::SESSION_SHORT_ID_ORDINAL_KEY,
         ]
         .into_iter()
         .any(|prefix| key.starts_with(prefix)),

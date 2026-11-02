@@ -193,6 +193,9 @@ pub(super) fn dispatch_item_effect(
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             },
         )));
     }

@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 
+use super::indexes::ProviderPrior;
 use crate::error::Result;
 
-/// One transaction's provider priors, including resolved neutral absence.
+/// One transaction's provider priors, including resolved neutral absence and
+/// a resolved unresolved-by-split status (FIX 10530).
 ///
 /// Create this inside the write transaction and discard it before that
 /// transaction ends. The scoring pass may repair disposable indexes, but it
@@ -12,17 +14,18 @@ use crate::error::Result;
 /// Nothing here is persisted or shared with another evaluation.
 #[derive(Default)]
 pub(crate) struct ProviderPriorMemo {
-    resolved: HashMap<String, Option<f32>>,
+    resolved: HashMap<String, ProviderPrior>,
 }
 
 impl ProviderPriorMemo {
-    /// Resolve an exact provider key once. `None` is a successful resolution;
-    /// an error is propagated and leaves no entry, never a neutral fallback.
+    /// Resolve an exact provider key once. Every [`ProviderPrior`] is a
+    /// successful resolution; an error is propagated and leaves no entry,
+    /// never a neutral fallback.
     pub(super) fn resolve(
         &mut self,
         provider: &str,
-        resolve: impl FnOnce() -> Result<Option<f32>>,
-    ) -> Result<Option<f32>> {
+        resolve: impl FnOnce() -> Result<ProviderPrior>,
+    ) -> Result<ProviderPrior> {
         if let Some(&prior) = self.resolved.get(provider) {
             return Ok(prior);
         }

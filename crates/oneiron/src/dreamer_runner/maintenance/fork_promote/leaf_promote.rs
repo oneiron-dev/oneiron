@@ -284,7 +284,7 @@ fn elsewhere(
             .is_some_and(|node| node.node_id == parent);
         if team.project != Some(project)
             && placed
-            && pick(team, axis) == Some(winner)
+            && pick(team, axis).as_deref() == Some(winner)
             && !reserved(team)
             && seen.insert(team.team_ref.as_str())
         {
@@ -294,12 +294,13 @@ fn elsewhere(
     runs
 }
 
-/// What `team` chose on `axis`: its pattern, or its one model (each id's
-/// final `@revision` stripped) when it ran on no other. A mix picks no model,
-/// and no team receipt names a critic.
-fn pick(team: &TeamReceipt, axis: DecisionAxis) -> Option<&str> {
+/// What `team` chose on `axis`: its pattern, its one model (each id's final
+/// `@revision` stripped) when it ran on no other, or the one critic its
+/// settled outcome names (FIX 2970). A mix picks no model, and a panel no
+/// critic.
+fn pick(team: &TeamReceipt, axis: DecisionAxis) -> Option<String> {
     match axis {
-        DecisionAxis::WinningPattern => Some(team.pattern.as_str()),
+        DecisionAxis::WinningPattern => Some(team.pattern.as_str().to_owned()),
         DecisionAxis::WinningModel => {
             let models: BTreeSet<&str> = team
                 .models
@@ -308,11 +309,11 @@ fn pick(team: &TeamReceipt, axis: DecisionAxis) -> Option<&str> {
                 .collect();
             let mut models = models.into_iter();
             match (models.next(), models.next()) {
-                (Some(model), None) => Some(model),
+                (Some(model), None) => Some(model.to_owned()),
                 _ => None,
             }
         }
-        DecisionAxis::TrustedCritic => None,
+        DecisionAxis::TrustedCritic => team.trusted_critic(),
     }
 }
 

@@ -44,9 +44,9 @@ struct NodeInput {
 }
 
 /// The node a child's input names.
-struct NodeTarget {
+pub(crate) struct NodeTarget {
     source_ref: FeedbackTriageSourceRef,
-    evidence: EntityId,
+    pub(crate) evidence: EntityId,
     generation: u32,
     node: u32,
 }
@@ -96,7 +96,7 @@ fn lost_lease() -> Error {
     Error::InvalidConfig("the feedback triage job no longer holds its lease".into())
 }
 
-fn node_target(input: &Value) -> Result<NodeTarget> {
+pub(crate) fn node_target(input: &Value) -> Result<NodeTarget> {
     let node: NodeInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
     Ok(NodeTarget {
         source_ref: FeedbackTriageSourceRef {
@@ -344,14 +344,14 @@ impl Vault {
             erased::refuse_erased_in_txn(self, txn, &handoff)?;
             // The park fence lands on a terminal row too; a plan lands only
             // on the job's live lease.
-            if !AttemptQueue::new(self).holds_lease_in_txn(
-                txn,
-                record.id,
-                lease_owner,
-                record.attempt_count,
-            )? {
+            let queue = AttemptQueue::new(self);
+            if !queue.holds_lease_in_txn(txn, record.id, lease_owner, record.attempt_count)? {
                 return Err(lost_lease());
             }
+            // The park renews the lease it parks under: a lease reclaim that
+            // read the parked set before this write finds the lease live
+            // under its own writer and leaves it (FIX 10304).
+            queue.renew_lease_in_txn(txn, record.id, lease_owner, record.attempt_count, now)?;
             let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
             let owner = Owner {
                 source_ref: &handoff.source_ref,
@@ -367,6 +367,7 @@ impl Vault {
                     reason: PARK_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                     park_owner: COACH_FEEDBACK_TRIAGE_PARK_OWNER.to_owned(),
+                    carried_spend: None,
                     now,
                 },
                 DreamerTryLease {

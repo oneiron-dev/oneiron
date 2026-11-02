@@ -47,14 +47,14 @@ impl SideKey for WatchKey {
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
-const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
+pub(super) const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
 pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_PENDING);
 /// Key: source + question + root unit.
-const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
+pub(super) const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_RESTS_ON);
-const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
+pub(super) const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_ROOT_SOURCES);
 
 /// Records what `root`'s newest standing answer rests on besides `root`
@@ -135,6 +135,24 @@ pub(super) fn watch(
     let predicate = predicate(&binding.source).to_owned();
     let id = record.definition.question.id;
     QUESTION_WATCH.put(store, txn, &WatchKey { predicate, id }, &id)
+}
+
+/// Undoes [`watch`] for `record`, a question whose one version went with its
+/// erased answer (FIX 9918).
+pub(super) fn unwatch(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &QuestionRecord,
+) -> Result<()> {
+    let id = record.definition.question.id;
+    for unit in &record.definition.units {
+        UNIT_WATCH.delete(store, txn, &(*unit, id))?;
+    }
+    if let Some(binding) = &record.definition.binding {
+        let predicate = predicate(&binding.source).to_owned();
+        QUESTION_WATCH.delete(store, txn, &WatchKey { predicate, id })?;
+    }
+    Ok(())
 }
 
 /// The key-prefix (bytes after the table's own declared prefix) matching every watcher

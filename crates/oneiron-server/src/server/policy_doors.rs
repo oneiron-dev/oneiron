@@ -26,7 +26,8 @@ pub struct HostedPolicyRelay {
 
 impl HostedPolicyRelay {
     /// Bind an identity already proved by connector-edge authentication.
-    /// A hosted door always fails closed and offers the host's local-model path.
+    /// A hosted door offers the host's local-model path; whether an
+    /// availability degrade halts it is its config's outage posture.
     pub fn new(
         identity: &AuthenticatedConnectionIdentity,
         registry: EdgeServiceRegistry,

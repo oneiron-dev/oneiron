@@ -27,6 +27,11 @@ credential.
   the merge floor.
 - No older image is booted, and no reader of an image without the field is
   kept. `CONTRACT_VERSION` stays 3, and `Ping` has no field for this.
+- A cold restore's receipt names the engine's own build in `engine_build`
+  (FIX 6581): the 40-hex commit the build exported as
+  `ONEIRON_ENGINE_REVISION`, else the commit its source checkout's `HEAD`
+  named, else `null`. A release build exports the same commit it records as
+  the manifest's `engine_revision`, so the host can compare the two.
 - The custody anchor channels (FIX 6517) add two required manifest fields,
   published together: `anchor_wire_revision: 1` and `anchor_proxy_revision: 1`.
   Every serving cold boot of an image at or after their floor dials the anchor
@@ -59,7 +64,11 @@ credential.
   only for an image at revision 1, each naming the descriptor's guest-local
   CLI, never a host path. The bootstrap prepares the runtime for the vault UID
   and passes the engine one `--guest-runtime-fact` on every serving boot; no
-  fact stops the vault.
+  fact stops the vault. Each serving boot that prepares the runtime empties
+  `/vault/storage/container/runtime`, the container CLI's `XDG_RUNTIME_DIR`,
+  and keeps the directory itself (FIX 8936): the CLI's pause process id,
+  locks and sockets are that boot's own, never an earlier boot's.
+  `/vault/storage/container/home` and the image store in it are kept.
 - The trusted organ builds file (FIX 7889) adds a required manifest field,
   `vm_trusted_organ_builds_revision: 1`, which the rootfs receipt carries into
   the manifest. Its floor is the engine commit that merged FIX 7889. An image
@@ -67,6 +76,81 @@ credential.
   in its vault runs as third party. The supervisor checks the revision, with
   the hashes and that floor, before it stages a list, and counts a list
   applied only on an image at or after the floor.
+
+## Start checks and the outbox carrier
+
+- The vault disk (FIX 6632): before each cold boot's VMM starts, the host
+  reads the vault disk's ext4 superblock. A disk that is not ext4, or whose
+  filesystem UUID is not the provision binding's `vault_disk_uuid`, refuses
+  the start with `disk_mismatch`, before the guest or the key frame sees it.
+  A disk the host cannot read is logged `vm_vault_disk_unread` and left to
+  the guest's own check, which refuses it before the key goes in.
+- The boot timeout (FIX 8934): the VM profile's `boot_timeout_secs` bounds
+  the start's handshake waits, in seconds: a cold boot's provision,
+  credential, ready and join, a snapshot's rejoin, and a cold restore's
+  handshake. Unset, each waits 10 s; `0` refuses the profile. The VMM API
+  calls, the wait for the VMM API socket, and the standalone marker
+  inspection keep their fixed 10 s. Size it from a measured
+  first boot of an image with guest runtime bindings, whose bootstrap imports
+  both guest images before the engine starts; later boots import nothing.
+  The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
+- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+  The engine looks at the outbox companion every 5 s, with at most one
+  status question in flight. A question that fails (the companion ended, or
+  its socket errs) clears the revision, as a VM without one reads; a
+  question still unanswered leaves the last answer standing. Restarting a
+  companion that ended is the bootstrap's part.
+- Copies the carrier never agreed on (FIX 11074). When a member's origin
+  retires the agreed version and the other end holds a different copy, that
+  end takes the retirement for the agreed version and keeps its copy. It
+  answers `diverged_unagreed` with the copy's digest and length. Both ends
+  record the copy, and the carrier never removes it by itself. The
+  companion's `member_status` request lists each such copy (kind, member,
+  the end that holds it, both digests, the owner's answer), and each file
+  held back as `source_digest_mismatch` (FIX 11075). The engine raises one
+  inbox Ask per owner for each unanswered copy. `GET
+  /v1/owner/outbox/diverged` shows the copies with their cards, and `POST
+  /v1/owner/outbox/diverged` (`kind`, `member`, `held`, `answer`: `remove` or
+  `keep`) passes the owner's answer to the companion. The facade verbs
+  `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` take the
+  same page and answer, with their SDK and MCP doors (FIX 11739). The
+  carrier does it at its next turn. For a guest copy, `remove` deletes the file while it still
+  has that digest. For a host copy, the guest's next scan sends an ordinary
+  remove that names the digest. `keep` moves the copy, while it still has
+  that digest, to a hidden sibling of the member, `.<leaf>.diverged-<digest>`
+  (the leaf cut to fit one name), and never over a file already there. The
+  carrier skips hidden names, as it skips its own temporaries, so the copy
+  stays whole under its own name and the origin's next version lands at the
+  member's name (FIX 11736). The guest tells the host of every answer but a
+  `remove` of a host copy with a `divergence_cleared` frame at its next turn
+  (kind, member, digest, the end that holds the copy), kept on the guest's
+  member record until a turn sends it (FIX 11737). For a guest copy, the
+  host drops its refusal of its own version, so its next scan sends that
+  version again. For a host copy the owner kept, the host moves its copy
+  aside, so the guest's next version lands. When that move fails, the host
+  says so once, keeps the owner's keep on its record, and moves the copy
+  aside when it blocks the guest's next put (FIX 11986). The host acts only
+  on a copy its own record keeps with that digest.
+- Copies kept aside (FIX 11985). A kept copy that moved aside is recorded
+  on the end that holds it, and on the guest for a host copy. The
+  companion's `member_status` lists each one as `kept_aside` (kind, member,
+  the end that holds it, digest, length, side name, `kept_at_ms`,
+  `removing`, `failed`), and its card offers "Remove this copy". The owner's
+  `remove` naming that digest deletes the side copy. On the guest, the
+  companion deletes it at its next turn. For a host copy, the guest sends
+  `divergence_cleared` with `action` `remove_aside` at each turn, and the
+  host deletes its side copy and answers `aside_removed` (kind, member,
+  digest, `failed`) first in its next turn. A keep of a host copy is
+  answered the same way with `aside_kept` (FIX 12010): when the host's
+  move aside failed, the entry keeps `failed` saying why, while the copy
+  stays at the member's name until the next put moves it. The entry goes
+  once the side copy is deleted. A delete that fails is logged once and
+  keeps the entry,
+  with `failed` saying why, so the owner can answer again. A keep whose side
+  name is already there, with the same bytes, counts as aside, and the twin
+  at the member's name is deleted. Other notices carry `action` `answered`.
+  These frames are outbox wire revision 4, and each end refuses revision 3
+  at the hello.
 
 ## The channel
 
@@ -122,6 +206,8 @@ The descriptors:
 - R is the read end of a pipe. It carries one `ManagedRestoreInput`, then EOF.
 - W is the write end of a pipe. It takes the native result frames, one JSON line
   each.
+- On Linux each of R, W, Q, S and the runner's A must be a pipe the kernel
+  made: a named FIFO is refused (FIX 6580).
 - Q is the read end of a pipe. It carries one `ManagedRestoreIdentity` JSON
   object (at most 256 KiB), then EOF.
 - S is the write end of a pipe. It takes one `VmRestoreMarkerObservation` JSON
@@ -135,9 +221,9 @@ the observation.
 
 Timeouts:
 
-- The boot timeout covers only the boot's own steps: the VMM API calls, the
-  hello, the provision, the credential connection's accept, the join, and the
-  inspection's reply.
+- The boot timeout (`boot_timeout_secs`, above) covers only the boot's own
+  handshake waits listed above. The VMM API calls and the inspection's reply
+  keep their fixed 10 s.
 - A restore has no deadline. A guest that ends closes the channel, and the
   runner sees that.
 

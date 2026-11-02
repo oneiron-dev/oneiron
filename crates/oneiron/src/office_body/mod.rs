@@ -37,6 +37,8 @@ mod docx;
 mod doors;
 mod fork;
 mod holder_ask;
+mod live_recalc;
+mod live_units;
 mod pptx;
 mod records;
 mod resources;
@@ -56,6 +58,9 @@ pub use consent::{
 pub(crate) use consent::{DiscardAdmission, MergeAdmission};
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
+pub(crate) use holder_ask::resolve_holder_ask_in_txn;
+pub use live_units::LivePin;
+pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
     XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
@@ -66,7 +71,7 @@ pub use pptx::{
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
-pub(crate) use pptx::{deck_log_ops, live_refused};
+pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,

@@ -3,6 +3,7 @@
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
+use crate::dreamer_wake::{WakeCancellation, WakePassDeadline};
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};
@@ -47,7 +48,6 @@ impl PreparedConsolidationAttempt {
     pub(crate) fn branch(&self) -> &super::branch::QueuedBranch {
         &self.branch
     }
-    #[cfg(test)]
     pub(crate) fn turn_ids(&self) -> &[EntityId] {
         &self.turn_ids
     }
@@ -124,6 +124,21 @@ fn held_round_away_in(
 /// deadline applies.
 const WAKE_PREPARED_TURN_CAP: usize = super::DEFAULT_MESO_ROUND_TURN_CAP;
 
+/// What a long preparation polls per iteration: the pass's deadline and
+/// its cooperative cancellation (a drain's pause or a stop).
+pub(super) struct PreparationPreempt<'a> {
+    deadline: &'a WakePassDeadline,
+    cancel: &'a WakeCancellation,
+}
+
+impl PreparationPreempt<'_> {
+    /// True when the pass must stop preparing and end at its next boundary:
+    /// paused, stopped, or past its ceiling.
+    fn preempted(&self) -> bool {
+        self.cancel.is_cancelled() || self.deadline.expired()
+    }
+}
+
 /// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
 /// wake starts any writes. The read transaction closes immediately after this
 /// bounded projection; a wake never holds an LMDB reader slot across writes.
@@ -140,6 +155,11 @@ pub struct PreparedWake {
     /// The receipt of the one scoped read behind `sources`; `None` when the
     /// wake read nothing. Every branch opened on this wake folds it.
     read_receipt: Option<ScopedReadReceipt>,
+    /// Wall ms the preparation took, for each partition's stage line.
+    prepared_ms: u64,
+    /// The material this pass's admitted `host.wake` pre-hooks added, in
+    /// order (FIX 8722, 10665): every extraction of the wake reads it.
+    hook_material: Vec<String>,
 }
 
 impl PreparedWake {
@@ -151,12 +171,28 @@ impl PreparedWake {
         Self::capture_with_grants(vault, scope, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn capture_with_grants(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, None)
+        Self::prepare_matching(vault, scope, caller_scope, None, None)
+    }
+
+    /// [`Self::capture_with_grants`] for a driven pass: while the queues are
+    /// long, each iteration polls `deadline` and `cancel`, and a paused,
+    /// stopped or expired pass prepares nothing — it ends at its next
+    /// boundary instead.
+    pub(crate) fn capture_for_pass(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        caller_scope: Option<&Scope>,
+        deadline: &WakePassDeadline,
+        cancel: &WakeCancellation,
+    ) -> Result<Self> {
+        let preempt = PreparationPreempt { deadline, cancel };
+        Self::prepare_matching(vault, scope, caller_scope, None, Some(&preempt))
     }
 
     /// Direct execution uses the same one-revision planner but materializes
@@ -167,7 +203,7 @@ impl PreparedWake {
         caller_scope: Option<&Scope>,
         attempt: AttemptId,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, Some(attempt))
+        Self::prepare_matching(vault, scope, caller_scope, Some(attempt), None)
     }
 
     fn prepare_matching(
@@ -175,11 +211,15 @@ impl PreparedWake {
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
         only_attempt: Option<AttemptId>,
+        preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<Self> {
-        let (wake, owed) = Self::read_matching(vault, scope, caller_scope, only_attempt)?;
+        let started = std::time::Instant::now();
+        let (mut wake, owed) =
+            Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
         // The read transaction has closed: each retry's overflow is owed in
         // its own commit, before any branch of this wake runs.
         chunks::owe(vault, scope, owed);
+        wake.prepared_ms = super::stage_log::ms_since(started);
         Ok(wake)
     }
 
@@ -188,11 +228,19 @@ impl PreparedWake {
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
         only_attempt: Option<AttemptId>,
+        preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<(Self, Vec<chunks::WakePreparationChunks>)> {
+        // A preempted pass prepares nothing: the driver ends it at its next
+        // boundary, and the next pass prepares again.
+        let preempted = || preempt.is_some_and(|preempt| preempt.preempted());
+        let abandoned = || Ok((Self::default(), Vec::new()));
         // Witnessed TURN text is read under live relationship grants.
         let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        if preempted() {
+            return abandoned();
+        }
         let completed = chunk_identity::completed_chunks(&records, scope.attempt_kind());
         let left = if only_attempt.is_some() {
             BTreeSet::new()
@@ -217,7 +265,11 @@ impl PreparedWake {
             records,
             &left,
             &policy,
+            preempt,
         )?;
+        if preempted() {
+            return abandoned();
+        }
         // A host-supplied attenuation may carry additional exact prior CLAIM
         // grants not serialized into queued input. Pin them at this SAME txn;
         // BranchResources still admits only the effective exact scope.
@@ -280,6 +332,9 @@ impl PreparedWake {
         let mut texts = BTreeMap::new();
         let mut refused_texts = BTreeMap::new();
         for outcome in preparations.values() {
+            if preempted() {
+                return abandoned();
+            }
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
             };
@@ -316,7 +371,11 @@ impl PreparedWake {
             &mut preparations,
             &mut sources,
             &mut owed,
+            preempt,
         )?;
+        if preempted() {
+            return abandoned();
+        }
         Ok((
             Self {
                 sources,
@@ -325,9 +384,30 @@ impl PreparedWake {
                 left,
                 preparations,
                 read_receipt: Some(read_receipt),
+                prepared_ms: 0,
+                hook_material: Vec::new(),
             },
             owed,
         ))
+    }
+
+    /// Wall ms this wake's frozen preparation took.
+    pub(crate) fn prepared_ms(&self) -> u64 {
+        self.prepared_ms
+    }
+
+    /// This wake with the material its pass's admitted `host.wake`
+    /// pre-hooks added (FIX 10665).
+    #[must_use]
+    pub(crate) fn with_hook_material(mut self, material: Vec<String>) -> Self {
+        self.hook_material = material;
+        self
+    }
+
+    /// The material this wake's `host.wake` pre-hooks added, in order; empty
+    /// when none did.
+    pub(crate) fn hook_material(&self) -> &[String] {
+        &self.hook_material
     }
 
     /// Only work known at the wake's single revision may execute on it.
@@ -413,7 +493,7 @@ fn neighbourhood_in(
     let axes = project.map(|project| Scope {
         world: plan.branch.world_ref,
         facet: plan.branch.facet_ref,
-        relationship: bound.and_then(|scope| scope.relationship),
+        relationship: bound.and_then(|scope| scope.relationship.clone()),
         project: Some(project),
         ..Scope::default()
     });
@@ -423,7 +503,13 @@ fn neighbourhood_in(
         bound,
         thing: plan.thing,
     };
-    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
+    super::neighbourhood::discover_in(
+        vault,
+        txn,
+        read,
+        super::neighbourhood::ListingPin::attempt(plan.attempt_id),
+        &passage,
+    )
 }
 
 /// An attempt no pass runs before a later write, which a later wake

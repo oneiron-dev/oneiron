@@ -17,7 +17,9 @@
 
 use std::path::PathBuf;
 
-use oneiron::recovery::checkpoint::{BackupMarker, BackupSnapshotReceipt, backup_marker};
+use oneiron::recovery::checkpoint::{
+    BackupMarker, BackupSnapshotReceipt, CheckpointSigner, backup_marker_with_pins,
+};
 use oneiron_vault_contract::backup_handoff::write_private_file;
 
 use super::{
@@ -184,6 +186,12 @@ impl Produced {
     /// What `take` answers for this backup: its `bytes`, and the older ones
     /// `pruned` deleted.
     pub(crate) fn into_outcome(self, bytes: u64, pruned: Vec<String>) -> BackupOutcome {
+        let host_holds_unavailable = match self.receipt.host_holds {
+            oneiron::recovery::checkpoint::HostHoldsAvailability::Unavailable(reason) => {
+                Some(reason)
+            }
+            _ => None,
+        };
         BackupOutcome {
             backup: BackupRecord {
                 file: self.file,
@@ -195,6 +203,7 @@ impl Produced {
             },
             checkpoint_id: self.receipt.image_digest,
             pruned,
+            host_holds_unavailable,
         }
     }
 }
@@ -210,29 +219,48 @@ pub(crate) fn guard_attempt(plan: &BackupPlan, attempt: &str) -> std::io::Result
 /// is not there is lifted already; one that will not go is logged, and the
 /// label reads as changed until the next backup lifts it.
 pub(crate) fn lift_guard(plan: &BackupPlan) {
-    match std::fs::remove_file(plan.dir.join(guard_name(&plan.label))) {
+    let guard = plan.dir.join(guard_name(&plan.label));
+    match std::fs::remove_file(&guard) {
         Ok(()) => {
             // Unsynced, a crash brings the guard back: changed, never
             // covered.
             let _ = sync_dir(&plan.dir);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(
-            reason = "backup_attempt_guard_stuck",
-            error = %error,
-            "a failed backup attempt's guard did not lift; the vault reads as changed until the \
-             next backup"
-        ),
+        Err(error) => {
+            // FIX 6802: a stuck guard's mtime is refreshed, so the managed
+            // pass paces on it for the hour instead of backing up every tick.
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&guard)
+                .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+            tracing::warn!(
+                reason = "backup_attempt_guard_stuck",
+                error = %error,
+                "a failed backup attempt's guard did not lift; the vault reads as changed until \
+                 the next backup"
+            );
+        }
     }
 }
 
 /// The label's last accepted backup, from its marker
-/// ([`backup_marker`]): `None`, read as changed, while a failed attempt's
-/// guard stands or cannot be told absent, and as the marker read has it.
+/// ([`backup_marker_with_pins`], unpinned): `None`, read as changed, while a
+/// failed attempt's guard stands or cannot be told absent, and as the marker
+/// read has it.
 pub(crate) fn accepted_marker(plan: &BackupPlan) -> Option<BackupMarker> {
+    accepted_marker_with_pins(plan, None)
+}
+
+/// [`accepted_marker`], and when `pins` are given, `None` too for a backup
+/// whose commitment none of them signed (FIX 10712).
+pub(crate) fn accepted_marker_with_pins(
+    plan: &BackupPlan,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<BackupMarker> {
     match std::fs::symlink_metadata(plan.dir.join(guard_name(&plan.label))) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            backup_marker(&plan.dir, &plan.label)
+            backup_marker_with_pins(&plan.dir, &plan.label, pins)
         }
         _ => None,
     }

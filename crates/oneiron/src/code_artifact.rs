@@ -7,8 +7,13 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::temporal::TimeRange;
 
-pub const CODE_ARTIFACT_BODY_KEYS: [&str; 4] =
-    ["summary_prompt", "summary_hash", "repo_ref", "class"];
+pub const CODE_ARTIFACT_BODY_KEYS: [&str; 5] = [
+    "summary_prompt",
+    "summary_hash",
+    "repo_ref",
+    "class",
+    "lens_tree",
+];
 pub const CODE_ARTIFACT_SUMMARY_HASH_LEN: usize = 32;
 pub const CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES: usize = 16 * 1024;
 pub const CODE_ARTIFACT_REPO_REF_MAX_BYTES: usize = 1024;
@@ -17,6 +22,7 @@ const KEY_SUMMARY_PROMPT: &str = CODE_ARTIFACT_BODY_KEYS[0];
 const KEY_SUMMARY_HASH: &str = CODE_ARTIFACT_BODY_KEYS[1];
 const KEY_REPO_REF: &str = CODE_ARTIFACT_BODY_KEYS[2];
 const KEY_CLASS: &str = CODE_ARTIFACT_BODY_KEYS[3];
+const KEY_LENS_TREE: &str = CODE_ARTIFACT_BODY_KEYS[4];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -24,6 +30,10 @@ pub enum CodeArtifactClass {
     #[default]
     Codebase,
     Artifact,
+    /// A saved lens (CODE kind=lens, FIX 9896): its body carries the frozen
+    /// compiled tree in `lens_tree`, and its `repo_ref` names the pack slot
+    /// it was compiled for, not a repository.
+    Lens,
 }
 
 impl CodeArtifactClass {
@@ -32,6 +42,7 @@ impl CodeArtifactClass {
         match self {
             Self::Codebase => "codebase",
             Self::Artifact => "artifact",
+            Self::Lens => "lens",
         }
     }
 
@@ -39,8 +50,9 @@ impl CodeArtifactClass {
         match value {
             "codebase" => Ok(Self::Codebase),
             "artifact" => Ok(Self::Artifact),
+            "lens" => Ok(Self::Lens),
             _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "class must be codebase or artifact",
+                "class must be codebase, artifact or lens",
             ))),
         }
     }
@@ -53,6 +65,9 @@ pub struct CodeArtifactBody {
     pub summary_hash: [u8; CODE_ARTIFACT_SUMMARY_HASH_LEN],
     pub repo_ref: String,
     pub class: CodeArtifactClass,
+    /// A lens's frozen compiled tree, as canonical JSON; present exactly when
+    /// `class` is [`CodeArtifactClass::Lens`].
+    pub lens_tree: Option<String>,
 }
 
 impl CodeArtifactBody {
@@ -67,6 +82,26 @@ impl CodeArtifactBody {
             summary_hash,
             repo_ref: repo_ref.into(),
             class: CodeArtifactClass::Codebase,
+            lens_tree: None,
+        }
+    }
+
+    /// A saved lens (FIX 9896): the authored prompt it was compiled from,
+    /// the hash of its frozen tree, the pack slot it is bound to and the
+    /// tree itself.
+    #[must_use]
+    pub fn lens(
+        summary_prompt: impl Into<String>,
+        summary_hash: [u8; CODE_ARTIFACT_SUMMARY_HASH_LEN],
+        slot_ref: impl Into<String>,
+        lens_tree: impl Into<String>,
+    ) -> Self {
+        Self {
+            summary_prompt: summary_prompt.into(),
+            summary_hash,
+            repo_ref: slot_ref.into(),
+            class: CodeArtifactClass::Lens,
+            lens_tree: Some(lens_tree.into()),
         }
     }
 
@@ -79,7 +114,7 @@ impl CodeArtifactBody {
 
 pub fn encode_code_artifact_body(body: &CodeArtifactBody) -> Result<Vec<u8>> {
     validate_code_artifact_body(body)?;
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SUMMARY_PROMPT),
             Value::from(body.summary_prompt.as_str()),
@@ -93,7 +128,11 @@ pub fn encode_code_artifact_body(body: &CodeArtifactBody) -> Result<Vec<u8>> {
             Value::from(body.repo_ref.as_str()),
         ),
         (Value::from(KEY_CLASS), Value::from(body.class.as_str())),
-    ]);
+    ];
+    if let Some(tree) = &body.lens_tree {
+        entries.push((Value::from(KEY_LENS_TREE), Value::from(tree.as_str())));
+    }
+    let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
         .map_err(|_| Error::InvariantViolation("CODE artifact body MessagePack encode failed"))?;
@@ -130,6 +169,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
     let mut summary_hash: Option<[u8; CODE_ARTIFACT_SUMMARY_HASH_LEN]> = None;
     let mut repo_ref: Option<String> = None;
     let mut class: Option<CodeArtifactClass> = None;
+    let mut lens_tree: Option<String> = None;
     let mut seen = [false; CODE_ARTIFACT_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -185,6 +225,12 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
                 ))?;
                 class = Some(CodeArtifactClass::parse(text)?);
             }
+            KEY_LENS_TREE => {
+                let text = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidCodeArtifactBody("lens_tree must be a UTF-8 string"),
+                ))?;
+                lens_tree = Some(text.to_owned());
+            }
             _ => unreachable!("index resolved from CODE_ARTIFACT_BODY_KEYS"),
         }
     }
@@ -200,6 +246,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
             "missing required replay key repo_ref",
         )))?,
         class: class.unwrap_or_default(),
+        lens_tree,
     };
     validate_code_artifact_body(&body)?;
     Ok(body)
@@ -216,6 +263,21 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         CODE_ARTIFACT_REPO_REF_MAX_BYTES,
         "repo_ref must be non-empty and at most 1024 bytes",
     )?;
+    // A lens names its pack slot, not a repository, and carries its tree;
+    // every other class carries no tree.
+    if body.class == CodeArtifactClass::Lens {
+        return match body.lens_tree.as_deref() {
+            Some(tree) if !tree.is_empty() => Ok(()),
+            _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "a lens body must carry a non-empty lens_tree",
+            ))),
+        };
+    }
+    if body.lens_tree.is_some() {
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "only a lens body carries lens_tree",
+        )));
+    }
     crate::codebase::RepoRef::parse(&body.repo_ref).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "repo_ref must be a valid v1 repo_ref",

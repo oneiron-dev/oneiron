@@ -8,9 +8,7 @@ use crate::context_pack::{
 use crate::memory::repo_secret_reads::masked_asset_body;
 use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
-use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
-};
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::vault::Vault;
 
 use super::context_pack::{
@@ -45,6 +43,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
     producers: Option<&'v crate::memory::ProducerRows>,
     media: Option<&'v [EmbeddedMediaSeed]>,
+    image_pick: Option<crate::memory::ImagePick<'v>>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -84,6 +83,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             scoped_read: vault.scoped_read(actor_key),
             producers: None,
             media: None,
+            image_pick: None,
         }
     }
 
@@ -96,6 +96,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     #[must_use]
     pub fn with_media_seeds(mut self, seeds: &'v [EmbeddedMediaSeed]) -> Self {
         self.media = Some(seeds);
+        self
+    }
+
+    /// The host's fast per-image pick (OF-329) hydrate serves generated
+    /// images down their ladder with: without one an image goes in full to
+    /// a reader whose model takes images in. The host installs it; this
+    /// adapter picks nothing itself.
+    #[must_use]
+    pub fn with_image_pick(mut self, pick: Option<crate::memory::ImagePick<'v>>) -> Self {
+        self.image_pick = pick;
         self
     }
 
@@ -146,6 +156,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         };
         match crate::skill_reliability::SkillReliabilityQuery::on_tree(
             &tree,
+            project,
             type_ref,
             request.axis.clone(),
         ) {
@@ -365,20 +376,24 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // door, and nothing leaves this method unfiltered. A failed filter
         // discards the provisional row before the error returns, so a refused
         // read leaves no residue behind it.
-        let narrowing = self
-            .scoped_read
-            .filter_context_pack(&mut pack.value)
+        let narrowing = pack
+            .filter_scoped_under(&self.scoped_read, None)
             .map_err(|error| {
                 pack.discard_telemetry();
                 engine_failure(METHOD, &error)
             })?;
         // The widened budget only ever fed retrieval, so the answered pack is
-        // bound by the UNWIDENED response budget after filtering, exactly like
-        // the accepted route's `apply_context_pack_response_limits`.
-        apply_context_pack_response_retrieval_budget(&mut pack.value, response_budget);
-        pack.value.results.truncate(limit);
-        pack.value.neighbors.truncate(max_neighbors);
+        // cut to the UNWIDENED response budget after filtering, exactly like
+        // the accepted route's `apply_context_pack_response_limits`: critical
+        // rows first in every cut, an `All`-world pack's share held over its
+        // results and neighbors, and a cut critical row raises the overflow
+        // warning (FIX 9760).
+        let cut_critical = pack.select_response_rows(response_budget, limit, max_neighbors);
+        pack.value.stats.critical_over_budget |= cut_critical;
         scrub_context_pack_visible_stats(&mut pack.value);
+        // Instruction files name only units this read returns (FIX 9761).
+        pack.project_instruction_files_under(&self.scoped_read, None)
+            .map_err(|error| engine_failure(METHOD, &error))?;
         // Publish LAST, off the post-filter, post-truncate pack: the durable
         // run row then carries exactly the ids this actor received, so a
         // denied entity is as absent from telemetry as it is from the
@@ -470,9 +485,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // read through this lane.
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
-            let asset =
-                crate::memory::hydrated_asset(&self.scoped_read, id, reader, None, &mut |_| true)
-                    .map_err(|error| engine_failure(method, &error))?;
+            let lane = &self.scoped_read;
+            let asset = crate::memory::hydrated_asset(
+                lane,
+                id,
+                reader,
+                self.image_pick.as_ref(),
+                &mut |_| true,
+                None,
+            )
+            .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
             served = match asset.value {
                 crate::memory::HydratedAsset::Served { body, text, form } => {
@@ -654,34 +676,6 @@ fn apply_budget_controls<'a>(
     (builder, response_budget)
 }
 
-/// Accepted per-kind response budget, copied from the accepted route's
-/// `apply_context_pack_response_retrieval_budget`: each retrieval kind keeps at
-/// most its own unwidened item budget, in pack order.
-fn apply_context_pack_response_retrieval_budget(
-    pack: &mut ContextPack,
-    budget: ContextPackRetrievalBudget,
-) {
-    let mut claims = 0_usize;
-    let mut turns = 0_usize;
-    let mut summaries = 0_usize;
-    let mut facets = 0_usize;
-    let mut other = 0_usize;
-    pack.results.retain(|entity| {
-        let (count, limit) = match entity.entity_type {
-            ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
-            ENTITY_TYPE_TURN => (&mut turns, budget.turns),
-            ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
-            ENTITY_TYPE_FACET => (&mut facets, budget.facets),
-            _ => (&mut other, budget.other),
-        };
-        if *count >= limit {
-            return false;
-        }
-        *count += 1;
-        true
-    });
-}
-
 /// Accepted visible-stat scrub, copied from the accepted route's
 /// `scrub_context_pack_visible_stats`: the counters a caller can see describe
 /// the pack it actually received, never the wider internal retrieval. Every
@@ -769,6 +763,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         );
         reader.producers = self.producers;
         reader.media = self.media;
+        reader.image_pick = self.image_pick.clone();
         match request.into_inner() {
             VaultReadRequest::Query(request) => {
                 reader.query_op(&request).map(VaultReadResponse::Query)

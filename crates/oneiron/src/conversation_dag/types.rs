@@ -73,12 +73,15 @@ pub struct QuoteSpan {
 pub struct AppendRecord {
     /// Conversation owner.
     pub conversation: EntityId,
-    /// Record continued by the append; absent only for the first root.
+    /// Record continued by the append; absent only for the first root. A
+    /// MESSAGE continues only a MESSAGE of its own TURN.
     pub parent: Option<EntityId>,
-    /// Reply target; its content revision is captured in the append transaction.
+    /// Reply target, a TURN or one MESSAGE of a TURN; its content revision
+    /// is captured in the append transaction.
     pub reply_to: Option<EntityId>,
-    /// Quoted span. The reply then answers the TURN holding the quoted
-    /// MESSAGE; a `reply_to` naming another record is refused.
+    /// Quoted span. The reply then answers the quoted MESSAGE, placed
+    /// against the TURN holding it; a `reply_to` naming a record other than
+    /// that MESSAGE or its TURN is refused.
     pub quote: Option<QuoteSpan>,
     /// Addressing only; reply_to selects the separate reply mode.
     pub address: AddressMode,
@@ -86,8 +89,11 @@ pub struct AppendRecord {
     pub recipients: Vec<EntityId>,
     /// Advance HEAD; requires parent == HEAD and a non-sub-session record.
     pub advance: bool,
-    /// Record type. This revision admits TURN only; MESSAGE has its own door.
+    /// Record type: a TURN, or a MESSAGE of `containing_turn` (FIX 9771).
     pub kind: u8,
+    /// The TURN a MESSAGE record is part of; `None` for a TURN. A MESSAGE
+    /// never enters HEAD or the canonical line.
+    pub containing_turn: Option<EntityId>,
     /// Valid-time span.
     pub occurred: TimeRange,
     /// Learned-at time.
@@ -108,6 +114,54 @@ pub struct AppendRecord {
     pub thread_audience: Option<std::collections::BTreeSet<EntityId>>,
 }
 
+/// What a reply answers, at the content revision it answered (FIX 9771): a
+/// TURN, or one MESSAGE inside the TURN that holds it. A MESSAGE target
+/// keeps that TURN, against which the reply is placed and read.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DagReplyTarget {
+    /// A TURN, at the BLAKE3 hash of its body.
+    Turn { record: EntityId, revision: String },
+    /// One MESSAGE, at the BLAKE3 hash of its text, inside `containing_turn`.
+    Message {
+        record: EntityId,
+        revision: String,
+        containing_turn: EntityId,
+    },
+}
+
+impl DagReplyTarget {
+    /// The record answered: the TURN, or the MESSAGE.
+    #[must_use]
+    pub fn record(&self) -> EntityId {
+        match self {
+            Self::Turn { record, .. } | Self::Message { record, .. } => *record,
+        }
+    }
+
+    /// The content revision answered.
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        match self {
+            Self::Turn { revision, .. } | Self::Message { revision, .. } => revision,
+        }
+    }
+
+    /// The TURN the reply is placed against: the target itself, or the TURN
+    /// holding the MESSAGE.
+    #[must_use]
+    pub fn placement(&self) -> EntityId {
+        match self {
+            Self::Turn { record, .. } => *record,
+            Self::Message {
+                containing_turn, ..
+            } => *containing_turn,
+        }
+    }
+}
+
 /// Result of one append.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppendedRecord {
@@ -117,6 +171,12 @@ pub struct AppendedRecord {
     pub head: Option<EntityId>,
     /// Durable Parent target.
     pub parent: Option<EntityId>,
+    /// The stored record's type: TURN or MESSAGE.
+    pub kind: u8,
+    /// The TURN a MESSAGE record is part of; `None` for a TURN.
+    pub containing_turn: Option<EntityId>,
+    /// What the record answers, at the revision it answered.
+    pub reply_target: Option<DagReplyTarget>,
 }
 
 /// Root-first main-line paging. A cursor must still be on the selected line.

@@ -3,6 +3,7 @@
 
 use super::{EMU_PER_PX, Extent, GraphicError, GraphicInput, GraphicLimits, Origin};
 use crate::design_plan::{AssetKind, MediaType};
+use crate::resource::{CapacityHit, Dimension, wide};
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
@@ -68,12 +69,18 @@ pub(super) fn admit<'a>(input: &GraphicInput<'a>) -> Result<&'a [u8], GraphicErr
         }
     }
     let bytes = input.bytes.ok_or(GraphicError::MissingBytes)?;
-    let ceiling = match record.media {
-        MediaType::Svg => input.limits.svg_bytes,
-        MediaType::Png | MediaType::Jpeg => input.limits.raster_bytes,
+    // Past the caller's byte ceiling for its media, the asset is a capacity
+    // hit named with that ceiling (FIX 10654).
+    let (dimension, ceiling) = match record.media {
+        MediaType::Svg => (Dimension::SvgBytes, input.limits.svg_bytes),
+        MediaType::Png | MediaType::Jpeg => (Dimension::RasterBytes, input.limits.raster_bytes),
     };
     if bytes.len() > ceiling {
-        return Err(GraphicError::ResourceLimit);
+        return Err(GraphicError::Capacity(CapacityHit::new(
+            dimension,
+            wide(bytes.len()),
+            wide(ceiling),
+        )));
     }
     if *blake3::hash(bytes).as_bytes() != record.content_hash {
         return Err(GraphicError::HashMismatch);
@@ -94,8 +101,13 @@ pub(super) fn raster_extent(
     }
     .filter(|&(width, height)| width > 0 && height > 0)
     .ok_or(GraphicError::UnsupportedPayload)?;
-    if u64::from(width) * u64::from(height) > limits.raster_pixels {
-        return Err(GraphicError::ResourceLimit);
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > limits.raster_pixels {
+        return Err(GraphicError::Capacity(CapacityHit::new(
+            Dimension::RasterPixels,
+            pixels,
+            limits.raster_pixels,
+        )));
     }
     let whole = match media {
         MediaType::Png => png_whole(bytes),

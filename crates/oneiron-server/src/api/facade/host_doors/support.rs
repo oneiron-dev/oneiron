@@ -4,17 +4,21 @@
 
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaRequest};
+use oneiron::llm::media::{AiOperation, MediaReplayKey, MediaRequest};
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
+use oneiron::skill_attribution::RunWriteToken;
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
-use crate::api::facade::facade_actor;
+use crate::api::clock_ingress;
+use crate::api::facade::{FacadeApiError, facade_actor};
+use crate::api::type_feedback_release::{FeedbackScan, release_step_feedback};
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
@@ -52,23 +56,35 @@ pub(super) fn artifact_asker(
 
 /// One media call's answer, from its seat's ladder: on `run` when its caller
 /// admitted it on a line of its own, which bills that run's payer, else on
-/// the media meter as the owner's call ([`answered`]). A banked voice
+/// the media meter as the owner's call ([`answered`]), sourced from
+/// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746).
+/// while it waited (FIX 1746). An owner's call known by `replay` and a run's
+/// call known by its step key each answer a repeat from the first answer,
+/// unpaid (FIX 2962, FIX 2245).
 pub(super) async fn rendered(
     server: &SyncServer,
     operation: AiOperation,
     request: MediaRequest,
     voices: Option<RungVoices>,
     run: Option<&RunAdmission>,
+    sources: Option<Vec<EntityId>>,
+    replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
-    let answer = match (run, &voices) {
-        (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
-        (None, Some(voices)) => media.run_voiced(request, voices, None).await,
-        (None, None) => media.run(request, None).await,
+    let answer = match run {
+        Some(run) => {
+            media
+                .run_admitted(run, request, voices.as_ref(), replay)
+                .await
+        }
+        None => {
+            media
+                .run_replayed(request, voices.as_ref(), None, sources, None, replay)
+                .await
+        }
     };
     let withdrawn = || {
         MemoryError::new(
@@ -251,7 +267,7 @@ pub(in crate::api::facade) async fn off_runtime_listing<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&ProducerRows) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let producers = ProducerRows::default();
         let answer = act(&producers);
         (answer, producers.take())
@@ -265,15 +281,55 @@ tokio::task_local! {
     /// (Docs #3016): [`credential_listing`]'s fresh handle keeps it, so a
     /// generated program's call never reads as a person's.
     static CALLING_ORIGIN: oneiron::memory::HostWriteOrigin;
+    /// The leased run the call in flight writes for (FIX 10748): each
+    /// blocking hop opens its write envelope on its own thread
+    /// ([`clock_ingress::run_blocking`]), so the DerivedFrom edges its
+    /// writes leave are witnessed as that run's.
+    static CALLING_RUN_WRITES: Option<RunWriteToken>;
 }
 
 /// Runs `call` as the code run `origin` binds: every handle
-/// [`credential_listing`] builds inside it carries that origin.
+/// [`credential_listing`] builds inside it carries that origin, and its
+/// writes are made for the leased run the origin seals, if any.
 pub(crate) async fn with_calling_origin<F: std::future::Future>(
     origin: oneiron::memory::HostWriteOrigin,
     call: F,
 ) -> F::Output {
-    CALLING_ORIGIN.scope(origin, call).await
+    let run_writes = RunWriteToken::of_origin(&origin);
+    CALLING_ORIGIN
+        .scope(origin, CALLING_RUN_WRITES.scope(run_writes, call))
+        .await
+}
+
+/// Runs `call` with its writes made for the leased run `run_writes` names,
+/// lending no origin to its handles (FIX 10748): an action's verb row writes
+/// as its own caller, and only the derivations it leaves are the run's.
+pub(in crate::api::facade) async fn with_calling_run_writes<F: std::future::Future>(
+    run_writes: Option<RunWriteToken>,
+    call: F,
+) -> F::Output {
+    CALLING_RUN_WRITES.scope(run_writes, call).await
+}
+
+/// The leased run the call in flight writes for, for a blocking hop to open
+/// on its own thread. `None` outside any.
+pub(in crate::api::facade) fn calling_run_writes() -> Option<RunWriteToken> {
+    CALLING_RUN_WRITES.try_with(Clone::clone).ok().flatten()
+}
+
+/// `call`, which the call in flight spawns, under that call's calling origin
+/// and run writes: no task-local crosses a spawn.
+pub(in crate::api::facade) fn carrying_calling_run<F: std::future::Future>(
+    call: F,
+) -> impl std::future::Future<Output = F::Output> {
+    let origin = CALLING_ORIGIN.try_with(Clone::clone).ok();
+    let call = CALLING_RUN_WRITES.scope(calling_run_writes(), call);
+    async move {
+        match origin {
+            Some(origin) => CALLING_ORIGIN.scope(origin, call).await,
+            None => call.await,
+        }
+    }
 }
 
 /// `read` off the runtime on the credential's own handle as `caller`, at
@@ -300,6 +356,71 @@ pub(in crate::api::facade) async fn credential_listing<T: Send + 'static>(
         read(&*server, &auth, memory)
     })
     .await
+}
+
+/// [`Listed`] for a door that runs its caller's program (FIX 10389): its
+/// failure keeps the program's type feedback beside its typed refusal until
+/// the surface it answers on converts it ([`source_run_refusal`], or the MCP
+/// gateway's own), never erased into a bare [`MemoryError`] first.
+pub(crate) type SourceListed<T> = (Result<T, ForeignCodeFailure>, Vec<EntityId>);
+
+/// A source door's refusal before its program's source is admitted: it
+/// lists no row and carries no feedback.
+pub(in crate::api::facade) fn source_refused<T>(refusal: MemoryError) -> SourceListed<T> {
+    (Err(refusal.into()), Vec::new())
+}
+
+/// [`credential_listing`] for a door that runs its caller's program: the
+/// same handle, origin and collector, its failure kept whole
+/// ([`SourceListed`]). A worker that does not finish answers [`internal`]
+/// and lists none.
+pub(in crate::api::facade) async fn credential_source_listing<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    verb: &'static str,
+    run: impl FnOnce(&SyncServer, &CoreAuth, Memory<'_>) -> Result<T, ForeignCodeFailure>
+    + Send
+    + 'static,
+) -> SourceListed<T> {
+    let (answer, rows) =
+        credential_listing(server, auth, caller, verb, move |server, auth, memory| {
+            Ok(run(server, auth, memory))
+        })
+        .await;
+    let answer = match answer {
+        Ok(ran) => ran,
+        Err(refusal) => Err(refusal.into()),
+    };
+    (answer, rows)
+}
+
+/// A source door's failure as the facade answers it (FIX 10389): its
+/// refusal under the status, code and retry it has today, and its program's
+/// type feedback beside it, each item released apart for `auth`'s
+/// destination by `rows`, those the call read before it failed. A hold on
+/// one withholds only that item's text, never the refusal.
+pub(crate) fn source_run_refusal(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    rows: Option<&[EntityId]>,
+    failure: ForeignCodeFailure,
+) -> FacadeApiError {
+    let destination = auth.destination();
+    let program_steps = failure
+        .program_steps
+        .into_iter()
+        .map(|feedback| {
+            release_step_feedback(
+                server.vault(),
+                &destination,
+                rows,
+                feedback,
+                FeedbackScan::Named,
+            )
+        })
+        .collect();
+    FacadeApiError::from(failure.error).with_program_steps(program_steps)
 }
 
 /// The rows a door reads beside its handle's own reads, as its caller names

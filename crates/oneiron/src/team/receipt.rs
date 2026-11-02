@@ -137,6 +137,28 @@ pub struct TeamOutcome {
     pub anchor: Anchor,
     pub success: bool,
     pub at: u64,
+    /// The critics whose persisted reviews of the team's deliverable the
+    /// outcome settled (OF-420), as the settler read them. `None` is unknown
+    /// (a settler that read none); empty, no critic reviewed it. Always on
+    /// the wire: no old-format reader (Engine 00:35, L09 00:36).
+    pub critics: Option<Vec<TeamCritic>>,
+}
+
+/// One critique of a team's deliverable that the team's outcome settled
+/// (OF-420): the review holding it and the critic that gave it, named as
+/// the critique's reliability cell names that critic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamCritic {
+    /// The review's verdict claim.
+    pub review: EntityId,
+    pub artifact_id: String,
+    /// The lens's stored skill.
+    pub lens: EntityId,
+    /// The critic's executor at revision: `model@revision`, or a person's
+    /// own id.
+    pub executor: String,
+    /// What the critique said of the deliverable.
+    pub verdict: crate::critic::CritiqueVerdict,
 }
 
 /// One team run.
@@ -149,7 +171,7 @@ pub struct TeamReceipt {
     pub pattern: TeamPattern,
     pub pattern_skill: Option<PatternSkillRef>,
     pub axis: TeamAxis,
-    /// Model ids at revision the team ran on.
+    /// Model ids at revision the team ran on; empty when none was recorded.
     pub models: Vec<String>,
     pub shape: TeamShape,
     pub decided_by: DecidedBy,
@@ -195,12 +217,8 @@ impl TeamReceipt {
         )?;
         self.type_ref.validate()?;
         // No count cap on models or roles (ARCH-0079: width has no count
-        // cap), so a very wide team still records its receipt.
-        if self.models.is_empty() {
-            return Err(Error::InvalidClaimBody(
-                "a team receipt names at least one model id",
-            ));
-        }
+        // cap), so a very wide team still records its receipt. No model
+        // recorded is unknown, never a refusal (FIX 10192).
         for model in &self.models {
             bounded(model, "a model id is 1..=256 bytes without NUL")?;
         }
@@ -240,6 +258,34 @@ impl TeamReceipt {
     #[must_use]
     pub fn executor_mix(&self) -> String {
         model_mix(&self.models)
+    }
+
+    /// The one critic the settled outcome names (OF-420), the value the
+    /// TrustedCritic decision reads: `<lens skill hex>@<model>`, the
+    /// executor's final `@revision` stripped as the winning model's is. None
+    /// when the outcome names no critic or more than one: a panel is not one
+    /// critic's win.
+    #[must_use]
+    pub fn trusted_critic(&self) -> Option<String> {
+        let critics: std::collections::BTreeSet<String> = self
+            .outcome
+            .as_ref()?
+            .critics
+            .as_ref()?
+            .iter()
+            .map(|critic| {
+                let executor = critic.executor.as_str();
+                let model = executor
+                    .rsplit_once('@')
+                    .map_or(executor, |(model, _)| model);
+                format!("{}@{model}", critic.lens.to_hex())
+            })
+            .collect();
+        let mut critics = critics.into_iter();
+        match (critics.next(), critics.next()) {
+            (Some(critic), None) => Some(critic),
+            _ => None,
+        }
     }
 }
 
@@ -291,7 +337,9 @@ pub fn record_team_receipt_sourced(
 }
 
 /// Settles a team run's anchored outcome and feeds its pattern skill's
-/// payoff. Settling again with the same receipt replaces the outcome.
+/// payoff. Settling again with the same receipt replaces the outcome. The
+/// outcome names and scores the critics of the team's bound deliverables
+/// (FIX 12106).
 ///
 /// # Errors
 ///
@@ -302,11 +350,61 @@ pub fn settle_team_outcome(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
-    vault.with_write_txn_grouped(|wtxn| settle_team_outcome_in_txn(vault, wtxn, team_ref, outcome))
+    settle_team_work_outcome(vault, team_ref, outcome, &[])
+}
+
+/// [`settle_team_outcome`] for an outcome that judged `work`, the claims the
+/// settler names as the team's result, beside its bound deliverables (FIX
+/// 12106). The stored outcome names the critics whose persisted reviews
+/// judged that work, read from the store in place of the caller's, and each
+/// critique's outcome is recorded on its critic's cell as the owner path
+/// records it, written as the review's own principal. Capture only: critics
+/// that do not read leave the outcome's critics unknown, and a critique's
+/// outcome that does not land never fails the settlement.
+///
+/// # Errors
+///
+/// As [`settle_team_outcome`].
+pub(crate) fn settle_team_work_outcome(
+    vault: &Vault,
+    team_ref: &str,
+    outcome: &TeamOutcome,
+    work: &[EntityId],
+) -> Result<TeamReceipt> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut outcome = outcome.clone();
+        let reviews = match super::owner_outcome::team_deliverables_in_txn(vault, wtxn, team_ref) {
+            Ok(mut deliverables) => {
+                deliverables.extend_from_slice(work);
+                crate::critic::review::name_deliverable_critics_in_txn(
+                    vault,
+                    wtxn,
+                    &deliverables,
+                    &mut outcome,
+                )
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a team's deliverables did not read; its outcome names no critic"
+                );
+                outcome.critics = None;
+                None
+            }
+        };
+        let settled = settle_team_outcome_in_txn(vault, wtxn, team_ref, &outcome)?;
+        if let Some(reviews) = &reviews {
+            crate::critic::review::record_deliverable_outcomes_in_txn(
+                vault, wtxn, reviews, &outcome, None,
+            );
+        }
+        Ok(settled)
+    })
 }
 
 /// [`settle_team_outcome`] in the caller's transaction, so the source of the
-/// anchor, the outcome and its learning evidence land together.
+/// anchor, the outcome and its learning evidence land together. The outcome
+/// is stored as given: the caller names its critics.
 ///
 /// # Errors
 ///
@@ -367,20 +465,15 @@ fn feed_pattern_payoff_in_txn(
     if !teaches_pattern(receipt) {
         return Ok(());
     }
-    let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
+    let cell = pattern_cell(
+        skill,
+        &receipt.executor_mix(),
+        receipt.project,
+        &receipt.type_ref,
+    );
     // The planner card read this cell with parent/carried backoff; its first
-    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`). The
-    // parents are the stamp's in the tree it was placed in, the chain the
-    // owner's spawn read backs off through. A placed tree no longer kept, or
-    // one that does not read, borrows through the tree in force instead, so
-    // settlement never fails on it.
-    let parents = match placed_ancestry_in_txn(vault, wtxn, receipt) {
-        (parents, None) => parents,
-        (_, Some(_)) => {
-            let tree = load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
-            TypeTree::from(tree).ancestors(&receipt.type_ref)
-        }
-    };
+    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).
+    let parents = capture_parents_in_txn(vault, wtxn, receipt.project, &receipt.type_ref)?;
     let evidence = LearningEvidence {
         receipt: outcome.receipt.clone(),
         at: outcome.at,
@@ -392,6 +485,7 @@ fn feed_pattern_payoff_in_txn(
         outcome_label: None,
         pack_attribution: None,
         goal_revision: None,
+        measurement_version: None,
     };
     crate::learning::prior::capture_borrowed_prior_in_txn(
         vault,
@@ -404,6 +498,30 @@ fn feed_pattern_payoff_in_txn(
     Ok(())
 }
 
+/// The parents a cell's first own result keeps its borrowed prior through
+/// (FIX 9889): the stamp's chain in the tree it was placed in, the chain the
+/// owner's spawn read backs off through. A placed tree no longer kept, or
+/// one that does not read, borrows through `project`'s tree in force
+/// instead, so an outcome's write never fails on it.
+///
+/// # Errors
+///
+/// Storage errors reading the tree in force.
+pub(crate) fn capture_parents_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> Result<Vec<TypeRef>> {
+    Ok(match stamp_ancestry_in_txn(vault, txn, project, type_ref) {
+        (parents, None) => parents,
+        (_, Some(_)) => {
+            let tree = load_team_type_tree_in_txn(vault, txn, project)?;
+            TypeTree::from(tree).ancestors(type_ref)
+        }
+    })
+}
+
 /// The parent chain of `receipt`'s stamp in the tree it was placed in: its
 /// project's kept tree at the stamp's version, read in `txn`. Settlement and
 /// the owner's spawn read take learning parents from this one chain. The
@@ -414,9 +532,19 @@ pub(super) fn placed_ancestry_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt: &TeamReceipt,
 ) -> (Vec<TypeRef>, Option<String>) {
-    let version = u64::from(receipt.type_ref.tree_version);
-    match load_team_type_tree_at_in_txn(vault, txn, receipt.project, version) {
-        Ok(Some(tree)) => (TypeTree::from(tree).ancestors(&receipt.type_ref), None),
+    stamp_ancestry_in_txn(vault, txn, receipt.project, &receipt.type_ref)
+}
+
+/// [`placed_ancestry_in_txn`] for a stamp placed in `project`'s tree.
+fn stamp_ancestry_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> (Vec<TypeRef>, Option<String>) {
+    let version = type_ref.tree_version;
+    match load_team_type_tree_at_in_txn(vault, txn, project, version) {
+        Ok(Some(tree)) => (TypeTree::from(tree).ancestors(type_ref), None),
         Ok(None) => (
             Vec::new(),
             Some(format!("no kept task-type tree is at version {version}")),
@@ -451,23 +579,46 @@ pub(super) fn team_receipt_in_txn(
         .map(|stored| stored.receipt))
 }
 
-/// Every team receipt, optionally only those of one task type.
+/// Which team receipts a scan keeps (FIX 6038).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ReceiptScan<'a> {
+    /// Every scope's receipts, only those of one task type when one is
+    /// named: an inventory.
+    AllScopes(Option<&'a TypeRef>),
+    /// One scope's receipts of one task type: a project's (`None`, the
+    /// vault's) own runs, as its learning cells key them.
+    Scoped(Option<EntityId>, &'a TypeRef),
+}
+
+impl ReceiptScan<'_> {
+    fn keeps(self, receipt: &TeamReceipt) -> bool {
+        match self {
+            Self::AllScopes(type_ref) => type_ref.is_none_or(|t| receipt.type_ref == *t),
+            Self::Scoped(project, type_ref) => {
+                receipt.project == project && receipt.type_ref == *type_ref
+            }
+        }
+    }
+}
+
+/// Every team receipt of every scope, optionally only those of one task
+/// type: an inventory.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn team_receipts(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<TeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
-    team_receipts_in_txn(vault, &rtxn, type_ref)
+    team_receipts_in_txn(vault, &rtxn, ReceiptScan::AllScopes(type_ref))
 }
 
-/// [`team_receipts`] in the caller's snapshot.
-pub(super) fn team_receipts_in_txn(
+/// The receipts `scan` keeps, in the caller's snapshot.
+pub(crate) fn team_receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
+    scan: ReceiptScan<'_>,
 ) -> Result<Vec<TeamReceipt>> {
-    Ok(stored_receipts_in_txn(vault, txn, type_ref)?
+    Ok(stored_receipts_in_txn(vault, txn, scan)?
         .into_iter()
         .map(|stored| stored.receipt)
         .collect())
@@ -485,7 +636,8 @@ pub fn team_receipts_sourced(
     type_ref: Option<&TypeRef>,
 ) -> Result<Vec<SourcedTeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(stored_receipts_in_txn(vault, &rtxn, type_ref)?
+    let scan = ReceiptScan::AllScopes(type_ref);
+    Ok(stored_receipts_in_txn(vault, &rtxn, scan)?
         .into_iter()
         .map(StoredTeamReceipt::sourced)
         .collect())
@@ -495,13 +647,13 @@ pub fn team_receipts_sourced(
 fn stored_receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
+    scan: ReceiptScan<'_>,
 ) -> Result<Vec<StoredTeamReceipt>> {
     let mut rows: Vec<StoredTeamReceipt> = TEAM_RECEIPT
         .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, row)| row)
-        .filter(|row| type_ref.is_none_or(|t| row.receipt.type_ref == *t))
+        .filter(|row| scan.keeps(&row.receipt))
         .collect();
     rows.sort_by(|a, b| {
         let (a, b) = (&a.receipt, &b.receipt);

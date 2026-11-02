@@ -1,6 +1,6 @@
 //! Archive receipt I/O through ordinary ASSET admission, not terminal ledgers.
 use super::{
-    codec::{ReceiptArchive, decode, invalid, is_inert_holder},
+    codec::{ReceiptArchive, decode, id_of_bytes, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
 };
 use crate::{
@@ -106,7 +106,7 @@ impl Vault {
             }
             let archive = ReceiptArchive::new(holder, body, source.clone())?;
             let bytes = archive.bytes()?;
-            let id = archive.id()?;
+            let id = id_of_bytes(&bytes)?;
             if let Some(raw) =
                 crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
             {

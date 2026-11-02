@@ -9,8 +9,9 @@
 //! fn over the whole lists. C is never read here: it is the custody row's.
 //!
 //! A head whose compact JSON is over the intake's cap carries its filter's
-//! model as a digest and a short preview instead ([`model_digest_form`],
-//! FIX 7415), and the facts digest is over the head as it is sent. A head
+//! model, then its stack, as a digest and a short preview instead
+//! ([`digest_form`], FIX 7415, FIX 7468), and the facts digest is over the
+//! head as it is sent. A head
 //! within the cap is sent as the manifest gives it. The piece is never
 //! refused or dropped for its head.
 //!
@@ -43,7 +44,7 @@ const READ_BUFFER: usize = 64 * 1024;
 /// here in its UTF-8 bytes, which are never fewer.
 const HEAD_JSON_MAX: usize = 8 * 1024;
 /// CALLS TL6_HEAD_MODEL_DIGEST: the most characters of the filter's model
-/// a head over the cap keeps beside the model's digest.
+/// (or stack) a head over the cap keeps beside its digest.
 const MODEL_PREVIEW_CHARS: usize = 64;
 
 /// Why a piece's files ship nothing this pass.
@@ -260,9 +261,10 @@ fn open_regular(path: &Path) -> Result<File, Unreadable> {
 
 /// `head` within the intake's cap (FIX 7415): as it is when its compact
 /// JSON fits [`HEAD_JSON_MAX`]; else with its filter's model in
-/// [`model_digest_form`], the preview cut a character shorter until the
-/// head fits. A head that fits not even with no preview goes in that
-/// smallest form: the piece is never refused or dropped here.
+/// [`digest_form`], the preview cut a character shorter until the head
+/// fits; then, while it still does not, its filter's `stack_sha16` the same
+/// way (FIX 7468). A head that fits not even with no preview on either goes
+/// in that smallest form: the piece is never refused or dropped here.
 ///
 /// # Errors
 /// [`Unreadable::Mismatch`]: a head that does not encode.
@@ -273,7 +275,26 @@ fn within_cap(mut head: PieceFactsHeadV1) -> Result<PieceFactsHeadV1, Unreadable
     let model = std::mem::take(&mut head.filter.model);
     let mut preview = MODEL_PREVIEW_CHARS;
     loop {
-        head.filter.model = model_digest_form(&model, preview);
+        head.filter.model = digest_form(&model, preview);
+        if head_json_len(&head)? <= HEAD_JSON_MAX {
+            return Ok(head);
+        }
+        if preview == 0 {
+            break;
+        }
+        preview -= 1;
+    }
+    // A stack no longer than its digest form keeps its own value.
+    let Some(stack) = head
+        .filter
+        .stack_sha16
+        .take_if(|stack| stack.len() > digest_form(stack, 0).len())
+    else {
+        return Ok(head);
+    };
+    let mut preview = MODEL_PREVIEW_CHARS;
+    loop {
+        head.filter.stack_sha16 = Some(digest_form(&stack, preview));
         if preview == 0 || head_json_len(&head)? <= HEAD_JSON_MAX {
             return Ok(head);
         }
@@ -281,18 +302,19 @@ fn within_cap(mut head: PieceFactsHeadV1) -> Result<PieceFactsHeadV1, Unreadable
     }
 }
 
-/// CALLS TL6_HEAD_MODEL_DIGEST (FIX 7415): the filter's `model` as a head
-/// over the intake's cap carries it, in the contract's own `model` field:
-/// `blake3:`, the BLAKE3 of the model's UTF-8 bytes as 64 lower-case hex,
-/// `:`, then the model's first `preview` characters, cut on a character
-/// boundary. No contract type changes; LC's intake reads this form.
-fn model_digest_form(model: &str, preview: usize) -> String {
-    let digest = oneiron_vault_contract::hex(blake3::hash(model.as_bytes()).as_bytes());
-    let end = model
+/// CALLS TL6_HEAD_MODEL_DIGEST (FIX 7415): a filter field a head over the
+/// intake's cap carries in this form, in the contract's own field (`model`,
+/// then `stack_sha16`, FIX 7468): `blake3:`, the BLAKE3 of the value's UTF-8
+/// bytes as 64 lower-case hex, `:`, then the value's first `preview`
+/// characters, cut on a character boundary. No contract type changes; LC's
+/// intake reads this form in `model`.
+fn digest_form(value: &str, preview: usize) -> String {
+    let digest = oneiron_vault_contract::hex(blake3::hash(value.as_bytes()).as_bytes());
+    let end = value
         .char_indices()
         .nth(preview)
-        .map_or(model.len(), |(at, _)| at);
-    let kept = model.get(..end).unwrap_or_default();
+        .map_or(value.len(), |(at, _)| at);
+    let kept = value.get(..end).unwrap_or_default();
     format!("blake3:{digest}:{kept}")
 }
 

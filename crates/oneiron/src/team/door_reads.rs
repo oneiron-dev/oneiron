@@ -437,7 +437,7 @@ fn learning_reads(
         return Ok(Vec::new());
     };
     let executor = receipt.executor_mix();
-    let cell = pattern_cell(skill.skill, &executor, &receipt.type_ref);
+    let cell = pattern_cell(skill.skill, &executor, receipt.project, &receipt.type_ref);
     let parents = match placed_ancestry_in_txn(vault, txn, receipt) {
         (parents, None) => parents,
         (_, Some(reason)) => match load_team_type_tree_in_txn(vault, txn, receipt.project) {
@@ -478,6 +478,7 @@ fn learning_reads(
             executor,
             type_ref: TypeStamp::from(&receipt.type_ref),
             axis: PAYOFF_AXIS.to_owned(),
+            project: cell.project,
         },
         mean: estimate.mean(),
         own: read.own,
@@ -499,6 +500,7 @@ fn borrowed_view(cell: &LearningCell) -> BorrowedCellView {
         executor: cell.executor.clone(),
         type_ref: cell.type_ref.as_ref().map(TypeStamp::from),
         axis: cell.axis.clone(),
+        project: cell.project,
     }
 }
 

@@ -62,9 +62,15 @@ pub(super) fn check_disclosure(
             spec.class.as_ref().and_then(|row| row.guest_fact_limit),
         )
         .ok_or_else(invalid)?;
-    if refs.len() > cap {
-        return Err(invalid());
-    }
+    // The resolved class or holder limit is where this ask's disclosure is
+    // observed (FIX 10173), never refused: every exact ref is kept.
+    let mut disclosed = crate::scan_check::ScanCount::start_at(
+        crate::scan_check::EngineScan::GuestDisclosureRefs,
+        person.as_bytes(),
+        u64::try_from(cap).unwrap_or(u64::MAX),
+    );
+    disclosed.rows(refs.len());
+    disclosed.defer(&vault.store);
     if refs.is_empty() || guest.companion_ref == person || guest.companion_ref == asker {
         return Err(invalid());
     }
@@ -176,6 +182,14 @@ pub(super) fn check_delegation_record(
         && names_guest(action.bound(), person))
 }
 
+/// The guest's public key an ask carries (FIX-LIST 1978): 64 hex, a key the
+/// slip it is bound into can verify, else the ask refuses.
+fn guest_holder_key(hex: &str) -> Result<[u8; 32]> {
+    let key = super::brief::decode_hex::<32>(hex).ok_or_else(invalid)?;
+    ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| invalid())?;
+    Ok(key)
+}
+
 /// Admit only the exact question facts inside a live owner-stamped bound, then
 /// materialize a disjoint guest grant in the same transaction as the ask.
 pub(super) fn mint_guest_grants(
@@ -190,13 +204,32 @@ pub(super) fn mint_guest_grants(
     if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
         for (person, guest) in guests {
             let refs = check_disclosure(vault, txn, *person, asker, guest, effective)?;
+            // The guest grant keeps every disclosed ref; its old storage
+            // bound is observed where the grant is minted (FIX 10173).
+            if let Ok(mut count) = crate::scan_check::ScanCount::start(
+                &vault.store,
+                txn,
+                crate::scan_check::EngineScan::GuestGrantDisclosedRefs,
+                group_ref.as_bytes(),
+            ) {
+                count.rows(refs.len());
+                count.defer(&vault.store);
+            }
+            // The guest's own key travels with the ask into the grant, for
+            // the owner's slip mint to bind (FIX-LIST 1978).
+            let holder_key = guest
+                .holder_key
+                .as_deref()
+                .map(guest_holder_key)
+                .transpose()?;
             let grant = crate::federation::FederationGrant::ask_guest(
                 group_ref,
                 guest.companion_ref,
                 *person,
                 asker,
                 refs,
-            )?;
+            )?
+            .with_guest_holder_key(holder_key);
             let grant_id = crate::EntityId::derive(
                 crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
                 &[group_ref.as_bytes(), person.as_bytes()],

@@ -49,6 +49,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         match self.dispatch_agents_spawn(input.into_call()?)? {
             SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
                 attempt_ref,
@@ -91,6 +93,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         match self.dispatch_memory_supersede_claim(input.into_call()?)? {
             SelfDispatchOutcome::MemoryWrite(written) => {
                 Ok(crate::code_run::MemoryWriteOutput { id: written.id })
@@ -111,6 +115,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         let leader = input
             .leader
             .as_deref()
@@ -135,6 +141,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?)? {
             SelfDispatchOutcome::TaskRefusal(refusal) => Ok(TaskRefuseOutput {
                 task: refusal.task_ref,
@@ -165,6 +173,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         let parent = self.agent_parent.ok_or_else(|| {
             MemoryError::bad_request("a blocked report requires its acquired parent lease")
         })?;
@@ -219,6 +229,8 @@ impl<'a> HostSelfDispatcher<'a> {
             .agent_lease
             .as_ref()
             .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
         let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
             return Err(MemoryError::bad_request(
                 "a batch requires canonical live-run storage",

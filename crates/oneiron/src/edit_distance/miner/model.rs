@@ -1,14 +1,16 @@
 //! ED-04 miner domain and stored-row types.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT_REJECTED};
 use super::target::CompilationTarget;
-use crate::edit_distance::FinalizedProposalText;
 use crate::edit_distance::attribution::AmendmentJudgment;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource};
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef};
+use crate::edit_distance::{RetainedProposal, StoredProposal};
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
@@ -45,6 +47,8 @@ pub struct SubstitutionCluster {
     pub actor: EntityId,
     /// The skill every citing amendment rode, when they agree on one.
     pub skill: Option<EntityId>,
+    /// At least one citing fallback amendment had no attribution judgment.
+    pub unattributed: bool,
     /// Distinct amendment receipts showing this substitution, in receipt-id
     /// order so two passes over one ledger cite the same list in the same order.
     pub receipt_refs: Vec<String>,
@@ -143,8 +147,8 @@ pub struct MinedSkillEditDecision {
 pub enum MinedSkillEditVerdict {
     /// The edit was applied through the gated apply door.
     Accepted,
-    /// The decider refused it. The cluster goes quiet for
-    /// [`MINER_REJECTION_COOLDOWN_SECS`](crate::edit_distance::miner::MINER_REJECTION_COOLDOWN_SECS).
+    /// The decider refused it. The cluster goes quiet for the policy
+    /// manifest's `miner_rejection_wait_seconds` row.
     Rejected,
 }
 
@@ -220,6 +224,8 @@ pub(super) struct Bucket {
     pub(super) skill: Option<Option<EntityId>>,
     /// Set once two folds disagree.
     pub(super) skill_conflict: bool,
+    /// At least one fold came from a fallback amendment with no attribution judgment.
+    pub(super) unattributed: bool,
     pub(super) at: u64,
 }
 
@@ -227,7 +233,14 @@ impl Bucket {
     /// Folds one citing amendment in. Receipts are counted DISTINCTLY: one
     /// receipt whose window shows a substitution three times is one occurrence
     /// of a habit, not three.
-    pub(super) fn observe(&mut self, receipt_id: &str, skill: Option<EntityId>, at: u64) {
+    pub(super) fn observe(
+        &mut self,
+        receipt_id: &str,
+        skill: Option<EntityId>,
+        at: u64,
+        unattributed: bool,
+    ) {
+        self.unattributed |= unattributed;
         if !self.receipts.iter().any(|seen| seen == receipt_id) {
             self.receipts.push(receipt_id.to_owned());
         }
@@ -253,6 +266,7 @@ impl Bucket {
             } else {
                 self.skill.flatten()
             },
+            unattributed: self.unattributed,
             count: u32::try_from(self.receipts.len()).unwrap_or(u32::MAX),
             receipt_refs: self.receipts,
             at: self.at,
@@ -260,26 +274,72 @@ impl Bucket {
     }
 }
 
-/// What one judged amendment contributes: the routing facts and the text pair.
-pub(super) struct AmendmentSource<'a> {
+/// What one judged amendment contributes: the routing facts and the texts
+/// its Δ's refs name.
+pub(super) struct AmendmentSource {
     pub(super) actor: EntityId,
     pub(super) skill: Option<EntityId>,
-    pub(super) delta_source: DeltaSource,
-    pub(super) artifact: &'a FinalizedProposalText,
+    pub(super) ends: SourceEnds,
 }
 
-/// Every persisted proposal artifact, addressable by either ref pair a Δ can
-/// name it with.
+/// The texts a Δ's refs name, read through the rows that retain them.
+pub(super) enum SourceEnds {
+    /// A recorded window: one artifact holds both ends and every change (the shared opened row).
+    Recorded(Arc<RetainedProposal>),
+    /// Two endpoint texts, each read through its own row.
+    Endpoints(String, String),
+}
+
+/// Every persisted proposal row (finalized windows and endpoint-only
+/// imports), unopened, by row id. A row opens on the first judgment that
+/// resolves it and the opened row is kept for the rest of the pass (one
+/// snapshot-parse per artifact per pass).
 pub(super) struct ArtifactIndex {
-    pub(super) records: Vec<FinalizedProposalText>,
-    pub(super) by_refs: BTreeMap<(String, String), usize>,
+    pub(super) records: BTreeMap<EntityId, StoredProposal>,
+    pub(super) opened: RefCell<BTreeMap<EntityId, Arc<RetainedProposal>>>,
 }
 
 impl ArtifactIndex {
-    /// The artifact a Δ's `(proposed_ref, final_ref)` pair names.
-    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<&FinalizedProposalText> {
-        let key = (delta.proposed_ref.clone(), delta.final_ref.clone());
-        self.records.get(*self.by_refs.get(&key)?)
+    fn opened(&self, artifact: &EntityId) -> Option<Arc<RetainedProposal>> {
+        if let Some(hit) = self.opened.borrow().get(artifact).cloned() {
+            return Some(hit);
+        }
+        let opened = Arc::new(
+            self.records
+                .get(artifact)
+                .cloned()
+                .map(RetainedProposal::open)?,
+        );
+        self.opened
+            .borrow_mut()
+            .insert(*artifact, Arc::clone(&opened));
+        Some(opened)
+    }
+
+    /// The texts a Δ's refs name, through the lane it was measured on: a
+    /// recorded-ops Δ's one artifact, or a reconstructed Δ's two ends. A
+    /// field-diff Δ names no text.
+    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<SourceEnds> {
+        match delta.source {
+            DeltaSource::RecordedOps => {
+                let artifact = delta.proposed_ref.proposal_artifact()?;
+                if delta.final_ref.proposal_artifact() != Some(artifact) {
+                    return None;
+                }
+                self.opened(&artifact.entity_id()).map(SourceEnds::Recorded)
+            }
+            DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
+                self.end_text(&delta.proposed_ref)?,
+                self.end_text(&delta.final_ref)?,
+            )),
+            DeltaSource::FieldDiff => None,
+        }
+    }
+
+    fn end_text(&self, end: &EndpointRef) -> Option<String> {
+        self.opened(&end.proposal_artifact()?.entity_id())?
+            .end_text(end)
+            .into_text()
     }
 }
 
@@ -374,6 +434,7 @@ pub(super) struct StoredMinedEvidence {
     pub(super) from: String,
     pub(super) to: String,
     pub(super) class: String,
+    pub(super) unattributed: bool,
     pub(super) receipt_refs: Vec<String>,
     pub(super) count: u32,
     pub(super) at: u64,
@@ -389,6 +450,7 @@ impl StoredMinedEvidence {
             from: cluster.from.clone(),
             to: cluster.to.clone(),
             class: class.as_str().to_owned(),
+            unattributed: cluster.unattributed,
             receipt_refs: cluster.receipt_refs.clone(),
             count: cluster.count,
             at: cluster.at,
@@ -405,6 +467,7 @@ pub(super) struct StoredSkillEdit {
     )]
     pub(super) principal: Option<EntityId>,
     pub(super) v: u8,
+    pub(super) unattributed: bool,
     pub(super) skill: String,
     pub(super) scope: String,
     pub(super) from: String,

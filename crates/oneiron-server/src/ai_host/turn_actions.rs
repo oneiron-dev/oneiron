@@ -33,14 +33,15 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
     ManifestEntry,
 };
-use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
-use oneiron::memory::{MessageWriteMode, WitnessAuthor};
+use oneiron::claim::CallerLocality;
+use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionAuthority};
+use oneiron::memory::{Memory, MessageWriteMode, WitnessAuthor};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
 use super::AiHandle;
 use super::payer_funding::room_launch_funding;
-use super::resident_craft::{place_craft, snapshot_craft_scoped};
+use super::resident_craft::{craft_withdrawn, place_craft, snapshot_craft_scoped};
 use crate::api::ai::chat::{
     Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential, after_turn,
     begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint, text_message,
@@ -189,25 +190,21 @@ async fn act(
     // OF-490: the answering agent is shown its own craft, read on one
     // snapshot, and its action's attempt names what it was shown. Only the
     // notes the requester's own read admits are shown (SCAN C009, FIX 6102),
-    // read as the action's context is: a queued action carries no
-    // credential, so it reads as its actor. A call that runs as it always
-    // did is stamped with today's craft before it is shown, and shows none
-    // whose stamp fails. Beside a reused prefix, which shows and stamps the
-    // craft it captured, today's call is stamped only if it answers. One
-    // layout, the vault's or else the host's, places it (FIX 6676).
+    // read as the action's context is: where the requester asked from, under
+    // the authority its action stands on, judged again now (FIX 9464). A
+    // call that runs as it always did is stamped with today's craft before
+    // it is shown, and shows none whose stamp fails. Beside a reused prefix,
+    // which shows and stamps the craft it captured, today's call is stamped
+    // only if it answers. One layout, the vault's or else the host's, places
+    // it (FIX 6676).
     let layout = ai.prompt_layout();
     let lead = messages.len();
     let at = vault.now_recorded_at();
     let craft = blocking(|| {
-        snapshot_craft_scoped(
-            vault,
-            &vault.memory(actor, class),
-            &context.agent,
-            at,
-            layout,
-        )
+        craft_reader(vault, &action)
+            .and_then(|reader| snapshot_craft_scoped(vault, &reader, &context.agent, at, layout))
     });
-    let (shown, today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
+    let (shown, mut today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
         craft.map(|craft| (craft.message, craft.entries)).unzip()
     } else {
         let mut shown = None;
@@ -263,14 +260,28 @@ async fn act(
     // rides in.
     let board_context =
         board_context.map(|capture| freeze_chat_context(capture, &admitted.request));
-    let prefix_reused = matches!(reuse, ChatReuse::Reused(_));
     // A missing, stale or refused breakpoint leaves the action as it always
-    // ran; a kept one is sent first, with this call behind it.
+    // ran; a kept one is sent first, with this call behind it. One whose
+    // captured craft names a note erased, revised or no longer supported
+    // since is never sent again (FIX 8985): the action runs as it always
+    // did, on today's craft, stamped before it is sent.
     let (admitted, today, breakpoint) = match reuse {
         ChatReuse::Reused(reused) => {
-            let reused = *reused;
-            stamp_craft(vault, attempt, context.agent, &reused.craft);
-            (reused.live, Some(admitted), Some(reused.breakpoint))
+            let captured = &reused.craft;
+            match blocking(|| craft_withdrawn(vault, captured)) {
+                None => {
+                    let reused = *reused;
+                    stamp_craft(vault, attempt, context.agent, &reused.craft);
+                    (reused.live, Some(admitted), Some(reused.breakpoint))
+                }
+                Some(reason) => {
+                    live_fork_unavailable(reason);
+                    if let Some(entries) = today_craft.take() {
+                        stamp_craft(vault, attempt, context.agent, &entries);
+                    }
+                    (admitted, None, None)
+                }
+            }
         }
         ChatReuse::Unavailable(reason) => {
             live_fork_unavailable(reason);
@@ -278,6 +289,7 @@ async fn act(
         }
         ChatReuse::Today => (admitted, None, None),
     };
+    let prefix_reused = breakpoint.is_some();
     let keepalive = keepalive_every(
         vault
             .message_stream_policy()
@@ -364,6 +376,42 @@ async fn act(
         return Err("the reply was not recorded".into());
     }
     Ok(())
+}
+
+/// The reader a queued `action`'s craft is read through (FIX 9464), built
+/// as its context's is: the requester's own handle, where it asked from,
+/// under the slip its request was admitted on, verified again now. A native
+/// action, and an attested owner's, stand on the actor binding alone and
+/// read with no proof. `None`, logged without content, for an action that
+/// no longer stands (its slip revoked, or taken by its requester's erase,
+/// or its owner no longer the vault's) or whose slip does not verify now:
+/// its call is shown no craft.
+fn craft_reader<'v>(vault: &'v Vault, action: &TurnActionAttempt) -> Option<Memory<'v>> {
+    let (actor, class) = action.requester().ok()?;
+    if !action.requester_live(vault) {
+        tracing::info!(
+            "a turn action no longer stands for its requester; its call is shown no craft"
+        );
+        return None;
+    }
+    let reader = vault.memory(actor, class).at(if action.off_device {
+        CallerLocality::OffDevice
+    } else {
+        CallerLocality::OnDevice
+    });
+    let TurnActionAuthority::Slip { binding } = &action.authority else {
+        return Some(reader);
+    };
+    match vault.verify_invocation_slip(binding) {
+        Ok(proof) => Some(reader.with_read_proof(&proof)),
+        Err(error) => {
+            tracing::info!(
+                kind = ?error.kind(),
+                "a turn action's slip did not verify for its craft; its call is shown no craft"
+            );
+            None
+        }
+    }
 }
 
 /// Stamps craft `agent`'s call on `attempt` was shown without a load on the

@@ -1,7 +1,7 @@
 //! Public value types of the context pack: the pack itself, its entities, its
 //! stats, and its budget/allocation knobs.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
@@ -81,7 +81,7 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
-    /// Candidates assigned the low gravity signal because they had vector
+    /// Candidates counted for lexical disagreement because they had vector
     /// similarity above the cosine-ghost threshold and no BM25 text channel
     /// presence.
     pub cosine_ghosts_dampened: usize,
@@ -103,6 +103,32 @@ pub struct PackStats {
     pub critical_over_budget: bool,
     /// Critical claims eligible before budget truncation (not suppressed claims).
     pub critical_count: usize,
+    /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
+    pub deadline_exceeded: bool,
+}
+
+/// The critical claims a pack run found among its admitted candidates, and
+/// those its budgets left out (FIX 9760). Engine-internal: the ids never
+/// leave the engine. Only [`PackStats::critical_count`] and
+/// [`PackStats::critical_over_budget`] do, counted over the ids the reading
+/// caller is admitted to.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PackCriticalAccounting {
+    /// Critical claims among the admitted candidates before any cut.
+    pub(crate) eligible_ids: BTreeSet<EntityId>,
+    /// Those of `eligible_ids` that a per-kind, diversity, result, neighbor
+    /// or world-share cut left out of the pack.
+    pub(crate) budget_omitted_ids: BTreeSet<EntityId>,
+}
+
+/// An `All`-world pack's world share as its assembly left it, for a cut made
+/// after assembly (FIX 9759). Engine-internal: the ids never leave the engine.
+#[derive(Debug, Clone)]
+pub(crate) struct PackWorldShare {
+    /// The non-base claim fraction (ARCH-0004).
+    pub(crate) fraction: f32,
+    /// The non-base claims the pack emits; every other claim is base.
+    pub(crate) non_base_claims: BTreeSet<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]

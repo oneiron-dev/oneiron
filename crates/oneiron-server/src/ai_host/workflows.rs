@@ -123,8 +123,10 @@ impl WorkflowPump {
                         return;
                     }
                 };
+                let recoveries = runner.models.recoveries();
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
+                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
+                    stopped, recoveries,
                 );
             })?;
         Ok(Self {
@@ -168,6 +170,7 @@ fn pump(
     decisions: &OnceLock<DecisionHost>,
     ready: &Notify,
     mut stopped: watch::Receiver<bool>,
+    mut recoveries: watch::Receiver<u64>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
     loop {
@@ -175,7 +178,11 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let wake = match pump_once(runtime, vault, runner, status, decisions.get(), &stopped) {
+        let started = std::time::Instant::now();
+        let pass = pump_once(runtime, vault, runner, status, decisions.get(), &stopped);
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        tracing::debug!(target: "oneiron::workflow_pump", elapsed_us, "workflow pump pass");
+        let wake = match pass {
             Ok(wake) => wake,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -190,18 +197,35 @@ fn pump(
         let until_due = wake
             .due
             .map(|due| Duration::from_secs(due.saturating_sub(now_secs())));
+        let mut recovered = false;
         let woke = runtime.block_on(async {
             tokio::select! {
                 biased;
                 _ = stopped.wait_for(|stop| *stop) => false,
                 signal = signals.recv() => !matches!(signal, Err(broadcast::error::RecvError::Closed)),
                 () = ready.notified() => true,
+                // A model seat came back (FIX 1112): a step waiting on its
+                // backoff runs now. A gone runtime sends none, and the
+                // backoff runs out as before.
+                Ok(()) = recoveries.changed() => {
+                    recovered = true;
+                    true
+                }
                 () = tokio::time::sleep(until_due.unwrap_or_default()), if until_due.is_some() => true,
                 () = tokio::time::sleep(WAITING_RECHECK), if wake.recheck => true,
             }
         });
         if !woke {
             return;
+        }
+        if recovered {
+            match AgentDispatcher::new(vault).wake_workflow_retries(now_secs()) {
+                Ok(0) => {}
+                Ok(woke) => {
+                    tracing::info!(woke, "a provider recovered; waiting workflow steps run now")
+                }
+                Err(error) => tracing::warn!(%error, "workflow retries did not wake on a recovery"),
+            }
         }
         // Drain the burst our own commits (and any concurrent ones) caused.
         while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = signals.try_recv() {}
@@ -233,7 +257,12 @@ fn pump_once(
     }
     // A step parked on its payer goes on once the owners said yes (FIX 805);
     // a funding change no commit signals is caught on the recheck.
-    recheck |= super::payer_funding::resume_payer_parks(vault, LEASE_OWNER, now_secs()) > 0;
+    recheck |= super::payer_funding::resume_payer_parks(
+        vault,
+        LEASE_OWNER,
+        now_secs(),
+        Some(&runner.spent),
+    ) > 0;
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -364,6 +393,12 @@ fn pump_once(
                                 step.attempt.id,
                                 LEASE_OWNER,
                                 &fault,
+                                runner
+                                    .spent
+                                    .lock()
+                                    .expect("step spend mutex poisoned")
+                                    .get(&step.attempt.id)
+                                    .copied(),
                                 now_secs(),
                             )?;
                             parked = true;
@@ -412,6 +447,15 @@ fn pump_once(
             }
             match progress {
                 Ok(WorkflowProgress::Advanced(_)) => continue,
+                // A successor whose release was refused (FIX 10602) waits on
+                // a definition change no commit signals: looked at again on
+                // the recheck, for as long as it waits.
+                Ok(WorkflowProgress::Waiting(_)) => {
+                    recheck |= !dispatcher
+                        .workflow_status(*root)
+                        .is_ok_and(|status| status.release_refusal.is_none());
+                    break;
+                }
                 Ok(_) => break,
                 Err(error) => {
                     tracing::warn!(kind = ?error.kind(), ?root, "workflow step did not complete");
@@ -458,7 +502,8 @@ fn pump_once(
         }
     }
     recheck |= settle_workflow_tasks(vault, decisions);
-    let attempts = AttemptQueue::new(vault).list()?;
+    let attempts = AttemptQueue::new(vault)
+        .pump_wake_rows(oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND)?;
     let now = now_secs();
     // A scheduled or backing-off try wakes the pump at its own instant, the
     // readiness instant its claim reads.

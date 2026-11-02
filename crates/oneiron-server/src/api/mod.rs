@@ -70,6 +70,9 @@ mod authority_checkpoint;
 mod blob_artifacts;
 // OF-604: zstd and gzip request bodies, and compressed JSON replies.
 mod body_codec;
+// FIX 8195, FIX 7917: owner request bodies, read after the route's door and
+// spooled whatever their length.
+mod body_spool;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
 // merged booking solver and lifecycle.
@@ -90,7 +93,6 @@ mod conversation_transcript;
 mod conversations;
 mod core;
 mod courtesy_delete;
-use self::courtesy_delete as cooperative_deletion;
 mod discover;
 mod entity;
 mod error_map;
@@ -118,17 +120,21 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.
 pub(crate) mod host_action;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound, and claims
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
-    AsrSessions, DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
-    ModelStreams, admission_observer, ai_speech_for_run, call_verb as facade_call_verb,
-    claim_door_invocation, connector_answer_as, connector_call_listing_as, invocation_body,
-    self_use_as,
+    AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
+    INVOCATION_IN_FLIGHT, INVOCATION_RESPONSE_ERASED, ModelStreams, admission_observer,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
+    connector_call_listing_as, connector_call_listing_on, invocation_body, self_use_as,
 };
+// FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
+// authority clock floor.
+pub(crate) use self::facade::clock_ingress;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -139,6 +145,8 @@ mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
+// FIX 9382: a caller's own push of one TASK to Linear now.
+mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
@@ -162,10 +170,12 @@ mod owner_origin;
 mod owner_routes;
 pub(crate) use owner_routes::owner;
 // FIX 5911: an owner's own program proves its waking person the live
-// recorded owner, and takes the owner's media and hook-replay doors.
+// recorded owner, and takes the owner's media and hook-replay doors; its
+// media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
-    vault_hooks_replay_as_owner,
+    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
+    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
+    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
@@ -186,10 +196,18 @@ mod saved_query;
 mod scoped_auth;
 mod search;
 mod surface_events;
+// FIX 10389: one step's type feedback released apart from its answer, for
+// the MCP gateway and the HTTP facade alike.
+mod type_feedback_release;
 mod vad;
 pub(crate) mod write_facet;
 
-pub(crate) use self::artifacts::*;
+#[cfg(test)]
+pub(crate) use self::artifacts::{
+    ARTIFACT_CONTENT_SECURITY_POLICY, ARTIFACT_POINTER_CACHE_CONTROL, BLOB_IMMUTABLE_CACHE_CONTROL,
+    BLOB_POINTER_CACHE_CONTROL,
+};
+pub(crate) use self::artifacts::{ArtifactHosts, serve_artifact_path, serve_artifact_root};
 pub(crate) use self::booking::*;
 pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
@@ -202,7 +220,17 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
-pub(crate) use self::mcp_gateway::*;
+#[cfg(test)]
+pub(crate) use self::mcp_gateway::{
+    MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
+};
+pub(crate) use self::mcp_gateway::{
+    McpCallContext, ReaderChildDoor, RunGuests, VerdictAsker, WorkflowPreflight,
+    deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
+    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow, resolve_mcp_caller,
+    ride_run_carrier, run_session_reads,
+};
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
@@ -212,7 +240,9 @@ use self::params::{
     default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
     parse_optional_entity_id, query_params, unix_seconds_now,
 };
-pub(crate) use self::reactive::*;
+pub(crate) use self::reactive::ReactiveChange;
+#[cfg(test)]
+pub(crate) use self::reactive::{ReactiveDependency, ReactiveLocalQuery, open_local_reactive_read};
 pub(crate) use self::routes::api_routes;
 pub(crate) use self::run_tree::*;
 use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
@@ -293,9 +323,9 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                 "service": "oneiron-server",
                 "modes": ["flash", "thinking", "pro", "ultra"],
                 "capabilities": {
-                    "total": 2228,
+                    "total": 2229,
                     "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
-                    "counts": {"booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
+                    "counts": {"booking": 6, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {

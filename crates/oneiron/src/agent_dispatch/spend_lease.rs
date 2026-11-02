@@ -35,6 +35,7 @@ use super::spend_record::{
 use super::widen_record::invalid;
 
 mod ancestry;
+mod closed_scope;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
 
@@ -183,18 +184,24 @@ impl AgentDispatcher<'_> {
             return Err(invalid("only the payer may raise its accepted root cap"));
         }
         if let Some(payer) = &mut scope.payer {
-            payer.granted_by = actor;
+            payer.granted_by = Some(actor);
             payer.at_ms = shown.at_ms;
         }
         let additional = maximum.units - scope.cap_units;
         if scope.parent.is_some() {
-            let host = self.open_parent_in_txn(&txn, &scope)?;
+            // FIX 10541: the increase holds at the booking host and once
+            // through each closed hard scope on the way, no more than its room.
+            let Host { host, boundaries } = self.host_in_txn(&txn, &scope)?;
+            if let Some(refused) = closed_scope::boundary_refusal(&boundaries, additional) {
+                return Err(refused.into());
+            }
             let mut host = self.make_local_in_txn(&mut txn, host, additional)?;
             host.held_units = host
                 .held_units
                 .checked_add(additional)
                 .ok_or(crate::Error::ArithmeticOverflow("spend lease top-up"))?;
             SCOPE.put(&self.vault.store, &mut txn, &host.scope.0, &host)?;
+            closed_scope::hold_through(self, &mut txn, boundaries, additional)?;
         }
         scope.cap_units = maximum.units;
         scope.shown_at_ms = Some(shown.at_ms);
@@ -206,7 +213,10 @@ impl AgentDispatcher<'_> {
     /// Reserves `child`'s scope under `parent` in one transaction: units move
     /// from the parent's available into its held units. Refuses only a carve
     /// the nearest hard ancestor cannot cover. A hold larger than what is
-    /// available holds what is available; the cap is enforced at spend.
+    /// available holds what is available; the cap is enforced at spend. The
+    /// child keeps `parent` as its parent; a closed parent books at its
+    /// nearest open ancestor, through each closed hard scope between, which
+    /// holds the reservation too and bounds it to its room (FIX 10541).
     pub fn reserve_child_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -233,13 +243,13 @@ impl AgentDispatcher<'_> {
         if SCOPE.contains(&self.vault.store, txn, &id.0)? {
             return Err(invalid("the child's spend scope is already reserved").into());
         }
-        let host = self.effective_scope_in_txn(txn, parent)?;
-        let available = self.available_from_in_txn(txn, &host)?;
+        let booking = self.booking_in_txn(txn, parent)?;
+        let available = self.available_through_in_txn(txn, &booking)?;
         let (amount, hard) = match ask {
             ChildSpend::Carve { cap_units } => {
                 if cap_units > available {
                     return Err(SpendRefused::OverCap {
-                        scope: host.scope,
+                        scope: closed_scope::refusing_scope(&booking, cap_units),
                         available_units: available,
                         asked_units: cap_units,
                     });
@@ -248,12 +258,14 @@ impl AgentDispatcher<'_> {
             }
             ChildSpend::Hold { expected_units } => (expected_units.min(available), false),
         };
+        let Host { host, boundaries } = booking;
         let mut host = self.make_local_in_txn(txn, host, amount)?;
         host.held_units = host.held_units.saturating_add(amount);
         SCOPE.put(&self.vault.store, txn, &host.scope.0, &host)?;
+        closed_scope::hold_through(self, txn, boundaries, amount)?;
         let scope = SpendScope {
             scope: id,
-            parent: Some(host.scope),
+            parent: Some(parent.clone()),
             unit: host.unit,
             cap_units: amount,
             hard,
@@ -307,7 +319,9 @@ impl AgentDispatcher<'_> {
     /// Spends `units` against `scope`. A soft scope past its hold draws the
     /// excess from its parent chain; a hard scope, or the hard ancestor the
     /// chain reaches, refuses with [`SpendRefused::OverCap`] and records
-    /// nothing. A charge to a closed scope lands on its nearest open ancestor.
+    /// nothing. A charge to a closed scope lands on its nearest open ancestor,
+    /// which alone pays, and is tallied at each closed hard scope on the way
+    /// (FIX 10541).
     pub fn charge_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -331,12 +345,13 @@ impl AgentDispatcher<'_> {
 
     /// A guard a host runs `scope`'s model calls under: its limit is what the
     /// scope may still spend, and it suspends at that limit. Built only from
-    /// the existing guard API; record what it used with
-    /// [`Self::record_guard_spend`].
+    /// the existing guard API; a live lease books what it used in parts with
+    /// [`Self::record_guard_spend`], each look its part and the rest at the
+    /// try's end.
     pub fn guard_for_scope(&self, scope: &SpendScopeId) -> Result<BudgetGuard> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        let available = self.available_from_in_txn(&txn, &target)?;
+        let booking = self.booking_in_txn(&txn, scope)?;
+        let available = self.available_through_in_txn(&txn, &booking)?;
         Ok(BudgetGuard::new(
             scope.as_str(),
             available,
@@ -344,10 +359,12 @@ impl AgentDispatcher<'_> {
         ))
     }
 
-    /// Records what a guard from [`Self::guard_for_scope`] used, once, when
-    /// the guard is done. The spend already happened, so it is recorded whole:
-    /// the chain gives what it has, and any excess stays on `scope` past its
-    /// cap. The signal tells the host to wrap up or that the cap is reached.
+    /// Records what a guard from [`Self::guard_for_scope`] used (FIX 11459):
+    /// a live lease books each look's part through here, and the rest at the
+    /// try's end (`book_rest`). The spend already happened, so each part is
+    /// recorded whole: the chain gives what it has, and any excess stays on
+    /// `scope` past its cap. The signal tells the host to wrap up or that
+    /// the cap is reached.
     pub fn record_guard_spend(
         &self,
         scope: &SpendScopeId,
@@ -401,8 +418,8 @@ impl AgentDispatcher<'_> {
     /// hard ancestor.
     pub fn available_units(&self, scope: &SpendScopeId) -> Result<u64> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        self.available_from_in_txn(&txn, &target)
+        let booking = self.booking_in_txn(&txn, scope)?;
+        self.available_through_in_txn(&txn, &booking)
     }
 
     /// `scope` as a spend would report it, without spending: what is left
@@ -410,8 +427,8 @@ impl AgentDispatcher<'_> {
     /// (OF-541's budget hold reads it before work starts).
     pub fn spend_read(&self, scope: &SpendScopeId) -> Result<SpendRead> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        self.spend_read_in_txn(&txn, &target)
+        let booking = self.booking_in_txn(&txn, scope)?;
+        self.spend_read_through_in_txn(&txn, &booking)
     }
 
     /// [`Self::spend_read`] in the caller's snapshot.
@@ -420,8 +437,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         scope: &SpendScopeId,
     ) -> Result<SpendRead> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
-        self.spend_read_in_txn(txn, &target)
+        let booking = self.booking_in_txn(txn, scope)?;
+        self.spend_read_through_in_txn(txn, &booking)
     }
 
     /// [`Self::available_units`] in the caller's snapshot.
@@ -430,8 +447,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         scope: &SpendScopeId,
     ) -> Result<u64> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
-        self.available_from_in_txn(txn, &target)
+        let booking = self.booking_in_txn(txn, scope)?;
+        self.available_through_in_txn(txn, &booking)
     }
 
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
@@ -566,7 +583,10 @@ impl AgentDispatcher<'_> {
         units: u64,
         record_whole: bool,
     ) -> std::result::Result<SpendRead, SpendRefused> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
+        let Host {
+            host: target,
+            boundaries,
+        } = self.booking_in_txn(txn, scope)?;
         let drawn = if record_whole {
             units.min(self.available_from_in_txn(txn, &target)?)
         } else {
@@ -575,33 +595,24 @@ impl AgentDispatcher<'_> {
         let mut target = self.make_local_in_txn(txn, target, drawn)?;
         target.spent_units = target.spent_units.saturating_add(units);
         SCOPE.put(&self.vault.store, txn, &target.scope.0, &target)?;
-        Ok(self.spend_read_in_txn(txn, &target)?)
+        closed_scope::tally_through(self, txn, boundaries, units)?;
+        // The spend reports what a read reports after it, the closed
+        // boundaries' room included (FIX 11095).
+        let booking = self.booking_in_txn(txn, scope)?;
+        Ok(self.spend_read_through_in_txn(txn, &booking)?)
     }
 
-    fn spend_read_in_txn(&self, txn: &heed::RoTxn<'_>, scope: &SpendScope) -> Result<SpendRead> {
-        let available = self.available_from_in_txn(txn, scope)?;
-        let binding = self.binding_cap_in_txn(txn, scope)?;
-        let signal = if available == 0 {
-            Some(SpendSignal::AtCap {
-                cap_units: binding.cap_units,
-            })
-        } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
-            Some(SpendSignal::WrapUp {
-                available_units: available,
-                cap_units: binding.cap_units,
-            })
-        } else {
-            None
-        };
-        Ok(SpendRead {
-            scope: scope.scope.clone(),
-            unit: scope.unit.clone(),
-            spent_units: scope.spent_units,
-            available_units: available,
-            cap_scope: binding.scope,
-            cap_units: binding.cap_units,
-            signal,
-        })
+    /// `booking` as a spend would report it: what is left under the binding
+    /// cap, no more than any closed hard boundary's room (FIX 11095), the
+    /// same minimum the booking path enforces.
+    fn spend_read_through_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        booking: &Host,
+    ) -> Result<SpendRead> {
+        let available = self.available_through_in_txn(txn, booking)?;
+        let binding = self.binding_cap_in_txn(txn, &booking.host)?;
+        Ok(spend_read_with(&booking.host, available, &binding))
     }
 
     /// Makes `need` units local to `scope`, topping a soft scope up from its
@@ -684,6 +695,32 @@ impl AgentDispatcher<'_> {
     }
 }
 
+/// Assembles what one booking host reports: its identity and spend, what is
+/// left under the binding cap, and the wrap-up or cap signal in force.
+fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> SpendRead {
+    let signal = if available == 0 {
+        Some(SpendSignal::AtCap {
+            cap_units: binding.cap_units,
+        })
+    } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
+        Some(SpendSignal::WrapUp {
+            available_units: available,
+            cap_units: binding.cap_units,
+        })
+    } else {
+        None
+    };
+    SpendRead {
+        scope: host.scope.clone(),
+        unit: host.unit.clone(),
+        spent_units: host.spent_units,
+        available_units: available,
+        cap_scope: binding.scope.clone(),
+        cap_units: binding.cap_units,
+        signal,
+    }
+}
+
 /// Whether `payer`'s evidence binds its grantor to the payer: the payer is a
 /// live PERSON, and the grantor is that PERSON or an actor whose stored
 /// subject anchor names it. Read from stored bindings, never from labels.
@@ -696,8 +733,11 @@ pub(crate) fn payer_binds_in_txn(
         return Ok(false);
     }
     let at = vault.store.clock.now_recorded_at();
+    let Some(grantor) = payer.granted_by else {
+        return Ok(false);
+    };
     Ok(
-        crate::workspace_roster::person_of_actor_in_txn(vault, txn, payer.granted_by, at)?
+        crate::workspace_roster::person_of_actor_in_txn(vault, txn, grantor, at)?
             == Some(payer.party),
     )
 }

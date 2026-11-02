@@ -12,7 +12,8 @@ use sha2::{Digest, Sha256};
 // carriers from falling through a text serializer. Whole export uses the
 // credential-safe source facet, never these bytes as another escape channel.
 pub(super) const MAGIC: &[u8] = b"\xf5oneiron.receipt-archive.v1\0";
-const MAX_BYTES: usize = 4 * 1024 * 1024;
+/// The domain an archived source's id hashes its canonical bytes under.
+const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReceiptArchive {
@@ -57,21 +58,22 @@ impl ReceiptArchive {
         }
         Ok(())
     }
+    /// The canonical stored bytes: the magic, then the named MessagePack
+    /// payload. Any size: a source carries whole (FIX 10059).
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
-        self.validate()?;
-        let payload = rmp_serde::to_vec_named(self).map_err(|_| invalid())?;
-        if payload.len() > MAX_BYTES {
-            return Err(invalid());
-        }
-        let mut bytes = MAGIC.to_vec();
-        bytes.extend(payload);
+        let mut bytes = Vec::new();
+        self.write_canonical(&mut bytes)?;
         Ok(bytes)
     }
+    /// [`Self::bytes`] written into `out` as it is encoded, never held whole
+    /// here.
+    pub(super) fn write_canonical(&self, out: &mut impl std::io::Write) -> Result<()> {
+        self.validate()?;
+        out.write_all(MAGIC).map_err(|_| invalid())?;
+        rmp_serde::encode::write_named(out, self).map_err(|_| invalid())
+    }
     pub(super) fn id(&self) -> Result<EntityId> {
-        crate::codebase::entity_id_from_hash_material(
-            b"oneiron.receipt-archive.asset.v1",
-            &[&self.bytes()?],
-        )
+        id_of_bytes(&self.bytes()?)
     }
     pub(super) fn matches_body(&self, body: &[u8]) -> bool {
         is_inert_holder(body)
@@ -105,14 +107,39 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
     let Some(payload) = bytes.strip_prefix(MAGIC) else {
         return Ok(None);
     };
-    if payload.len() > MAX_BYTES {
-        return Err(invalid());
-    }
     let row: ReceiptArchive = rmp_serde::from_slice(payload).map_err(|_| invalid())?;
-    if row.bytes()? != bytes {
+    // Canonical: the row encodes back to exactly these bytes, compared as it
+    // is encoded rather than through a second whole copy.
+    let mut same = SameBytes { rest: bytes };
+    row.write_canonical(&mut same)?;
+    if !same.rest.is_empty() {
         return Err(invalid());
     }
     Ok(Some(row))
+}
+/// The id of the archived source whose canonical stored bytes are `bytes`
+/// ([`ReceiptArchive::bytes`]), hashed once from the bytes already held.
+pub(super) fn id_of_bytes(bytes: &[u8]) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
+}
+/// A writer that accepts only the next bytes of `rest`, so an encoding is
+/// compared with stored bytes as it is written.
+struct SameBytes<'a> {
+    rest: &'a [u8],
+}
+impl std::io::Write for SameBytes<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self.rest.strip_prefix(bytes) {
+            Some(rest) => {
+                self.rest = rest;
+                Ok(bytes.len())
+            }
+            None => Err(std::io::ErrorKind::InvalidData.into()),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))

@@ -227,6 +227,10 @@ fn stop_in_txn(
         ForceCancelOutcome::AlreadyCancelled(record)
         | ForceCancelOutcome::AlreadySettled(record) => (record, false),
     };
+    if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
+        super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
+        super::hold_index::unindex_program_hold_in_txn(vault, wtxn, &park)?;
+    }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);
     Ok((record, stopped))
@@ -247,6 +251,12 @@ fn resume_in_txn(
     let binding = match vault.bind_turn_program_in_txn(&*wtxn, attempt)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return Err(not_resumed(held.reason())),
+        TurnProgramBound::OwnerNotLive => {
+            return Err(not_resumed(crate::authority::OWNER_NOT_LIVE));
+        }
+        TurnProgramBound::Withdrawn { reason } => {
+            return Err(not_resumed(reason));
+        }
     };
     if let Some(why) = vault.validate_program_resume_checkpoint_in_txn(
         &*wtxn,

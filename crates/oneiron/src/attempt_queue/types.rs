@@ -248,7 +248,7 @@ pub struct AttemptEvent {
 }
 
 /// What one [`ManifestEntry`] names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ManifestKind {
@@ -278,7 +278,7 @@ impl ManifestKind {
 /// tier-2 body pull appends its own row WHEN it happens, so the terminal
 /// receipt carries the full accumulated manifest and attribution can name
 /// what was actually loaded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ManifestEntry {
     pub kind: ManifestKind,
     /// The loaded thing's stable identity (`skill_id`, claim id hex, …).

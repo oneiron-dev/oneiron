@@ -3,10 +3,10 @@
 //! Started, Producer and credential helpers stay in the parent; moved functions keep chat-only scope.
 
 use super::{
-    Answering, Body, ChatLine, ChatReply, EntryWake, IntoResponse, InvocationClaim, Json,
-    LlmStreamEvent, NEWCOMER, Producer, REVOKED, Response, Started, StatusCode, StreamCancelReason,
-    StreamExt, answer_memory, entry_wake, header, line, message_text, next_entry_wake, refusal,
-    revoked_line,
+    Answering, Body, ChatLine, ChatReply, DoorInvocationClaim, EntryWake, IntoResponse, Json,
+    Lapse, LlmStreamEvent, NEWCOMER, Producer, REVOKED, Response, Started, StatusCode,
+    StreamCancelReason, StreamExt, answer_memory, entry_wake, header, line, message_text,
+    next_entry_wake, refusal, revoked_line,
 };
 
 /// The NDJSON answer: accepted, each delta, the terminal, then saved or the
@@ -15,12 +15,13 @@ use super::{
 /// told to retry.
 pub(in crate::api::ai::chat) fn streamed(
     started: Started,
-    claim: Option<InvocationClaim>,
+    claim: Option<DoorInvocationClaim>,
 ) -> Response {
     let Started {
         user_turn,
         answering,
         credential,
+        board_omitted,
         ..
     } = started;
     let Answering {
@@ -31,6 +32,7 @@ pub(in crate::api::ai::chat) fn streamed(
     let accepted = ChatLine::Accepted {
         user_turn,
         message_id: handle.message_id().to_hex(),
+        board_omitted,
     };
     let head = futures_util::stream::once(async move { line(&accepted) });
     let events = subscription.filter_map(|event| async move {
@@ -109,6 +111,7 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
         turn,
         answering,
         credential,
+        board_omitted,
         ..
     } = started;
     let Answering {
@@ -150,6 +153,7 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
         text: outcome.text,
         incomplete: !receipt.complete(),
         finish_reason: receipt.finish_reason,
+        board_omitted,
     })
     .into_response()
 }
@@ -190,8 +194,9 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         Err(reason)
     };
     let revoked = || {
-        cancel(StreamCancelReason::Custom(REVOKED.into()));
-        Err("the turn's credential was revoked".to_owned())
+        let lapse = credential.lapse();
+        cancel(lapse.cancel_reason());
+        Err(lapse.reason().to_owned())
     };
     // The newcomer barrier: the reply was assembled for the audience before
     // the entry. Its MESSAGE keeps what it saved and is cancelled; the next
@@ -248,7 +253,13 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {
-                    cancel(StreamCancelReason::Custom(REVOKED.into()));
+                    let lapse = credential.lapse();
+                    cancel(lapse.cancel_reason());
+                    // An attested owner's lapse is his action's own reason
+                    // (FIX 11090); a revoked credential's stays as it was.
+                    if lapse != Lapse::Revoked {
+                        return Err(lapse.reason().to_owned());
+                    }
                 }
                 return Err(format!("terminal message was not saved: {error:?}"));
             }

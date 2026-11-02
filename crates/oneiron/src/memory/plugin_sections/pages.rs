@@ -7,7 +7,7 @@ use super::{
 };
 use crate::context_board::{
     EngineSectionBindings, PluginSectionRegistry, pending_plugin_proposal_page,
-    render_pack_sections,
+    plugin_section_fit_evidence, render_pack_sections,
 };
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryResult};
@@ -58,18 +58,30 @@ impl Memory<'_> {
                 }
             })
             .collect();
+        let pending_claims: Vec<EntityId> =
+            page.rows.iter().map(|row| row.install_claim_id).collect();
+        let fits = plugin_section_fit_evidence(vault, &pending_claims).map_err(plugin_error)?;
         self.produced_from(rows);
         Ok(PluginSectionsView {
             pending: page
                 .rows
                 .into_iter()
-                .map(|row| PluginSectionPendingRow {
-                    claim_ref: row.install_claim_id.to_hex(),
-                    pack_id: row.pack_id,
-                    section_id: row.section_id.0,
-                    label: row.label,
-                    origin: row.origin.kind().to_owned(),
-                    awaiting_owner_consent: row.awaiting_owner_consent,
+                .zip(fits)
+                .map(|(row, fit)| {
+                    let (analysis, permissions) = match fit {
+                        Some(fit) => (Some(fit.analysis), fit.permissions),
+                        None => (None, Vec::new()),
+                    };
+                    PluginSectionPendingRow {
+                        claim_ref: row.install_claim_id.to_hex(),
+                        pack_id: row.pack_id,
+                        section_id: row.section_id.0,
+                        label: row.label,
+                        origin: row.origin.kind().to_owned(),
+                        awaiting_owner_consent: row.awaiting_owner_consent,
+                        analysis,
+                        permissions,
+                    }
                 })
                 .collect(),
             pending_total: page.matching_total,

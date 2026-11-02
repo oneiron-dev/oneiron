@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::ConnectorCallRoute;
 use crate::entity_id::EntityId;
-use crate::secret_custody::SentPresentation;
+use crate::secret_custody::{RunSecretHolder, SentPresentation};
 use crate::secret_lease::SecretGrantRef;
 
 use super::result_scrub::OutboundResultSender;
@@ -100,14 +100,31 @@ pub struct ConnectorCallCaller {
     pub name: String,
 }
 
+/// Why a delivered call's outcome carries no reply (FIX 2823).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorResultAbsence {
+    /// The reply is not retained: a replay of an already delivered call, or
+    /// a settled call read back. Nothing is sent again to fetch it.
+    NotRetained,
+    /// The send presented a custody record's value, and the value could not
+    /// be read again to clear it from the reply, so the reply is withheld.
+    CredentialClearFailed,
+}
+
 /// What one connector call came to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectorCallOutcome {
     /// The connector acknowledged the call. `result` is its reply when this
     /// send carried one; a replay of an already delivered call has none.
+    /// `result_absence` says why when `result` is `None`.
     Delivered {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
+        result_absence: Option<ConnectorResultAbsence>,
+        /// The budget messages this send's charge fired on its key and
+        /// catalog pool (FIX 3759): the 80% plan and 95% land texts. Empty
+        /// when none fired, and on a replay.
+        budget_steering: Vec<String>,
     },
     /// Held for consent or governance. Nothing was sent. Once the hold may
     /// have cleared, [`crate::Vault::resume_connector_call`] re-enters it.
@@ -163,13 +180,17 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// from here on, in place of the route's own secret, through the
     /// credential door for the route's effector; `None` goes back to the
     /// route's. With a `grant`, each send redeems it at its door
-    /// (`Vault::redeem_secret_grant_at_door`) instead. False when this host
-    /// cannot present a record or a grant: a call that names one is then
-    /// refused unsent.
+    /// (`Vault::redeem_secret_grant_at_door`) instead. A record the use's
+    /// own `run` found presents through that run's seat binding, under the
+    /// route effector's door policy (`Vault::with_run_secret_for`, FIX
+    /// 8334), in each send and each live exchange taken up again. False
+    /// when this host cannot present a record or a grant: a call that names
+    /// one is then refused unsent.
     fn present_credential(
         &mut self,
         credential: Option<EntityId>,
         grant: Option<SecretGrantRef>,
+        _run: Option<RunSecretHolder>,
     ) -> bool {
         credential.is_none() && grant.is_none()
     }
@@ -232,6 +253,11 @@ pub struct PendingConnectorCallRef {
     pub name: String,
     pub tool: String,
     pub settled: bool,
+    /// A full count-bound budget window paced the call (FIX 8686): `Some`
+    /// with `true` while its window is still shut on the engine's clock, so
+    /// no resume runs; `Some(false)` once it opened, so the next pass drives
+    /// it at once.
+    pub paced: Option<bool>,
 }
 
 /// One tool's approved input schema, on the governing key the caller's own

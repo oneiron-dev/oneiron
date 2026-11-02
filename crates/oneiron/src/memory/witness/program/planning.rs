@@ -4,39 +4,6 @@
 
 use super::*;
 
-/// The pointer of the first record `assertions` names that `lane` does not
-/// read in `txn`, cited before created: a malformed id, a missing row and an
-/// unreadable one are one answer. Every id is judged in the one snapshot.
-/// A model stream's continuation terminal judges its own through it too
-/// (FIX 3416).
-pub(in crate::memory::witness) fn unread_assertion_in(
-    lane: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    assertions: &WitnessAssertions,
-) -> MemoryResult<Option<String>> {
-    let lists = [
-        ("cited", &assertions.cited),
-        ("created", &assertions.created),
-    ];
-    let mut named = Vec::new();
-    for (list, records) in lists {
-        for (index, record) in records.iter().enumerate() {
-            let id = EntityId::from_hex(&record.id).ok();
-            named.push((format!("/assertions/{list}/{index}/id"), id));
-        }
-    }
-    let ids: Vec<EntityId> = named.iter().filter_map(|(_, id)| *id).collect();
-    let mut readable = lane.entities_readable_in_txn(txn, &ids)?.into_iter();
-    for (pointer, id) in named {
-        // A malformed id takes no readable slot: its pointer fails as it is.
-        let read = id.is_some() && readable.next().unwrap_or(false);
-        if !read {
-            return Ok(Some(pointer));
-        }
-    }
-    Ok(None)
-}
-
 impl Memory<'_> {
     pub(super) fn plan_witness<'t>(
         &self,
@@ -163,6 +130,17 @@ impl Memory<'_> {
                 "a record the reply asserts does not resolve for this writer",
             ));
         }
+        // FIX 1211: a created record every check above read is proved made
+        // by this writer in the durable run its dispatcher is bound to, or
+        // recorded not proven once the turn lands. The reply stands either way.
+        if let Some(read) = assertions {
+            let run = self
+                .host_origin
+                .as_ref()
+                .and_then(HostWriteOrigin::bound_run);
+            let created = unproven_creations_in(dbs, wtxn, &plan.turn.assertions, self.actor, run);
+            read.unproven.set(created);
+        }
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
         // The policy manifest is resolved from THIS transaction's snapshot, so
         // the ceiling that authorizes the rows is the one the commit lands
@@ -171,7 +149,7 @@ impl Memory<'_> {
         // verbatim, so an envelope the base boundary refuses is refused at
         // staging too, before the overlay segment installs.
         let policy = resolve_policy_manifest(&self.vault.store, wtxn)?;
-        let write_actor = WriteActor::new(self.actor, self.actor_class);
+        let write_actor = self.write_actor();
         let mut authorized = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
             // The Coach's own question about a pending training offer may

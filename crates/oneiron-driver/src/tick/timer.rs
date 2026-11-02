@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+use oneiron::attempt_queue::AttemptQueue;
 use oneiron::sync::residence::FreeTimeArming;
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
@@ -27,10 +27,11 @@ use super::{CommitmentDeadline, DeadlineSource, IdleSample, NowMillis, system_no
 /// the vault's stable client identity (`load_or_mint_client_id` via
 /// [`DreamerRunnerStore::local_home_node_candidate`]) and the elected home
 /// designation. Surfacing a due macro when either check would refuse leaves
-/// the queued row unmutated and — deadlines having priority over pushes —
-/// busy-spins the supervisor on the same overdue deadline, starving push
-/// lanes. Both checks are re-read every cycle; an unreadable vault identity
-/// is treated as not-admissible (macro suppressed, other lanes still flow).
+/// the queued row unmutated and — a due deadline taking every other turn
+/// from the pushes — busy-spins the supervisor on the same overdue deadline,
+/// crowding the push lanes. Both checks are re-read every cycle; an
+/// unreadable vault identity is treated as not-admissible (macro suppressed,
+/// other lanes still flow).
 /// For the same reason an attempt an operator placed on another worker is
 /// never this node's deadline: the claim refuses it.
 pub struct AttemptQueueDeadlines<'v> {
@@ -169,13 +170,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         let mut macro_admissible = None;
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
-        for attempt in queue.list()? {
-            if !matches!(
-                attempt.state,
-                AttemptState::Queued | AttemptState::Scheduled
-            ) {
-                continue;
-            }
+        // The ready index holds exactly the Queued and Scheduled tries, so no
+        // other row of the ledger is decoded here (FIX 11940).
+        for attempt in queue.ready_rows()? {
             let placed_elsewhere = attempt
                 .placement
                 .as_ref()
@@ -195,7 +192,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 continue;
             }
             // FIX 5661 C2b (FIX 6212): a started free-time try the old home
-            // drains arms without the home gate, so it settles here.
+            // drains arms without the home gate, so it settles here; so does
+            // every bound one where that home's state is only a local opening
+            // no move exports (FIX 6575).
             if scope == DreamerConsolidationScope::Macro && !free_time.drain.contains(&attempt.id) {
                 let eligible = match macro_admissible {
                     Some(value) => value,
@@ -575,7 +574,9 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
 /// FIX 5661 C2b (FIX 6212): the free-time tries this node's admission takes
 /// now, which the timer arms by the claim's own readiness, and the started
 /// ones the old home drains, which the host's own pass runs to their end
-/// without the home gate so the node can freeze its state for the move.
+/// without the home gate so the node can freeze its state for the move. An
+/// old home whose state is only a local opening no move exports drains every
+/// bound one so (FIX 6575).
 /// Read-only and best-effort: an unreadable set arms nothing for it.
 fn free_time_arming(vault: &Vault) -> FreeTimeArming {
     oneiron::sync::residence::free_time_arming(vault).unwrap_or_else(|error| {

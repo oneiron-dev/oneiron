@@ -2,6 +2,8 @@
 //! Entry: pull_image.
 //! Definitions: this module owns the listed functions; types stay in the parent.
 
+use std::cell::Cell;
+
 use base64::Engine as _;
 
 use super::{
@@ -104,16 +106,10 @@ pub fn resolve_audio_ref(
     reference: &AudioRef,
 ) -> MemoryResult<ScopedReadResult<ResolvedMedia>> {
     let asset = reference.evidence.id;
-    let ScopedReadResult { value, receipt } = lane.read(&[PointRead::id(asset)], None)?;
+    let ScopedReadResult { value, receipt } = asset_blob_in_lane(lane, asset)?;
     let bytes = value
-        .into_iter()
-        .flatten()
-        .find(|row| row.entity_type == ENTITY_TYPE_ASSET)
-        .and_then(|row| row.body)
-        .as_deref()
-        .map(audio_of)
-        .transpose()?
-        .flatten()
+        .as_ref()
+        .and_then(audio_of)
         .filter(|(bytes, media_type)| {
             *blake3::hash(bytes).as_bytes() == reference.evidence.body_hash
                 && media_type.eq_ignore_ascii_case(&reference.media_type)
@@ -138,17 +134,36 @@ pub fn resolve_audio_ref(
 /// before it decodes or serves, so a door that bounds the bodies it decodes
 /// bounds these too: an image past the bound steps down to its thumbnail,
 /// then its text, and with nothing left that fits is omitted, and the vault
-/// asks. The host's `pick` runs before the full image is charged.
+/// asks. The ask's bound is `room_left`, what the door's own budget held
+/// before this serving, less what it charged (FIX 680); with `None`, the
+/// vault's `limits.image_room_bytes`. The host's `pick` runs before the full
+/// image is charged.
 pub fn hydrated_asset(
     lane: &ScopedRead<'_>,
     asset: EntityId,
     consumer: &AssetConsumer,
     pick: Option<&ImagePick<'_>>,
     admits: &mut dyn FnMut(usize) -> bool,
+    room_left: Option<u64>,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
-    let ScopedReadResult { value, receipt } = asset_forms_in_lane(lane, asset, true, admits)?;
+    let charged = Cell::new(0_u64);
+    let mut counted = |len: usize| {
+        let admitted = admits(len);
+        if admitted {
+            charged.set(
+                charged
+                    .get()
+                    .saturating_add(u64::try_from(len).unwrap_or(u64::MAX)),
+            );
+        }
+        admitted
+    };
+    let left = || room_left.map(|left| left.saturating_sub(charged.get()));
+    let ScopedReadResult { value, receipt } = asset_forms_in_lane(lane, asset, true, &mut counted)?;
     let value = match value {
-        Some(forms) if forms.image.is_some() => forms.hydrated(lane, consumer, pick, admits)?,
+        Some(forms) if forms.image.is_some() => {
+            forms.hydrated(lane, consumer, pick, &mut counted, &left)?
+        }
         _ => HydratedAsset::Stored,
     };
     Ok(ScopedReadResult { value, receipt })
@@ -175,20 +190,33 @@ pub(crate) fn asset_audio_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
 ) -> MemoryResult<Option<(String, Vec<u8>)>> {
-    let Some(row) = lane
-        .read(&[PointRead::id(asset)], None)?
+    Ok(asset_blob_in_lane(lane, asset)?
         .value
-        .into_iter()
-        .next()
-        .flatten()
-        .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
-    else {
-        return Ok(None);
-    };
-    let Some(body) = row.body else {
-        return Ok(None);
-    };
-    Ok(audio_of(&body)?.map(|(bytes, mime)| (mime, bytes)))
+        .as_ref()
+        .and_then(audio_of)
+        .map(|(bytes, mime)| (mime, bytes)))
+}
+
+/// The media type and bytes of the blob `asset` holds, read through `lane`
+/// in the snapshot that admitted the ASSET (FIX 9949): `None` when the lane
+/// withholds the asset, it is no ASSET, or it names no blob.
+fn asset_blob_in_lane(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+) -> MemoryResult<ScopedReadResult<Option<(String, Vec<u8>)>>> {
+    let vault = lane.vault();
+    lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
+        let body = rows
+            .into_iter()
+            .next()
+            .flatten()
+            .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
+            .and_then(|row| row.body);
+        match body {
+            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, &body),
+            None => Ok(None),
+        }
+    })
 }
 
 /// Reads the forms of `asset` through `lane`. The lane admits the ASSET and
@@ -206,7 +234,7 @@ pub(crate) fn asset_forms_in_lane(
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
-        value: (row, derived),
+        value: (row, media, derived),
         mut receipt,
     } = lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let row = rows
@@ -215,6 +243,11 @@ pub(crate) fn asset_forms_in_lane(
             .flatten()
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
             .and_then(|row| row.body);
+        // The bytes in the snapshot that admitted the row (FIX 9949).
+        let media = match &row {
+            Some(body) => super::blob::resolve_asset_blob_in_lane(vault, txn, body)?,
+            None => None,
+        };
         let mut derived = Vec::new();
         if row.is_some() {
             for edge in vault.store.port_edges(
@@ -227,18 +260,18 @@ pub(crate) fn asset_forms_in_lane(
                 derived.push(edge?.target);
             }
         }
-        Ok::<_, MemoryError>((row, derived))
+        Ok::<_, MemoryError>((row, media, derived))
     })?;
-    let Some(body) = row else {
+    if row.is_none() {
         return Ok(ScopedReadResult {
             value: None,
             receipt,
         });
-    };
+    }
     let mut forms = AssetForms {
         asset,
-        image: image_of(&body)?,
-        audio: audio_of(&body)?,
+        image: media.as_ref().and_then(image_of),
+        audio: media.as_ref().and_then(audio_of),
         text: None,
         omitted: None,
     };

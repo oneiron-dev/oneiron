@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    close_due_outcome_windows, next_outcome_window_close_at, refresh_due_artifact_questions_while,
-    refresh_due_questions_by_role_while,
+    close_due_outcome_windows, next_outcome_window_close_at, question_unit_correlation,
+    refresh_due_artifact_questions_while, refresh_due_questions_by_role_while, standing_ask_route,
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -68,26 +68,27 @@ pub(crate) struct LadderGraphAnswerer<'s> {
 }
 
 impl<'s> LadderGraphAnswerer<'s> {
-    /// An answerer for `asker`, climbing `dial` with `budget` per unit. A
-    /// ceiling of `human` is held at `big`: a graph answer never queues an
-    /// owner ask.
+    /// An answerer for `asker`, climbing all of `dial` with `budget` per
+    /// unit. A dial up to the person asks the next authorised role (OF-506):
+    /// the asker as the responsible actor, climbing to the vault's owners,
+    /// as a standing question's ask does; it never stops at `big`.
     pub(crate) fn new(
         server: &'s SyncServer,
         asker: WriteActor,
-        mut dial: DecisionDial,
+        dial: DecisionDial,
         budget: Duration,
     ) -> Result<Self> {
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
         if dial.first > dial.ceiling {
             return Err(Error::InvalidConfig(
-                "a graph question's dial starts at the owner ask".into(),
+                "a graph question's dial starts above its ceiling".into(),
             ));
         }
+        let principal = asker.entity_ref();
         Ok(Self::build(
             server,
-            asker.entity_ref(),
+            principal,
             asker,
-            None,
+            Some(standing_ask_route(principal)),
             dial,
             budget,
         ))
@@ -144,12 +145,15 @@ impl<'s> LadderGraphAnswerer<'s> {
     }
 
     /// `ladder` without the rungs that send unit text off the host, where
-    /// the question's posture forbids that.
-    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l> {
+    /// the question's posture forbids that, judged on the route each call
+    /// takes (FIX 9525, [`crate::decision_host::DecisionHost::under_posture`]).
+    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l>
+    where
+        's: 'l,
+    {
+        let server: &'l SyncServer = self.server;
         match self.posture {
-            Some(posture) => {
-                ladder.under_posture(posture, self.server.decision_host().remote_opt_in())
-            }
+            Some(posture) => server.decision_host().under_posture(ladder, posture),
             None => ladder,
         }
     }
@@ -171,7 +175,7 @@ pub(crate) fn question_posture(
 /// text from, and `dial` starting at the first rung it leaves in the dial,
 /// when there is one.
 fn under_question_posture<'l>(
-    server: &SyncServer,
+    server: &'l SyncServer,
     ladder: DecisionLadder<'l>,
     posture: Option<HostingPrivacyPosture>,
     dial: &mut DecisionDial,
@@ -179,7 +183,7 @@ fn under_question_posture<'l>(
     let Some(posture) = posture else {
         return ladder;
     };
-    let ladder = ladder.under_posture(posture, server.decision_host().remote_opt_in());
+    let ladder = server.decision_host().under_posture(ladder, posture);
     if let Some(first) = ladder.first_media_reader(dial.first, dial.ceiling, false, false) {
         dial.first = first;
     }
@@ -230,6 +234,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
                     provider,
                     cost_per_thousand: decision.receipt.cost_per_thousand.unwrap_or(0.0),
                     paired: None,
+                    rule: decision.receipt.rule,
                 })
             }
             _ => None,
@@ -287,6 +292,14 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
             ladder.local = Some(rung as &dyn DecisionProvider);
         }
         ladder.ask_to = self.ask_to.as_ref();
+        // Each unit's person ask is its own: a refresh of the same unit at the
+        // same version finds the same open ask (OF-506).
+        ladder.correlation = Some(question_unit_correlation(
+            question,
+            self.principal,
+            context.unit.as_bytes(),
+            &context.sources.first().map_or([0; 32], |unit| unit.hash),
+        )?);
         let ladder = self.postured(ladder);
         let text = images.is_empty() && audio.is_empty();
         if !text || self.posture.is_some() {
@@ -331,11 +344,11 @@ pub(crate) fn spawn(
     spawn_with_pause(server, admit, || None)
 }
 
-/// [`spawn`] under a host's pause (FIX 7376): each admitted pass reads
-/// `epoch_source` once, after its admission and before it pumps, and starts
-/// no next stage or unit once that epoch holds the pause. The unit in
-/// flight finishes, the pass returns what it did and drops its admission,
-/// and the pump sleeps as after any pass. An epoch of `None` never pauses.
+/// [`spawn`] under a host's pause (FIX 7376): each loop reads `epoch_source` once, and
+/// an admitted pass starts no next stage or unit once that epoch holds the pause. The
+/// unit in flight finishes, the pass returns what it did and drops its admission, and
+/// the pump sleeps as after any pass, woken at once by a thaw on that same epoch (FIX
+/// 7581). An epoch of `None` never pauses.
 pub(crate) fn spawn_with_pause(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
@@ -349,13 +362,16 @@ pub(crate) fn spawn_with_pause(
             let Some(server) = weak.upgrade() else {
                 break;
             };
+            // Read before the gate, once a loop: the pass borrows it, so a freeze since
+            // shows there, and the sleep below waits on it, so a thaw wakes the loop.
+            let mut epoch = epoch_source();
             let next = match admit() {
                 Some(pass) => {
-                    // Read after the gate, once a pass: a freeze since then shows here.
-                    let epoch = epoch_source();
+                    let pass_epoch = epoch.clone();
                     tokio::task::spawn_blocking(move || {
                         let _pass = pass;
-                        let mut may_start = || epoch.as_ref().is_none_or(|held| !*held.borrow());
+                        let mut may_start =
+                            || pass_epoch.as_ref().is_none_or(|held| !*held.borrow());
                         pump_due_while(&server, oneiron_vault_contract::now_ts(), &mut may_start)?;
                         let question = server.vault().next_question_refresh_at()?;
                         let wake = server.vault().next_answer_wake_at()?;
@@ -390,6 +406,18 @@ pub(crate) fn spawn_with_pause(
                         break;
                     }
                 }
+                // The pause epoch wakes the sleep as a change does: a thaw moves it or
+                // closes it for a fresh epoch, so the loop reads its due work at once
+                // instead of at the next change or sweep. A freeze wakes it for one
+                // refused pass. No epoch never wakes this branch.
+                _ = async {
+                    match epoch.as_mut() {
+                        Some(epoch) => {
+                            let _ = epoch.changed().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {}
             }
         }
     })

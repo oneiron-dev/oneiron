@@ -9,6 +9,7 @@ mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
+pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{
@@ -132,6 +133,19 @@ impl Vault {
         match self.host_net_floor.get() {
             Some(floor) => floor.acquire(fds, workers),
             None => UnmeteredFloor.acquire(fds, workers),
+        }
+    }
+
+    /// Takes `bytes` of the floor this vault's host lent, looked up now, as
+    /// a run's relay charges its paused request and answer bodies; a vault no
+    /// host lent one charges nothing.
+    ///
+    /// # Errors
+    /// Returns the floor's `WouldBlock` back-pressure when it is full.
+    pub fn acquire_host_net_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
+        match self.host_net_floor.get() {
+            Some(floor) => floor.acquire_bytes(bytes),
+            None => UnmeteredFloor.acquire_bytes(bytes),
         }
     }
 }

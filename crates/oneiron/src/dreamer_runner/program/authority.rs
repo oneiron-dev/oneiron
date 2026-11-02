@@ -9,11 +9,18 @@
 //! verifies it again, every caveat included, and the program runs under
 //! that live, verified view: its scope, ceiling and verbs bind every read
 //! and effect the program makes, never the actor's broader native surface.
+//!
+//! A managed vault's attested owner seals his person alone (FIX 11090):
+//! each judgment asks the host whether the vault records him as its live
+//! owner then. One who no longer is refuses that wake, or ends that program
+//! Failed; it is never a lapse that waits for his standing to return. A turn
+//! program whose original authorization was positively withdrawn ends the
+//! same way (FIX 11593).
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError, VerifiedSlip};
 use crate::dreamer_runner::{DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerMilestoneClaim};
 use crate::error::{ClaimError, Error, Result};
 use crate::write_envelope::WriteEnvelope;
@@ -46,13 +53,19 @@ enum Proof {
     /// delegated from, the FEDERATION_GRANT it was minted under, the digest
     /// of the effective scope it was admitted with, and the instrument the
     /// request presented, which is no authority on its own: each judgment
-    /// verifies it again in its own snapshot (FIX 8717).
+    /// verifies it again in its own snapshot (FIX 8717). The erase of the
+    /// actor takes the instrument out (`None`, FIX 10668); the witnesses
+    /// stay, and an authority with no instrument no longer stands. A rebind
+    /// (FIX 11429) seals the live successor the same way and keeps each slip
+    /// it stood on before in `rebound_from`, oldest first.
     Slip {
         slip_id: [u8; 32],
         parent: Option<[u8; 32]>,
         grant: Option<EntityId>,
         scope_digest: [u8; 32],
-        instrument: InvocationSlipBinding,
+        instrument: Option<InvocationSlipBinding>,
+        #[serde(default)]
+        rebound_from: Vec<[u8; 32]>,
     },
     /// A self-hosted vault's host credential acting as the vault's owner
     /// (FIX 2222): the host root by id, or the explicit local dev mode.
@@ -60,6 +73,10 @@ enum Proof {
     /// The in-process host's own caller, which presents no credential: its
     /// live binding stands for it.
     Native,
+    /// The vault's owner `holder`, whom its supervisor attested with no slip
+    /// (FIX 11090): he stands only while the vault records him as its live
+    /// owner. Nothing of his is kept.
+    AttestedOwner { holder: EntityId },
 }
 
 impl TurnProgramAuthority {
@@ -104,9 +121,50 @@ impl TurnProgramAuthority {
                 parent: claims.parent_id,
                 grant,
                 scope_digest,
-                instrument: instrument.clone(),
+                instrument: Some(instrument.clone()),
+                rebound_from: Vec::new(),
             },
         })
+    }
+
+    /// The signed instrument this sealed authority keeps, when it is a
+    /// slip's and no erase took it out.
+    pub(super) fn slip_instrument(&self) -> Option<&InvocationSlipBinding> {
+        match &self.proof {
+            Proof::Slip { instrument, .. } => instrument.as_ref(),
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
+    /// This slip's authority rebound to `successor` (FIX 11429), once
+    /// [`Vault::rebind_invocation_slip_in_txn`] proved the rebind in the
+    /// writer that swaps it: sealed from the successor's live, verified
+    /// `proof` as a turn seals a slip ([`Self::slip`]), with the slip it
+    /// stood on before kept in its lineage. `None` for an authority that is
+    /// no slip's, or a successor a turn would seal nothing for.
+    pub(super) fn rebound_to(
+        &self,
+        proof: &VerifiedSlip,
+        successor: &InvocationSlipBinding,
+    ) -> Option<Self> {
+        let Proof::Slip {
+            slip_id,
+            rebound_from,
+            ..
+        } = &self.proof
+        else {
+            return None;
+        };
+        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?;
+        if let Proof::Slip {
+            rebound_from: lineage,
+            ..
+        } = &mut rebound.proof
+        {
+            lineage.extend_from_slice(rebound_from);
+            lineage.push(*slip_id);
+        }
+        Some(rebound)
     }
 
     /// A self-hosted host credential acting as the owner `actor`, under the
@@ -132,8 +190,31 @@ impl TurnProgramAuthority {
         }
     }
 
+    /// A managed vault's attested owner `holder`, as a human (FIX 11090).
+    pub(crate) fn attested_owner(holder: EntityId) -> Self {
+        Self {
+            actor: holder,
+            actor_class: EdgeActorClass::Human as u8,
+            proof: Proof::AttestedOwner { holder },
+        }
+    }
+
     pub(crate) fn actor(&self) -> EntityId {
         self.actor
+    }
+
+    /// The erase of `actor` takes the signed instrument out of this sealed
+    /// authority when `actor` is its waking actor (FIX 10668). The proof
+    /// stays a slip's, with its slip id, parent, Grant and scope digest as
+    /// content-free witnesses, and stands no more. Whether it changed.
+    pub(super) fn scrub_instrument_of(&mut self, actor: &EntityId) -> bool {
+        if self.actor != *actor {
+            return false;
+        }
+        match &mut self.proof {
+            Proof::Slip { instrument, .. } => instrument.take().is_some(),
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => false,
+        }
     }
 
     pub(crate) fn class(&self) -> Result<EdgeActorClass> {
@@ -148,7 +229,7 @@ impl TurnProgramAuthority {
     pub(super) fn grant(&self) -> Option<EntityId> {
         match &self.proof {
             Proof::Slip { grant, .. } => *grant,
-            Proof::HostAction { .. } | Proof::Native => None,
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
         }
     }
 
@@ -156,7 +237,24 @@ impl TurnProgramAuthority {
     pub(super) fn scope_digest(&self) -> Option<[u8; 32]> {
         match &self.proof {
             Proof::Slip { scope_digest, .. } => Some(*scope_digest),
-            Proof::HostAction { .. } | Proof::Native => None,
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
+    /// The slip that authorized the turn, when it was a slip's (FIX 11593).
+    pub(super) fn slip_id(&self) -> Option<[u8; 32]> {
+        match &self.proof {
+            Proof::Slip { slip_id, .. } => Some(*slip_id),
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
+    /// The host root the turn acted under, when it was a host action's with
+    /// one (FIX 11593).
+    pub(super) fn host_root(&self) -> Option<[u8; 32]> {
+        match &self.proof {
+            Proof::HostAction { root } => *root,
+            Proof::Slip { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
         }
     }
 
@@ -175,7 +273,29 @@ impl TurnProgramAuthority {
 
     /// [`Self::stands_in_txn`], with the slip's live, verified view when it
     /// stands on one: the scope, ceiling and verbs the program runs under.
-    fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
+    /// An attested owner stands on his live ownership alone, never on the
+    /// native writer checks. A lapsed authority whose original authorization
+    /// was positively withdrawn answers so (FIX 11593), never merely lapsed.
+    pub(super) fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
+        match self.standing_before_withdrawal_in_txn(vault, txn)? {
+            Standing::Lapsed => match super::withdrawn::withdrawn_in_txn(vault, txn, self)? {
+                Some(reason) => Ok(Standing::Withdrawn { reason }),
+                None => Ok(Standing::Lapsed),
+            },
+            standing => Ok(standing),
+        }
+    }
+
+    /// The standing with a withdrawal still reading as a lapse:
+    /// [`Self::standing_in_txn`] tells them apart.
+    fn standing_before_withdrawal_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Standing> {
+        if let Proof::AttestedOwner { holder } = self.proof {
+            return self.owner_standing_in_txn(vault, txn, holder);
+        }
         let writer = WriteActor::new(self.actor, self.class()?);
         if let Err(error) = vault.verify_native_write_actor_in_txn(txn, &writer) {
             return lapsed(error).map(Standing::of);
@@ -188,6 +308,10 @@ impl TurnProgramAuthority {
                 instrument,
                 ..
             } => {
+                // An erased instrument proves nothing (FIX 10668).
+                let Some(instrument) = instrument else {
+                    return Ok(Standing::Lapsed);
+                };
                 if !vault.capability_slip_id_is_live_in_txn(txn, slip_id)? {
                     return Ok(Standing::Lapsed);
                 }
@@ -226,6 +350,27 @@ impl TurnProgramAuthority {
                 }
             }
             Proof::Native => Ok(Standing::Stands(None)),
+            Proof::AttestedOwner { holder } => self.owner_standing_in_txn(vault, txn, *holder),
+        }
+    }
+
+    /// The attested owner `holder`'s standing in `txn` (FIX 11090): he is the
+    /// sealed actor, as a human, and the vault records him as its live owner
+    /// at this revision. A host that cannot judge it is an error, never a
+    /// lapse and never his refusal.
+    fn owner_standing_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Standing> {
+        if holder != self.actor || self.class()? != EdgeActorClass::Human {
+            return Err(invalid());
+        }
+        match crate::authority::require_live_managed_owner_in_txn(vault, txn, holder) {
+            Ok(()) => Ok(Standing::Stands(None)),
+            Err(ManagedOwnerCheckError::OwnerNotLive) => Ok(Standing::OwnerNotLive),
+            Err(unavailable) => Err(unavailable.into_error()),
         }
     }
 
@@ -260,9 +405,15 @@ impl TurnProgramAuthority {
 }
 
 /// What a sealed authority stands on at one revision.
-enum Standing {
+pub(super) enum Standing {
     /// It lapsed: the program takes the lapse's hold.
     Lapsed,
+    /// Its attested owner is not the vault's live owner (FIX 11090): the
+    /// item is refused or ends Failed, never held.
+    OwnerNotLive,
+    /// Its original authorization was positively withdrawn (FIX 11593): the
+    /// program ends, never held.
+    Withdrawn { reason: &'static str },
     /// It stands, with the slip's live, verified view when it is a slip's.
     Stands(Option<VerifiedSlip>),
 }
@@ -285,6 +436,21 @@ fn lapsed(error: Error) -> Result<bool> {
         Error::Claim(_) | Error::InvalidClaimBody(_) => Ok(false),
         error => Err(error),
     }
+}
+
+/// The admission receipt the program `attempt` was stamped under (FIX 7500):
+/// the loop link an action it took carries. A stamp that does not read
+/// names none.
+pub(crate) fn program_attempt_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Option<[u8; 16]> {
+    ATTEMPT
+        .get(vault, txn, &attempt)
+        .ok()
+        .flatten()
+        .map(|stamp| stamp.receipt_id)
 }
 
 /// Binds a program attempt to the waking actor its admission sealed: the
@@ -332,7 +498,8 @@ pub(crate) fn stamp_program_attempt(
             actor_class: row.wake.authority.class_byte(),
             receipt_id: row.receipt_id,
         },
-    )
+    )?;
+    super::index::index_attempt_in_txn(vault, txn, actor, record.id)
 }
 
 /// A program attempt's milestones carry its waking actor and no other: the
@@ -399,6 +566,8 @@ impl Vault {
             Standing::Lapsed => {
                 return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
             }
+            Standing::OwnerNotLive => return Ok(TurnProgramBound::OwnerNotLive),
+            Standing::Withdrawn { reason } => return Ok(TurnProgramBound::Withdrawn { reason }),
         };
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
@@ -441,12 +610,16 @@ pub(crate) fn require_program_authority_in_txn(
     if stamp.attempt_id != *attempt.as_bytes() || row.wake.authority.actor() != stamp.actor {
         return Err(invalid());
     }
-    if !row.wake.authority.stands_in_txn(vault, txn)? {
-        return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+    match row.wake.authority.standing_in_txn(vault, txn)? {
+        Standing::Stands(_) => Ok(()),
+        Standing::Lapsed => Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
             reason: "a program's waking authority no longer stands",
-        }));
+        })),
+        // His own reason, never a generic lapse (FIX 11090).
+        Standing::OwnerNotLive => Err(ManagedOwnerCheckError::OwnerNotLive.into_error()),
+        // Its own reason, never a generic lapse (FIX 11593).
+        Standing::Withdrawn { reason } => Err(super::withdrawn::withdrawn_refusal(reason)),
     }
-    Ok(())
 }
 
 /// What binding one program attempt for an entry found.
@@ -455,6 +628,14 @@ pub(crate) enum TurnProgramBound {
     /// The waking actor's authority, or the pin, no longer stands: the hold
     /// it takes.
     Lapsed(ProgramHold),
+    /// Its attested owner is not the vault's live owner (FIX 11090): the
+    /// program ends Failed, held by nothing.
+    OwnerNotLive,
+    /// Its original authorization was positively withdrawn (FIX 11593): the
+    /// program ends Failed, held by nothing.
+    Withdrawn {
+        reason: &'static str,
+    },
 }
 
 /// The actor `id`'s stamp names, in `txn`.

@@ -64,11 +64,15 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
+            // A repo-mutation row reads by its own door (FIX 2890).
             let found = match super::retained::hit(vault, txn, decl, key, value)? {
                 Some(found) => found,
-                None => match write_payload_hit(value) {
-                    None => super::loro_blocks::hit(vault, txn, decl, key, value)?,
-                    raw => raw,
+                None => match super::repo_rows::hit(vault, txn, decl, key, value)? {
+                    Some(found) => found,
+                    None => match write_payload_hit(value) {
+                        None => super::loro_blocks::hit(vault, txn, decl, key, value)?,
+                        raw => raw,
+                    },
                 },
             };
             if found.is_some() {
@@ -92,6 +96,10 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     if let Some(done) = super::retained::lift(vault, txn, decl, row_key)? {
+        return Ok(done);
+    }
+    // A repo-mutation row marks by its own door (FIX 2890).
+    if let Some(done) = super::repo_rows::lift(vault, txn, decl, row_key)? {
         return Ok(done);
     }
     let row = match decl.db {
@@ -132,6 +140,16 @@ pub(super) fn path(key: &[u8]) -> String {
 
 fn cursor(place: u8, key: &[u8]) -> Vec<u8> {
     [&[place][..], key].concat()
+}
+
+/// The census cursor of `decl`'s row `row` (its key after the table's
+/// prefix): `None` for a table that is no carrier.
+pub(super) fn cursor_of(decl: &SideTableDecl, row: &[u8]) -> Option<Vec<u8>> {
+    let place = CARRIERS.iter().position(|held| std::ptr::eq(*held, decl))?;
+    Some(cursor(
+        u8::try_from(place).ok()?,
+        &[decl.prefix, row].concat(),
+    ))
 }
 
 fn carrier_of(key: &[u8]) -> Option<(&'static SideTableDecl, &[u8])> {

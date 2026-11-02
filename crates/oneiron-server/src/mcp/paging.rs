@@ -81,6 +81,10 @@ pub struct McpPageSource {
 pub struct McpPageResume {
     pub field: &'static str,
     pub argument: &'static str,
+    /// The key the continuation takes inside `argument`, when `argument` is
+    /// an object the call sent: the call goes back with that object whole,
+    /// this key set (FIX 9175). `None`: the continuation is `argument` itself.
+    pub within: Option<&'static str>,
 }
 
 impl McpPageSource {
@@ -140,7 +144,29 @@ impl McpPageSource {
     /// and a caller passes it back as `argument`.
     #[must_use]
     pub const fn resumed_by(mut self, field: &'static str, argument: &'static str) -> Self {
-        self.resume = Some(McpPageResume { field, argument });
+        self.resume = Some(McpPageResume {
+            field,
+            argument,
+            within: None,
+        });
+        self
+    }
+
+    /// Names the producer's own continuation inside one of its call's
+    /// arguments: `field` of the output holds it, and a caller passes back the
+    /// object it sent as `argument`, with `key` set to it (FIX 9175).
+    #[must_use]
+    pub const fn resumed_within(
+        mut self,
+        field: &'static str,
+        argument: &'static str,
+        key: &'static str,
+    ) -> Self {
+        self.resume = Some(McpPageResume {
+            field,
+            argument,
+            within: Some(key),
+        });
         self
     }
 
@@ -313,6 +339,25 @@ impl McpPageBudget {
         self.resume = Some((argument, value));
     }
 
+    /// Puts the continuation [`Self::resume_with`] named back inside the
+    /// call's own argument, for a producer that resumes within one
+    /// ([`McpPageSource::resumed_within`]): `call_argument` whole, with the
+    /// resume's key set to the continuation and every other key as the call
+    /// sent it. With no such object the page has no way on, and says so.
+    pub fn resume_within(&mut self, resume: McpPageResume, call_argument: Option<&Value>) {
+        let Some(key) = resume.within else {
+            return;
+        };
+        let Some((argument, value)) = self.resume.take() else {
+            return;
+        };
+        if let Some(Value::Object(sent)) = call_argument {
+            let mut sent = sent.clone();
+            sent.insert(key.to_owned(), value);
+            self.resume = Some((argument, Value::Object(sent)));
+        }
+    }
+
     /// A non-terminal page that carries NO way on says so explicitly.
     ///
     /// This is derived from the facts it is about, so a `More` can never
@@ -360,41 +405,68 @@ impl McpPageBudget {
     }
 }
 
+/// One step of [`canonical_json`]'s walk.
+enum CanonicalStep<'a> {
+    /// A value still to write.
+    Value(&'a Value),
+    /// An object key, written with its colon.
+    Key(&'a str),
+    /// A separator or a closing bracket.
+    Text(&'static str),
+}
+
 /// Serializes JSON into a deterministic RFC-8785-shaped form for the values
 /// used by MCP argument binding. In particular, every object is sorted
 /// recursively; relying on `Value::to_string()` would preserve the workspace's
 /// insertion order and make two equivalent nested objects hash differently.
+/// The walk keeps what it has left to write on a heap stack, so a value of
+/// any depth writes the same bytes without deepening the call stack (FIX
+/// 10603).
 fn canonical_json(value: &Value, out: &mut String) {
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-        Value::Number(value) => out.push_str(&value.to_string()),
-        Value::String(value) => {
-            out.push_str(&serde_json::to_string(value).expect("JSON strings are serializable"));
-        }
-        Value::Array(values) => {
-            out.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                canonical_json(value, out);
-            }
-            out.push(']');
-        }
-        Value::Object(values) => {
-            let mut keys = values.keys().collect::<Vec<_>>();
-            keys.sort_unstable();
-            out.push('{');
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
+    let mut pending = vec![CanonicalStep::Value(value)];
+    while let Some(step) = pending.pop() {
+        let value = match step {
+            CanonicalStep::Value(value) => value,
+            CanonicalStep::Key(key) => {
                 out.push_str(&serde_json::to_string(key).expect("JSON keys are serializable"));
                 out.push(':');
-                canonical_json(&values[key], out);
+                continue;
             }
-            out.push('}');
+            CanonicalStep::Text(text) => {
+                out.push_str(text);
+                continue;
+            }
+        };
+        match value {
+            Value::Null => out.push_str("null"),
+            Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Value::Number(value) => out.push_str(&value.to_string()),
+            Value::String(value) => {
+                out.push_str(&serde_json::to_string(value).expect("JSON strings are serializable"));
+            }
+            Value::Array(values) => {
+                out.push('[');
+                pending.push(CanonicalStep::Text("]"));
+                for (index, value) in values.iter().enumerate().rev() {
+                    pending.push(CanonicalStep::Value(value));
+                    if index > 0 {
+                        pending.push(CanonicalStep::Text(","));
+                    }
+                }
+            }
+            Value::Object(values) => {
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                out.push('{');
+                pending.push(CanonicalStep::Text("}"));
+                for (index, key) in keys.into_iter().enumerate().rev() {
+                    pending.push(CanonicalStep::Value(&values[key]));
+                    pending.push(CanonicalStep::Key(key));
+                    if index > 0 {
+                        pending.push(CanonicalStep::Text(","));
+                    }
+                }
+            }
         }
     }
 }
@@ -498,10 +570,8 @@ pub(super) struct McpPageContinuation {
     pub(super) position: u32,
     /// The immutable producer result this position indexes.
     pub(super) snapshot: Option<McpPageSnapshot>,
-    /// Mint order within this registry, from its own monotonic counter and no
-    /// clock. It is the ONLY input to the retention bound's eviction choice, so
-    /// which handle a full connection loses is deterministic and replayable.
-    pub(super) minted_seq: u64,
+    /// The measured bytes `snapshot` retains, counted once at mint (FIX 9507).
+    pub(super) retained_bytes: u64,
 }
 
 /// A foreign TTL can only narrow this endpoint's refusal to cache.

@@ -54,6 +54,10 @@ impl PublicLoop {
             super::speech::stopped(&stop, &mut self.bridge, &mut self.outputs);
         }
         self.outputs.brain.settle_retired().await;
+        // Its speculative passes still running past their deadline write when
+        // their queries end: joined while the session holds its admission,
+        // which public.rs drops once this returns (FIX 3814).
+        super::join_speculative(self.host.speculative.clone()).await;
         controls(&mut self.wire, &self.journal)?;
         let mut journal = self.journal.lock().map_err(|_| unavailable())?;
         journal.finished(&self.host);
@@ -97,11 +101,12 @@ impl PublicLoop {
             tokio::select! {
                 () = shutdown.triggered() => break,
                 // No door named the session for a while: once it rests, no
-                // brain turn answering or winding down, it releases its
-                // admission, and nothing here runs until a door names it
-                // again and takes one.
+                // brain turn answering or winding down and no speculative
+                // pass running past its deadline, it releases its admission,
+                // and nothing here runs until a door names it again and
+                // takes one.
                 () = tokio::time::sleep_until(release_at.unwrap_or_else(Instant::now)), if release_at.is_some() => {
-                    if shutdown.is_triggered() || !self.outputs.brain.at_rest() {
+                    if shutdown.is_triggered() || !self.outputs.brain.at_rest() || !self.host.speculative_at_rest() {
                         not_before = Instant::now() + REST_RECHECK;
                     } else if self.hold.release_if_idle() {
                         tokio::select! {

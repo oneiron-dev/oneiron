@@ -60,7 +60,8 @@ pub(crate) fn erase_gate_decision_actor_in_txn(
 
 impl Store {
     /// Clears `actor_ref` in place on every ledger row that names `actor`,
-    /// and nothing else: the claim skeleton redactor is for an erased claim.
+    /// and each read context its writer copied that names it, and nothing
+    /// else: the claim skeleton redactor is for an erased claim.
     /// A row goes back as it was stored, plain or sealed to its claim under
     /// the key generation that sealed it. A sealed row whose key was retired
     /// can be read by no one and stays as it is. A row whose own partition,
@@ -72,7 +73,6 @@ impl Store {
         actor: &EntityId,
         at: u64,
     ) -> Result<()> {
-        let actor_ref = actor.to_hex();
         let mut cleared = Vec::new();
         let mut held = Vec::new();
         let custody = self.core.key_custody.local();
@@ -87,14 +87,14 @@ impl Store {
                 }
                 decoded => decoded?,
             };
-            if record.actor_ref.as_deref() != Some(actor_ref.as_str()) {
+            if !record.names_actor(actor) {
                 continue;
             }
             if self.gate_partition_held_in_txn(&*wtxn, record.claim_id.as_ref())? {
                 held.push(decision_id);
                 continue;
             }
-            record.actor_ref = None;
+            record.scrub_actor(actor);
             cleared.push((decision_id, reseal_gate_decision(custody, &raw, &record)?));
         }
         for (decision_id, value) in &cleared {
@@ -107,8 +107,9 @@ impl Store {
     }
 }
 
-/// `record` encoded as the row `raw` was stored: plain, or sealed to its
-/// claim under the key generation that sealed it.
+/// `record` encoded as the row `raw` was stored: plain, sealed to its claim
+/// under the key generation that sealed it, or sealed under the policy
+/// partition (FIX 7806).
 pub(super) fn reseal_gate_decision(
     custody: Option<LocalCustody<'_>>,
     raw: &[u8],
@@ -118,6 +119,10 @@ pub(super) fn reseal_gate_decision(
     match (orcb::raw_claim_generation(raw), custody) {
         (Some((_, generation)), Some(custody)) => orcb::encode_hot_at(custody, record, generation),
         (Some(_), None) => Err(orcb::corrupt()),
+        (None, Some(custody)) if orcb::is_policy_sealed(raw) => {
+            orcb::encode_policy(custody, record)
+        }
+        (None, None) if orcb::is_policy_sealed(raw) => Err(orcb::corrupt()),
         (None, _) => encode_gate_decision(record),
     }
 }

@@ -9,7 +9,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
-use crate::http::GraphQlCall;
+use crate::http::{GraphQlCall, GraphQlValue};
 use crate::source::LinearTrackerConfig;
 use crate::{data, invalid};
 
@@ -34,7 +34,7 @@ pub trait LinearOutboundDoor {
         &mut self,
         mutation: &LinearMutation<'_>,
         call: &GraphQlCall,
-    ) -> LinearSyncResult<Value>;
+    ) -> LinearSyncResult<GraphQlValue>;
 }
 
 /// The mirror mutation behind one door call: what the vault checks against

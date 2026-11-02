@@ -25,8 +25,9 @@ pub use review_views::{
 };
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{
-    CodeDocumentRows, CodeFileIngress, code_document_texts_in_txn, erase_head_actor_in_txn,
-    erase_ingress_actor_in_txn, verify_frontier_in_txn,
+    CodeDocumentRows, CodeFileIngress, code_document_genesis_id, code_document_identity_in_txn,
+    code_document_texts_in_txn, erase_head_actor_in_txn, erase_ingress_actor_in_txn,
+    verify_frontier_in_txn,
 };
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,

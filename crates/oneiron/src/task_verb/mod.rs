@@ -14,6 +14,7 @@ mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_soft_confirm;
+mod session_ask;
 pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_dispatch;
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
@@ -23,23 +24,25 @@ mod attendee_answer;
 mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
+pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
 mod brief_history;
 pub(crate) use brief_history::settled_brief_in;
 mod browser_workflow;
+mod cancel_settlement;
 mod checkout_facts;
 mod code_consent_word;
 pub(crate) use checkout_facts::CheckoutTaskAccess;
 pub(crate) use code_consent_word::code_consent_word_in_txn;
 mod consts;
 pub(crate) use consts::TASK_EXTERNAL_ATTEMPT_KIND;
+mod consult_assignee_wait;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
 mod consult_fanout_resume;
 mod consult_fanout_store;
 mod consult_fanout_types;
 mod consult_ladder_facade;
-mod consult_party_backfill;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
@@ -51,6 +54,7 @@ mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
 mod external_attempt;
+mod fact_link_wake;
 pub(crate) use external_attempt::decode as decode_external_task_attempt;
 mod fanout_check;
 mod fanout_launch;
@@ -68,7 +72,7 @@ mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    task_lifecycle_receipts,
+    settled_receipt_in, task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -77,6 +81,7 @@ pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
+mod presence_jobs;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
@@ -85,6 +90,7 @@ mod proposal_create;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
 mod report_journal;
 pub(crate) use report_journal::{
@@ -98,6 +104,7 @@ pub mod run_control;
 pub mod run_doors;
 mod runner_done;
 mod scheduling;
+pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
@@ -197,7 +204,8 @@ pub use runner_done::{
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
-    settled_task_result_binding, task_human_assignee, task_is_terminal,
+    settled_task_result_binding, settled_task_result_binding_in_txn, task_human_assignee,
+    task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
@@ -429,7 +437,9 @@ pub(crate) use ask_record::{
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
+pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
+pub(crate) use session_ask::{SessionAskParts, SessionAskRecord};
 
 pub(crate) use ask_effect::ProjectWidenRoute;
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};

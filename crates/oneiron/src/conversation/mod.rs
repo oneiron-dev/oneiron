@@ -10,6 +10,8 @@ mod preview;
 mod privacy_erase;
 mod roles;
 mod session;
+// An owner-named residual speaker handed into a PERSON window (FIX 3634).
+mod speaker_handoff;
 mod turn_actions;
 mod visibility;
 
@@ -35,8 +37,10 @@ pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
+pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};
 pub use turn_actions::{
-    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine,
+    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
+    TurnActionContext, TurnActionLine, TurnActionRebindReceipt, TurnActionRebindRequest,
     TurnActionReceipt, TurnActionRequest,
 };
 pub(crate) use visibility::{

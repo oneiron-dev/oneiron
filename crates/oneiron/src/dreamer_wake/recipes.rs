@@ -131,12 +131,29 @@ impl Vault {
     }
 }
 
+/// The unflagged windows a weave for `attempt` audits, drawn on a read
+/// snapshot of their own before the weave's write opens (FIX 7902): the draw
+/// reads whole turn texts until it fills, which no write transaction holds.
+/// Each window is read again at its own audit, so one the weave's commit
+/// outdates is judged there, as any drawn window is.
+pub(crate) fn weave_window_sample(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+) -> Result<Vec<sieve::SieveAuditWindow>> {
+    let txn = vault.store.env.read_txn()?;
+    let policy = policy_in_txn(vault, &txn)?;
+    sieve::audit_window_sample_in_txn(vault, &txn, attempt.status.attempt.id, &policy)
+}
+
 /// The summary executor reads retained source turns, never an earlier summary.
 /// Source selection and the audit sample are durable children of this receipt.
+/// `windows` is [`weave_window_sample`], drawn before this write; `None`
+/// draws it here, for a weave whose input was not there when the draw ran.
 pub(crate) fn weave_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     attempt: &DreamerAdmittedAttempt,
+    windows: Option<Vec<sieve::SieveAuditWindow>>,
     now: u64,
 ) -> Result<()> {
     let requester = vault.dreamer_authority_in_txn(txn, now)?;
@@ -167,8 +184,11 @@ pub(crate) fn weave_in_txn(
         sieve::enqueue_rungs_in_txn(&store, txn, &attempt.status, &span, true, now)?;
     }
     // Unflagged windows go on top of the flagged sample (OF-498f).
-    for window in sieve::audit_window_sample_in_txn(vault, txn, attempt.status.attempt.id, &policy)?
-    {
+    let windows = match windows {
+        Some(windows) => windows,
+        None => sieve::audit_window_sample_in_txn(vault, txn, attempt.status.attempt.id, &policy)?,
+    };
+    for window in windows {
         sieve::enqueue_window_audit_in_txn(&store, txn, &attempt.status, &window, &policy, now)?;
     }
     Ok(())

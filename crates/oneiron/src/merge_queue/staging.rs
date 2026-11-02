@@ -10,6 +10,30 @@ use crate::{
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+/// How many proposals one speculation window spans: a batch stages every
+/// nonempty subset of one window over all earlier windows in full (FIX 9948).
+pub(super) const SPECULATION_WIDTH: usize = 6;
+
+/// The most proposals one batch holds: its path mask is a `u64` whose
+/// all-ones value names the slow check's path.
+pub(super) const MAX_BATCH_PROPOSALS: usize = 63;
+
+/// The masks a batch of `count` proposals stages, ascending: for each window
+/// of [`SPECULATION_WIDTH`] proposals, every nonempty subset of it with every
+/// earlier window whole. Up to one window, every nonempty subset; the last
+/// mask is always the full batch, and every landed prefix is one of them.
+pub(super) fn speculative_masks(count: usize) -> Vec<u64> {
+    let mut masks = Vec::new();
+    for start in (0..count.min(MAX_BATCH_PROPOSALS)).step_by(SPECULATION_WIDTH) {
+        let prefix = (1_u64 << start) - 1;
+        let width = SPECULATION_WIDTH.min(count - start);
+        for subset in 1..(1_u64 << width) {
+            masks.push(prefix | (subset << start));
+        }
+    }
+    masks
+}
+
 impl MergeQueue<'_> {
     /// Admit reviewed proposals from the last green tree, without applying them.
     pub fn enqueue(&self, proposals: Vec<MergeProposal>) -> Result<MergeBatch> {
@@ -115,9 +139,8 @@ impl MergeQueue<'_> {
         }
         self.require_clean(self.repo.repo_root())?;
         let wire = GitWire::new(self.vault)?;
-        let count = (1_u64 << batch.proposals.len()) - 1;
         batch.paths.clear();
-        for mask in 1..=count {
+        for mask in speculative_masks(batch.proposals.len()) {
             let path = self.worktree_path(id, mask);
             if wire.worktree_registered(&self.repo, &path)? {
                 wire.remove_worktree(&self.repo, &path, 0)?;
@@ -280,7 +303,7 @@ impl MergeQueue<'_> {
             return Err(invalid("live speculation cannot be collected"));
         }
         let wire = GitWire::new(self.vault)?;
-        for mask in 1..(1 << batch.proposals.len()) {
+        for mask in speculative_masks(batch.proposals.len()) {
             wire.remove_worktree(&self.repo, &self.worktree_path(id, mask), 0)?;
         }
         let slow = self.worktree_path(id, u64::MAX);
@@ -388,8 +411,12 @@ impl MergeQueue<'_> {
 }
 
 pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
-    if proposals.is_empty() || proposals.len() > 6 {
-        return Err(invalid("merge batch must contain one to six proposals"));
+    // More than one window is admitted whole and speculated a window at a
+    // time (FIX 9948); the mask's width is the batch's one bound.
+    if proposals.is_empty() || proposals.len() > MAX_BATCH_PROPOSALS {
+        return Err(invalid(
+            "a merge batch holds one to 63 proposals, the width of its path mask",
+        ));
     }
     let mut ids = BTreeSet::new();
     let mut total = 0_usize;

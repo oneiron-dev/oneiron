@@ -6,7 +6,9 @@
 //! `.<vault dir name>.key-custody/<namespace hex>.<vault hex>/<tag hex>.<item hex>/`
 //! holds a subject's `g<generation hex16>` entries, its
 //! `.retired-g<generation hex16>` markers and its
-//! `.g<generation hex16>-<random hex16>.pending` temporaries. Every directory
+//! `.g<generation hex16>-<random hex16>.pending` temporaries; a world pad's
+//! also holds the `.carried-<key id hex>` compartments a restore left
+//! unopened ([`super::carried_pads`], PAD-3). Every directory
 //! and file is opened without following a link. On Unix each is the
 //! effective uid's, owner-only (0700/0600), and an entry has exactly one
 //! link; on Windows the user's profile ACL, which custody's directories
@@ -45,6 +47,16 @@ pub(super) fn container(root: &Path) -> Result<PathBuf> {
     Ok(root.with_file_name(name))
 }
 
+/// The key custody directory the engine keeps beside the vault whose data
+/// directory is `data_dir` (`.<data directory>.key-custody`), for a host
+/// that must keep the name free or move it with the vault (FIX 6582).
+///
+/// # Errors
+/// A `data_dir` with no final component.
+pub fn custody_container_path(data_dir: &Path) -> Result<PathBuf> {
+    container(data_dir)
+}
+
 /// Whether a custody directory exists beside the vault at `root`. A binding
 /// another platform wrote names no root here, so none exists for it.
 pub(crate) fn custody_present(root: &Path) -> Result<bool> {
@@ -54,7 +66,7 @@ pub(crate) fn custody_present(root: &Path) -> Result<bool> {
     exists(&container(root)?)
 }
 
-fn exists(path: &Path) -> Result<bool> {
+pub(super) fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -68,6 +80,12 @@ pub(super) fn entry_name(generation: u64) -> String {
 
 pub(super) fn marker_name(generation: u64) -> String {
     format!(".retired-g{generation:016x}")
+}
+
+/// The name of the mark that `generation`'s Mint frame is synced (FIX
+/// 5798): no census, generation scan or pending sweep reads it as an entry.
+fn journaled_name(generation: u64) -> String {
+    format!(".journaled-g{generation:016x}")
 }
 
 /// The error a fault reads as: the kind's own, or custody's.
@@ -307,7 +325,7 @@ impl LocalCustody<'_> {
     }
 
     /// `subject`'s directory; refused for another vault's subject.
-    fn subject_dir(&self, subject: &CustodySubject) -> Result<PathBuf> {
+    pub(super) fn subject_dir(&self, subject: &CustodySubject) -> Result<PathBuf> {
         if subject.vault() != self.binding.vault() {
             return Err(subject.kind().corrupt());
         }
@@ -325,6 +343,10 @@ impl LocalCustody<'_> {
             kind,
         )?;
         open_dir(&self.compartment()?, create == Create::All, kind)?;
+        // FIX 11208: an erasable key's ref is filed before its directory.
+        if create != Create::Nothing && subject.kind() == CustodyKind::ErasableKey {
+            self.index_erasable(subject)?;
+        }
         let file = open_dir(&dir, create != Create::Nothing, kind)?;
         Ok((dir, file))
     }
@@ -430,7 +452,22 @@ impl LocalCustody<'_> {
     /// erase of the subject still retires.
     pub(crate) fn publish_minted(&self, id: &CustodyId, secret: &CustodySecret) -> Result<()> {
         self.publish(id, secret)?;
+        self.journal_mint(id)
+    }
+
+    /// Journals `id`'s Mint, synced, unless its mark says a frame already
+    /// holds it; then marks it (FIX 5798, 6781). An entry whose Mint append
+    /// failed, or whose writer aborted after publishing it, is journaled
+    /// here at its next use, before any row sealed under it commits: one
+    /// frame per entry, not one per use. A mark lost to a crash only
+    /// journals the Mint again, which moves the log on and changes no set.
+    fn journal_mint(&self, id: &CustodyId) -> Result<()> {
+        let dir = self.subject_dir(id.subject())?;
+        if exists(&dir.join(journaled_name(id.generation())))? {
+            return Ok(());
+        }
         self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
+        write_once(&dir, &journaled_name(id.generation()), &[])?;
         Ok(())
     }
 
@@ -496,48 +533,36 @@ impl LocalCustody<'_> {
         Ok(subjects)
     }
 
-    /// `id`'s entry, minting it only while unpublished. A damaged entry is
-    /// never treated as absent; only an unpublished temporary is discarded.
+    /// `id`'s entry, minting it only while unpublished, its Mint journaled
+    /// whether this call minted it or found it, for every client (FIX 5798,
+    /// 6781): an entry an earlier call published before its Mint failed to
+    /// append, or its writer aborted, is journaled here, before any row
+    /// sealed under it commits. Every reader of the log takes a Mint as a
+    /// set member, so one journaled again only moves the log on. A damaged
+    /// entry is never treated as absent; only an unpublished temporary is
+    /// discarded. A retired id is refused, never minted again; a found key
+    /// is kept.
     pub(crate) fn get_or_create(&self, id: &CustodyId) -> Result<CustodySecret> {
-        self.get_or_mint(id).map(|(secret, _)| secret)
-    }
-
-    /// [`Self::get_or_create`], its Mint journaled whether it minted the
-    /// entry or found it (KS-6): an entry an earlier call published before
-    /// its Mint failed to append, or its writer aborted, is journaled here,
-    /// before any row sealed under it commits. Every reader of the log takes
-    /// a Mint as a set member, so one journaled again only moves the log on.
-    /// A retired id is refused, never minted again; a found key is kept.
-    pub(crate) fn get_or_create_journaled(&self, id: &CustodyId) -> Result<CustodySecret> {
-        let (secret, minted) = self.get_or_mint(id)?;
-        if !minted {
-            self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
-        }
-        Ok(secret)
-    }
-
-    /// `id`'s entry and whether this call minted and journaled it.
-    fn get_or_mint(&self, id: &CustodyId) -> Result<(CustodySecret, bool)> {
         let kind = id.kind();
         let (dir, directory) = self.prepare(id)?;
         let path = dir.join(entry_name(id.generation()));
-        if exists(&path)? {
-            return Ok((self.read(id)?, false));
-        }
-        let secret = CustodySecret::random(kind.secret_len());
-        let published = write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
-        platform::sync_held(&directory, &dir)?;
-        if !published {
-            return Ok((self.read(id)?, false));
-        }
+        let secret = if exists(&path)? {
+            self.read(id)?
+        } else {
+            let secret = CustodySecret::random(kind.secret_len());
+            let published = write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
+            platform::sync_held(&directory, &dir)?;
+            if published { secret } else { self.read(id)? }
+        };
         // KS-4: the mint is journaled, synced, before a row sealed under it
         // may commit.
-        self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
-        Ok((secret, true))
+        self.journal_mint(id)?;
+        Ok(secret)
     }
 
     /// Destroys precisely `id`: its marker is synced, then its entry is
-    /// unlinked and the directory synced. Neither an old snapshot nor a
+    /// unlinked and the directory synced, then a world pad's carried
+    /// compartments go too (PAD-3). Neither an old snapshot nor a
     /// delayed retirement can revive or destroy another generation. Ordering
     /// against readers and the durable intent is the caller's
     /// ([`crate::store::Store::finish_custody_retirements`]).
@@ -565,6 +590,6 @@ impl LocalCustody<'_> {
             Err(err) => return Err(err.into()),
         }
         platform::sync_held(&directory, &dir)?;
-        Ok(())
+        self.drop_carried(id.subject())
     }
 }

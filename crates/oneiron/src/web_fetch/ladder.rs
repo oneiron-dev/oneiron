@@ -1,8 +1,8 @@
 //! Private ladder-driver internals: the rung-slot requirement and check, the
 //! per-rung and per-page implementation behind [`WebFetcher::fetch`] and
-//! [`WebFetcher::crawl`], the two peer-controlled link ceilings, the
-//! breadth-first walk state, the crawl failure reason renderer, and the closed
-//! wire form every decoded [`FetchResult`] passes through.
+//! [`WebFetcher::crawl`], the breadth-first walk state, the crawl failure
+//! reason renderer, and the closed wire form every decoded [`FetchResult`]
+//! passes through.
 //!
 //! Nothing here is public surface. The parent module owns [`WebFetcher`], every
 //! public constructor and method on it, and every exported type these units
@@ -20,29 +20,8 @@ use super::render::{
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
     CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererError, RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher,
-    content_hash,
+    RendererError, RendererKind, WebFetchError, WebFetchResult, WebFetcher, content_hash,
 };
-
-/// Ceiling on how many distinct URLs one walk's frontier may hold.
-///
-/// The per-page ceiling alone still leaves `page budget × per-page ceiling`, and
-/// the page budget is the caller's number, so the frontier carries its own
-/// bound. Both ceilings are engine constants: neither is a caller dial.
-pub(super) const MAX_CRAWL_FRONTIER_URLS: usize = 65536;
-
-/// The exact reason literal recorded when admitting a page's links would push
-/// the walk's frontier past [`MAX_CRAWL_FRONTIER_URLS`].
-pub(super) const FRONTIER_LINK_BUDGET_EXCEEDED_REASON: &str = "frontier_link_budget_exceeded";
-
-/// The one seam a rung's discovered links reach the walk through.
-///
-/// An over-ceiling page is an ordinary typed rung failure, so it consumes its
-/// attempt and admits neither page nor links, and a seed that does it stays a
-/// typed seed error. Nothing here ever hands back a shortened link list.
-fn bounded_link_list(links: Vec<String>, base: &Url) -> RendererResult<Vec<String>> {
-    normalize_link_list(links, base)
-}
 
 /// Whether an absent ladder slot is an ordinary trace record or a fail-closed
 /// engine error.
@@ -121,8 +100,7 @@ impl WebFetcher {
         // crawl requires the former above, so the fallback serves only a
         // single-page caller that cannot enqueue these links.
         let link_base = final_url.as_ref().unwrap_or(&canonical_url);
-        let discovered_links =
-            bounded_link_list(page.discovered_links, link_base).map_err(as_attempt)?;
+        let discovered_links = normalize_link_list(page.discovered_links, link_base);
 
         let result = FetchResult {
             content_hash: content_hash(&page.markdown),
@@ -311,19 +289,6 @@ impl CrawlWalk {
         }
 
         let fresh = self.fresh_links(links, scope, &pinned_origin);
-        if self.frontier.len().saturating_add(fresh.len()) > MAX_CRAWL_FRONTIER_URLS {
-            // The bound is over URLs still held in memory, not every URL the
-            // walk ever queued. A long one-link chain therefore remains a
-            // one-entry frontier, while a genuinely wide page is refused. The
-            // attempt is already counted, and neither the page nor one link of
-            // it is admitted. Dropping only the overflowing tail would make
-            // `unvisited_urls` a quiet lie about what remained in front of us.
-            self.failed.push(CrawlPageFailure {
-                url: requested,
-                reason: FRONTIER_LINK_BUDGET_EXCEEDED_REASON.to_string(),
-            });
-            return;
-        }
 
         if is_seed {
             self.pinned_origin = Some(final_origin);
@@ -331,12 +296,8 @@ impl CrawlWalk {
         self.admit_page(page, fresh, final_url);
     }
 
-    /// This page's links that admission would newly add to the frontier: in link
+    /// This page's links that admission newly adds to the frontier: in link
     /// order, deduplicated, and filtered exactly as admission filters.
-    ///
-    /// Measuring the ceiling against this — rather than against raw peer text —
-    /// is what keeps the bound about frontier growth instead of about how
-    /// verbosely a page spells links the walk would discard anyway.
     fn fresh_links(&self, links: &[String], scope: CrawlScope, pinned_origin: &str) -> Vec<Url> {
         let mut seen = BTreeSet::new();
         let mut fresh = Vec::new();

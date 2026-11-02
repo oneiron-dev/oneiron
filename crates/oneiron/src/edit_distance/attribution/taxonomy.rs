@@ -1,13 +1,15 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
-use crate::claim::{PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST};
-use crate::edit_distance::delta::delta_from_reconstructed;
+use super::origin::UNKNOWN_EXECUTOR;
+use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::learning::TypeRef;
+use crate::llm::decision::DecisionReceipt;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
-    AuditAnswerSource, EditHunk, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
-    classify_split_traced, settled_split,
+    AuditAnswerSource, EditHunk, HunkVerdict, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
+    classify_split_traced, settled_split, split_from_verdicts,
 };
 
 // ---------------------------------------------------------------------------
@@ -26,8 +28,9 @@ pub type AmendmentClass = AttributionVerdict;
 /// An attempt that FAILED is wrong by construction. An amendment rode an
 /// APPROVAL, so wrongness is a question, and these three answers are what the
 /// pre-filter in [`classify_amendment`] reasons over. `None` on the evidence
-/// means the question is unsettled, and the judge abstains rather than guessing
-/// — the false-pass bias [`run_judge_audit`](crate::edit_distance::attribution::run_judge_audit) exists to expose starts exactly
+/// means the question is unsettled, and the amendment holds as `unclear`
+/// rather than guessing — the false-pass bias
+/// [`run_judge_audit`](crate::edit_distance::attribution::run_judge_audit) exists to expose starts exactly
 /// there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -71,9 +74,9 @@ impl AmendmentCause {
 /// scope, and the facts that settle the class.
 ///
 /// The `Option` facts are unsettled-by-default on purpose. A door that observed
-/// an amendment but cannot say WHY records what it knows and lets the judge
-/// abstain; inventing a cause to fill the slot is the failure this whole module
-/// is instrumented against.
+/// an amendment but cannot say WHY records what it knows and the amendment
+/// holds as `unclear`; inventing a cause to fill the slot is the failure this
+/// whole module is instrumented against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AmendmentEvidence {
     /// The receipt ED-01 measured this amendment's Δ against.
@@ -88,6 +91,16 @@ pub struct AmendmentEvidence {
     /// no receipt the engine stamps carries it, so the host that ran the
     /// attempt supplies it.
     pub attempt_receipt: Option<String>,
+    /// The executor identity at revision (`id@revision`) that drafted the
+    /// amended proposal; `None` when unknown. The evidence door takes the
+    /// named attempt's own stamp over this one (FIX 9812).
+    pub executor: Option<String>,
+    /// The task type the drafting run was placed in; `None` when no task
+    /// placed it. The evidence door takes the named attempt's stamp.
+    pub type_ref: Option<TypeRef>,
+    /// The project the drafting run counted in; `None` is the vault's. The
+    /// evidence door takes the named attempt's stamp (FIX 6038).
+    pub project: Option<EntityId>,
     /// The `(subject, scope)` axis the resulting cost row is keyed on.
     pub scope: String,
     /// Why the decider amended (see [`AmendmentCause`]).
@@ -110,6 +123,9 @@ impl AmendmentEvidence {
             actor,
             skill: None,
             attempt_receipt: None,
+            executor: None,
+            type_ref: None,
+            project: None,
             scope: scope.into(),
             cause: None,
             followed_skill: None,
@@ -137,6 +153,14 @@ impl AmendmentEvidence {
     #[must_use]
     pub fn with_attempt(mut self, attempt_receipt: impl Into<String>) -> Self {
         self.attempt_receipt = Some(attempt_receipt.into());
+        self
+    }
+
+    /// Stamps the executor identity at revision that drafted the proposal,
+    /// for a producer that knows it. A named attempt's own stamp wins.
+    #[must_use]
+    pub fn with_executor(mut self, executor: impl Into<String>) -> Self {
+        self.executor = Some(executor.into());
         self
     }
 
@@ -206,7 +230,54 @@ pub struct AmendmentJudgment {
     pub evidence_receipts: Vec<String>,
     /// ED-01's measured edit mass for this amendment.
     pub d_norm: f32,
+    /// The measurement engine version `d_norm` was measured under
+    /// (ARCH-0056 §2 `engine_ver`): folds never average across two.
+    pub engine_ver: String,
     pub at: u64,
+    /// Each changed hunk the host cut, in text order, as judged (FIX 9808).
+    /// Empty when the amendment was judged as one region.
+    pub hunks: Vec<HunkLabel>,
+    /// The executor identity at revision that drafted the proposal, frozen
+    /// from the evidence when judged; `None` when unknown (FIX 9812).
+    pub executor: Option<String>,
+    /// The task type the drafting run was placed in, when one placed it.
+    pub type_ref: Option<TypeRef>,
+    /// The project whose cells the judgment lands in, frozen from the
+    /// evidence or the reviewed claim; `None` is the vault's (FIX 6038).
+    pub project: Option<EntityId>,
+    /// The terminal pack receipt of the attempt the proposal came from, when
+    /// the evidence named one.
+    pub attempt_receipt: Option<String>,
+    /// The judge revision whose answers this judgment stands on; `None`
+    /// only for settled, unjudged or owner-scripted labels — the rule tier
+    /// stamps its own revision.
+    pub judge: Option<String>,
+    /// The answering model's identity (`provider/name@revision`) behind
+    /// `judge`, when one model gave every answer: the identity an executor
+    /// stamp is compared with. `None` wherever `judge` is.
+    pub judge_model: Option<String>,
+    /// The receipt of each decision that gave the verdict, in order; empty
+    /// when no ladder was asked (FIX 447, 11511).
+    pub receipts: Vec<DecisionReceipt>,
+    /// The actor whose proposal was judged.
+    pub actor: Option<EntityId>,
+    /// The SKILL the proposal rode, when it rode one.
+    pub skill: Option<EntityId>,
+    /// A rejection's judgment: the decider discarded the proposal, so there
+    /// is no Δ and no hunks, and `d_norm` is the whole proposal's edit mass
+    /// (FIX 7823).
+    pub rejected: bool,
+}
+
+/// One changed hunk as judged: the label it stands at after the floor, and
+/// the identities of the substitutions it made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkLabel {
+    pub class: AmendmentClass,
+    /// The miner's digests of the hunk's normalized substitutions, at the
+    /// miner's own extraction granularity; empty when the hunk makes none.
+    /// Identities, never the hunk's text.
+    pub substitution_refs: Vec<String>,
 }
 
 impl AmendmentJudgment {
@@ -227,6 +298,22 @@ impl AmendmentJudgment {
             [only] => Some(only.class),
             _ => None,
         }
+    }
+
+    /// The executor key this judgment folds and charges under: its stamp, or
+    /// the unknown-executor key. Never the model serving now (FIX 9812).
+    #[must_use]
+    pub fn executor_key(&self) -> &str {
+        self.executor.as_deref().unwrap_or(UNKNOWN_EXECUTOR)
+    }
+
+    /// Whether the proposal was drafted on the judge's own model (ARCH-0056
+    /// §8): such runs are flagged, because judges favour their own model's
+    /// work. The executor stamp is compared with the judge's answering model,
+    /// never with its revision, which also names the provider's version.
+    #[must_use]
+    pub fn on_judge_model(&self) -> bool {
+        self.executor.is_some() && self.executor == self.judge_model
     }
 
     /// Whether every share is `unclear`: nothing in this amendment may be
@@ -264,14 +351,14 @@ pub struct PreferenceProposal {
 // ---------------------------------------------------------------------------
 
 /// Classifies one amendment into a label + share split, or ABSTAINS
-/// (`Ok(None)`) when the facts do not settle it.
+/// (`Ok(None)`) when the judge does.
 ///
 /// | cause | class of every hunk |
 /// |---|---|
 /// | external change | `Environment` |
 /// | decider preference | `PreferenceShift` |
 /// | proposal wrong | *the judge's, hunk by hunk* |
-/// | unsettled | abstain |
+/// | unsettled | `unclear`, with a missing-cause note |
 ///
 /// `hunks` are the changed regions as the host cut them; each weighs its own
 /// edit mass, measured here with the pinned reconstructed-lane metric. With no
@@ -299,8 +386,8 @@ pub fn classify_amendment(
 }
 
 /// [`classify_amendment`], beside what answered it for the held-out audit's
-/// batch (OF-542): nothing for an unsettled cause, a settled cause's certain
-/// label, or the judge's raw answers before the floor held any.
+/// batch (OF-542): an unclear hold for an unsettled cause, a settled cause's
+/// certain label, or the judge's raw answers before the floor held any.
 ///
 /// # Errors
 ///
@@ -311,27 +398,37 @@ pub(super) fn classify_amendment_traced(
     hunks: &[EditHunk<'_>],
     floor: f32,
 ) -> Result<(Option<AttributionSplit>, JudgeTrace)> {
+    let masses: Vec<f64> = hunks
+        .iter()
+        .map(|hunk| myers_line_diff(hunk.before, hunk.after).ops.edit_mass())
+        .collect();
     let settled = match evidence.cause {
         None => {
+            // An unsettled cause holds the whole amendment as `unclear` with
+            // a missing-cause note (FIX 9798), through the normal
+            // unclear-ledger path — never a withdrawal.
             let trace = JudgeTrace {
                 source: AuditAnswerSource::NotJudged,
                 answers: Vec::new(),
                 revision: None,
+                model: None,
+                receipts: Vec::new(),
             };
-            return Ok((None, trace));
+            let answers = vec![
+                HunkVerdict {
+                    verdict: AmendmentClass::Unclear,
+                    confidence: 0.0,
+                    note: Some("cause unsettled".to_owned()),
+                };
+                hunks.len().max(1)
+            ];
+            let split = split_from_verdicts(AttributionLane::Amendment, &masses, answers, floor)?;
+            return Ok((Some(split), trace));
         }
         Some(AmendmentCause::ExternalChange) => Some(AmendmentClass::Environment),
         Some(AmendmentCause::DeciderPreference) => Some(AmendmentClass::PreferenceShift),
         Some(AmendmentCause::ProposalWrong) => None,
     };
-    let masses: Vec<f64> = hunks
-        .iter()
-        .map(|hunk| {
-            delta_from_reconstructed(hunk.before, hunk.after)
-                .ops_summary
-                .edit_mass()
-        })
-        .collect();
     let probe = evidence.as_outcome_evidence();
     let request = JudgeRequest {
         lane: AttributionLane::Amendment,
@@ -352,6 +449,8 @@ pub(super) fn classify_amendment_traced(
                     request.regions()
                 ],
                 revision: None,
+                model: None,
+                receipts: Vec::new(),
             };
             Ok((Some(settled_split(class, &request, &masses)?), trace))
         }
@@ -412,18 +511,18 @@ pub(super) fn class_subject(
     }
 }
 
-/// Which `*.edit_cost` row a class earns, or `None` when it earns none.
+/// Whether a class charges its subject `learning.edit_cost`: the actor for
+/// an `execution_lapse`, the skill for a `skill_defect`.
 ///
 /// `Discovery` earns nothing HERE: missing content is SK-04's edit-proposal
 /// case, and charging the skill for content it never claimed to have would
 /// double-book a signal that already has a consequence.
-pub(super) const fn cost_predicate(class: AmendmentClass) -> Option<&'static str> {
+pub(super) const fn charges_edit_cost(class: AmendmentClass) -> bool {
     match class {
-        AmendmentClass::ExecutionLapse => Some(PREDICATE_ACTOR_EDIT_COST),
-        AmendmentClass::SkillDefect => Some(PREDICATE_SKILL_EDIT_COST),
+        AmendmentClass::ExecutionLapse | AmendmentClass::SkillDefect => true,
         AmendmentClass::Discovery
         | AmendmentClass::Environment
         | AmendmentClass::PreferenceShift
-        | AmendmentClass::Unclear => None,
+        | AmendmentClass::Unclear => false,
     }
 }

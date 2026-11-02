@@ -10,11 +10,9 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::claim::{
     WeaveDigestFeedback, WeaveDigestRequest, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingUndo, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
@@ -24,29 +22,173 @@ use oneiron::lens::LensFrameCard;
 use oneiron::{EdgeActorClass, EntityId};
 use serde::Serialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/weave/schedules", get(schedules).put(set_schedule))
-        .route("/weave/schedules/clear", post(clear_schedule))
-        .route("/weave/setting-changes", get(setting_changes))
-        .route("/weave/setting-changes/answer", post(answer_setting_change))
-        .route("/weave/setting-changes/undo", post(undo_setting_change))
-        .route("/weave/digest-feedback", post(digest_feedback))
-        .route("/weave/report", post(report))
-        .route("/weave/lens", post(lens))
-        .route("/weave/digest", get(digest))
-        .route("/weave/link/wrong", post(wrong_link))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/schedules",
+                summary: "Every reader's digest schedule.",
+                row: None,
+            },
+            get(schedules),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/weave/schedules",
+                summary: "One reader's cadence, first due second and sections.",
+                row: None,
+            },
+            put(set_schedule),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/schedules/clear",
+                summary: "Stop one reader's digests.",
+                row: None,
+            },
+            post(clear_schedule),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/setting-changes",
+                summary: "The Coach's changes to the owner's own digest settings, newest first.",
+                row: Some("vault.weave.setting_changes.list"),
+            },
+            get(setting_changes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/setting-changes/answer",
+                summary: "Accept, as the owner's own act, or decline one proposed change.",
+                row: Some("vault.weave.setting_changes.answer"),
+            },
+            post(answer_setting_change),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/setting-changes/undo",
+                summary: "The one-tap undo of an applied or accepted change.",
+                row: Some("vault.weave.setting_changes.undo"),
+            },
+            post(undo_setting_change),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/digest-feedback",
+                summary: "What the owner tells the Coach about his own digest.",
+                row: Some("vault.weave.digest_feedback.put"),
+            },
+            post(digest_feedback),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/report",
+                summary: "The owner lens, live.",
+                row: None,
+            },
+            post(report),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/lens",
+                summary: "The owner lens, live, rendered through the weave-report skill on this server's Dreamer narrative route, as a card whose frame this server holds for the credential's events on it.",
+                row: None,
+            },
+            post(lens),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/weave/digest",
+                summary: "The owner's digest.",
+                row: None,
+            },
+            get(digest),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/weave/link/wrong",
+                summary: "The owner labels a link it sees in the owner lens as wrong.",
+                row: None,
+            },
+            post(wrong_link),
+        ),
+    ]
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ScheduleCleared {
     cleared: bool,
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/weave/schedules`'s body (FIX 11611):
+/// [`WeaveScheduleView`].
+pub(crate) fn set_weave_schedule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveScheduleView>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/weave/schedules`'s answer
+/// (FIX 11611): [`WeaveScheduleView`].
+pub(crate) fn weave_schedule_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveScheduleView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/schedules/clear`'s body
+/// (FIX 11611): [`WeaveReaderRef`].
+pub(crate) fn clear_weave_schedule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReaderRef>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/schedules/clear`'s answer
+/// (FIX 11611): [`ScheduleCleared`].
+pub(crate) fn weave_schedule_cleared_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ScheduleCleared>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/link/wrong`'s body
+/// (FIX 11611): [`WeaveWrongLinkRequest`].
+pub(crate) fn weave_wrong_link_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveWrongLinkRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/link/wrong`'s answer
+/// (FIX 11611): [`WeaveLinkCorrectionView`].
+pub(crate) fn weave_link_correction_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveLinkCorrectionView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s body (FIX 11655):
+/// [`WeaveReportRequest`]. `POST /v1/owner/weave/lens` takes the same body.
+pub(crate) fn weave_report_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s answer (FIX 11655):
+/// [`WeaveReportView`].
+pub(crate) fn weave_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/lens`'s answer (FIX 11655):
+/// [`LensFrameCard`].
+pub(crate) fn weave_lens_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LensFrameCard>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
@@ -80,10 +222,10 @@ async fn schedules(
 async fn set_schedule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveScheduleView>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveScheduleView>,
 ) -> OwnerReply<WeaveScheduleView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let set = blocking(move || -> OwnerResult<WeaveScheduleView> {
         let row = request.into_schedule().map_err(memory_invalid)?;
         server.vault().set_weave_digest_schedule(&owner, &row)?;
@@ -97,10 +239,10 @@ async fn set_schedule(
 async fn clear_schedule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReaderRef>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReaderRef>,
 ) -> OwnerReply<ScheduleCleared> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let cleared = blocking(move || -> OwnerResult<ScheduleCleared> {
         let reader = request.reader().map_err(memory_invalid)?;
         Ok(ScheduleCleared {
@@ -139,10 +281,10 @@ async fn setting_changes(
 async fn answer_setting_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestSettingAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestSettingAnswer>,
 ) -> OwnerReply<WeaveDigestSettingChange> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
         let change = change_id(&request.change_ref)?;
         server
@@ -159,10 +301,10 @@ async fn answer_setting_change(
 async fn undo_setting_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestSettingUndo>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestSettingUndo>,
 ) -> OwnerReply<WeaveDigestSettingChange> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let undone = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
         let change = change_id(&request.change_ref)?;
         server
@@ -179,10 +321,10 @@ async fn undo_setting_change(
 async fn digest_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestFeedback>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestFeedback>,
 ) -> OwnerReply<WeaveDigestFeedback> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let told = blocking(move || -> OwnerResult<WeaveDigestFeedback> {
         server
             .vault()
@@ -197,10 +339,10 @@ async fn digest_feedback(
 async fn report(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReportRequest>,
 ) -> OwnerReply<WeaveReportView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let view = blocking(move || -> OwnerResult<WeaveReportView> {
         let vault = server.vault();
@@ -221,10 +363,10 @@ async fn report(
 async fn lens(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReportRequest>,
 ) -> OwnerReply<LensFrameCard> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let caller = crate::ai_host::WeaveLensCaller::Owner { owner, auth };
     let lens = crate::ai_host::render_live_weave_lens(&server, caller, request)
         .await
@@ -267,10 +409,10 @@ async fn digest(
 async fn wrong_link(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveWrongLinkRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveWrongLinkRequest>,
 ) -> OwnerReply<WeaveLinkCorrectionView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let filed = blocking(move || -> OwnerResult<WeaveLinkCorrectionView> {
         let vault = server.vault();

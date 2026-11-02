@@ -61,6 +61,6 @@ pub fn federation_burst_host_only<T, I>(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{verb} requires the serving host's signed Connect ingress and window manager"),
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }

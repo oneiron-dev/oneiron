@@ -42,7 +42,6 @@ pub(crate) use self::execution::seated_planner;
 use self::settlement::settle;
 
 use std::collections::{BTreeMap, HashSet};
-use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -53,10 +52,11 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor,
+    agent_dispatch_actor, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, ReadSetProducer, SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
+    SetAttemptResult,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -66,7 +66,10 @@ use oneiron::code_run::{
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
-use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
+use oneiron::dreamer_runner::{
+    CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt, outage_park_reason,
+    outage_retry_after,
+};
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
@@ -104,8 +107,6 @@ use crate::mcp::{
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
 pub(crate) const LEASE_OWNER: &str = "oneiron-server-agent-runs";
-/// The reason a run stopped by a provider outage parks under.
-const OUTAGE_PARK_REASON: &str = "agent_run_provider_unavailable";
 /// The park a run waiting on a durable signal holds its lease under, owned
 /// by the trap its wait's reply wakes; a restart is not that signal, so
 /// recovery keeps the lease.
@@ -121,12 +122,10 @@ const WAKES_PER_PASS: usize = 16;
 /// enters again, and how many such waits in a row it takes before it ends.
 const WINDOW_FULL_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_FULL_TRIES: u32 = 30;
-/// How many tries in a row a run gets whose model call failed for a reason
-/// that passes (a rate limit, a spent window): the failure ladder's default
-/// bound. Each retry is a fresh attempt, so a fresh run. An outage parks the
-/// run instead (FIX 3194).
-const RUN_MAX_TRIES: NonZeroU16 = NonZeroU16::new(3).expect("three is nonzero");
-/// How long such a retry waits per try when its provider named no reset.
+/// How long a run whose model call failed for a reason that passes (a rate
+/// limit, a spent window) waits per retry when its provider named no reset.
+/// Each retry is a fresh attempt, so a fresh run. An outage parks the run
+/// instead (FIX 3194).
 const RUN_RETRY_BACKOFF_SECS: u64 = 30;
 /// The codes a continuation's fork refuses with at lease time (FIX 3694),
 /// each the stable reason its successor fails under.
@@ -299,12 +298,27 @@ impl SyncServer {
         let mut pass = Pass::default();
         let vault = self.vault();
         // A run parked on its payer goes on once the owners said yes (FIX 805).
-        resume_payer_parks(vault, LEASE_OWNER, now);
+        resume_payer_parks(vault, LEASE_OWNER, now, None);
         // OF-533: the waits a pumped run parks on are swept on this recheck,
         // so a parked ask's deadline lands with no Dreamer enabled.
         if let Err(error) = vault.settle_code_run_waits() {
             pass.faults
                 .insert("task waits".to_owned(), error.to_string());
+        }
+        // A signal that beat its wait's park could not be consumed by the
+        // delivering commit. Resume it now that its park and binding exist.
+        if let Err(error) =
+            AgentDispatcher::new(vault).resume_signalled_runs(now.saturating_mul(1_000))
+        {
+            pass.faults
+                .insert("signalled run waits".to_owned(), error.to_string());
+        }
+        // A host door's retry hint is a due timer on its park. The resumed
+        // run's own next call probes the rested offer and re-parks if it is
+        // still unavailable; recovery and restart resume the same row too.
+        if let Err(error) = resume_due_outage_parks(vault, now) {
+            pass.faults
+                .insert("outage parks".to_owned(), error.to_string());
         }
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
@@ -585,6 +599,62 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         )))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn clear_stale_outage_marker(runner: &DreamerRunnerStore<'_>, due_at: u64, attempt: AttemptId) {
+    if let Err(error) = runner.delete_due_outage_marker(due_at, attempt) {
+        tracing::warn!(%error, ?attempt, "a stale outage due marker was not deleted");
+    }
+}
+
+/// Resumes each due host-door outage park. Recovery, restart, and this sweep
+/// all use the same owner-checked idempotent resume door, so only one wins.
+/// With no vault migration, a park written before this index resumes through
+/// recovery or restart, or gains an index row when it re-parks.
+fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
+    let runner = DreamerRunnerStore::new(vault);
+    let mut resumed = 0;
+    for (due_at, attempt) in runner.due_outage_attempts(now)? {
+        let (status, park) = match runner.status_with_park(attempt) {
+            Ok(Some((status, park))) => (status, park),
+            Ok(None) => {
+                clear_stale_outage_marker(&runner, due_at, attempt);
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(%error, ?attempt, "an outage park could not be read");
+                continue;
+            }
+        };
+        if !matches!(status.attempt.state, AttemptState::Leased) {
+            continue;
+        }
+        let Some(park) = park else {
+            clear_stale_outage_marker(&runner, due_at, attempt);
+            continue;
+        };
+        if park.park_owner != LEASE_OWNER {
+            continue;
+        }
+        if park.cause != DreamerParkCause::ProviderUnavailable {
+            clear_stale_outage_marker(&runner, due_at, attempt);
+            continue;
+        }
+        let current_due = outage_retry_after(&park.reason)
+            .map(|retry_after| park.parked_at.saturating_add(retry_after));
+        if current_due != Some(due_at) {
+            clear_stale_outage_marker(&runner, due_at, attempt);
+            continue;
+        }
+        match runner.resume_parked(attempt, LEASE_OWNER, now) {
+            Ok(Some(_)) => resumed += 1,
+            Ok(None) => clear_stale_outage_marker(&runner, due_at, attempt),
+            Err(error) => {
+                tracing::warn!(%error, ?attempt, "a due outage park was not resumed");
+            }
+        }
+    }
+    Ok(resumed)
 }
 
 /// Whether a run stopped on a model call no provider answered (FIX 3194):

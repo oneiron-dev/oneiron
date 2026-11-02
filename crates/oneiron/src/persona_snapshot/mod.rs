@@ -45,6 +45,7 @@ pub use self::types::{
 };
 
 pub(crate) use self::codec::validate_persona_snapshot_export_body_bytes;
+pub(crate) use self::copy::erase_in_txn;
 pub(crate) use self::types::{
     PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL, PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL,
     PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD,

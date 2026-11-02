@@ -21,6 +21,10 @@ use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
 
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
+// FIX 647: a delegated reader's credential, verified for a handle's reads.
+mod read_credential;
+
+pub use self::read_credential::verify_read_credential;
 
 /// One native vault and the options it was opened with. The engine Vault
 /// itself owns the lease, so server and embedded Arc holders obey one lifetime.
@@ -323,12 +327,15 @@ fn divergent_options_error(
     bad_request(
         format!(
             "{} is already open in this process with different options \
-             (open dimensions {:?} and device class {:?}, requested {:?} and {:?})",
+             (open dimensions {:?}, device class {:?} and checkpoint-root hold {:?}; \
+             requested {:?}, {:?} and {:?})",
             canonical.display(),
             registered.dimensions,
             registered.device_class,
+            registered.hold_checkpoint_root_signer,
             requested.dimensions,
             requested.device_class,
+            requested.hold_checkpoint_root_signer,
         ),
         &[
             "Reopen with the same options the first open used.",
@@ -336,6 +343,12 @@ fn divergent_options_error(
         ],
     )
 }
+
+/// A host's word on whether it is still open, asked before each call of a
+/// handle attached to the vault it opened, and of every handle rebound from
+/// it: its refusal is the call's, so none starts once the host has closed,
+/// while a call already running finishes (FIX 4895).
+pub type HostOpenCheck = Arc<dyn Fn() -> Result<(), MemoryError> + Send + Sync>;
 
 /// The embedded half of [`crate::OneironClient`].
 ///
@@ -353,6 +366,13 @@ pub(crate) struct EmbeddedClient {
     /// one, bound to this handle's actor: the app host's principal (OF-063,
     /// FIX 1668).
     off_record_session: Option<String>,
+    /// The attaching host's [`HostOpenCheck`]; `None` for a handle whose
+    /// vault no closable host lends it.
+    host_open: Option<HostOpenCheck>,
+    /// The verified slip this handle's delegated reader presented, which
+    /// every read runs under ([`Self::with_read_credential`], FIX 647);
+    /// `None` reads as the bound actor's own verbs do.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
 }
 
 impl EmbeddedClient {
@@ -372,16 +392,23 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open: None,
+            read_proof: None,
         })
     }
 
     /// [`Self::open`] over a vault the host already opened at `path`
-    /// ([`attach_shared`]), bound to the same generic embedded owner actor.
+    /// ([`attach_shared`]), bound to the same generic embedded owner actor;
+    /// with `host_open`, each call first asks it.
     pub(crate) fn attach(
         path: &Path,
         vault: Arc<Vault>,
         options: &OpenOptions,
+        host_open: Option<HostOpenCheck>,
     ) -> Result<Self, MemoryError> {
+        if let Some(host_open) = &host_open {
+            host_open()?;
+        }
         let shared = attach_shared(path, vault, options)?;
         let actor = shared.vault().ensure_embedded_owner_actor()?;
         Ok(Self {
@@ -390,6 +417,8 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open,
+            read_proof: None,
         })
     }
 
@@ -414,6 +443,8 @@ impl EmbeddedClient {
             actor_class,
             room_turn: None,
             off_record_session: None,
+            host_open: self.host_open.clone(),
+            read_proof: None,
         })
     }
 
@@ -426,7 +457,12 @@ impl EmbeddedClient {
     /// exists to prevent. Comparing the acquiring PID against the current one
     /// is the only check that can tell those two cases apart, and it runs
     /// before facade entry so the child fails typed rather than partially.
+    /// A handle attached to a host's vault asks that host first
+    /// ([`HostOpenCheck`]).
     pub(crate) fn ensure_dispatch_pid(&self) -> Result<(), MemoryError> {
+        if let Some(host_open) = &self.host_open {
+            host_open()?;
+        }
         if self.shared.held_by_current_process() {
             return Ok(());
         }
@@ -440,6 +476,10 @@ impl EmbeddedClient {
     /// (I1/T2).
     pub(crate) fn memory(&self) -> oneiron::memory::Memory<'_> {
         let memory = self.shared.vault().memory(self.actor, self.actor_class);
+        let memory = match &self.read_proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
         match self.off_record_session.as_deref() {
             Some(session) => memory.in_off_record_session(session),
             None => memory,
@@ -455,6 +495,19 @@ impl EmbeddedClient {
         self.ensure_dispatch_pid()?;
         Ok(Self {
             off_record_session: Some(session_ref.to_owned()),
+            ..self.clone()
+        })
+    }
+
+    /// The same handle with every read run under the paired credential `key`
+    /// its delegated reader presented (FIX 647), verified against this vault
+    /// ([`verify_read_credential`]): the slip the server's door binds to a
+    /// served request's handle. A rebind to another actor drops it.
+    pub(crate) fn with_read_credential(&self, key: &str) -> Result<Self, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        let proof = verify_read_credential(self.shared.vault(), key)?;
+        Ok(Self {
+            read_proof: Some(proof),
             ..self.clone()
         })
     }

@@ -6,6 +6,9 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod stored_read;
+pub(crate) use stored_read::StoredReadProof;
+
 const MAX_CAVEATS: usize = 64;
 const MINT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/mint\0";
 const CAVEAT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/caveat\0";
@@ -93,22 +96,7 @@ impl VerifiedSlip {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
         };
-        let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
-        let effective = requested.intersect(&pact.effective_scope);
-        if pact.status != super::FederationPactStatus::Active
-            || fold
-                .federation_grant_bindings
-                .get(grant)
-                .is_none_or(|ids| ids.len() != 1)
-            || !crate::federation::Ceiling::new(requested.clone())
-                .is_within(&crate::federation::Ceiling::new(effective.clone()))
-            || effective.worlds.is_bottom()
-            || effective.facets.is_bottom()
-            || effective.bands.is_bottom()
-        {
-            return Err(invalid_authority());
-        }
-        Ok(())
+        witnessed_pact_scope(fold, grant, requested).map(drop)
     }
 
     #[must_use]
@@ -416,60 +404,7 @@ impl CapabilitySlip {
             VerifyingKey::from_bytes(&block.next_binding_key).map_err(|_| invalid_authority())?;
             prefix.caveats.push(block.clone());
             binding_key = block.next_binding_key;
-            if caveat.scope.as_ref().is_some_and(|scope| {
-                matches!(&scope.verbs, crate::federation::ScopeAxis::Some(verbs)
-                    if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
-            }) || caveat
-                .records
-                .iter()
-                .flatten()
-                .chain(caveat.channels.iter().flatten())
-                .any(|token| crate::credential_door::names_a_floor(token))
-            {
-                return Err(invalid_authority());
-            }
-            if let Some(scope) = &caveat.scope {
-                effective.scope = effective.scope.meet(scope);
-            }
-            if let Some(expiry) = caveat.expires_at {
-                effective.expires_at = effective.expires_at.min(expiry);
-            }
-            if let Some(ttl) = caveat.ttl_secs {
-                effective.ttl_secs = effective.ttl_secs.min(ttl);
-            }
-            effective.single_use |= caveat.single_use;
-            if let Some(comm) = caveat.comm {
-                effective.comm = Some(super::effective_slip_comm(effective.comm).min(comm));
-            }
-            if let Some((grant, bound)) = &caveat.pact {
-                bound.validate()?;
-                pact = Some(match &pact {
-                    Some((prior_grant, prior)) if prior_grant == grant => {
-                        (*grant, prior.intersect(bound))
-                    }
-                    Some(_) => return Err(invalid_authority()),
-                    None => (*grant, bound.clone()),
-                });
-            }
-            if let Some(records) = &caveat.records {
-                effective.records = if records_constrained {
-                    effective.records.intersection(records).cloned().collect()
-                } else {
-                    records.clone()
-                };
-                records_constrained = true;
-                if effective.records.is_empty() {
-                    effective.scope = Scope::default();
-                }
-            }
-            if let Some(channels) = &caveat.channels {
-                effective.channels = effective.channels.intersection(channels).cloned().collect();
-                // Empty channels carry no credential-door authority. A disjoint
-                // meet must not turn a channel-bound slip into a generic reader.
-                if effective.channels.is_empty() {
-                    effective.scope = Scope::default();
-                }
-            }
+            meet_caveat(&mut effective, &mut pact, &mut records_constrained, caveat)?;
         }
         if now < effective.issued_at || now >= effective.expires_at || effective.ttl_secs == 0 {
             return Err(invalid_authority());
@@ -488,6 +423,275 @@ impl CapabilitySlip {
         };
         verified.witness_pact(fold)?;
         Ok(verified)
+    }
+}
+
+/// A pact bound the caveats carry, as the meet folds it: one grant, its
+/// bounds intersected.
+type PactBound = Option<(crate::EntityId, crate::federation::FederationDirectionScope)>;
+
+/// Meets one authenticated caveat into `effective`: the one meet live
+/// verification and a transferred removal archive's bounds (FIX-LIST 8224)
+/// both take. A caveat naming a floor, or a second pact, refuses.
+fn meet_caveat(
+    effective: &mut SlipClaims,
+    pact: &mut PactBound,
+    records_constrained: &mut bool,
+    caveat: &SlipCaveat,
+) -> EngineResult<()> {
+    if caveat.scope.as_ref().is_some_and(|scope| {
+        matches!(&scope.verbs, crate::federation::ScopeAxis::Some(verbs)
+            if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
+    }) || caveat
+        .records
+        .iter()
+        .flatten()
+        .chain(caveat.channels.iter().flatten())
+        .any(|token| crate::credential_door::names_a_floor(token))
+    {
+        return Err(invalid_authority());
+    }
+    if let Some(scope) = &caveat.scope {
+        effective.scope = effective.scope.meet(scope);
+    }
+    if let Some(expiry) = caveat.expires_at {
+        effective.expires_at = effective.expires_at.min(expiry);
+    }
+    if let Some(ttl) = caveat.ttl_secs {
+        effective.ttl_secs = effective.ttl_secs.min(ttl);
+    }
+    effective.single_use |= caveat.single_use;
+    if let Some(comm) = caveat.comm {
+        effective.comm = Some(super::effective_slip_comm(effective.comm).min(comm));
+    }
+    if let Some((grant, bound)) = &caveat.pact {
+        bound.validate()?;
+        *pact = Some(match pact.as_ref() {
+            Some((prior_grant, prior)) if prior_grant == grant => (*grant, prior.intersect(bound)),
+            Some(_) => return Err(invalid_authority()),
+            None => (*grant, bound.clone()),
+        });
+    }
+    if let Some(records) = &caveat.records {
+        effective.records = if *records_constrained {
+            effective.records.intersection(records).cloned().collect()
+        } else {
+            records.clone()
+        };
+        *records_constrained = true;
+        if effective.records.is_empty() {
+            effective.scope = Scope::default();
+        }
+    }
+    if let Some(channels) = &caveat.channels {
+        effective.channels = effective.channels.intersection(channels).cloned().collect();
+        // Empty channels carry no credential-door authority. A disjoint
+        // meet must not turn a channel-bound slip into a generic reader.
+        if effective.channels.is_empty() {
+            effective.scope = Scope::default();
+        }
+    }
+    Ok(())
+}
+
+/// `requested` met with `grant`'s pact while that pact holds in `fold`: it
+/// is Active, its grant is bound once, `requested` lies inside its effective
+/// scope and no axis of the meet is ⊥. A live slip's pact bound
+/// ([`VerifiedSlip::witness_pact`]) and a transferred removal archive's, at
+/// each serve (FIX 11860), are both witnessed so.
+fn witnessed_pact_scope(
+    fold: &AuthorityFold,
+    grant: &crate::EntityId,
+    requested: &crate::federation::FederationDirectionScope,
+) -> EngineResult<crate::federation::FederationDirectionScope> {
+    let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
+    let effective = requested.intersect(&pact.effective_scope);
+    if pact.status != super::FederationPactStatus::Active
+        || fold
+            .federation_grant_bindings
+            .get(grant)
+            .is_none_or(|ids| ids.len() != 1)
+        || !crate::federation::Ceiling::new(requested.clone())
+            .is_within(&crate::federation::Ceiling::new(effective.clone()))
+        || effective.worlds.is_bottom()
+        || effective.facets.is_bottom()
+        || effective.bands.is_bottom()
+    {
+        return Err(invalid_authority());
+    }
+    Ok(effective)
+}
+
+/// The verb a transferred holder's bounds must carry to take any of a
+/// removal archive (CALLS "REMOVAL_ARCHIVE_TRANSFER_VERB", accepted by the
+/// Engine 10-22 05:3x): the scoped export's own.
+pub(crate) const REMOVAL_ARCHIVE_TRANSFER_VERB: &str = "export";
+
+/// What a transferred slip's authenticated caveats leave its holder of the
+/// original mint (FIX-LIST 8224): the caveats met over the mint's claims,
+/// the mint's own lifetime aside, which the removal already ended for its
+/// recipient too. Live standing (revocation, retirement) is not consulted:
+/// it ended with the removal, and a transfer's bounds never revive it. A
+/// pact bound is the one standing read live, at each serve (FIX 11860).
+#[derive(Debug, Clone)]
+pub(crate) struct TransferredBounds {
+    scope: Scope,
+    /// The named-record bound, when one constrains.
+    records: Option<BTreeSet<String>>,
+    /// Whether the effective bounds name channels: an archived record
+    /// carries none, so a channel-bound transfer takes nothing here.
+    channel_bound: bool,
+    deadline: u64,
+    single_use: bool,
+    /// The pact bound a caveat set: its grant and the scope it requested.
+    pact: PactBound,
+}
+
+impl TransferredBounds {
+    /// Whether the archived record `id`, which stood at `position` when the
+    /// removal froze it, lies inside these bounds at `now`. A record frozen
+    /// with no position is judged as if it stood everywhere: only bounds no
+    /// caveat narrowed take it. A one-shot transfer is judged as any other:
+    /// the archive doors take it once and spend it in the writer that serves
+    /// it ([`Self::single_use`], FIX-LIST 10773). A pact-bound transfer takes
+    /// only a record whose frozen position lies inside `served_pact`, the
+    /// scope its pact still leaves it at this serve
+    /// ([`Self::served_pact_scope`], FIX 11860), and nothing once that pact
+    /// no longer holds. A channel-bound one takes nothing: an archived record
+    /// stood on no channel, and this door is none.
+    #[must_use]
+    pub(crate) fn admits(
+        &self,
+        id: crate::EntityId,
+        position: Option<&Scope>,
+        now: u64,
+        served_pact: Option<&crate::federation::FederationDirectionScope>,
+    ) -> bool {
+        if now >= self.deadline || self.channel_bound {
+            return false;
+        }
+        let top = Scope::top();
+        if self.pact.is_some()
+            && !served_pact
+                .is_some_and(|pact| super::current_scope::within(position.unwrap_or(&top), pact))
+        {
+            return false;
+        }
+        if self
+            .records
+            .as_ref()
+            .is_some_and(|records| !records.contains(&id.to_hex()))
+        {
+            return false;
+        }
+        let mut record = crate::federation::record_scope::note_world::any_world_at(
+            position.unwrap_or(&top),
+            &self.scope.worlds,
+        );
+        record.verbs = crate::federation::ScopeAxis::Some(BTreeSet::from([
+            REMOVAL_ARCHIVE_TRANSFER_VERB.to_owned(),
+        ]));
+        record.facets.is_narrowing_of(&self.scope.facets)
+            && self
+                .scope
+                .admits(REMOVAL_ARCHIVE_TRANSFER_VERB, &record, &Scope::top())
+    }
+
+    /// Whether the mint or a caveat made the transfer one-shot: an archive
+    /// door serves it once, and the first answer that takes anything spends
+    /// the slip (FIX-LIST 10773).
+    #[must_use]
+    pub(crate) const fn single_use(&self) -> bool {
+        self.single_use
+    }
+
+    /// The grant of the pact a caveat bound this transfer to, if one did.
+    #[must_use]
+    pub(crate) fn pact_grant(&self) -> Option<crate::EntityId> {
+        self.pact.as_ref().map(|(grant, _)| *grant)
+    }
+
+    /// The scope a pact-bound transfer takes at this serve: its requested
+    /// scope met with its pact's effective scope, while that pact holds in
+    /// `fold` (FIX 11860); `None` with no pact bound, or once the pact ended,
+    /// was suspended or no longer covers what the transfer requested.
+    #[must_use]
+    pub(crate) fn served_pact_scope(
+        &self,
+        fold: &AuthorityFold,
+    ) -> Option<crate::federation::FederationDirectionScope> {
+        let (grant, requested) = self.pact.as_ref()?;
+        witnessed_pact_scope(fold, grant, requested).ok()
+    }
+}
+
+impl CapabilitySlip {
+    /// `None` while the mint's own binding key still proves this slip: the
+    /// original recipient, whose retrieval stays byte-identical. Otherwise
+    /// the bounds its caveats leave the holder, met by the same meet live
+    /// verification takes, over a chain [`Self::verify_origin`] already
+    /// authenticated; a caveat that meet refuses comes back as its error.
+    pub(crate) fn transferred_bounds(&self) -> Option<EngineResult<TransferredBounds>> {
+        if self.current_binding_key() == self.claims.binding_key {
+            return None;
+        }
+        let mut effective = self.claims.clone();
+        effective.expires_at = u64::MAX;
+        effective.ttl_secs = u64::MAX;
+        let mut pact = None;
+        let mut records_constrained =
+            !effective.records.is_empty() || !effective.channels.is_empty();
+        for block in &self.caveats {
+            if let Err(error) = meet_caveat(
+                &mut effective,
+                &mut pact,
+                &mut records_constrained,
+                &block.caveat,
+            ) {
+                return Some(Err(error));
+            }
+        }
+        Some(Ok(TransferredBounds {
+            deadline: effective
+                .expires_at
+                .min(effective.issued_at.saturating_add(effective.ttl_secs)),
+            records: records_constrained.then_some(effective.records),
+            channel_bound: !effective.channels.is_empty(),
+            scope: effective.scope,
+            single_use: effective.single_use,
+            pact,
+        }))
+    }
+}
+
+/// What a slip's mint and signed caveats leave its holder, met as live
+/// verification meets them, with no clock, liveness or holder proof judged
+/// (FIX 6108): the bounds a rebind holds a successor instrument within.
+pub(crate) struct SignedBounds {
+    pub(crate) claims: SlipClaims,
+    /// The mint or a caveat named a record or channel set, so an empty set
+    /// here admits no record at all.
+    pub(crate) records_bound: bool,
+    /// The pact bound a caveat set: its grant and the scope it requested.
+    pub(crate) pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+}
+
+impl CapabilitySlip {
+    /// [`SignedBounds`] of this slip, over a chain [`Self::verify_origin`]
+    /// already authenticated; a caveat the meet refuses comes back as its
+    /// error.
+    pub(crate) fn signed_bounds(&self) -> EngineResult<SignedBounds> {
+        let mut claims = self.claims.clone();
+        let mut pact = None;
+        let mut records_bound = !claims.records.is_empty() || !claims.channels.is_empty();
+        for block in &self.caveats {
+            meet_caveat(&mut claims, &mut pact, &mut records_bound, &block.caveat)?;
+        }
+        Ok(SignedBounds {
+            claims,
+            records_bound,
+            pact,
+        })
     }
 }
 

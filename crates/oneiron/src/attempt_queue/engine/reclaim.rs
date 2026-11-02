@@ -212,6 +212,11 @@ impl AttemptQueue<'_> {
             }
             wtxn.commit()?;
             self.store.notify_attempt_observers();
+            // FIX 11482: a force-cancelled landing's job notice commits
+            // here, outside any owner scope, so this door sends it itself.
+            if report.landing_force_cancelled > 0 {
+                self.store.notify_notification_updates();
+            }
             // Committed: the step each reclaimed lease or expired landing was
             // running stops (FIX 600).
             for (id, generation) in lost_leases {

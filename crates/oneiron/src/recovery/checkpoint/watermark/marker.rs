@@ -18,7 +18,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use oneiron_crypto::backup::inspect_backup_tail;
+use oneiron_crypto::backup::{CheckpointSigner, inspect_backup_tail, verify_tail_with_pins};
 
 use super::{MARKER_SCHEMA_VERSION, WatermarkMarker, marker_name};
 
@@ -32,6 +32,16 @@ const MARKER_MAX_BYTES: u64 = 4096;
 
 /// The marker of `label`'s newest backup in `dir`, when it reads strictly.
 pub(super) fn read_bound_marker(dir: &Path, label: &str) -> Option<WatermarkMarker> {
+    read_bound_marker_with_pins(dir, label, None)
+}
+
+/// [`read_bound_marker`], and when `pins` are given, the commitment the
+/// backup's tail carries signed by one of them (FIX 10712).
+pub(super) fn read_bound_marker_with_pins(
+    dir: &Path,
+    label: &str,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<WatermarkMarker> {
     let bytes = read_private_marker(&dir.join(marker_name(label)))?;
     let marker: WatermarkMarker = serde_json::from_slice(&bytes).ok()?;
     let named = marker.schema_version == MARKER_SCHEMA_VERSION
@@ -40,7 +50,7 @@ pub(super) fn read_bound_marker(dir: &Path, label: &str) -> Option<WatermarkMark
         && hex64(&marker.outer_blake3)
         && marker.size > 0
         && names_backup(&marker.file, label, &marker.image_digest);
-    (named && tail_holds(dir, &marker)).then_some(marker)
+    (named && tail_holds(dir, &marker, pins)).then_some(marker)
 }
 
 /// The marker file at `path`, read whole, when it is a private regular file
@@ -125,8 +135,9 @@ fn stamp_shape(stamp: &str) -> bool {
 
 /// Whether the backup `marker` names in `dir` is a regular file of exactly
 /// its size, opened without following a link and never blocking, whose
-/// head and tail carry the commitment it records.
-fn tail_holds(dir: &Path, marker: &WatermarkMarker) -> bool {
+/// head and tail carry the commitment it records, signed by one of `pins`
+/// when they are given.
+fn tail_holds(dir: &Path, marker: &WatermarkMarker, pins: Option<&[CheckpointSigner]>) -> bool {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -146,5 +157,6 @@ fn tail_holds(dir: &Path, marker: &WatermarkMarker) -> bool {
     inspect_backup_tail(std::io::BufReader::new(&file)).is_ok_and(|tail| {
         tail.size == marker.size
             && oneiron_vault_contract::hex(&tail.commitment_digest) == marker.commitment_digest
+            && pins.is_none_or(|pins| verify_tail_with_pins(&tail, pins).is_ok())
     })
 }

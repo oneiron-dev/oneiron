@@ -99,8 +99,9 @@ impl Vault {
                     )
                 })
                 .transpose()?;
+            // The read mark keeps each record readable as a calibration
+            // pair after this run (FIX 566).
             for (source, _) in &unread {
-                PERSON_CHANGED.delete(&self.store, txn, source)?;
                 PERSON_CHANGED_READ.put(&self.store, txn, source, &now)?;
             }
             Ok(proposal)
@@ -109,23 +110,29 @@ impl Vault {
 }
 
 /// Up to `limit` unread override records in key order, each page of
-/// [`PAGE`] read in its own snapshot and resumed after the last key read.
+/// [`PAGE`] read in its own snapshot and resumed after the last key read. A
+/// record with a read mark was read by an earlier run and is passed over.
 fn unread_records(vault: &Vault, limit: usize) -> Result<Vec<(EntityId, PersonChangedAnswer)>> {
     let mut unread: Vec<(EntityId, PersonChangedAnswer)> = Vec::new();
+    let mut last: Option<EntityId> = None;
     while unread.len() < limit {
-        let want = PAGE.min(limit - unread.len());
-        let page = {
-            let txn = vault.store.env.read_txn()?;
-            let start = unread
-                .last()
-                .map_or(Bound::Unbounded, |(source, _)| Bound::Excluded(source));
-            PERSON_CHANGED
-                .iter_range(&vault.store, &txn, start, Bound::Unbounded)?
-                .take(want)
-                .collect::<Result<Vec<_>>>()?
-        };
-        let short = page.len() < want;
-        unread.extend(page);
+        let txn = vault.store.env.read_txn()?;
+        let start = last.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let page = PERSON_CHANGED
+            .iter_range(&vault.store, &txn, start, Bound::Unbounded)?
+            .take(PAGE)
+            .collect::<Result<Vec<_>>>()?;
+        let short = page.len() < PAGE;
+        for (source, record) in page {
+            last = Some(source);
+            if PERSON_CHANGED_READ.contains(&vault.store, &txn, &source)? {
+                continue;
+            }
+            unread.push((source, record));
+            if unread.len() == limit {
+                break;
+            }
+        }
         if short {
             break;
         }

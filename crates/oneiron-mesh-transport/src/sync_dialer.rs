@@ -1,7 +1,9 @@
 //! The sync client's carrier to its home machine over the mesh (OF-535). Set
 //! a [`MeshSyncDialer`] as `SyncClientConfig::mesh_dialer` and the steady
 //! socket and every residence socket ride the paired home's connection; the
-//! upgrade, its slip and machine proofs are the bytes they are on TCP.
+//! upgrade, its slip and machine proofs are the bytes they are on TCP. Each
+//! dial asks its resolver which home it targets, so a dialer that follows
+//! the elected home dials it from the next attempt on (FIX 3131).
 
 use std::sync::Arc;
 
@@ -9,24 +11,34 @@ use oneiron::sync::{SyncDial, SyncDialer, SyncStream};
 
 use crate::{MachineId, MeshError, MeshTransport, SYNC_ALPN};
 
+/// The home MACHINE one dial targets, asked once per attempt.
+pub type HomeResolver = Arc<dyn Fn() -> MachineId + Send + Sync>;
+
 /// Dials the home MACHINE by its roster key on [`SYNC_ALPN`] and opens the one
 /// stream a sync socket rides. The transport's policy admits the home: build
 /// it with [`crate::PairedMachineGrants`].
 pub struct MeshSyncDialer {
     transport: Arc<dyn MeshTransport>,
-    home: MachineId,
+    home: HomeResolver,
 }
 
 impl std::fmt::Debug for MeshSyncDialer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MeshSyncDialer")
-            .field("home", &self.home)
-            .finish_non_exhaustive()
+        // The home is resolved per dial, so none is shown here.
+        f.debug_struct("MeshSyncDialer").finish_non_exhaustive()
     }
 }
 
 impl MeshSyncDialer {
+    /// Dials `home` on every attempt.
     pub fn new(transport: Arc<dyn MeshTransport>, home: MachineId) -> Self {
+        Self::resolving(transport, Arc::new(move || home))
+    }
+
+    /// Dials the home `home` resolves at each attempt (FIX 3131): the steady
+    /// socket, each residence socket and each request on the carrier capture
+    /// their own.
+    pub fn resolving(transport: Arc<dyn MeshTransport>, home: HomeResolver) -> Self {
         Self { transport, home }
     }
 
@@ -68,9 +80,10 @@ fn io_error(error: MeshError) -> std::io::Error {
 impl SyncDialer for MeshSyncDialer {
     fn dial(&self) -> SyncDial<'_> {
         Box::pin(async move {
+            let home = (self.home)();
             let connection = self
                 .transport
-                .dial(self.home, SYNC_ALPN)
+                .dial(home, SYNC_ALPN)
                 .await
                 .map_err(io_error)?;
             let stream = connection.open_duplex().await.map_err(io_error)?;

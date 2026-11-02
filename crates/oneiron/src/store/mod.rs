@@ -116,6 +116,8 @@ pub mod ports {
     };
 }
 
+mod active_write_txn;
+pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
@@ -126,6 +128,10 @@ mod body_envelope;
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+mod claim_vad_owed;
+pub(crate) use claim_vad_owed::{
+    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+};
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
@@ -133,6 +139,15 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
+pub(crate) mod replay_only_commits;
+// FIX 7907, 7958: a federation grant's scope opening keys.
+pub(crate) mod grant_scope_custody;
+mod host_issuer_custody;
+// FIX 8875: the home handoff's custody contract, for L03's carrier.
+pub(crate) mod home_handoff_custody;
+mod idempotency_intent;
+mod inference_snapshot_custody;
+mod invocation_claims;
 mod key_custody;
 mod key_encoding;
 mod known_history;
@@ -141,6 +156,7 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
 mod page_bound;
@@ -152,6 +168,7 @@ mod retrieval_telemetry;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
+mod served_vaults;
 mod short_id_alias;
 mod structural_kind_registry;
 mod sync_responses;
@@ -170,8 +187,8 @@ pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
-    asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
-    stage_asset_body_in_txn,
+    CheckedAssetBody, asset_body_file_of_row, asset_file_in_txn, asset_file_of_raw_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 #[allow(
@@ -179,19 +196,21 @@ pub(crate) use asset_body::{
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
 pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
 pub(crate) use backup_change::telemetry_batch_class;
 pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodyMint,
-    BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope, SealedStream,
-    SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn, body_instances_in_rows,
-    body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable, erase_bodies_in_txn,
-    instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
+    BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_INSTANCES, BODY_KEYS, BodyFile, BodyKeyRow,
+    BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
+    SealedStream, SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn,
+    body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
+    erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    require_body_instances, retire_body_key_in_txn, sealed_body_file_name,
+    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
+    sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
@@ -204,9 +223,9 @@ pub(crate) use body_envelope::{
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
-    erase_response_owner_in_txn, is_opaque_erased, release_response_in_txn,
+    erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn,
+    settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -228,15 +247,17 @@ pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
+pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
-    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, Publication,
-    PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
+    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
+    Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
+    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
@@ -274,13 +295,27 @@ pub(crate) use structural_kind_registry::{
     STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
     structural_kind_registry_key,
 };
+// FIX 10379: the intent a keyed request's route writes under, counted by
+// each write it commits.
+#[doc(hidden)]
+pub use idempotency_intent::{
+    IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
+};
+#[doc(hidden)]
+pub use invocation_claims::{
+    InvocationClaimEntry, InvocationClaimRelease, StoredPeerMachine,
+    invocation_claim_opaque_retired_at, invocation_claim_response_read,
+};
+pub(crate) use invocation_claims::{
+    erase_invocation_claim_owner_in_txn, invocation_claim_owners, invocation_claim_scan,
+};
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;
 #[doc(hidden)]
 pub use sync_responses::{
-    IdempotencyEntry, ResponseStamps, http_response_read, media_job_erased_state,
-    media_response_read,
+    IdempotencyEntry, ResponseStamps, http_opaque_retired_at, http_response_read,
+    media_job_erased_state, media_response_read,
 };
 pub(crate) use sync_responses::{
     MediaKey, erase_sync_response_owner_in_txn, http_erase_drop_caller, http_owners, http_scan,

@@ -50,7 +50,16 @@ impl AttemptQueue<'_> {
                 }
                 break;
             };
-            let record = decode_record(&raw, id)?;
+            // FIX 10708: an erased marker is a retired row that was never
+            // prunable; the walk stops at it, counted, as at a missing one.
+            let record = match decode_record(&raw, id) {
+                Ok(record) => record,
+                Err(error) if super::reads::retired_marker(&error) => {
+                    super::reads::warn_erased_rows("prune_retry_chain", 1);
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
             if !crate::attempt_queue::owner_retained_kind(&record.kind)
                 || !record.state.is_terminal()
                 || record.run_id.is_some()
@@ -67,6 +76,7 @@ impl AttemptQueue<'_> {
                 )));
             }
             self.delete_entries_naming(wtxn, &record)?;
+            crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &record)?;
             self.store.attempt_records.delete(wtxn, id.as_bytes())?;
             crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &record)?;
             pruned += 1;
@@ -136,6 +146,7 @@ impl AttemptQueue<'_> {
                     return Err(invalid_transition("compact", row.state.as_str()));
                 }
                 self.delete_entries_naming(wtxn, &row)?;
+                crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &row)?;
                 self.store.attempt_records.delete(wtxn, row.id.as_bytes())?;
                 crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &row)?;
                 deleted += 1;
@@ -163,7 +174,22 @@ impl AttemptQueue<'_> {
         parent: Option<AttemptId>,
         folded: u32,
     ) -> Result<()> {
+        crate::attempt_queue::index::move_retry_child_in_txn(
+            self.store,
+            wtxn,
+            row.id,
+            row.retry_of,
+            parent,
+        )?;
+        let from = crate::run_tree::effective_parent(&row);
         row.retry_of = parent;
+        crate::attempt_queue::index::move_parent_child_in_txn(
+            self.store,
+            wtxn,
+            row.id,
+            from,
+            crate::run_tree::effective_parent(&row),
+        )?;
         row.folded_retries = row.folded_retries.saturating_add(folded);
         let encoded = self.encode_in_txn(wtxn, &mut row)?;
         self.store

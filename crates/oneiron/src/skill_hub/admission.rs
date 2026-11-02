@@ -53,7 +53,8 @@ pub enum HubAdmissionDisposition {
 }
 impl Vault {
     /// Restore, and a shared merge's rollback where it asks, is owner-only
-    /// even for a no-op. Plain user delete retains a PERSON shell; the
+    /// even for a no-op; a default-hub import checks the same proof in the
+    /// writer that commits it. Plain user delete retains a PERSON shell; the
     /// generic registry-lifecycle check alone cannot see its deletion
     /// tombstone.
     pub(super) fn check_restore_owner_in_txn(

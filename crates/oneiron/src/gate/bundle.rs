@@ -26,6 +26,7 @@ use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
+use super::delegation_chain::evaluate_with_delegation_chain;
 use super::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision,
     check_claim_policy_for_write_with_record, claim_consent_binding_parts, claim_gate_input,
@@ -39,6 +40,7 @@ use crate::error::GateError;
 
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
+mod decision_context;
 // The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
 mod pending_heal;
 
@@ -531,7 +533,7 @@ impl Vault {
 
             for id in &member_claim_ids {
                 if action == GateConsentBundleAction::Approve {
-                    self.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+                    self.complete_deferred_claim_in_txn(wtxn, id, false, now, Some(actor))?;
                     crate::task_verb::settle_task_proposal_in_txn(
                         self,
                         wtxn,
@@ -539,6 +541,8 @@ impl Vault {
                         Some(actor),
                         now,
                     )?;
+                    // An approved curator finding applies with it (FIX 5423).
+                    self.apply_approved_curator_in_savepoint(wtxn, *id, now)?;
                 } else {
                     self.cancel_deferred_claim_in_txn(wtxn, id)?;
                 }
@@ -561,6 +565,10 @@ impl Vault {
                         kind: crate::runtime_hooks::SettlementKind::GateConsentBundle,
                     },
                 )?;
+            }
+            // The approval's commit carries its consolidation debt (FIX 11858).
+            if action == GateConsentBundleAction::Approve {
+                self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
             }
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
@@ -586,9 +594,10 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: bundle_id.to_vec(),
                 read_frontier_hash: frontier.finalize().into(),
+                context: decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids),
                 redacted_at: None,
             };
-            self.store.append_gate_decision_in_txn(wtxn, &record)?;
+            decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
             Ok((
                 GateConsentBundleReceipt {
@@ -660,7 +669,15 @@ fn check_session_bundle_actor_policy(
             // classify, so no consent context is composed (pre-DEC-0006 path).
             None,
         );
-        enforce_gate_decision(policy.evaluate_gate(&input))?;
+        // A delegated reviewer meets its live delegation chain (FIX 10537).
+        enforce_gate_decision(evaluate_with_delegation_chain(
+            store,
+            rtxn,
+            policy,
+            &input,
+            None,
+            Some(*actor),
+        ))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
     // Read-only review over already-proposed bodies. Bundle MERGE builds its

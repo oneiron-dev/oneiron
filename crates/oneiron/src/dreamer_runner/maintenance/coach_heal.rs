@@ -406,6 +406,7 @@ impl Vault {
                 now,
             )?;
             crate::failure_ladder::oversight::proposed_in_txn(self, txn, &case_ref, now)?;
+            crate::failure_ladder::oversight::routed_in_txn(self, txn, &case_ref, now)?;
             blocked_reports::settle_in_txn(self, txn, &key, proposal, now)?;
             super::code_fix::wake_in_txn(
                 self,
@@ -571,6 +572,7 @@ impl Vault {
                 now,
             )?;
             crate::failure_ladder::oversight::proposed_in_txn(self, txn, &receipt.to_hex(), now)?;
+            crate::failure_ladder::oversight::routed_in_txn(self, txn, &receipt.to_hex(), now)?;
             blocked_reports::settle_in_txn(self, txn, &receipt, proposal, now)?;
             super::code_fix::wake_blocked_in_txn(
                 self,

@@ -572,14 +572,20 @@ impl Vault {
             POLICY
                 .put(&self.store, txn, &(), &policy)
                 .map_err(|e| row_error(e, invalid()))?;
-            crate::policy_setting_doors::record_policy_setting_act_in_txn(
+            let signed = crate::policy_setting_doors::record_policy_setting_act_in_txn(
                 self,
                 txn,
                 crate::policy_setting_doors::PolicySetting::DreamerWakePolicy,
                 actor,
                 surface,
                 &prior,
-            )
+                &policy,
+            )?;
+            // The signed record goes last, best effort (FIX 4624).
+            if let Some(act) = signed {
+                self.record_policy_setting_op_in_txn(txn, act);
+            }
+            Ok(())
         })
     }
     /// Update just the grain on the same owner-authenticated policy row used

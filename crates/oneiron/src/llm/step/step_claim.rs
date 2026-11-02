@@ -756,6 +756,20 @@ pub(super) fn step_index_lookup(
     step_index_lookup_in_txn(vault, &rtxn, attempt_id, step_hash)
 }
 
+/// Forgets the memo in the caller's writer, so a charge-mark forget commits
+/// beside it (FIX 7489). The terminal claim stays.
+pub(crate) fn forget_step_memo_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<()> {
+    let Some(claim_id) = step_index_lookup_in_txn(vault, txn, attempt_id, step_hash)? else {
+        return Ok(());
+    };
+    deindex_dreamer_step_claim(&vault.store, txn, &claim_id)
+}
+
 /// Forgets `attempt_id`'s memo of the step `step_hash`, so the attempt's next
 /// call of that step asks its model again. The terminal claim stays; only the
 /// index row that would replay it goes.
@@ -764,16 +778,7 @@ pub(crate) fn forget_step_memo(
     attempt_id: AttemptId,
     step_hash: &[u8; 32],
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        let key = StepIndexKey {
-            attempt_id,
-            step_hash: *step_hash,
-        };
-        let Some(claim_id) = STEP_INDEX_FORWARD.get(&vault.store, wtxn, &key)? else {
-            return Ok(());
-        };
-        deindex_dreamer_step_claim(&vault.store, wtxn, &claim_id)
-    })
+    vault.with_write_txn(|wtxn| forget_step_memo_in_txn(vault, wtxn, attempt_id, step_hash))
 }
 
 pub(super) fn step_index_lookup_in_txn(

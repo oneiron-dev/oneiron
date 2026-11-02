@@ -130,6 +130,11 @@ pub struct TrialEvidence {
     /// above are the known billed spend only, and the losses are unknown.
     #[serde(default)]
     pub unknown_arms: usize,
+    /// Earlier attempts of arms the owner resent (FIX 10464): their spend is
+    /// unknown, so while nonzero the costs above are the known billed spend
+    /// only, while the losses are read on the resent arms.
+    #[serde(default)]
+    pub resent_unknown_arms: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -212,6 +217,10 @@ pub struct ModelTrial {
     /// Every arm sent, each kept before the next send.
     #[serde(default)]
     pub arms: Vec<TrialArmProgress>,
+    /// Arms of unknown outcome the owner chose to send again (FIX 10464),
+    /// each as it stood when resent: its spend stays unknown, never zero.
+    #[serde(default)]
+    pub resent_arms: Vec<TrialArmProgress>,
     pub evidence: Option<TrialEvidence>,
     pub receipt: Option<ModelTrialReceipt>,
 }
@@ -266,8 +275,16 @@ pub enum TrialArmOutcome {
     /// Billed, and kept before the next send.
     Completed { reading: TrialReading },
     /// Sent with no reading back: its spend is unknown, never zero, and it
-    /// is never sent again.
+    /// is never sent again unless its owner resends it (FIX 10464).
     Unknown { failure: TrialArmFailure },
+}
+
+/// One arm of a trial: a held-out case's answer and which of its two reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrialArmKey {
+    pub answer: EntityId,
+    pub arm: TrialArm,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

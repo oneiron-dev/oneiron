@@ -8,7 +8,10 @@ use std::cell::RefCell;
 
 use self::segment::TxnSegment;
 
+mod held;
 mod lifecycle;
+mod repo_projection;
+mod retained;
 mod retire;
 mod rows;
 mod segment;
@@ -25,6 +28,7 @@ pub(crate) fn txn_segment_installed() -> bool {
     ACTIVE_SEGMENT.with(|slot| slot.borrow().is_some())
 }
 
+pub(super) use self::held::PlanCharge;
 pub(super) use self::lifecycle::Lease;
 pub(crate) use self::lifecycle::SessionOverlay;
 pub(crate) use self::segment::TxnSegmentGuard;

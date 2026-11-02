@@ -93,11 +93,18 @@ impl Store {
     /// a held one keeps its bytes, its claim references and its indexes, and
     /// the erase owes it its skeleton. `true` when anything changed, an owed
     /// scrub included; never whether the erase is complete.
+    ///
+    /// `erase` is set for an erase (FIX 7955): only it retires the claim's
+    /// decision key, so a restore of an older image cannot open what it
+    /// redacted. A delete keeps the key, so its receipts restore from a
+    /// pre-delete backup in the restore window; its skeletons, tray and owed
+    /// scrubs are the same.
     pub(crate) fn redact_gate_decisions_for_claim_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &[u8; 16],
         redacted_at: u64,
+        erase: bool,
     ) -> Result<bool> {
         self.reject_legal_hold_in_txn(&*wtxn, claim_id)?;
         let id = EntityId::from_bytes(*claim_id)
@@ -134,7 +141,9 @@ impl Store {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));
             }
         }
-        self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
+        if erase {
+            self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
+        }
         Ok(changed)
     }
 
@@ -196,6 +205,7 @@ impl Store {
         record.actor_ref = None;
         record.grant_ref = None;
         record.diff_handle.clear();
+        record.context = Default::default();
         // An injected clock at epoch zero must still produce a valid v1 row.
         record.redacted_at = Some(redacted_at.max(1));
         vet_gate_decision_record(&record)?;
@@ -365,12 +375,11 @@ impl Store {
             } else if let Some(redacted_at) = claim {
                 self.redact_gate_decision_in_txn(wtxn, record, redacted_at)?;
             } else {
-                let names_erased = owed.iter().any(|scrub| {
-                    scrub.kind == OwedScrub::Actor
-                        && record.actor_ref.as_deref() == Some(scrub.source.to_hex().as_str())
-                });
+                let mut names_erased = false;
+                for scrub in owed.iter().filter(|scrub| scrub.kind == OwedScrub::Actor) {
+                    names_erased |= record.scrub_actor(&scrub.source);
+                }
                 if names_erased {
-                    record.actor_ref = None;
                     let value = reseal_gate_decision(custody, &raw, &record)?;
                     LEDGER.put(self, wtxn, &decision, &value)?;
                 }

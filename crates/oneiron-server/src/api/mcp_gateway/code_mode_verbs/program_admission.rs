@@ -26,10 +26,13 @@ use oneiron::attempt_queue::AttemptRecord;
 use oneiron::authority::InvocationSlipBinding;
 use oneiron::browser_library::{
     AdmissionCaller, CallerUnavailable, ProgramAdmissionJob, ProgramAdmissionOutcome,
+    SolvedRunEvidence, admission_readiness,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::HostSelfDispatcher;
-use oneiron::runtime_hooks::verb::{VerbAskCredentialRef, VerbAskDoor, VerbAskRefusal};
+use oneiron::runtime_hooks::verb::{
+    VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor, VerbAskRefusal,
+};
 use oneiron_browser::{BatchInput, ProposeOutput, SubgoalStatus};
 
 /// The caller one admission job acts as, established at its start.
@@ -64,7 +67,9 @@ impl JobCaller {
 impl RunGuests {
     /// Runs the admission job `job` (id `job_id`, leased as `leased`) as
     /// `caller`, its sources' caller as they stand now (CUA E8b): what it
-    /// came to. A caller that does not stand now acts on nothing.
+    /// came to. A caller that does not stand now acts on nothing, and only
+    /// once it stands is the proposal's readiness against `evidence` judged
+    /// (FIX 10720): a revocation surfaces first.
     pub(crate) fn admit_program(
         server: &Arc<SyncServer>,
         runtime: &tokio::runtime::Handle,
@@ -72,11 +77,15 @@ impl RunGuests {
         job_id: oneiron::EntityId,
         job: &ProgramAdmissionJob,
         caller: &AdmissionCaller,
+        evidence: &[SolvedRunEvidence],
     ) -> ProgramAdmissionOutcome {
         let caller = match established(server, job_id, caller) {
             Ok(caller) => caller,
             Err(cause) => return ProgramAdmissionOutcome::CredentialUnavailable { cause },
         };
+        if let Some(lacking) = admission_readiness(job, evidence) {
+            return lacking;
+        }
         let guests = Self {
             browser: RunBrowser::new(server, job_id),
             desktop: None,
@@ -84,6 +93,7 @@ impl RunGuests {
             planner: None,
             payer: None,
             admission: Some(job.filing(job_id)),
+            admission_lease: Some(leased.clone()),
         };
         let outcome = guests.reconstruct_and_propose(server, runtime, leased, &caller, job);
         drop(guests);
@@ -114,8 +124,8 @@ impl RunGuests {
             steps: proposal.steps.clone(),
             postcondition: proposal.postcondition.clone(),
         };
-        let steps = match program.fill(&proposal.args) {
-            Ok((steps, _)) => steps,
+        let (steps, checks) = match program.fill(&proposal.args) {
+            Ok(filled) => filled,
             Err(error) => return refused(error.code()),
         };
         let batch = BatchInput {
@@ -140,6 +150,37 @@ impl RunGuests {
             Some(SubgoalStatus::Done) => {}
             Some(status) => return ProgramAdmissionOutcome::ReconstructionStopped { status },
             None => return refused("admission_batch_unread"),
+        }
+        // The filled postcondition on the reconstructed page (FIX 10721),
+        // read as propose's own Solved check reads its expects: a Done batch
+        // whose page misses checks ends here, proposing nothing. Only the
+        // fills this side reproduces are read here: propose slots secret
+        // operands against the proposing session's driver, which this job
+        // has none of, so a proposal carrying typed secret arguments, or
+        // naming a seed candidate whose own program stands in for the
+        // proposal's, keeps propose's own read as before and never ends
+        // at this one.
+        let own_read = proposal.secret_args.is_empty() && proposal.candidate.is_none();
+        let mut unmet = Vec::new();
+        if own_read {
+            for (index, check) in checks.iter().enumerate() {
+                let Ok(input) = serde_json::to_value(check) else {
+                    return refused("admission_expect_encode");
+                };
+                let verb = AgentVerb::SelfBrowserExpect;
+                let output = match self.job_call(server, runtime, leased, caller, verb, input) {
+                    Ok(output) => output,
+                    Err(outcome) => return outcome,
+                };
+                match output.get("met").and_then(|met| met.as_bool()) {
+                    Some(true) => {}
+                    Some(false) => unmet.push(index),
+                    None => return refused("admission_expect_unread"),
+                }
+            }
+        }
+        if !unmet.is_empty() {
+            return ProgramAdmissionOutcome::PostconditionUnmet { unmet };
         }
         let Ok(input) = serde_json::to_value(proposal) else {
             return refused("admission_proposal_encode");
@@ -266,6 +307,21 @@ impl RunGuests {
             } => {
                 let auth = kept_auth(server, reference, witness, Some(verb.as_str()))
                     .map_err(|cause| ProgramAdmissionOutcome::CredentialUnavailable { cause })?;
+                // The facade's own row admission, run again at each call
+                // (FIX 10715), as the MCP arm's gates run again: the
+                // credential still binds the writer its door established,
+                // and it holds the verb's dispatch scope (both job verbs
+                // are Write rows, whose require also holds the record
+                // scope unrestricted). Its hooks run in the call below.
+                if auth.principal_ref() != Some(writer.entity_ref().to_hex().as_str())
+                    || auth.actor_class() != Some(writer.actor_class().gate_actor_class())
+                {
+                    return Err(ProgramAdmissionOutcome::CredentialUnavailable {
+                        cause: CallerUnavailable::CredentialChanged,
+                    });
+                }
+                auth.require(crate::auth::CoreScope::Write)
+                    .map_err(|error| refused(error.code().as_str().to_owned()))?;
                 let memory = crate::api::credential_memory(
                     &server.vault,
                     Some(&auth),
@@ -323,6 +379,17 @@ fn established(
             reference,
             witness,
         } => {
+            // A managed vault's attested owner kept no binding (FIX 11063):
+            // he is acted for as the person he is, as a person with no
+            // credential is, only while this vault records him as its live
+            // owner.
+            if let VerbAskCredentialSource::AttestedOwner { holder } = reference.instrument.source {
+                attested_owner_source(server, reference, holder, actor, witness.as_ref())?;
+                return match owner_proof(server, *actor) {
+                    Some(_) => Ok(JobCaller::Owner(*actor)),
+                    None => Err(CallerUnavailable::ContextUnavailable),
+                };
+            }
             let witness = witness
                 .as_ref()
                 .ok_or(CallerUnavailable::InstrumentNotHeld)?;
@@ -340,6 +407,8 @@ fn established(
                     }
                     Ok(JobCaller::Mcp(context))
                 }
+                // Only the attested owner comes by his own stream.
+                VerbAskDoor::McpOwner { .. } => Err(CallerUnavailable::CredentialChanged),
                 // A room turn's door is not rebuilt for a job.
                 VerbAskDoor::Facade { room: Some(_) } => Err(CallerUnavailable::ContextUnavailable),
                 VerbAskDoor::Facade { room: None } => {
@@ -365,6 +434,29 @@ fn established(
             None => Err(CallerUnavailable::ContextUnavailable),
         },
         AdmissionCaller::Unsupported => Err(CallerUnavailable::ContextUnavailable),
+    }
+}
+
+/// Whether an attested owner's kept `reference` is his own source's: it
+/// names `actor`, a human, in this vault, and no slip binding stands beside
+/// it. His standing is judged at use, as a person's is.
+fn attested_owner_source(
+    server: &SyncServer,
+    reference: &VerbAskCredentialRef,
+    holder: oneiron::EntityId,
+    actor: &WriteActor,
+    witness: Option<&InvocationSlipBinding>,
+) -> Result<(), CallerUnavailable> {
+    if holder != actor.entity_ref()
+        || actor.actor_class() != oneiron::EdgeActorClass::Human
+        || witness.is_some()
+    {
+        return Err(CallerUnavailable::CredentialChanged);
+    }
+    match server.vault.authority_vault_id() {
+        Ok(Some(vault)) if vault == reference.instrument.vault => Ok(()),
+        Ok(_) => Err(CallerUnavailable::CredentialChanged),
+        Err(_) => Err(CallerUnavailable::CredentialUnavailable),
     }
 }
 
@@ -396,9 +488,14 @@ fn kept_auth(
     } else {
         CallerLocality::OffDevice
     };
-    crate::code_consent_host::kept_instrument_auth(server, &reference.instrument, witness, door)
-        .map(|auth| auth.at(locality))
-        .map_err(unavailable)
+    crate::code_consent_host::kept_instrument_auth(
+        server,
+        &reference.instrument,
+        Some(witness),
+        door,
+    )
+    .map(|auth| auth.at(locality))
+    .map_err(unavailable)
 }
 
 /// A connector's registration whose STREAM connection is `connection`, as
@@ -450,6 +547,7 @@ fn connector(
         room_turn: None,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 
@@ -463,6 +561,9 @@ const fn unavailable(refusal: VerbAskRefusal) -> CallerUnavailable {
         VerbAskRefusal::CredentialUnavailable => CallerUnavailable::CredentialUnavailable,
         VerbAskRefusal::ScopeRefused => CallerUnavailable::ScopeRefused,
         VerbAskRefusal::ContextUnavailable => CallerUnavailable::ContextUnavailable,
+        // A person no longer this vault's live owner is acted for not at
+        // all; the receipt names his lapse, not a door fault (FIX 11690).
+        VerbAskRefusal::OwnerNotLive => CallerUnavailable::OwnerNotLive,
     }
 }
 

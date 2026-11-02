@@ -187,7 +187,31 @@ fn mcp_admit_verb_scope(
     if tool.requires_unscoped() {
         mcp_admit_unscoped_execution(actor, tool.name, "arguments.spec")?;
     }
+    if actor.scope.is_narrow()
+        && let Some(asset) = ask_image_asset(tool, arguments)
+    {
+        // `ai.ask_image` pulls its image through the credential's own lane,
+        // which can be wider than the connector's registration: a narrowed
+        // connector asks only about an image inside its own ceiling.
+        mcp_admit_scoped_entity(server, actor, &asset, "arguments.spec.handle")?;
+    }
     Ok(())
+}
+
+/// The ASSET an `ai.ask_image` call's view handle names (FIX 679); `None`
+/// for any other tool, and for a handle that does not parse, which the
+/// door refuses before it reads anything.
+fn ask_image_asset(
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+) -> Option<oneiron::EntityId> {
+    if tool.name != "ai.ask_image" {
+        return None;
+    }
+    let handle = arguments.spec.as_ref()?.get("handle")?.as_str()?;
+    oneiron::memory::ImageHandle::parse(handle)
+        .ok()
+        .map(|handle| handle.asset)
 }
 
 /// Refuses one call whose EXECUTION cannot carry this credential's scope.
@@ -303,8 +327,10 @@ pub(super) fn mcp_credential_reads(
 /// credential's world. A TASK carries no `world` key, so it is projected
 /// through the engine's record-scope stamp instead (`mcp_task_in_world`):
 /// the board's TASK rows, a call addressing a TASK and the STREAM events about
-/// one all take that one projection (ARCH-0067 §5). Any other row that carries
-/// no `world` key cannot be PROVEN in this credential's world and is refused.
+/// one all take that one projection (ARCH-0067 §5). A NOTE is in this world
+/// when any of its live `InWorld` edges names it (an edge-less NOTE is in base
+/// reality alone). Any other row that carries no `world` key cannot be PROVEN
+/// in this credential's world and is refused.
 /// Prerelease law: the admission is narrowed outright, with no compatibility
 /// carve-out for the rows the old CLAIM-only check let through.
 pub(super) fn mcp_scope_covers_entity(
@@ -321,6 +347,14 @@ pub(super) fn mcp_scope_covers_entity(
         .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
     if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
         if !mcp_task_in_world(scoped_read.vault(), scope, id)? {
+            return Ok(false);
+        }
+    } else if let Some(world_ref) = scope.world_ref
+        && entity_type == Some(oneiron::registry::ENTITY_TYPE_NOTE)
+    {
+        // A NOTE sits in a world by its live `InWorld` edges, as at every
+        // other door: any of its worlds that is this one (FIX 10373).
+        if !scoped_read.vault().note_in_world(id, world_ref) {
             return Ok(false);
         }
     } else if let Some(world_ref) = scope.world_ref {
@@ -393,13 +427,16 @@ fn mcp_task_in_world(
 /// scope omission: rows proven inside the credential's world and facet that
 /// another of its bounds withholds. A row in a world or facet the credential
 /// cannot read, or one that cannot prove where it sits, adds to no count
-/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`.
+/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`. The
+/// bare rows of `bare_children`, a narrowed board's children it already
+/// judged by their TASK or their dispatch scope (FIX 1052), pass as they are.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     rows: oneiron::context_board::TasksSectionRows,
     pins: &[oneiron::context_board::HookPin],
     served: &mut Vec<oneiron::EntityId>,
+    bare_children: &std::collections::BTreeSet<String>,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut omitted = 0_usize;
@@ -420,11 +457,18 @@ pub(super) fn mcp_scoped_tasks_section(
         }
     }
     let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
+    let mut children_served = Vec::new();
     for job in rows.bare_jobs {
-        if admits(&job.id)? {
+        // A narrowed board's child row names its attempt, which no entity
+        // read proves: its board already judged it by its evidence.
+        if bare_children.contains(&job.id) {
+            children_served.extend(oneiron::EntityId::from_hex(&job.id).ok());
+            bare_jobs.push(job);
+        } else if admits(&job.id)? {
             bare_jobs.push(job);
         }
     }
+    served.extend(children_served);
     let rows = oneiron::context_board::TasksSectionRows {
         intents,
         bare_jobs,

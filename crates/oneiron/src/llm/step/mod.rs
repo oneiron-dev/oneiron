@@ -14,6 +14,8 @@ mod codec;
 // their run's captured route (an `ExecutorStorage` method, no export).
 mod compaction_step;
 mod execute;
+// FIX 465, FIX 2245: a durable step's media call, by its attempt.
+mod media_step;
 pub mod public;
 mod schema;
 mod schema_guard;
@@ -33,6 +35,7 @@ mod step_state;
 mod submission_custody;
 mod trap;
 mod trap_binding;
+mod trap_sent;
 mod types;
 
 // The moved bodies still spell these parent (`llm`) names as `super::X`;
@@ -54,6 +57,7 @@ pub use self::trap::{
     trap_park_owner,
 };
 pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
+pub use self::trap_sent::heal_sent_markers;
 pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
@@ -68,11 +72,11 @@ pub(crate) use self::step_only::{
 };
 
 pub(crate) use self::settled::{
-    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller,
+    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller, settled_step_usage_in_txn,
 };
 pub(crate) use self::step_claim::{
-    deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,
-    terminal_step_identity,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use self::response_bodies::{

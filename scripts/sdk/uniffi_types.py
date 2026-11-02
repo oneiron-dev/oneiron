@@ -22,8 +22,11 @@ What UniFFI cannot express stays the crate's `WireJson` leaf, inside the
 record and not as the whole argument: a `serde_json::Value`, a type on a
 by-value cycle (a record cannot hold itself; one that reaches itself only
 through a sequence or a map, as a tree's `children: Vec<Self>` does, is an
-ordinary record), a tuple, a bare unit, an untyped union and a 128-bit
-integer. A row whose input or output has a shape the inventory could
+ordinary record), a bare unit, an untyped union and a 128-bit integer. A
+tuple is a generated record with positional fields (`item0`, ...) whose
+serde is the engine tuple's one JSON array, through the tuple codec
+(`crate::codec::ser_tuple2` / `de_tuple2`, `ser_tuple3` / `de_tuple3`;
+FIX 3298). A row whose input or output has a shape the inventory could
 not read keeps that side on `WireJson` whole.
 """
 import json
@@ -103,6 +106,7 @@ class UniffiTypes:
         self.inv = inventory
         self.taken = {name.upper() for name in set(taken) | RESERVED}
         self.mirrors = {}    # (declaration key, closed arguments) -> name
+        self.tuples = {}     # closed member types -> tuple record name
         self.items = []      # rendered items, in first-reached order
         self.leaves = {}     # where -> why it stays a WireJson leaf
         self.recursive = self.cycles()
@@ -207,6 +211,7 @@ class UniffiTypes:
             if node[1] == 'int': return WIDTHS.get(node[2] if len(node) > 2 else 'i64', 'Int').title()
             return {'string': 'String', 'float': 'Float', 'bool': 'Bool', 'null': 'Unit'}[node[1]]
         if kind == 'opaque': return 'Json'
+        if kind == 'tuple': return 'Tuple' + ''.join(self.mangle(m) for m in node[1])
         return 'Value'
 
     def rt(self, node, subst, where):
@@ -226,8 +231,45 @@ class UniffiTypes:
             return inner if inner.startswith('Option<') else f'Option<{inner}>'
         if kind == 'map': return f'std::collections::HashMap<String, {self.rt(node[1], subst, where)}>'
         if kind == 'ref': return self.ref(node, subst, where)
-        if kind in ('tuple', 'union', 'unknown', 'never'): return self.leaf(where, WIRE_LEAVES[kind])
+        if kind == 'tuple': return self.tuple(node, subst, where)
+        if kind in ('union', 'unknown', 'never'): return self.leaf(where, WIRE_LEAVES[kind])
         return self.leaf(where, WIRE_LEAVES['inline'].format(name=kind))
+
+    def tuple(self, node, subst, where):
+        'A tuple as a generated record with positional fields, crossing as one JSON array (FIX 3298).'
+        # UniFFI has no tuple: the record names each position (`item0`, ...),
+        # and its serde reads and writes the array the engine tuple does
+        # (`crate::codec::ser_tuple2` / `de_tuple2`, `ser_tuple3` /
+        # `de_tuple3`), so a row still converts through the shared wire shape.
+        # A shape outside the codec's arities stays a WireJson leaf.
+        members = [self.close(m, subst) for m in node[1]]
+        if len(members) not in (2, 3):
+            return self.leaf(where, WIRE_LEAVES['tuple'])
+        key = repr(members)
+        if key in self.tuples: return self.tuples[key]
+        name = self.allocate('Tuple' + ''.join(self.mangle(m) for m in members))
+        self.tuples[key] = name
+        kinds = [self.rt(m, {}, f'{where}.{i}') for i, m in enumerate(members)]
+        arity = len(members)
+        fields = ''.join(f'    pub item{i}: {kind},\n' for i, kind in enumerate(kinds))
+        params = ', '.join(f'&self.item{i}' for i in range(arity))
+        made = ', '.join(f'item{i}' for i in range(arity))
+        self.items.append(
+            '/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.\n'
+            '#[derive(Clone, Debug, PartialEq, uniffi::Record)]\n'
+            f'pub struct {name} {{\n{fields}}}\n'
+            f'impl serde::Serialize for {name} {{\n'
+            '    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n'
+            f'        crate::codec::ser_tuple{arity}({params}, serializer)\n'
+            '    }\n'
+            '}\n'
+            f"impl<'de> serde::Deserialize<'de> for {name} {{\n"
+            "    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n"
+            f'        crate::codec::de_tuple{arity}(deserializer, |{made}| Self {{ {made} }})\n'
+            '    }\n'
+            '}\n'
+        )
+        return name
 
     def ref(self, node, subst, where):
         key = node[1]
@@ -302,10 +344,21 @@ class UniffiTypes:
 
     def record(self, name, owner, ir, subst):
         fields, tag = self.fields(owner, ir, subst, True)
-        head = f'#[derive({DERIVES}, uniffi::Record)]\n'
+        # A struct whose engine Debug is written by hand keeps a value out of
+        # it (a secret's value or a sealed input, FIX 4993): its mirror's
+        # Debug names the type alone.
+        redacted = owner in self.inv.redacted
+        derives = DERIVES.replace('Debug, ', '') if redacted else DERIVES
+        head = f'#[derive({derives}, uniffi::Record)]\n'
         if tag: head += f'#[serde(tag = {literal(tag[0])}, rename = {literal(tag[1])})]\n'
         if owner in self.inv.closed: head += '#[serde(deny_unknown_fields)]\n'
-        return head + f'pub struct {name} {{\n' + ''.join(fields) + '}\n'
+        record = head + f'pub struct {name} {{\n' + ''.join(fields) + '}\n'
+        if redacted:
+            record += (f'impl std::fmt::Debug for {name} {{\n'
+                       "    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n"
+                       f'        f.debug_struct({literal(name)}).finish_non_exhaustive()\n'
+                       '    }\n}\n')
+        return record
 
     def enum(self, name, owner, meta, subst):
         tag, content, untagged = meta['tag'], meta['content'], meta['untagged']

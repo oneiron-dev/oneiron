@@ -5,7 +5,7 @@
 //!
 //! Two forms share one codec. A head's world compartment, once
 //! [`WORLD_PAD_COMPARTMENTS`] is on, sits among the head's others under the
-//! control compartment's digests. A capsule ([`SealedWorldPads`]) stands
+//! control compartment's root. A capsule ([`SealedWorldPads`]) stands
 //! alone: what a machine's pad hydration carries to another of the owner's
 //! machines, bound to its custody position, its world, the exact set of pads
 //! it holds and the set of recipients it is wrapped to. Its BLAKE3 is what
@@ -169,6 +169,16 @@ fn wrap_recipient(wrap: &WrapWire) -> Option<WrapRecipient> {
     }
 }
 
+/// Keeps the wraps among `wraps` to a recipient `admitted` names, verbatim:
+/// a carried compartment's (PAD-3, FIX 11133), never wrapped again.
+pub(super) fn retain_admitted(wraps: &mut Vec<WrapWire>, admitted: Option<&PadRecipients>) {
+    wraps.retain(|wrap| {
+        wrap_recipient(wrap).is_some_and(|recipient| {
+            admitted.is_some_and(|admitted| admitted.contains_key(&recipient))
+        })
+    });
+}
+
 /// The compartment key the wrap to `recipient` gives `secret`, if one names
 /// it.
 fn unwrap_for(
@@ -257,6 +267,12 @@ pub(crate) struct OpenedWorldPads {
     pub(in crate::store) required_keys: Vec<WorldKeyId>,
     pub(in crate::store) live: BTreeMap<[u8; 40], Zeroizing<[u8; 32]>>,
     pub(in crate::store) retired: BTreeSet<[u8; 40]>,
+}
+
+impl OpenedWorldPads {
+    pub(crate) fn retired(&self) -> &BTreeSet<[u8; 40]> {
+        &self.retired
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -404,7 +420,7 @@ pub(crate) fn seal_world_pad_compartment(
     let key_id = capsule_key_id(position, &world, &keys, &ids);
     let body = BodyWire {
         control: None,
-        digests: Vec::new(),
+        root: None,
         live: live
             .iter()
             .map(|(full, secret)| EntryWire {
@@ -424,6 +440,11 @@ pub(crate) fn seal_world_pad_compartment(
             .collect(),
         recipients: Vec::new(),
         history: Vec::new(),
+        // A world's pad capsule carries no erase evidence (FIX 10584 item
+        // 3) or holder debt (FIX 11206): those ride the head's host-readable
+        // compartments.
+        evidence: Vec::new(),
+        holders: Vec::new(),
     };
     let mut key = Zeroizing::new([0u8; 32]);
     crate::world_keys::os_fill(&mut key[..])?;
@@ -507,9 +528,11 @@ pub(crate) fn open_world_pad_compartment(
     )?;
     let mut body: BodyWire = rmp_serde::from_slice(&plain).map_err(|_| pads_corrupt())?;
     if body.control.is_some()
-        || !body.digests.is_empty()
+        || body.root.is_some()
         || !body.recipients.is_empty()
         || !body.history.is_empty()
+        || !body.evidence.is_empty()
+        || !body.holders.is_empty()
     {
         return Err(pads_corrupt());
     }

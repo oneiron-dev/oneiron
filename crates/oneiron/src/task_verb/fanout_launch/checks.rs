@@ -127,6 +127,7 @@ pub(super) fn record_dispatched_check_in(
                 denied: false,
                 choice_receipt_ref: None,
                 shipped_policy_rows: governed.shipped_rows,
+                requester: None,
             }
         }
     };

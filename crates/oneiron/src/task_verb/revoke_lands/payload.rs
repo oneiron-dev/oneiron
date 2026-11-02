@@ -87,6 +87,39 @@ pub(super) fn restrictive(vault: &Vault, verb: &str, args: &Value) -> Option<Par
     }
 }
 
+/// Whether every part a polymorphic call of `verb` writes withdraws or
+/// erases (FIX 11201): a batch every put of which withdraws an access grant,
+/// or a shared act that deletes the vault, erases or removes an owner. A
+/// connector pack accept stamps the pack's consent, whatever rows it denies,
+/// so it is never one; nor is any other call.
+///
+/// # Errors
+/// The pending shared act's read failing.
+pub(super) fn wholly_restrictive(vault: &Vault, verb: &str, args: &Value) -> crate::Result<bool> {
+    Ok(match verb {
+        "vault.batch" => args
+            .get("entities")
+            .and_then(Value::as_array)
+            .is_some_and(|puts| !puts.is_empty() && puts.iter().all(withdraws_a_grant)),
+        "vault.shared.execute" => {
+            let Some(act) = args.get("act_id").and_then(Value::as_str) else {
+                return Ok(false);
+            };
+            vault.pending_authority_act(act)?.is_some_and(|saved| {
+                matches!(
+                    SharedActKind::parse(&saved.act),
+                    Some(
+                        SharedActKind::DeleteVault
+                            | SharedActKind::Erase
+                            | SharedActKind::RemoveOwner
+                    )
+                )
+            })
+        }
+        _ => false,
+    })
+}
+
 fn pinned(path: &[&str], parse: fn(&Value) -> bool) -> Pinned {
     Pinned {
         path: path.iter().map(|key| (*key).to_owned()).collect(),
@@ -128,7 +161,7 @@ fn disposition(value: &Value) -> bool {
 /// that no longer does, or that a hook dropped, gives way to the caller's
 /// own put. The notes say what changed (`applied` adds one for a change that
 /// stands). `None` when the caller's puts cannot be put back: no list of
-/// puts is left, or putting one back would pass the batch's bound.
+/// puts is left.
 pub(super) fn keep_puts(
     kept: &[Value],
     candidate: &mut Value,
@@ -155,9 +188,6 @@ pub(super) fn keep_puts(
                 ));
             }
             None => {
-                if entities.len() >= crate::core_write::shape::CORE_MAX_BATCH_ENTITIES {
-                    return None;
-                }
                 entities.push(put.clone());
                 notes.push(format!(
                     "a hook took this batch's withdrawal of grant {named} out; it was put back"

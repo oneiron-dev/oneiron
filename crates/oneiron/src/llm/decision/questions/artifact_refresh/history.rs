@@ -10,6 +10,7 @@ use super::super::ask_history::{
     ask_history_through_in_txn,
 };
 use super::super::store::owned_head;
+use super::unit_receipts::artifact_unit_receipts;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
 use crate::edit_roundtrip::ArtifactAskRun;
 use crate::edit_settle::PendingProposalView;
@@ -20,7 +21,8 @@ impl Asking<'_> {
     /// named in its run ref after `kind`, so two asks in one second hold two refs. A
     /// completed ask holds its answers as a proposal, restamps the artifact and logs the
     /// ask, all in one transaction; a failed one, before or at that commit, is logged as
-    /// failed and leaves the stamp, and its error stands.
+    /// failed and leaves the stamp, and its error stands. The log entry keeps the receipt
+    /// of every unit the ask left without an answer (FIX 9913).
     pub(super) fn ask_recorded(
         &self,
         artifact: EntityId,
@@ -29,6 +31,13 @@ impl Asking<'_> {
         ask: impl FnOnce(&str) -> Result<ArtifactAskRun>,
     ) -> Result<Option<PendingProposalView>> {
         let vault = self.vault;
+        // The live bodies it reads, pinned as the ask starts (FIX 2115).
+        let mut live = Vec::new();
+        for (id, _) in &observed {
+            if let Some(pin) = vault.office_body_pin(id)? {
+                live.push((*id, pin));
+            }
+        }
         let ask_id = EntityId::now();
         let reference = format!(
             "{kind}:{}:{}:{}:{}",
@@ -37,15 +46,21 @@ impl Asking<'_> {
             self.now,
             ask_id.to_hex()
         );
-        let event = |proposal_ref: Option<String>, failed: Option<ErrorKind>| ArtifactAskEvent {
-            ask_id,
-            artifact,
-            question_version: self.version,
-            versions: observed.clone(),
-            asked_at: self.now,
-            proposal_ref,
-            failed,
-            parent_proposal_ref: None,
+        let event = |proposal_ref: Option<String>,
+                     failed: Option<ErrorKind>,
+                     units: Vec<super::ArtifactUnitReceipt>| {
+            ArtifactAskEvent {
+                ask_id,
+                artifact,
+                question_version: self.version,
+                versions: observed.clone(),
+                asked_at: self.now,
+                proposal_ref,
+                failed,
+                parent_proposal_ref: None,
+                details_omitted: false,
+                units,
+            }
         };
         let committed = ask(&reference).and_then(|run| {
             vault.with_write_txn_grouped(|wtxn| {
@@ -62,16 +77,17 @@ impl Asking<'_> {
                     asked_at: self.now,
                     proposal_ref: proposal_ref.clone(),
                     ask_id: Some(ask_id),
+                    live: live.clone(),
                 };
                 ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
                 let principal = self.record.principal;
-                let asked = event(proposal_ref, None);
+                let asked = event(proposal_ref, None, artifact_unit_receipts(&run));
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
                 Ok(proposed)
             })
         });
         if let Err(error) = &committed {
-            let failed = event(None, Some(error.kind()));
+            let failed = event(None, Some(error.kind()), Vec::new());
             let logged = vault.with_write_txn_grouped(|wtxn| {
                 let principal = self.record.principal;
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, failed)
@@ -88,7 +104,9 @@ impl Asking<'_> {
 }
 
 /// One logged ask as its principal reads it back: the pins it read and where its
-/// answers stand now, by the walk the next ask's baseline takes.
+/// answers stand now, by the walk the next ask's baseline takes. An entry logged with
+/// its ref details left out (FIX 9419) says so, and where its answers stand is not
+/// read: it names no proposal to read it from.
 pub(in crate::llm::decision::questions) fn artifact_event_record(
     vault: &Vault,
     event: &ArtifactAskEvent,
@@ -99,11 +117,19 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         asked_at: event.asked_at,
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
+        live: Vec::new(),
     };
     let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
     record
         .parent_proposal_ref
         .clone_from(&event.parent_proposal_ref);
+    record.units.clone_from(&event.units);
+    if event.details_omitted {
+        record.details_omitted = true;
+        if event.failed.is_none() {
+            record.standing = ArtifactAskStanding::DetailsOmitted;
+        }
+    }
     Ok(record)
 }
 
@@ -136,6 +162,8 @@ fn ask_record(
         ask_id: stamp.ask_id,
         failed: failed.map(error_kind_wire_name),
         parent_proposal_ref: None,
+        details_omitted: false,
+        units: Vec::new(),
     })
 }
 

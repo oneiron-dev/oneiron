@@ -92,9 +92,27 @@ impl SessionBinding<'_> {
         complete: bool,
         owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output(path, sink, complete, self.session.limit_watch(), |digest| {
-            self.session.pin_result_body(digest)
-        })?;
+        self.publish_output_sourced(path, sink, complete, owner, None)
+    }
+
+    /// [`Self::publish_output`] with the occurrence's complete input rows,
+    /// or `None` when any constituent is unknown (FIX 7104).
+    pub(super) fn publish_output_sourced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<CodeRunRawOutput> {
+        let finished = finish_output_sourced(
+            path,
+            sink,
+            complete,
+            input_rows,
+            self.session.limit_watch(),
+            |digest| self.session.pin_result_body(digest),
+        )?;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
@@ -132,10 +150,11 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output(
+        let finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
+            output.input_rows.clone(),
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;

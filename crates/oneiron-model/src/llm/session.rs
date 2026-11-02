@@ -14,6 +14,13 @@
 //! a session lives in memory, is never persisted, and is never restored as
 //! truth. A metadata match is never a KV hit: only the worker's verified
 //! token frontier is.
+//!
+//! Codec v1.2 (R3) adds the snapshot ops: `session.export` copies a
+//! published checkpoint out of the worker into a sealed region, and
+//! `session.import` rebuilds one from such a region on a new, empty session,
+//! staged until the host has rechecked what it was admitted under and
+//! publishes it. The worker keeps no snapshot past its op's replay; what the
+//! host keeps, and where, is the host's.
 use serde::{Deserialize, Serialize};
 
 use super::CacheIdentity;
@@ -26,6 +33,23 @@ pub const SESSIONS_CAPABILITY: &str = "sessions";
 /// The codec minor version that carries session ops (codec v1.1); a worker
 /// that advertises a lower one gets none.
 pub const SESSION_SCHEMA_MINOR: u64 = 1;
+
+/// The codec minor that carries the snapshot ops (codec v1.2): a worker
+/// advertises it with `capabilities.sessions.snapshot`. It is asked only of
+/// [`SessionOp::Export`] and [`SessionOp::Import`]; every other op still
+/// needs [`SESSION_SCHEMA_MINOR`] alone.
+pub const SNAPSHOT_SCHEMA_MINOR: u64 = 2;
+
+/// The snapshot format both sides speak: `OIRS`, a u32 little-endian schema,
+/// a u64 little-endian header length, the canonical JSON header, then the
+/// tensor payload it describes.
+pub const SNAPSHOT_SCHEMA: u64 = 1;
+
+/// A snapshot region's encoding on the native channel.
+pub const SNAPSHOT_ENCODING: &str = "snapshot_v1";
+
+/// What names a snapshot region's bytes: their SHA-256.
+pub const SNAPSHOT_HASH: &str = "sha256";
 
 /// A session or branch handle's size: 128 bits, minted by the worker.
 pub const SESSION_HANDLE_BYTES: usize = 16;
@@ -68,6 +92,12 @@ hex_bytes!(
     /// A working branch's handle inside a session.
     BranchHandle,
     16
+);
+hex_bytes!(
+    /// The SHA-256 of a snapshot region's bytes, as both sides take it:
+    /// never a token digest.
+    SnapshotDigest,
+    32
 );
 
 /// The conversation a call's canonical path was read from, as the producer
@@ -157,10 +187,12 @@ pub enum SessionOp {
     SuffixCommit,
     Restore,
     Drop,
+    Export,
+    Import,
 }
 
 impl SessionOp {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Create,
         Self::Append,
         Self::Checkpoint,
@@ -169,6 +201,8 @@ impl SessionOp {
         Self::SuffixCommit,
         Self::Restore,
         Self::Drop,
+        Self::Export,
+        Self::Import,
     ];
 
     #[must_use]
@@ -182,6 +216,24 @@ impl SessionOp {
             Self::SuffixCommit => "session.suffix_commit",
             Self::Restore => "session.restore",
             Self::Drop => "session.drop",
+            Self::Export => "session.export",
+            Self::Import => "session.import",
+        }
+    }
+
+    /// The codec minor that carries the op.
+    #[must_use]
+    pub const fn minor(self) -> u64 {
+        match self {
+            Self::Create
+            | Self::Append
+            | Self::Checkpoint
+            | Self::Fork
+            | Self::Generate
+            | Self::SuffixCommit
+            | Self::Restore
+            | Self::Drop => SESSION_SCHEMA_MINOR,
+            Self::Export | Self::Import => SNAPSHOT_SCHEMA_MINOR,
         }
     }
 }
@@ -191,13 +243,77 @@ impl SessionOp {
 pub struct SessionCapability {
     pub minor: u64,
     pub ops: Vec<String>,
+    /// What its snapshots are; only a minor-2 worker that exports or
+    /// imports names it.
+    #[serde(default)]
+    pub snapshot: Option<SnapshotCapability>,
 }
 
 impl SessionCapability {
-    /// Whether the worker serves `op` at this codec minor.
+    /// Whether the worker serves `op` at the op's codec minor, and, for a
+    /// snapshot op, writes and reads the snapshots this side does.
     #[must_use]
     pub fn serves(&self, op: SessionOp) -> bool {
-        self.minor >= SESSION_SCHEMA_MINOR && self.ops.iter().any(|name| name == op.wire_name())
+        let minor = op.minor();
+        let agreed = minor < SNAPSHOT_SCHEMA_MINOR
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(SnapshotCapability::agrees);
+        self.minor >= minor && agreed && self.ops.iter().any(|name| name == op.wire_name())
+    }
+}
+
+/// A minor-2 worker's `capabilities.sessions.snapshot`: the snapshot schema,
+/// region encoding and hash it speaks, and the recurrent state kinds it
+/// captures and rebuilds exactly (`gdn`, `swa`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SnapshotCapability {
+    pub schema: u64,
+    pub encoding: String,
+    pub hash: String,
+    pub state_kinds: Vec<String>,
+}
+
+impl SnapshotCapability {
+    /// Whether the worker's snapshots are the ones this side reads: the same
+    /// schema, encoding and hash, and some state kind it rebuilds.
+    #[must_use]
+    pub fn agrees(&self) -> bool {
+        self.schema == SNAPSHOT_SCHEMA
+            && self.encoding == SNAPSHOT_ENCODING
+            && self.hash == SNAPSHOT_HASH
+            && !self.state_kinds.is_empty()
+    }
+}
+
+/// A refused snapshot op that is a cache miss, not a fault: nothing ran, and
+/// the host goes cold and recomputes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotMiss {
+    /// The snapshot's schema, layout, state or model identity is not one
+    /// this worker rebuilds exactly.
+    Incompatible,
+    /// The worker has no room for it beside what runs now.
+    Busy,
+}
+
+impl SnapshotMiss {
+    /// The refusal code.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Incompatible => "snapshot_incompatible",
+            Self::Busy => "snapshot_busy",
+        }
+    }
+
+    /// The miss a refusal code names, if it names one.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        [Self::Incompatible, Self::Busy]
+            .into_iter()
+            .find(|miss| miss.code() == code)
     }
 }
 
@@ -364,6 +480,70 @@ pub struct SessionRestore {
 /// `session.restore`'s answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct SessionRestored {
+    pub residency: SessionResidency,
+}
+
+/// A region's description on the native channel: one whole region, the
+/// first descriptor of the frame that carries it, in `encoding`.
+/// `buffer_id` names it on its connection: the request id of that frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegionDescriptor {
+    pub buffer_id: u64,
+    pub fd_index: u64,
+    pub offset: u64,
+    pub length: u64,
+    pub encoding: String,
+}
+
+/// `session.export`: copy the session's published checkpoint, `checkpoint`
+/// exactly (its digest, HEAD, frontier and parent), into a snapshot in a
+/// sealed region whose descriptor rides on the answer's frame. The
+/// checkpoint stays published and resident.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionExport {
+    #[serde(flatten)]
+    pub target: SessionTarget,
+    #[serde(flatten)]
+    pub stamp: SessionOpStamp,
+    pub checkpoint: CanonicalCheckpointRef,
+}
+
+/// `session.export`'s answer: the checkpoint it copied, the snapshot's
+/// length and SHA-256, and the region that holds it (`output.length` is the
+/// snapshot's length). A retry of the op gets the same bytes again.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SessionExported {
+    pub checkpoint: CanonicalCheckpointRef,
+    pub snapshot_bytes: u64,
+    pub snapshot_sha256: SnapshotDigest,
+    pub output: RegionDescriptor,
+    #[serde(default)]
+    pub residency: SessionResidency,
+}
+
+/// `session.import`: rebuild `checkpoint` from the snapshot the frame's
+/// input region carries (`snapshot_bytes` long, named by `snapshot_sha256`)
+/// on a session that holds nothing yet, and stage it as that session's
+/// successor. It is never ready until a `session.checkpoint` publishes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionImport {
+    #[serde(flatten)]
+    pub target: SessionTarget,
+    #[serde(flatten)]
+    pub stamp: SessionOpStamp,
+    pub checkpoint: CanonicalCheckpointRef,
+    pub snapshot_bytes: u64,
+    pub snapshot_sha256: SnapshotDigest,
+}
+
+/// `session.import`'s answer: the staged checkpoint, and the bytes it read
+/// with their SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SessionImported {
+    pub staged: CanonicalCheckpointRef,
+    pub imported_bytes: u64,
+    pub snapshot_sha256: SnapshotDigest,
+    #[serde(default)]
     pub residency: SessionResidency,
 }
 

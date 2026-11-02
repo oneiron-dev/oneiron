@@ -32,6 +32,7 @@ mod doctor;
 mod recovery_commands;
 mod recovery_kit;
 mod secret_commands;
+mod secret_input;
 mod transfer_commands;
 mod vault_key;
 pub use self::control_commands::{
@@ -47,7 +48,7 @@ pub use self::transfer_commands::{export, import};
 pub use self::vault_key::vault_key;
 pub(super) use self::vault_key::{
     HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,
-    refuse_orphaned_page_seal,
+    refuse_orphaned_page_seal, wrap_sealed_vault,
 };
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
@@ -120,26 +121,55 @@ pub(super) fn open_stopped_vault_with(
     // as `serve` ensures it, to carry the owner's acts (FIX 4648). No root is
     // minted here, and the command goes on without one.
     vault.ensure_serving_install_profile_at_start(
-        configured_host_issuer(config, &vault).as_ref(),
+        configured_host_issuer(config, &vault, false).as_ref(),
         "owner command",
     );
     Ok(vault)
 }
 
-/// The host root issuer the configured secret names, as `serve` takes it
-/// (`SyncServer::new`): none for an absent or empty secret, or on a relay.
+/// The host root issuer a configured secret admits, as `serve` takes it
+/// (`SyncServer::new`): [`host_issuer`]; none for an absent or empty
+/// secret, on a relay, or where this install holds no issuer seed.
 pub(super) fn configured_host_issuer(
     config: &ServeConfig,
     vault: &oneiron::Vault,
+    may_root: bool,
 ) -> Option<oneiron::authority::HostSlipIssuer> {
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return None;
     }
-    let secret = config
+    config
         .sync_server_config()
         .auth_secret
         .filter(|secret| !secret.is_empty())?;
-    oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).ok()
+    host_issuer(config, vault, may_root).ok()
+}
+
+/// This install's host root issuer for `vault` (FIX-LIST 3018): its own
+/// issuer seed for the vault, in the keystore `config` names, installed here
+/// as `serve` installs it when the vault has none yet. With `may_root`, a
+/// vault no root has reached takes a fresh seed first, for the rooting the
+/// caller then does; a rooted vault only loads its seed, never a new one.
+/// The configured secret admits the caller; it is not the key.
+pub(super) fn host_issuer(
+    config: &ServeConfig,
+    vault: &oneiron::Vault,
+    may_root: bool,
+) -> anyhow::Result<oneiron::authority::HostSlipIssuer> {
+    if vault.device_keystore_assurance().is_none() {
+        config.keystore.install_on(vault, &config.vault_path);
+    }
+    let issuer = if may_root {
+        vault.bootstrap_host_slip_issuer()
+    } else {
+        vault.load_host_slip_issuer()
+    };
+    issuer.map_err(|error| {
+        anyhow::anyhow!(
+            "this install holds no host issuer for vault {}: {error}",
+            config.vault_path.display()
+        )
+    })
 }
 
 pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {
@@ -193,13 +223,15 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
 
 /// Creates `out` (owner-only, never over an existing file) and fills it with
 /// `write`. A failed write removes the partial file, so the same `--out` can
-/// be retried.
+/// be retried. The file is open for reading too: the export writes its
+/// archive through a `Read + Write + Seek` sink that reads back what it
+/// wrote, and a write-only handle fails it with EBADF (FIX 12027).
 pub(super) fn write_new_file(
     out: &Path,
     write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> anyhow::Result<()> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.read(true).write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -231,14 +263,14 @@ fn raw_stdin() -> io::Result<std::fs::File> {
 /// when the config names its secret. Without one, a run the Dreamer proposed
 /// stays undecided here; a running server decides it at `/v1/owner/runs`.
 fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Result<()> {
-    let Some(secret) = config
+    if config
         .sync_server_config()
         .auth_secret
-        .filter(|secret| !secret.is_empty())
-    else {
+        .is_none_or(|secret| secret.is_empty())
+    {
         return Ok(());
-    };
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    }
+    let issuer = host_issuer(config, vault, true)?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     Ok(())

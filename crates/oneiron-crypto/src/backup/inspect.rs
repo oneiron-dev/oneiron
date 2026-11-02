@@ -397,6 +397,21 @@ pub fn inspect_backup_tail<R: Read + Seek>(mut reader: R) -> Result<BackupTailEv
     })
 }
 
+/// Checks `evidence`, as [`inspect_backup_tail`] read it, against signers
+/// trusted from outside the artifact (FIX 10712): the signer its commitment
+/// names, against which that read verified the commitment's signature, is
+/// one of `pins`. It proves no more of the artifact than that read does.
+pub fn verify_tail_with_pins(
+    evidence: &BackupTailEvidence,
+    pins: &[CheckpointSigner],
+) -> Result<()> {
+    if pins.contains(&evidence.commitment.signer) {
+        Ok(())
+    } else {
+        Err(Error::SignerMismatch)
+    }
+}
+
 /// What every sealed frame of one artifact must name.
 struct FrameExpect<'a> {
     kind: ArtifactKind,

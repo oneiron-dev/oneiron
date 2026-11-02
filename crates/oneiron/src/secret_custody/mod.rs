@@ -67,14 +67,18 @@
 
 mod carrier_custody;
 mod carrier_marks;
+mod cloud_registration;
 mod codec;
 mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) mod holder_export;
 mod known_values;
+mod leaf_delivery;
 mod masked_files;
 mod owner_door;
+mod pending_restore;
 mod reveal;
 mod run_bound;
 mod sighted_file;
@@ -96,15 +100,25 @@ mod floor_keys {
 }
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
+pub use self::cloud_registration::{
+    CloudRegistrationBinding, CloudRegistrationErased, CloudRegistrationFence,
+    CloudRegistrationLink, CloudRegistrationLinked, CloudRegistrationPhase,
+    CloudRegistrationTokenUse,
+};
+pub(crate) use self::cloud_registration::{
+    cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
+    is_cloud_registration_slot,
+};
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
+pub use self::control::input::{CustodyInputBinding, SealedInput, seal_custody_input};
 #[cfg(feature = "sync")]
 pub(crate) use self::control::input::{
     RelayedInput, WitnessPart, held_input_in_txn, held_inputs, held_witness_in_txn, held_witnesses,
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
@@ -115,41 +129,57 @@ pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
-    restore_secret_custody_in_txn,
+    restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
-    NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
+    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    note_found_keys_in_txn, raise_found_key_notices_in_txn, ruled_no_secret_in_txn,
-    settle_found_key_in_txn,
+    found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
+    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
+pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
+// FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
+pub(crate) use self::leaf_delivery::CustodyLeafSession;
+pub use self::leaf_delivery::{
+    LEAF_KEY_REFUSED_BACKOFF_MS, LEAF_KEY_REQUEST_TTL_MS, LeafKeyAnswer, LeafKeyFailureCause,
+    LeafKeyRequest,
+};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
-    KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, filled, holds_masked_keys_in_txn,
-    masked_file_in_txn, put_masked_file_in_txn, sighted_bytes_in_txn,
+    KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, PlaceHandles, filled,
+    filled_with, holds_masked_keys_in_txn, masked_copy_withheld, masked_file_in_txn,
+    put_masked_file_in_txn, sighted_bytes_in_txn,
 };
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
 };
+// FIX-LIST 10671: a restore's credentials pending on their source's evidence.
+pub use self::pending_restore::{
+    PENDING_CREDENTIAL_RELEASE_NOTE, PendingCredentialBatch, PendingCredentialCard,
+    PendingCredentialConfirmation, PendingCredentialOutcome, PendingCredentialReleaseReceipt,
+    PendingCredentialResult,
+};
+pub(crate) use self::pending_restore::{PendingRestoreStage, erase_pending_restore_actor_in_txn};
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
     REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,
-    RevealAskErase, RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER,
-    SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
-    SecretRevealDecision, SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
+    RevealAskErase, RevealGrantScope, RevealTarget, SECRET_REVEAL_REASON_ASKED,
+    SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
+    SecretRevealAnswered, SecretRevealAsk, SecretRevealCause, SecretRevealDecision,
+    SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, erase_reveal_actor_in_txn,
-    parse_secret_handle, reveal_value_in_txn,
+    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
+    erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
+pub(crate) use self::run_bound::run_secret_effector;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
@@ -178,12 +208,14 @@ pub use self::types::{
 };
 pub use self::use_handle::{
     KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
-    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
-    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
-    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
-    SentValue,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
+    SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
+    SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
+    SecretUseSend, SentPresentation, SentValue,
 };
-pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
+pub(crate) use self::use_handle::{
+    SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,
+};
 // The holder's manifest judgment an enacted register's result signs (FIX
 // 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};

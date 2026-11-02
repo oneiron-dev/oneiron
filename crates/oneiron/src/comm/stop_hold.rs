@@ -1,6 +1,7 @@
 //! The send hold of an inbound STOP (F06): the external-effect gate's read
-//! of a STOP's standing opt-out, and the marker of one this replica has not
-//! projected yet.
+//! of a STOP's standing opt-out, the marker of one this replica has not
+//! projected yet, and the projector's read of what a peer's projection of a
+//! STOP left here.
 //!
 //! A STOP row first observed here writes one marker keyed by its event id:
 //! the local record, or a peer's copy arriving by sync, whatever its
@@ -24,12 +25,17 @@ use std::collections::{BTreeSet, HashSet};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use super::claims::CommResult;
+use super::ProjectedCommEvent;
+use super::claims::{CommClaimValue, CommError, CommResult, PREDICATE_COMM_OPT_OUT};
 use super::consent::{
     OPT_OUT_REASON_STOP, claim_body_in_txn, parties_opt_out_subjects_in_txn, standing_opt_out_head,
     subject_claim_ids_in_txn,
 };
+use super::projection_writes::{
+    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
+};
 use super::records::{CommEventKind, CommRecord, decode_comm_record};
+use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::counterparty_contact::CounterpartyOptOutReason;
 use crate::entity_id::EntityId;
@@ -212,4 +218,45 @@ pub(crate) fn send_stop_reason_in_txn(
         channel_class,
     )?;
     Ok(held.then_some(reason))
+}
+
+/// What a peer's projection of a STOP left on this replica: `Some(true)`
+/// when the STOP's own opt-out stands here, so the rule only consumes gates
+/// and refreshes contacts; `Some(false)` when that opt-out arrived closed, or
+/// a head after the STOP moved the slot; `None` until one of them arrives.
+///
+/// The rule never mints for a peer's STOP. Its own opt-out, or the later head
+/// that answers it, arrives with the peer's state, and a copy minted here
+/// first could stand against a clear the peer's human already made. An older
+/// head standing here is no answer: its clear may be in flight (R1-F1).
+pub(super) fn peer_stop_projection_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event: &ProjectedCommEvent<'_>,
+) -> CommResult<Option<bool>> {
+    let channel = event.channel_class.ok_or(CommError::InvalidRecord)?;
+    let own = projected_comm_claim_id(
+        event.source_event_id,
+        &CommClaimValue::OptOut {
+            party_ref: event.party_ref,
+            channel_class: Some(channel.to_owned()),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: event.occurred_at,
+        },
+    )?;
+    let history = matching_claims_in_txn(
+        vault,
+        rtxn,
+        event.party_ref,
+        PREDICATE_COMM_OPT_OUT,
+        Some(channel),
+        None,
+        false,
+    )?;
+    if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
+        return Ok(Some(claim.is_standing()));
+    }
+    let answered_later = latest_claim_transition_boundary(&history)
+        .is_some_and(|boundary| event.occurred_at < boundary);
+    Ok(answered_later.then_some(false))
 }

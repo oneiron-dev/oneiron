@@ -48,7 +48,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationTrigger, StandingPolicy,
-    record_explicit_ruling_in_txn, standing_policy_for,
+    record_explicit_ruling_in_txn, standing_policy_for, standing_policy_for_in,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -75,9 +75,11 @@ use crate::wave_orchestration::{
 };
 use serde::{Deserialize, Serialize};
 
+mod ask_auto;
 mod checks;
 mod hold;
 mod resume;
+pub(super) use self::ask_auto::AskAutoGate;
 use self::checks::settle_held_attempts_in;
 pub(super) use self::checks::{AskCheck, WaveCheck, record_ask_check_in, record_wave_check_in};
 pub(super) use self::hold::{
@@ -290,6 +292,11 @@ pub(super) struct StoredLaunch {
     /// Shipped default rows the admission read in place of rows missing
     /// from the vault manifest.
     shipped_policy_rows: Vec<String>,
+    /// The requester a held ask was admitted under (FIX 11691): the agent
+    /// dispatches its release queues keep it, as the asker's own surface
+    /// would have. `None` for a wave no credential caller applied (FIX 11811),
+    /// and for an ask no credential caller made.
+    requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
 impl StoredLaunch {
@@ -571,6 +578,8 @@ pub(super) struct WaveLaunchInput<'a> {
     pub(super) statement: FanoutStatement,
     pub(super) gate: &'a WaveLaunchGate,
     pub(super) now: u64,
+    /// The credential caller whose request applied the wave, if one did.
+    pub(super) requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
 /// What a gated wave apply's writer decided.
@@ -606,7 +615,7 @@ pub(super) fn admit_wave_launch_in(
     let gate = input.gate;
     let scope = wave_scope(input.actor, input.cut.epic_task_ref());
     if policy_in(vault, txn, &ConsultFanOutScope::default())? != gate.governed
-        || standing_policy_for(vault, &scope, EscalationTrigger::Budget)? != gate.standing
+        || standing_policy_for_in(vault, txn, &scope, EscalationTrigger::Budget)? != gate.standing
     {
         return Err(consult_refusal(
             MEMORY_CODE_INVALID_STATE,
@@ -636,6 +645,7 @@ pub(super) fn admit_wave_launch_in(
         denied: false,
         choice_receipt_ref: None,
         shipped_policy_rows: gate.governed.shipped_rows.clone(),
+        requester: input.requester.clone(),
     };
     let admission = admit_fanout_with_history(
         &plan,

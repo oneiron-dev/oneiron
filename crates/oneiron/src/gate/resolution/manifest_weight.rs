@@ -45,6 +45,7 @@ pub(super) fn row_weight(body_len: usize, row: &ManifestRow) -> usize {
             text(pack.auto_checker.as_ref()),
             list(&pack.weave_report_policy),
             list(&pack.booking_conversion_rows),
+            list(&pack.booking_anti_abuse_rows),
             list(&pack.dreamer_failure_rules),
             pack.connector_class_carry.as_ref().map_or(0, |carry| {
                 carry.iter().fold(set(carry), |sum, (class, connector)| {

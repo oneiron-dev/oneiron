@@ -4,6 +4,7 @@ use super::{
     FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, FederationPeer,
     corrupt,
 };
+use crate::store::Store;
 use crate::{Result, Vault};
 
 fn key(id: &[u8; 32]) -> Vec<u8> {
@@ -31,10 +32,10 @@ pub(super) fn load(
     Ok(Some(row))
 }
 
-fn put(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -> Result<()> {
+fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -> Result<()> {
     let id = crate::deletion::parse_hex::<32>(&row.batch_ref).ok_or_else(corrupt)?;
     let bytes = rmp_serde::to_vec_named(row).map_err(|_| corrupt())?;
-    vault.store.sync_queue.put(txn, &key(&id), &bytes)?;
+    store.sync_queue.put(txn, &key(&id), &bytes)?;
     Ok(())
 }
 
@@ -63,7 +64,7 @@ pub(super) fn record(
         }
     };
     put(
-        vault,
+        &vault.store,
         txn,
         &FederationBurstReceipt {
             batch_ref,
@@ -82,18 +83,36 @@ pub(super) fn settle(
     txn: &mut heed::RwTxn<'_>,
     peer: &FederationPeer,
     work: &DeferredWork,
-    rejected: bool,
+    state: FederationBurstWorkState,
 ) -> Result<()> {
     if let Some(mut receipt) = load(vault, txn, peer, &work.id)? {
         if receipt.state != FederationBurstWorkState::Pending {
             return Ok(());
         }
-        receipt.state = if rejected {
-            FederationBurstWorkState::Rejected
-        } else {
-            FederationBurstWorkState::Imported
-        };
-        put(vault, txn, &receipt)?;
+        receipt.state = state;
+        put(&vault.store, txn, &receipt)?;
+    }
+    Ok(())
+}
+
+/// Moves the Pending receipt of batch `id` to `state` without its peer: an
+/// expiry or an erase ends the batch for whoever sent it.
+pub(super) fn settle_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &[u8; 32],
+    state: FederationBurstWorkState,
+) -> Result<()> {
+    let mut receipt: FederationBurstReceipt = match store.sync_queue.get(txn, &key(id))? {
+        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        None => return Ok(()),
+    };
+    if receipt.batch_ref != blake3::Hash::from(*id).to_hex().to_string() {
+        return Err(corrupt());
+    }
+    if receipt.state == FederationBurstWorkState::Pending {
+        receipt.state = state;
+        put(store, txn, &receipt)?;
     }
     Ok(())
 }

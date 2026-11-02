@@ -42,7 +42,7 @@ const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here
 /// What one conversation landing asks the Dreamer to check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ConversationCheckDeclaration {
+pub(crate) struct ConversationCheckDeclaration {
     summary: EntityId,
     epoch: u64,
     session: EntityId,
@@ -101,7 +101,7 @@ impl ConversationCheckDeclaration {
 
     /// The declaration `input` carries, or `None` when it declares no
     /// conversation.
-    pub(super) fn from_input(input: &Value) -> Result<Option<Self>> {
+    pub(crate) fn from_input(input: &Value) -> Result<Option<Self>> {
         let Some((_, value)) = input.as_map().and_then(|entries| {
             entries
                 .iter()
@@ -125,7 +125,7 @@ impl ConversationCheckDeclaration {
 
     /// The records a finding cites: the writer, its filed step and, while
     /// `words_live`, the summary.
-    fn cited(&self, words_live: bool) -> Vec<EntityId> {
+    pub(crate) fn cited(&self, words_live: bool) -> Vec<EntityId> {
         let mut evidence = vec![self.writer];
         if let Some(step) = &self.step {
             evidence.push(step.claim);
@@ -188,7 +188,10 @@ pub(super) async fn run_conversation_check(
         Reading::Ready { summary, evidence } => (summary, evidence),
         Reading::Settled(settled) => {
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         Reading::Deferred => {
             return Ok(DreamerAttemptExecution::Park {
@@ -198,8 +201,9 @@ pub(super) async fn run_conversation_check(
         }
     };
     let locality = judge_locality(&model)?;
+    let keyless = model.inference.selected_keyless();
     let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality)?;
+    let request = judge_request(&model, &input, locality, keyless)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -213,12 +217,16 @@ pub(super) async fn run_conversation_check(
         evidence: &cited,
         state: &input,
         locality,
+        keyless,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
     };
-    let mut settled = match read(ctx.vault, &declaration)? {
+    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
+        verdict.spend.note_before_error(ctx);
+        error
+    })? {
         Reading::Ready { .. } => {
             let (reason, conflicts) = judged.map_or_else(
                 || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
@@ -243,10 +251,11 @@ pub(super) async fn run_conversation_check(
         }
     };
     settled.judge = Some(judging.judge(&model));
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-    Ok(DreamerAttemptExecution::Completed {
-        completed_units: verdict.spend.units,
-    })
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
+        verdict.spend.note_before_error(ctx);
+        return Err(error);
+    }
+    Ok(verdict.spend.completed())
 }
 
 /// Reads the landing's receipt, the summary's words and the span, and
@@ -317,6 +326,7 @@ fn judge_request(
     model: &CompactionCheckModel<'_>,
     input: &serde_json::Value,
     locality: crate::llm::ModelLocality,
+    keyless: bool,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
         "type": "object", "additionalProperties": false,
@@ -334,7 +344,7 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    judge_call(model, schema, input, locality)
+    judge_call(model, schema, input, locality, keyless)
 }
 
 /// What the judge reads: the span's length in turns, the summary and the

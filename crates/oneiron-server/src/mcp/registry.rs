@@ -6,7 +6,6 @@ use super::actors::{
     McpCredentialHashKey, McpResolvedActor,
 };
 use super::paging::{McpPageContinuation, McpPageCursorError, McpPageCursorState, McpPageSnapshot};
-use super::surface::MCP_MAX_LIVE_PAGE_CONTINUATIONS;
 use oneiron::context_board::{
     BoardRenderMode, BoardStreamFrame, BoardStreamRegistry, FrameEnqueueOutcome, StreamConnectionId,
 };
@@ -39,14 +38,11 @@ pub struct McpConnectorActorRegistry {
     /// refused presentation could consume an unrelated cursor. The key carries
     /// the connection, so no connector can name another's handle.
     ///
-    /// The set one connection owns is BOUNDED by
-    /// [`MCP_MAX_LIVE_PAGE_CONTINUATIONS`]; see
-    /// [`McpConnectorActorRegistry::make_room_for_page_continuation`].
+    /// No count bounds that set (FIX 9507, rule 5): every handle issued and
+    /// not yet consumed stays live until its connection is unregistered,
+    /// revoked or pruned. Its retained producer bytes are measured instead;
+    /// see [`McpConnectorActorRegistry::retained_page_snapshot_bytes`].
     page_continuations: BTreeMap<(StreamConnectionId, String), McpPageContinuation>,
-    /// Monotonic mint counter for the retention bound's eviction order. It
-    /// orders mints within this registry and is never published, never a clock,
-    /// and never part of a cursor token.
-    page_continuation_seq: u64,
     /// Each vault-wide connection's reader as its latest call resolved it:
     /// the credential the board publisher admits an own-task event under.
     /// A connection with none hears no such event. Dropped with the
@@ -79,7 +75,6 @@ impl McpConnectorActorRegistry {
             streams: BoardStreamRegistry::default(),
             board_epochs: BTreeMap::new(),
             page_continuations: BTreeMap::new(),
-            page_continuation_seq: 0,
             stream_readers: BTreeMap::new(),
             run_readers: BTreeMap::new(),
             wake_owners: BTreeMap::new(),
@@ -118,8 +113,9 @@ impl McpConnectorActorRegistry {
     /// The old five-argument method remains useful for registry-only callers;
     /// gateway continuations always use this snapshot-bearing form.
     ///
-    /// The retention this mint adds is BOUNDED: see
-    /// [`Self::make_room_for_page_continuation`].
+    /// The mint never evicts a sibling: every issued, unconsumed handle of
+    /// this connection stays valid (FIX 9507). The row records the measured
+    /// size of the snapshot it retains.
     pub(crate) fn mint_page_cursor_with_snapshot(
         &mut self,
         connection: &StreamConnectionId,
@@ -133,13 +129,8 @@ impl McpConnectorActorRegistry {
             self.page_cursor_token(connection, tool, argument_digest, snapshot_epoch, position);
         let key = (connection.clone(), cursor.clone());
         // Re-minting the SAME handle — same connection, tool, arguments,
-        // producer epoch, and position — replaces its row in place and is not a
-        // second retention, so it never evicts a sibling.
-        if !self.page_continuations.contains_key(&key) {
-            self.make_room_for_page_continuation(connection);
-        }
-        self.page_continuation_seq = self.page_continuation_seq.saturating_add(1);
-        let minted_seq = self.page_continuation_seq;
+        // producer epoch, and position — replaces its row in place.
+        let retained_bytes = snapshot.as_ref().map_or(0, retained_snapshot_bytes);
         self.page_continuations.insert(
             key,
             McpPageContinuation {
@@ -149,43 +140,10 @@ impl McpConnectorActorRegistry {
                 snapshot_epoch,
                 position,
                 snapshot,
-                minted_seq,
+                retained_bytes,
             },
         );
         cursor
-    }
-
-    /// Enforces this connection's continuation retention bound BEFORE one more
-    /// handle is retained (ONE-1704 repair).
-    ///
-    /// The policy is EXPLICIT and deterministic: a connection holds at most
-    /// [`MCP_MAX_LIVE_PAGE_CONTINUATIONS`] outstanding handles, and the mint
-    /// that would exceed it evicts this connection's OLDEST-minted handles
-    /// until there is room for exactly one more. Eviction is chosen over
-    /// refusing the mint because refusing it would publish a `More` end marker
-    /// with no handle to continue from — a page a caller can neither finish nor
-    /// re-enter — while an evicted handle stays fail-closed at the door: the
-    /// next presentation of it is [`McpPageCursorError::Unknown`], never a
-    /// silent restart at page one that would re-ship rows the caller already
-    /// has and then call the enumeration complete.
-    ///
-    /// Only THIS connection's rows are considered and only its own oldest rows
-    /// are dropped, so one connector's mint pattern can never evict another's
-    /// continuation, and nothing here weakens the connector/tool/argument/
-    /// producer binding or the one-time consumption a surviving handle carries.
-    fn make_room_for_page_continuation(&mut self, connection: &StreamConnectionId) {
-        while self.live_page_continuations(connection) >= MCP_MAX_LIVE_PAGE_CONTINUATIONS {
-            let Some(oldest) = self
-                .page_continuations
-                .iter()
-                .filter(|((owner, _), _)| owner == connection)
-                .min_by_key(|(_, state)| state.minted_seq)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            self.page_continuations.remove(&oldest);
-        }
     }
 
     /// Consumes one presented continuation handle and returns the producer
@@ -309,6 +267,19 @@ impl McpConnectorActorRegistry {
             .keys()
             .filter(|(owner, _)| owner == connection)
             .count()
+    }
+
+    /// The measured bytes of the producer snapshots this connection's live
+    /// continuations retain (FIX 9507): what an operator reads instead of a
+    /// count that once evicted unfinished reads.
+    #[must_use]
+    pub fn retained_page_snapshot_bytes(&self, connection: &StreamConnectionId) -> u64 {
+        self.page_continuations
+            .iter()
+            .filter(|((owner, _), _)| owner == connection)
+            .fold(0_u64, |total, (_, state)| {
+                total.saturating_add(state.retained_bytes)
+            })
     }
 
     pub(super) fn page_cursor_token(
@@ -750,4 +721,29 @@ impl McpConnectorActorRegistry {
 fn normalize_credential(credential: &str) -> Option<&str> {
     let credential = credential.trim();
     (!credential.is_empty()).then_some(credential)
+}
+
+/// The JSON-encoded size of one retained producer snapshot's output and the
+/// board keyframe it retains, and the row ids beside them, counted without
+/// building the encoding.
+fn retained_snapshot_bytes(snapshot: &McpPageSnapshot) -> u64 {
+    struct Count(u64);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len() as u64);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // A value that cannot encode was never sent; it counts as nothing.
+    let _ = serde_json::to_writer(&mut count, &snapshot.output);
+    if let Some(keyframe) = &snapshot.keyframe {
+        let _ = serde_json::to_writer(&mut count, keyframe);
+    }
+    let rows = snapshot.rows.as_ref().map_or(0, Vec::len) as u64;
+    let id_bytes = std::mem::size_of::<oneiron::EntityId>() as u64;
+    count.0.saturating_add(rows.saturating_mul(id_bytes))
 }

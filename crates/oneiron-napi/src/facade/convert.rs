@@ -15,8 +15,8 @@ use super::dtos::{
     NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
     NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
     NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome,
+    NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             author,
             message_type: message.message_type.clone(),
             content: message.content.clone(),
-            metadata: message.metadata.clone(),
+            metadata: message.metadata.clone().map(super::js_json::js_json),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,
             quote: message.quote.as_ref().map(quote_to_engine).transpose()?,
@@ -129,7 +129,11 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
-        assertions: Default::default(),
+        assertions: turn
+            .assertions
+            .as_ref()
+            .map(NapiWitnessAssertions::to_engine)
+            .unwrap_or_default(),
     })
 }
 
@@ -197,6 +201,9 @@ pub(super) fn commit_outcome_from_engine(
                 message: refusal.message,
                 suggestions: refusal.suggestions,
                 field: refusal.field,
+                legal_hold: refusal
+                    .legal_hold
+                    .map(|notice| super::legal_hold::legal_hold_from_engine(*notice)),
             }),
             receipt_ref,
         },
@@ -231,17 +238,19 @@ pub(super) fn forget_active_matches(
     Ok(receipts)
 }
 
-fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> NapiReadScope {
-    NapiReadScope {
-        entity_types: scope
-            .entity_types
-            .map(|types| types.into_iter().map(u32::from).collect()),
+/// One receipt scope, its entity types as their registry kinds (FIX 8117),
+/// spelled as every wire spells them (FIX 10762): a pack's own type the
+/// static registry does not name travels as its decimal byte, never narrowed
+/// or widened.
+fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> BoundaryResult<NapiReadScope> {
+    Ok(NapiReadScope {
+        entity_types: scope.entity_kinds(),
         max_sensitivity_band: u32::from(scope.max_sensitivity_band),
         include_stale: scope.include_stale,
         min_confidence: f64::from(scope.min_confidence),
         min_salience: f64::from(scope.min_salience),
         deny_all: scope.deny_all,
-    }
+    })
 }
 
 /// The engine's read receipt, field for field.
@@ -249,9 +258,9 @@ pub(super) fn read_receipt_from_engine(
     receipt: oneiron::claim::ScopedReadReceipt,
 ) -> BoundaryResult<NapiReadReceipt> {
     Ok(NapiReadReceipt {
-        requested: read_scope_from_engine(receipt.requested),
-        actor_ceiling: read_scope_from_engine(receipt.actor_ceiling),
-        applied: read_scope_from_engine(receipt.applied),
+        requested: read_scope_from_engine(receipt.requested)?,
+        actor_ceiling: read_scope_from_engine(receipt.actor_ceiling)?,
+        applied: read_scope_from_engine(receipt.applied)?,
         narrowed_axes: receipt.narrowed_axes,
         suppressed_count: u32::try_from(receipt.suppressed_count)
             .map_err(|_| "suppressed_count does not fit a 32-bit count".to_owned())?,
@@ -317,7 +326,7 @@ pub(super) fn structural_put_to_engine(
     Ok(StructuralPutInput {
         id: input.id.clone(),
         kind: input.kind.clone(),
-        body: input.body.clone(),
+        body: super::js_json::js_json(input.body.clone()),
         text_fields: input.text_fields.as_ref().map(|fields| {
             fields
                 .iter()
@@ -350,6 +359,25 @@ pub(super) fn witness_receipt_from_engine(
         turn_short_id: receipt.turn_short_id,
         message_short_ids: receipt.message_short_ids,
         receipt_ref: receipt.receipt_ref,
+        wake_outcome: receipt.wake_outcome.map(wake_outcome_from_engine),
+    }
+}
+
+/// Projects a turn's program-wake outcome onto the boundary DTO, spelled as
+/// the engine's wire spells it.
+fn wake_outcome_from_engine(
+    outcome: oneiron::memory::TurnProgramWakeOutcome,
+) -> NapiTurnProgramWakeOutcome {
+    use oneiron::memory::TurnProgramWakeOutcome;
+    let (newly_recorded, reason) = match outcome {
+        TurnProgramWakeOutcome::NotArmed => (None, None),
+        TurnProgramWakeOutcome::Evaluated { newly_recorded } => (Some(newly_recorded), None),
+        TurnProgramWakeOutcome::Unpersisted { reason } => (None, Some(reason.as_str().to_owned())),
+    };
+    NapiTurnProgramWakeOutcome {
+        outcome: outcome.as_str().to_owned(),
+        newly_recorded,
+        reason,
     }
 }
 
@@ -408,6 +436,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         value_text: item.value_text,
         confidence: f64::from(item.confidence),
         hedge_bucket: item.hedge_bucket,
+        confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
         provenance: NapiMemoryProvenance {
             source: item.provenance.source,
             source_revision_ids: item.provenance.source_revision_ids,
@@ -605,6 +634,8 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,
+        // Omitted or empty selects every project the caller reads (FIX 8115).
+        project_refs: scope.project_refs.unwrap_or_default(),
         ..Default::default()
     })
 }

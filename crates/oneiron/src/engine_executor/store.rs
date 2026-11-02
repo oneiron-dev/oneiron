@@ -51,7 +51,9 @@ pub(super) fn publish_output(
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
-    let output = storage.publish_code_run_output(path, sink, true, record.run_id)?;
+    let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
+    let output =
+        storage.publish_code_run_output_sourced(path, sink, true, record.run_id, input_rows)?;
     record.outputs.push(output.clone());
     Ok(output)
 }
@@ -641,6 +643,12 @@ pub(super) fn console_output_path(seq: u64) -> String {
 /// body the run owns and never in its replay record (FIX 8277).
 pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.{invocation}.type-diagnostics.json")
+}
+
+/// The board frames a step's verb answers carried beside their outputs
+/// (FIX 2135), kept for the model's view of that step.
+pub(super) fn board_frames_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.board-frames.json")
 }
 
 pub(super) fn implicit_speak_output_path(seq: u64) -> String {

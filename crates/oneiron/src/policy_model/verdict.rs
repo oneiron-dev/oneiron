@@ -281,10 +281,38 @@ pub struct PolicyPassAudit {
     /// The model's stated reason, bounded and otherwise untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_rationale: Option<String>,
+    /// The notes generation was already running when the read's one budget
+    /// ran out, and was cut there (FIX 10531): the verdict stands without its
+    /// notes, as it does on a failed notes call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_notes_cut: bool,
     /// Registered row questions and their shared-ladder receipts. These
     /// contain answers and hashes/ids, never the candidate or policy text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typed_decisions: Vec<crate::llm::decision::TypedDecision>,
+    /// The typed fault that ended the safeguard read after its reply came
+    /// back (FIX 1202). The verdict is the skip it was; the receipt names
+    /// the fault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_error: Option<PolicyReadError>,
+}
+
+/// A fault that ended a safeguard read after its reply came back, for the
+/// receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyReadError {
+    /// The guard could not settle the lease the admitted read went out on.
+    SettlementInvariant,
+}
+
+impl PolicyReadError {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SettlementInvariant => "settlement_invariant",
+        }
+    }
 }
 
 impl PolicyPassAudit {
@@ -300,6 +328,7 @@ impl PolicyPassAudit {
             && self.model_confidence.is_none()
             && self.model_rationale.is_none()
             && self.typed_decisions.is_empty()
+            && self.read_error.is_none()
     }
 }
 

@@ -45,7 +45,7 @@ pub(crate) async fn self_saved_query_evaluate(
         ));
     }
     let (server, auth) = (Arc::clone(server), auth.clone());
-    tokio::task::spawn_blocking(move || evaluate(&server, &auth, caller, &input))
+    super::clock_ingress::run_blocking(move || evaluate(&server, &auth, caller, &input))
         .await
         .map_err(|_| internal(VERB))?
 }

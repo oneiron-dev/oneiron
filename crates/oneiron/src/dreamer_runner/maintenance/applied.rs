@@ -29,8 +29,11 @@ use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
 mod action_mode_row;
+mod decision_context;
+mod disposition;
 mod identity_erase;
 pub(super) use action_mode_row::{action_mode_applied_in_txn, record_action_mode_in_txn};
+pub(super) use disposition::record_disposition_in_txn;
 pub(super) use identity_erase::erase_identity_inverses_in_txn;
 
 const APPLIED: SideTable<MaintenanceTarget, AppliedRow, Named> =
@@ -468,6 +471,7 @@ fn record_finding_in_txn(
         finding_revision.to_vec(),
         now,
     );
+    receipt.context = decision_context::applied(vault, &*txn, target, attempt);
     receipt.grant_ref = grant.map(|grant| grant.to_hex());
     vault
         .store
@@ -481,45 +485,6 @@ fn record_finding_in_txn(
             attempt,
             facet: facet.to_owned(),
             finding_revision: Some(finding_revision),
-            applied_at: now,
-            receipt: receipt.decision_id,
-            reverted: None,
-        },
-    )
-}
-
-/// Records one background identity abstention or settle in its transaction:
-/// the inverse row under the ask (a settle's mention keys it as its ask
-/// would) and the Dreamer's receipt naming it. A later abstention or settle
-/// on the same key (its candidates or tags changed and it was decided again)
-/// takes the row over; the ledger keeps every receipt.
-pub(super) fn record_disposition_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    ask: [u8; 32],
-    facet: &str,
-    actor: WriteActor,
-    inverse: MaintenanceInverse,
-    now: u64,
-) -> Result<()> {
-    let target = MaintenanceTarget::IdentityAsk(ask);
-    let kind = match inverse {
-        MaintenanceInverse::IdentitySettle(_) => IDENTITY_SETTLE_KIND,
-        _ => IDENTITY_PROVISIONAL_KIND,
-    };
-    let mut receipt = decision(actor, kind, APPLY_REASON, target, ask.to_vec(), now);
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    APPLIED.put(
-        &vault.store,
-        txn,
-        &target,
-        &AppliedRow {
-            inverse,
-            attempt: None,
-            facet: facet.to_owned(),
-            finding_revision: None,
             applied_at: now,
             receipt: receipt.decision_id,
             reverted: None,
@@ -559,6 +524,7 @@ pub(super) fn record_project_tree_fork_in_txn(
         key,
         now,
     );
+    receipt.context = decision_context::applied(vault, &*txn, target, Some(attempt));
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -630,6 +596,7 @@ pub(super) fn close_with_parent_in_txn(
         handle,
         now,
     );
+    receipt.context = decision_context::answering(vault, &*txn, row.receipt);
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -705,6 +672,7 @@ pub(super) fn decision(
         grant_ref: None,
         diff_handle,
         read_frontier_hash: [0; 32],
+        context: Default::default(),
         redacted_at: None,
     }
 }
@@ -779,6 +747,7 @@ impl Vault {
                 row.receipt.as_bytes().to_vec(),
                 now,
             );
+            receipt.context = decision_context::answering(self, &*txn, row.receipt);
             self.store
                 .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
             out.receipt_ref = format!("gate:{}", receipt.decision_id.to_hex());

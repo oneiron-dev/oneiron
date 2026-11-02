@@ -474,6 +474,24 @@ pub(crate) fn stage_pad_row_erase_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let Some(raw) = store.port_entity_raw(wtxn, id)?.map(Zeroizing::new) else {
+        // A peer's hard tombstone of a pad row this replica never held (FIX
+        // 7294): the pad custody holds whose key derives the row id goes, and
+        // its key leaves the home's kept pad objects. A custody fault is
+        // warned, never refused, as for a shell. Any other id names no pad.
+        let staged = store.world_pad_item_of_row(id).and_then(|item| match item {
+            Some(item) => {
+                stage_retained_pad_key_erase_in_txn(store, wtxn, id, &item);
+                store.stage_world_pad_key_erase_in_txn(wtxn, &item)
+            }
+            None => Ok(()),
+        });
+        if let Err(error) = staged {
+            tracing::warn!(
+                row = %id.to_hex(),
+                kind = ?error.kind(),
+                "a replayed pad row tombstone's custody entry was not staged for retirement"
+            );
+        }
         return Ok(());
     };
     let Some(body) = pad_row_body(&raw) else {

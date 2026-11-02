@@ -19,7 +19,21 @@
 //! the handoff in its adopting writer (FIX 5931); the old home's tries run in
 //! the host's own passes, and this worker only rechecks quiescence in the
 //! final writer and freezes.
+//!
+//! FIX 6459: each round first feeds the route residence reads take now, so
+//! a host with no topology captures its moves' routes too ([`feed_move_routes`]
+//! feeds a topology's). FIX 6574: a target whose status says it fenced the
+//! handoff makes this node take its state back and replan the move.
+//!
+//! FIX 8875 stage 2: before it stages a handoff's parts, a delivery sends the
+//! erasable keys its actors' content is sealed under, to the key session the
+//! target offers on the same socket; a target that offers none or refuses
+//! them lands those actors' rows as their facts alone, and the delivery goes
+//! on. After each round the worker asks every holder this node owes a
+//! retired key's copy to retire it, and clears each debt the holder's answer
+//! proves; a holder out of reach keeps its debt for a later round.
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -28,13 +42,13 @@ use tokio::sync::mpsc;
 use super::SyncConnection;
 use crate::Vault;
 use crate::sync::TransportError;
-use crate::sync::client::{HandoffLane, SyncEvent, TargetCancel, TargetStanding};
+use crate::sync::client::{HandoffLane, SyncClientConfig, SyncEvent, TargetCancel, TargetStanding};
 use crate::sync::home_handoff::{
-    self, DeliveryPlan, FrozenHandoff, HomeAck, HomeMove, IncompleteReason,
+    self, DeliveryPlan, FrozenHandoff, HomeAck, HomeMove, IncompleteReason, OwedRetirement,
 };
 
 /// Whether this build delivers home handoffs (on since FIX 5661 C2b). Off,
-/// the worker never runs a round and no move's route is captured.
+/// the worker never runs a round and no route is fed for a move.
 const HOME_HANDOFF_DELIVERY: bool = true;
 
 /// The target's answer to a cancel, or why it could not be read: no
@@ -75,15 +89,87 @@ async fn keep_ack(
     blocking(move || home_handoff::record_ack(&vault, &id, ack)).await
 }
 
-/// Captures the route of the move this node's election last recorded, at
-/// the move. Off while delivery is off. A capture that fails is logged;
-/// the move's delivery then finds no route and records that.
-pub(super) fn capture_move_route(vault: &Vault, endpoint_of: impl FnOnce(u64) -> Option<String>) {
+/// FIX 8875: sends `frozen`'s keys to its target on `lane`, sealed to the key
+/// session the target offers there. A target that offers no session or
+/// refuses the keys, or keys that do not seal, are logged: the delivery goes
+/// on, and those actors' rows land there as their facts alone. A call that
+/// fails ends the round, as a part's does.
+async fn send_keys(
+    vault: &Arc<Vault>,
+    lane: &mut HandoffLane,
+    frozen: &FrozenHandoff,
+) -> Result<(), TransportError> {
+    if frozen.keys.is_empty() {
+        return Ok(());
+    }
+    let Some(offer) = lane.session(&frozen.id, &frozen.digest).await? else {
+        tracing::debug!("a home handoff's target offered no key session");
+        return Ok(());
+    };
+    let exporting = Arc::clone(vault);
+    let handoff = frozen.clone();
+    let keys =
+        match blocking(move || home_handoff::transit_keys(&exporting, &handoff, &offer)).await {
+            Ok(keys) => keys,
+            Err(error) => {
+                tracing::debug!(%error, "a home handoff's keys were not sealed");
+                return Ok(());
+            }
+        };
+    if lane
+        .keys(&frozen.id, &frozen.digest, &keys)
+        .await?
+        .is_none()
+    {
+        tracing::debug!("a home handoff's target refused its keys");
+    }
+    Ok(())
+}
+
+/// FIX 8875: asks `debt`'s holder, on a socket that proves it, to retire its
+/// copies of the keys this node retired, then clears each debt its answer
+/// proves. A holder with no endpoint, out of reach or refusing keeps its
+/// debts.
+async fn retire_at_holder(
+    vault: &Arc<Vault>,
+    config: &SyncClientConfig,
+    debt: OwedRetirement,
+) -> Result<(), TransportError> {
+    let Some(endpoint) = debt.endpoint.as_deref() else {
+        return Ok(());
+    };
+    let Some(mut lane) = HandoffLane::open(vault, config, endpoint, debt.holder).await? else {
+        return Ok(());
+    };
+    if lane.retire(&debt.keys).await?.is_none() {
+        return Ok(());
+    }
+    let Some(retired) = lane.retired(&debt.keys).await? else {
+        return Ok(());
+    };
+    if retired.is_empty() {
+        return Ok(());
+    }
+    let noting = Arc::clone(vault);
+    let holder = debt.holder;
+    blocking(move || home_handoff::note_retired(&noting, holder, &retired)).await
+}
+
+/// FIX 6459: feeds the host topology's candidate `endpoints` and the
+/// `fallback` route residence reads take where it names none, before the
+/// election they inform; the election captures each move's route from
+/// them. Off while delivery is off. A feed that fails is logged; the next
+/// round's feed captures the move.
+pub(super) fn feed_move_routes(
+    vault: &Vault,
+    endpoints: Option<BTreeMap<u64, String>>,
+    fallback: String,
+) {
     if !HOME_HANDOFF_DELIVERY {
         return;
     }
-    if let Err(error) = home_handoff::capture_route(vault, endpoint_of) {
-        tracing::warn!(kind = ?error.kind(), "a home move's route was not captured");
+    if let Err(error) = home_handoff::feed_routes(vault, endpoints, fallback) {
+        tracing::warn!(kind = ?error.kind(), "a home move's routes were not fed");
     }
 }
 
@@ -107,6 +193,11 @@ impl SyncConnection {
                     "Home handoff delivery failed: {error}"
                 )));
             }
+            if let Err(error) = self.retirement_round(&vault).await {
+                let _ = events.send(SyncEvent::Error(format!(
+                    "Home handoff key retirement failed: {error}"
+                )));
+            }
             loop {
                 tokio::select! {
                     () = self.home_handoff_wake.notified() => break,
@@ -123,8 +214,13 @@ impl SyncConnection {
         }
     }
 
-    /// One round of the carrier's plan.
+    /// One round of the carrier's plan, after feeding the route residence
+    /// reads take now (FIX 6459): a move no route was captured for yet takes
+    /// it.
     async fn home_handoff_round(&self, vault: &Arc<Vault>) -> Result<(), TransportError> {
+        let feeding = Arc::clone(vault);
+        let fallback = self.config.client_config.residence_url();
+        blocking(move || home_handoff::feed_fallback_route(&feeding, fallback)).await?;
         let planned = Arc::clone(vault);
         match blocking(move || home_handoff::delivery_plan(&planned)).await? {
             DeliveryPlan::Idle => Ok(()),
@@ -133,6 +229,24 @@ impl SyncConnection {
             DeliveryPlan::Reclaim(frozen) => self.reclaim(vault, &frozen).await,
             DeliveryPlan::Supersede(frozen, onward) => self.supersede(vault, &frozen, onward).await,
         }
+    }
+
+    /// FIX 8875: one pass over every holder this node owes a retired key's
+    /// copy to. A holder whose calls fail is logged and keeps its debts; the
+    /// next holder is still asked.
+    async fn retirement_round(&self, vault: &Arc<Vault>) -> Result<(), TransportError> {
+        let reading = Arc::clone(vault);
+        let owed = blocking(move || home_handoff::owed_retirements(&reading)).await?;
+        if owed.is_empty() {
+            return Ok(());
+        }
+        let config = self.client_config();
+        for debt in owed {
+            if let Err(error) = retire_at_holder(vault, &config, debt).await {
+                tracing::debug!(%error, "a holder's retired home handoff keys stay owed");
+            }
+        }
+        Ok(())
     }
 
     /// Freezes for `movement` once every registered table is quiescent; a
@@ -200,9 +314,13 @@ impl SyncConnection {
         };
         let staged = match lane.status(&frozen.id, &frozen.digest).await? {
             Some(TargetStanding::Adopted(ack)) => return keep_ack(vault, frozen, ack).await,
+            Some(TargetStanding::Fenced) => return self.replan(vault, frozen).await,
             Some(TargetStanding::Staged(staged)) => staged,
             None => return Ok(()),
         };
+        // FIX 8875: the keys go before the parts, so a target that holds
+        // every part holds them too and its own arrival opens the content.
+        send_keys(vault, &mut lane, frozen).await?;
         for index in staged..frozen.parts {
             let reading = Arc::clone(vault);
             let id = frozen.id;
@@ -225,6 +343,21 @@ impl SyncConnection {
             Some(ack) => keep_ack(vault, frozen, ack).await,
             None => Ok(()),
         }
+    }
+
+    /// FIX 6574: `frozen`'s target fenced it for good. This node takes its
+    /// state back and records a fresh move to the home its election names,
+    /// that same target included; the next round freezes a new export.
+    async fn replan(
+        &self,
+        vault: &Arc<Vault>,
+        frozen: &FrozenHandoff,
+    ) -> Result<(), TransportError> {
+        let replanning = Arc::clone(vault);
+        let id = frozen.id;
+        blocking(move || home_handoff::replan_fenced(&replanning, &id)).await?;
+        self.home_handoff_wake.notify_one();
+        Ok(())
     }
 
     /// FIX 5931: this node is home again before its target acked. Adopted

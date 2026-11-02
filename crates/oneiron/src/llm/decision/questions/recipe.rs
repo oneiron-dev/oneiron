@@ -18,12 +18,14 @@ pub struct GraphQuestionRef {
 /// The unit and the exact sources selected by the resident's recipe. Sources
 /// are required: a missing contact, variant or signal means abstain, not no.
 /// The same unit may occur with different evidence (for example, variants).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphQuestionInput {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub unit: EntityId,
     #[serde(with = "super::super::codec::entities")]
+    #[schemars(with = "Vec<String>")]
     pub evidence: Vec<EntityId>,
 }
 
@@ -59,6 +61,8 @@ pub fn run_graph_question(
 }
 
 /// Prior proposals come only from the workflow runner's completed stages.
+/// Every input and evidence source the recipe names is required work: their
+/// count is no refusal (FIX 9914).
 pub(crate) fn run_graph_question_with_proposals(
     vault: &Vault,
     principal: EntityId,
@@ -72,12 +76,11 @@ pub(crate) fn run_graph_question_with_proposals(
     let validate = || -> crate::Result<()> {
         let record = read_question(vault, principal, reference.id, Some(reference.version))?
             .ok_or(Error::EntityNotFound)?;
-        if record.definition.adapter != "graph" || inputs.len() > 4096 {
+        if record.definition.adapter != "graph" {
             return Err(Error::InvalidConfig("invalid graph question recipe".into()));
         }
         for input in inputs {
             if !record.definition.units.contains(&input.unit)
-                || input.evidence.len() > 4096
                 || input.evidence.contains(&input.unit)
                 || input.evidence.iter().collect::<HashSet<_>>().len() != input.evidence.len()
             {
@@ -105,14 +108,14 @@ pub(crate) fn run_graph_question_with_proposals(
             };
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
-                let key = super::graph_ask::asker_reader(vault, principal)?;
+                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
                 super::graph_ask::unit_images(&lane, &context)?
             } else {
                 Vec::new()
             };
             let audio = if answerer.reads_audio() && record.definition.media.audio {
-                let key = super::graph_ask::asker_reader(vault, principal)?;
+                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
                 super::graph_ask::unit_audio(&lane, &context)?
             } else {

@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use ed25519_dalek::SigningKey;
 
 use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
+use crate::authority::export_secret_executor;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, FrontierSigner,
     MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest,
@@ -73,6 +74,7 @@ pub(crate) fn owner_work_executor(
         OwnerWorkBody::Custody { change, holder, .. } => {
             custody_work_executor(fold, *change, *holder, recorder)
         }
+        OwnerWorkBody::ExportSecret(work) => export_secret_executor(fold, work),
     }
 }
 
@@ -182,6 +184,21 @@ impl Vault {
         self.sign_owner_work_in_txn(txn, act, work, None)
     }
 
+    /// Records the work `act` needs, carrying `act` exactly as the door that
+    /// authenticated it made it, in `txn` (FIX 4624(b)): an owner export's
+    /// own act, for the export secret work its holder does. The caller
+    /// checked its owner a live vault owner in this same transaction. The
+    /// executor is pinned by [`owner_work_executor`]; with none to name,
+    /// nothing is written and the receipt says why.
+    pub(crate) fn record_owner_work_with_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: OwnerAct,
+        work: OwnerWorkBody,
+    ) -> Result<OwnerWorkReceipt> {
+        self.sign_owner_work_in_txn(txn, act, work, None)
+    }
+
     /// Records the key work the world settings edit signed as entry `edit`
     /// left a holder, in the edit's own write transaction (FIX 4704): Ensure
     /// work for the world's revision `after`, right after the edit, binding
@@ -226,7 +243,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
-        work: OwnerWorkBody,
+        mut work: OwnerWorkBody,
         privacy_basis: Option<WorldPrivacyWorkBasis>,
     ) -> Result<OwnerWorkReceipt> {
         let target = act.target;
@@ -246,6 +263,12 @@ impl Vault {
         let joiner = FrontierSigner::Install(machine, &signing);
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
+        // FIX 11866: custody permits past one row ride in pieces this key
+        // signs ahead of the request, else today's path.
+        let piece_signer = (Some(machine), &signing);
+        let fold = self
+            .stage_custody_permit_pieces_in_txn(txn, &fold, piece_signer, &mut work)?
             .unwrap_or(fold);
         // The main-log heads alone (FIX 4987): the settings edit key work
         // follows is a main-log row among them or their ancestors, and the

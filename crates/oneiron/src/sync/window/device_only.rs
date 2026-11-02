@@ -295,6 +295,19 @@ fn bytes_verdict(
         .import(update)
         .is_ok_and(|status| status.pending.is_none())
     {
+        // A snapshot's encoded root, read from its own section whatever the
+        // snapshot's kind (FIX 10165): a full snapshot can keep a root too,
+        // and its latest state or a checkout can hide the root's bytes.
+        if meta.mode.is_snapshot() {
+            let Some(root) = super::admission::encoded_root_state(update) else {
+                return Ok(UpdateVerdict::Uninspectable);
+            };
+            if let Some(root) = root
+                && carries_device_only(vault, flagged, key, &root)?
+            {
+                return Ok(UpdateVerdict::Withheld);
+            }
+        }
         // Its state, the state at its shallow root (encoded whole beside the
         // operations past it), then every operation it holds (a shallow
         // snapshot's state carries what its history no longer does).

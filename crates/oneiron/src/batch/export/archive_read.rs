@@ -5,7 +5,9 @@
 //! rows are then read one line at a time into the import's disk-backed row
 //! index (FIX 3678): each row is checked as it is read and spooled, and only
 //! where it is stays indexed. An attached file stays in the archive until a
-//! row needs it, checked against its name again each time it is read. The
+//! row needs it, checked against its name again each time it is read; a
+//! source tree's member stored as a file (FIX 10101) stays its descriptor in
+//! the row, read when its tree is validated or imported. The
 //! archive holds no member the manifest does not list. No ceiling caps the
 //! whole. The rows then pass the same validation and admission doors as
 //! before; nothing here grants authority.
@@ -14,15 +16,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Seek};
 
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 use super::archive_index::{ArchiveIndex, ArchiveSpool, IndexedArchive, Section};
 use super::{
     ArchiveRecordKind, ArchiveSecretCustody, ExportAgentBundle, ExportDerivationEnvelope,
-    ExportEdge, ExportEntity, ExportEpochFloor, ExportLedger, ExportPack, ExportResultBody,
-    ExportRun, ExportRunResults, ExportSkillBundle, PortableEmbeddingSpace,
-    VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH, VAULT_ARCHIVE_RECORDS_DIR,
-    WholeVaultDocument, WholeVaultDocumentManifest, archive_file_path,
+    ExportEdge, ExportEntity, ExportEpochFloor, ExportFileTree, ExportLedger, ExportPack,
+    ExportResultBody, ExportRun, ExportRunResults, ExportSkillBundle, ExportSourceContent,
+    PortableEmbeddingSpace, VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH,
+    VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -260,27 +261,6 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
         }
     }
     spool.seal()?;
-    // A source-tree file's `file` comes back as its text, read from the
-    // archive one row at a time.
-    for kind in [
-        ArchiveRecordKind::Pack,
-        ArchiveRecordKind::Skill,
-        ArchiveRecordKind::AgentPack,
-    ] {
-        let mut rows = spool.rows(kind);
-        while let Some((_, line)) = rows.next(&spool)? {
-            let mut row: Value = self::row(&line)?;
-            attach_tree(kind, &mut row, &files, Some(&mut cited))?;
-            match kind {
-                ArchiveRecordKind::Pack => drop(typed::<ExportPack>(row)?),
-                ArchiveRecordKind::Skill => {
-                    let bundle: ExportSkillBundle = typed(row)?;
-                    cite_entity_file(&bundle.entity, &files, &mut cited)?;
-                }
-                _ => drop(typed::<ExportAgentBundle>(row)?),
-            }
-        }
-    }
     // OF-370: the kind slots come back from their rows, each kind once; an
     // archive without slot rows carries no embedding setup.
     let slot_bindings = slots.finish()?;
@@ -317,8 +297,19 @@ fn check_row(
             cite_entity_file(&row, files, cited)?;
         }
         ArchiveRecordKind::Claim => cite_entity_file(&row(line)?, files, cited)?,
-        ArchiveRecordKind::Skill | ArchiveRecordKind::Pack | ArchiveRecordKind::AgentPack => {
-            drop(row::<Value>(line)?);
+        ArchiveRecordKind::Skill => {
+            let bundle: ExportSkillBundle = row(line)?;
+            cite_entity_file(&bundle.entity, files, cited)?;
+            cite_tree(bundle.source_tree.as_ref(), files, cited)?;
+        }
+        ArchiveRecordKind::Pack => {
+            if let ExportPack::Source(source) = row::<ExportPack>(line)? {
+                cite_tree(Some(&source.source_tree), files, cited)?;
+            }
+        }
+        ArchiveRecordKind::AgentPack => {
+            let bundle: ExportAgentBundle = row(line)?;
+            cite_tree(bundle.source_tree.as_ref(), files, cited)?;
         }
         ArchiveRecordKind::Edge => drop(row::<ExportEdge>(line)?),
         ArchiveRecordKind::DerivationEnvelope => drop(row::<ExportDerivationEnvelope>(line)?),
@@ -359,17 +350,40 @@ fn check_row(
     Ok(())
 }
 
-/// OF-222: an ASSET's file body names one attached file, at its length.
+/// OF-222: an ASSET's file body names one attached file, at its length, and
+/// so does each source member of a hub source body stored as a file.
 fn cite_entity_file(
     row: &ExportEntity,
     files: &dyn ArchiveFiles,
     cited: &mut BTreeSet<String>,
 ) -> Result<()> {
-    if let ExportBody::File(file) = &row.body {
-        if files.file_len(file.blake3()) != Some(file.bytes()) {
-            return Err(invalid("archive entity file is absent or another length"));
+    match &row.body {
+        ExportBody::File(file) => {
+            if files.file_len(file.blake3()) != Some(file.bytes()) {
+                return Err(invalid("archive entity file is absent or another length"));
+            }
+            cited.insert(file.blake3().to_owned());
         }
-        cited.insert(file.blake3().to_owned());
+        ExportBody::HubSource(source) => cite_tree(Some(source.source_tree()), files, cited)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// FIX 10101: each source member stored as a file names one attached file,
+/// at its length.
+fn cite_tree(
+    tree: Option<&ExportFileTree>,
+    files: &dyn ArchiveFiles,
+    cited: &mut BTreeSet<String>,
+) -> Result<()> {
+    for member in tree.into_iter().flat_map(|tree| &tree.files) {
+        if let ExportSourceContent::File(file) = &member.content {
+            if files.file_len(file.blake3()) != Some(file.bytes()) {
+                return Err(invalid("archive source file is absent or another length"));
+            }
+            cited.insert(file.blake3().to_owned());
+        }
     }
     Ok(())
 }
@@ -395,9 +409,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 edges: self.all(ArchiveRecordKind::Edge)?,
             },
             claims: self.all(ArchiveRecordKind::Claim)?,
-            packs: self.all_hydrated(ArchiveRecordKind::Pack)?,
-            skills: self.all_hydrated(ArchiveRecordKind::Skill)?,
-            agent_packs: self.all_hydrated(ArchiveRecordKind::AgentPack)?,
+            packs: self.all(ArchiveRecordKind::Pack)?,
+            skills: self.all(ArchiveRecordKind::Skill)?,
+            agent_packs: self.all(ArchiveRecordKind::AgentPack)?,
             derivation_envelopes: self.all(ArchiveRecordKind::DerivationEnvelope)?,
             run_results: ExportRunResults {
                 runs: self.all(ArchiveRecordKind::Run)?,
@@ -418,23 +432,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         Ok(all)
     }
-
-    fn all_hydrated<T: DeserializeOwned>(&self, kind: ArchiveRecordKind) -> Result<Vec<T>> {
-        let mut rows = self.spool.rows(kind);
-        let mut all = Vec::new();
-        while let Some((loc, _)) = rows.next(&self.spool)? {
-            all.push(self.hydrated(kind, loc)?);
-        }
-        Ok(all)
-    }
 }
 
 fn row<T: DeserializeOwned>(line: &[u8]) -> Result<T> {
     serde_json::from_slice(line).map_err(|_| invalid("invalid whole-vault archive rows"))
-}
-
-fn typed<T: DeserializeOwned>(row: Value) -> Result<T> {
-    serde_json::from_value(row).map_err(|_| invalid("invalid whole-vault archive rows"))
 }
 
 /// Whether `name` is a member path the archive may hold.
@@ -479,53 +480,6 @@ fn member_digest<R: Read + Seek>(
         read,
         crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes()),
     ))
-}
-
-/// A source-tree row's files come back as their text, read from the archive
-/// one at a time; `cited` notes each file named, when the read is the first.
-pub(super) fn attach_tree(
-    kind: ArchiveRecordKind,
-    row: &mut Value,
-    files: &dyn ArchiveFiles,
-    mut cited: Option<&mut BTreeSet<String>>,
-) -> Result<()> {
-    let tree = match kind {
-        ArchiveRecordKind::Pack if row.get("kind").and_then(Value::as_str) == Some("source") => {
-            row.pointer_mut("/value/source_tree")
-        }
-        ArchiveRecordKind::Pack => None,
-        _ => row.get_mut("source_tree"),
-    };
-    let Some(tree_files) = tree
-        .and_then(|tree| tree.get_mut("files"))
-        .and_then(Value::as_array_mut)
-    else {
-        return Ok(());
-    };
-    for file in tree_files {
-        let Some(fields) = file.as_object_mut() else {
-            continue;
-        };
-        let Some(reference) = fields.remove("file") else {
-            continue;
-        };
-        let blake3 = reference
-            .as_str()
-            .ok_or_else(|| invalid("invalid archive file reference"))?;
-        if !fields.get("content").is_none_or(Value::is_null) {
-            return Err(invalid("archive tree file carries inline content"));
-        }
-        if files.file_len(blake3).is_none() {
-            return Err(invalid("archive tree file is absent"));
-        }
-        let text = String::from_utf8(files.read_file(blake3)?)
-            .map_err(|_| invalid("archive tree file is not UTF-8 text"))?;
-        fields.insert("content".to_owned(), Value::from(text));
-        if let Some(cited) = cited.as_mut() {
-            cited.insert(blake3.to_owned());
-        }
-    }
-    Ok(())
 }
 
 fn invalid(reason: &str) -> Error {

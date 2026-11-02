@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use oneiron::secret_custody::RunSecretSeat;
 use oneiron::{EntityId, Vault};
-use oneiron_browser::{AbandonedTakeover, BrowserError, BrowserSession, Takeover};
+use oneiron_browser::{
+    AbandonedTakeover, BrowserError, BrowserSession, DemonstrationOutput, Takeover,
+};
 
 use super::SyncServer;
 use super::desktop_seats::{RunSeats, Seat, SeatGuest};
@@ -43,8 +45,28 @@ impl SeatGuest for BrowserSession {
         Self::takeover(self)
     }
 
+    fn press_wait(&self) -> Option<EntityId> {
+        EntityId::from_hex(Self::press_wait(self)?).ok()
+    }
+
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
         Self::abandon_takeover(self)
+    }
+
+    fn abandoned_demonstration(&mut self) -> Option<DemonstrationOutput> {
+        self.take_abandoned_demonstration()
+    }
+
+    fn closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
+        self.take_closed_demonstrations()
+    }
+
+    fn land_closed_demonstration(
+        vault: &Vault,
+        run: EntityId,
+        record: &serde_json::Value,
+    ) -> oneiron::Result<String> {
+        vault.append_browser_demonstration_closed_receipt(run, record)
     }
 
     fn land_abandoned(

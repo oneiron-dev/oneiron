@@ -22,6 +22,24 @@ pub(in crate::task_verb) fn ask_launch_needs_approval(
     {
         return Ok(false);
     }
+    Ok(!recipients_approve_launch_in(
+        vault,
+        txn,
+        recipients,
+        approval_project,
+    )?)
+}
+
+/// Whether every one of `recipients` is a principal who would answer the
+/// ask's launch approval: a live vault owner, or a live holder of
+/// `approval_project`'s lead or board. Such an ask is never held, in any
+/// mode: holding it would ask the approver to approve asking them.
+pub(in crate::task_verb) fn recipients_approve_launch_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    recipients: &[EntityId],
+    approval_project: Option<EntityId>,
+) -> MemoryResult<bool> {
     let holders = launch_role_holders_in(vault, txn, approval_project)?;
     for recipient in recipients {
         let approver = (vault.get_entity_type_in_txn(txn, recipient)?
@@ -29,10 +47,10 @@ pub(in crate::task_verb) fn ask_launch_needs_approval(
             && actor_is_vault_owner_in_txn(vault, txn, *recipient, EdgeActorClass::Human)?)
             || holders.iter().any(|holder| holder.actor == *recipient);
         if !approver {
-            return Ok(true);
+            return Ok(false);
         }
     }
-    Ok(false)
+    Ok(true)
 }
 
 /// The live holders of a launch's approval role beside the owner: the
@@ -130,6 +148,9 @@ pub(in crate::task_verb) struct AskHold<'a> {
     pub(in crate::task_verb) statement: FanoutStatement,
     pub(in crate::task_verb) scope: String,
     pub(in crate::task_verb) effect: Option<AskEffect>,
+    /// The requester the ask was admitted under, which its release keeps
+    /// (FIX 11691).
+    pub(in crate::task_verb) requester: Option<crate::agent_dispatch::QueuedRequester>,
     pub(in crate::task_verb) now: u64,
 }
 
@@ -175,6 +196,7 @@ pub(in crate::task_verb) fn hold_ask_in(
         denied: false,
         choice_receipt_ref: None,
         shipped_policy_rows: governed.shipped_rows.clone(),
+        requester: hold.requester,
     };
     let admission = admit_fanout_with_history(
         &plan,

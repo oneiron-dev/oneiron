@@ -146,6 +146,9 @@ pub(super) fn fold_entry_state(
                 super::conversation_training::ConversationTrainingChoiceState::default(),
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
+            policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
+            refused_export_acts: BTreeSet::new(),
+            agent_carried_acts: BTreeMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
@@ -153,6 +156,7 @@ pub(super) fn fold_entry_state(
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
+            residence_directives: BTreeMap::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -294,6 +298,37 @@ pub(super) fn fold_entry_state(
     if let AuthorityOp::AgentGrantAct(record) = &entry.op {
         if let Err(issue) = super::agent_grant_act::apply_agent_grant_act(
             &state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is an act on a vault setting or an agent's free-time policy, on its
+    // target's frontier (FIX 4624, FIX 5660).
+    if let AuthorityOp::PolicySettingSet(set) = &entry.op {
+        if let Err(issue) = super::policy_setting_choice::apply_policy_setting(
+            &mut state,
+            entry,
+            set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's whole-vault export, which moves no fold state but a
+    // refused one's mark (FIX 4624).
+    if let AuthorityOp::ExportAct(record) = &entry.op {
+        if let Err(issue) = super::export_act::apply_export_act(
+            &mut state,
             entry,
             record,
             hash,
@@ -450,7 +485,10 @@ pub(super) fn fold_entry_state(
     }
     if matches!(
         entry.op,
-        AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
+        AuthorityOp::SlipMint(_)
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
+            | AuthorityOp::SlipGrantRevoke { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
         if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
@@ -512,7 +550,11 @@ pub(super) fn fold_entry_state(
 /// Whether a residence result's signer is the install key of the machine it
 /// names under a chain that says "yours" in the result's parent state, or
 /// under that machine's live, answered roster revision there, mine or not
-/// (FIX 8888), past that key's last sequence there.
+/// (FIX 8888), past that key's last sequence there. A result that names its
+/// directive's row as a parent stands on that alone, as before; one whose
+/// directive is beneath its parents (FIX 5412, CALLS "FIX 5412 result
+/// parents") stands only where its parent state holds that row as a valid
+/// directive of the same id naming the same machine.
 fn residence_result_stands(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -522,6 +564,12 @@ fn residence_result_stands(
     let AuthorityKey::Ed25519(signer) = entry.signer_key() else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
+    if !entry.parent_hashes.contains(&result.directive_entry)
+        && state.residence_directives.get(&result.directive_entry)
+            != Some(&(result.directive, result.machine))
+    {
+        return Err(AuthorityFoldIssue::InvalidAncestry(hash));
+    }
     if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
         machine
             .chains()
@@ -568,6 +616,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::SlipGrantRevoke { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::FederationLifecycle(_)
@@ -588,9 +637,12 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_) => false,
     }
 }

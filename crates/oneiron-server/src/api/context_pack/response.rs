@@ -4,7 +4,8 @@ use super::super::{
     MemoriesRequest, VadPayload, advance_memories_cursor, core_engine_error, hex_bytes,
 };
 use super::controls::{ContextPackBudgetControls, CoreDisclosureAssembly, CoreInterlocutorStamp};
-use super::resolve::{ContextPackResponseLimits, apply_context_pack_response_limits};
+use super::instruction_files::returned_instruction_files;
+use super::response_limits::{ContextPackResponseLimits, apply_context_pack_response_limits};
 use crate::error::ApiError;
 use crate::projection::View;
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
@@ -102,12 +103,14 @@ pub(crate) struct CoreContextPackStats {
     /// Neighbor entities hydrated.
     #[schema(example = 0)]
     neighbors_hydrated: usize,
-    /// Vector-only candidates dampened by cosine-ghost suppression.
+    /// Vector-only candidates counted for cosine-ghost lexical disagreement.
     #[schema(example = 0)]
     cosine_ghosts_dampened: usize,
     /// Claims suppressed by read-path gates.
     #[schema(example = 0)]
     claims_suppressed: usize,
+    /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
+    deadline_exceeded: bool,
     /// Item truncation accounting.
     items_truncated: CoreContextPackItemAccounting,
     /// Item drop accounting.
@@ -314,8 +317,8 @@ pub(crate) async fn run_context_pack_builder(
         tracing::error!(kind = ?error.kind(), "core context-pack clamp count failed");
         core_engine_error("core context-pack scoped read failed", error)
     })?;
-    let mut narrowing = scoped_read
-        .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
+    let mut narrowing = pack
+        .filter_scoped_under(scoped_read, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack scoped read failed");
@@ -330,12 +333,7 @@ pub(crate) async fn run_context_pack_builder(
             tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
-    apply_context_pack_response_limits(&mut pack.value, response_limits);
-    project_instruction_files(scoped_read, &mut pack.value).map_err(|error| {
-        pack.discard_telemetry();
-        tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
-        core_engine_error("core context-pack scoped read failed", error)
-    })?;
+    apply_context_pack_response_limits(&mut pack, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     // Board provenance/snippets consume the same authorized snapshot, before
     // the requested JSON profile removes source fields for the separate pack.
@@ -354,7 +352,15 @@ pub(crate) async fn run_context_pack_builder(
         })
         .transpose()
         .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
-    let pack = pack.finish_projected_json(&projection);
+    // Instruction files name only units the projection's cuts kept (FIX 9761).
+    let pack = pack
+        .finish_projected_json(&projection, |pack| {
+            returned_instruction_files(scoped_read, pack, disclosure.as_ref())
+        })
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
+            core_engine_error("core context-pack scoped read failed", error)
+        })?;
     let run_id = pack.run_id;
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
@@ -555,6 +561,7 @@ pub(crate) fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextP
         neighbors_hydrated: stats.neighbors_hydrated,
         cosine_ghosts_dampened: stats.cosine_ghosts_dampened,
         claims_suppressed: stats.claims_suppressed,
+        deadline_exceeded: stats.deadline_exceeded,
         items_truncated: CoreContextPackItemAccounting {
             count: stats.items_truncated.count,
             reason: stats.items_truncated.reason.as_str().to_owned(),
@@ -691,6 +698,7 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Hyde => "hyde",
         oneiron::RetrievalSignal::HydeRetry => "hyde_retry",
         oneiron::RetrievalSignal::MediaVector => "media_vector",
+        oneiron::RetrievalSignal::Relevance => "relevance",
     }
 }
 
@@ -756,34 +764,4 @@ pub(crate) struct CoreReactionSignal {
     pub glyph: String,
     pub occurred_at: u64,
     pub recorded_at: u64,
-}
-
-/// Keeps each instruction handle `pack` carries only over the units it still
-/// returns, and only while `read` reads its CODE_ARTIFACT, all in one
-/// snapshot (FIX 646): the handles are gathered before the scoped filter,
-/// over units the caller may not be shown.
-fn project_instruction_files(
-    read: &oneiron::claim::ScopedRead<'_>,
-    pack: &mut oneiron::ContextPack,
-) -> oneiron::Result<()> {
-    let returned: BTreeSet<_> = pack
-        .results
-        .iter()
-        .chain(&pack.neighbors)
-        .map(|entity| entity.id)
-        .collect();
-    for handle in &mut pack.instruction_files {
-        handle.units.retain(|unit| returned.contains(unit));
-    }
-    pack.instruction_files
-        .retain(|handle| !handle.units.is_empty());
-    let artifacts: Vec<_> = pack
-        .instruction_files
-        .iter()
-        .map(|handle| vec![handle.code_artifact_id])
-        .collect();
-    let mut readable = read.refs_readable_each(&artifacts)?.into_iter();
-    pack.instruction_files
-        .retain(|_| readable.next().unwrap_or(false));
-    Ok(())
 }

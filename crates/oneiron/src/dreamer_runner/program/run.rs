@@ -690,23 +690,25 @@ pub(super) fn undecodable_actor_steps_in_txn(
 }
 
 /// The steps an erase of one actor reaches: each settled step that keeps a
-/// body, and each step whose row does not decode.
+/// body, and each step whose row does not decode. A step already held as
+/// the erased marker is neither.
 struct ActorSteps {
     bodied: Vec<((EntityId, EntityId), TurnProgramStep)>,
     undecodable: Vec<(EntityId, EntityId)>,
 }
 
 /// The steps under each code run `actor`'s attempt stamps name, read on
-/// `txn`. A key that does not decode names no step and is left as it is.
+/// `txn`; the stamps by their actor index (FIX 5735). A stamp that does not
+/// decode names no actor. A key that does not decode names no step and is
+/// left as it is.
 fn actor_steps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
 ) -> Result<ActorSteps> {
     let mut code_runs = BTreeSet::new();
-    for row in ATTEMPT.iter_raw_from(vault, txn, &[])? {
-        let (_, bytes) = row?;
-        if let Ok(stamp) = ATTEMPT.decode_value(&bytes)
+    for attempt in super::index::actor_attempts_in_txn(vault, txn, actor)? {
+        if let Some(stamp) = ATTEMPT.get_lenient(vault, txn, &attempt)?
             && stamp.actor == *actor
         {
             code_runs.insert(turn_program_code_run(&stamp.admission)?);
@@ -722,7 +724,15 @@ fn actor_steps_in_txn(
             let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
                 continue;
             };
-            match STEP.decode_value(&bytes) {
+            // An erased marker (FIX 6227) is already out of reach: neither a
+            // body nor a row that does not decode, so its bytes stay and the
+            // step still reads as erased (FIX 10709).
+            let family = crate::store::ResponseFamily::ProgramStep;
+            let raw = match crate::store::ResponseRead::of(family, &STEP.key_bytes(&key), &bytes) {
+                crate::store::ResponseRead::ErasedOpaque(_) => continue,
+                crate::store::ResponseRead::Present(raw) => raw,
+            };
+            match STEP.decode_value(raw) {
                 Ok(step)
                     if matches!(
                         step.state,

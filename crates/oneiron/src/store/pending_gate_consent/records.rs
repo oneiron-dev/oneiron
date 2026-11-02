@@ -37,6 +37,11 @@ pub struct PendingGateConsentRecord {
     pub reason_codes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dreamer_run_id: Option<String>,
+    /// The predicate of the claim the row parks, stamped when the row is
+    /// written, so a reader whose claim body is gone still names it. `None`
+    /// where the writer had no claim body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<String>,
 }
 
 /// Internal RCPT-1 deletion state for one run-scoped pending-consent row.
@@ -75,16 +80,6 @@ pub(crate) struct OwnerAnswerObligationRecord {
     /// owner a fresh one.
     #[serde(rename = "replacement_body_hash")]
     pub(crate) item: [u8; 32],
-    /// Whether a peer revision that lands over this claim lands demoted: set
-    /// when a peer overwrote a confirm this device attached, cleared by a
-    /// fresh local one. An earlier invalidation row has no field and reads
-    /// as set.
-    #[serde(default = "peer_revisions_demoted_by_default")]
-    pub(crate) demotes_peer_revisions: bool,
-}
-
-const fn peer_revisions_demoted_by_default() -> bool {
-    true
 }
 
 pub(super) fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {

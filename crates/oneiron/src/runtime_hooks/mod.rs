@@ -18,6 +18,7 @@ mod host;
 pub mod host_doors;
 mod lineage;
 mod outcome;
+mod pack_line;
 mod read;
 mod regen;
 mod replay;
@@ -29,24 +30,30 @@ mod source;
 mod store;
 pub mod verb;
 
-pub use block::{HookBlock, HookBlockLifetime};
+pub use block::{HookBlock, HookBlockLifetime, HookTurnTarget};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookRunContext, HookVerdict,
-    HookVerdictCall,
+    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation,
+    HookRunContext, HookSettledCallRef, HookVerdict, HookVerdictCall, HookVerdictContext,
+    HookVerdictReply,
 };
 pub use grant::HookGrant;
+pub(crate) use grant::carry_hook_grant_in_txn;
 pub use host::{BudgetHit, HOST_BUDGET_HIT};
 pub use lineage::{HookCheck, HookCheckReason, LineageLink};
 pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
 };
+pub use read::grant_view::hook_evidence_views;
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
     HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
     HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
 };
-pub use replay::{HookReplayCase, HookReplayCompare, HookReplayEntry, HookReplayResult};
+pub use replay::{
+    HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,
+    HookReplayResult,
+};
 pub use runner::{
     FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassAdmission, HookPassReport,
 };
@@ -56,10 +63,15 @@ pub(crate) use scope::HookScope;
     reason = "the gate's settlement doors call it once their seam lands"
 )]
 pub(crate) use source::record_settlement_in_txn;
+pub(crate) use source::record_timeout_demotion_in_txn;
 pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact,
     SettledOutcome, SettlementKind, SettlementPosition,
 };
-pub(crate) use store::{hook_receipts, hook_run_read_rows};
-pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
+pub(crate) use store::{
+    hook_receipts, hook_run_read_rows, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
+};
+pub use verb::{
+    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookPreSnapshot, VerbHookStop, hook_class,
+};
 pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};

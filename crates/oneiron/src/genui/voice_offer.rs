@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 const OFFERS: SideTable<Vec<u8>, StoredVoiceOffer, LegacyJson> =
     SideTable::new(&side_table::GENUI_VOICE_GRANT_OFFER);
 const OFFER_LIFETIME_SECONDS: u64 = 600;
-const MAX_PENDING_OFFERS: usize = 1024;
 
 /// A displayable offer. Neither the nonce nor the corroborating voice-print
 /// result is a credential; only `confirm_voice_grant_offer` can mint a grant.
@@ -108,19 +107,10 @@ impl Vault {
             expires_at,
         };
         let key = offer_key(&grant_offer_nonce)?;
-        // Prune in its own committed transaction: rejecting a new offer at
-        // capacity must not roll back reclamation of expired rows.
+        // Expired offers are reclaimed in their own committed transaction.
+        // Every live offer is issued, however many are pending (FIX 9858).
         self.prune_expired_voice_grant_offers()?;
         self.with_write_txn_grouped(|txn| {
-            let mut pending = 0;
-            for _entry in OFFERS.scan_keys(&self.store, txn, &[])? {
-                pending += 1;
-                if pending >= MAX_PENDING_OFFERS {
-                    return Err(Error::InvalidConfig(
-                        "voice grant offer capacity reached".to_owned(),
-                    ));
-                }
-            }
             if OFFERS.contains(&self.store, txn, &key)? {
                 return Err(invalid_offer());
             }
@@ -139,9 +129,9 @@ impl Vault {
     }
 
     /// Remove expired, unconfirmed voice offers from this vault. Safe to call
-    /// from maintenance; offer issuance also invokes it before checking the
-    /// bounded pending capacity. The transaction commits even when a later
-    /// confirmation or issuance is refused.
+    /// from maintenance; offer issuance also invokes it before it writes. The
+    /// transaction commits even when a later confirmation or issuance is
+    /// refused.
     pub fn prune_expired_voice_grant_offers(&self) -> Result<usize> {
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
@@ -199,6 +189,37 @@ impl Vault {
             Ok(receipt)
         })
     }
+}
+
+/// Erasing `actor` from the pending voice offers (FIX 9861): every offer it
+/// owns goes in the erase's own transaction, its principal ref with it, and
+/// every other owner's offer stays. An offer is not yet a grant, so nothing
+/// it would have minted is lost. An id whose entity is no actor scans
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors, or an offer row that cannot be read.
+pub(crate) fn erase_voice_offer_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let owner = actor.to_hex();
+    let mut owned = Vec::new();
+    for entry in OFFERS.iter_from(&vault.store, wtxn, &[])? {
+        let (key, row) = entry.map_err(row_error)?;
+        if row.owner_actor == owner {
+            owned.push(key.to_vec());
+        }
+    }
+    for key in &owned {
+        OFFERS.delete(&vault.store, wtxn, key)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

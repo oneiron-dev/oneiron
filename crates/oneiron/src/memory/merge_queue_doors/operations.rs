@@ -9,8 +9,8 @@ use crate::repo_mutation::mount::RepoMountRef;
 impl Memory<'_> {
     /// `vault.code.merge_queue.enqueue`: queues stored repository proposals
     /// as one batch through the unchanged `MergeQueue::enqueue`, which keeps
-    /// its one to six proposal bound, size limit and green-base check. No
-    /// proposal is reviewed, checked or landed here.
+    /// its size limit and green-base check and speculates six proposals at a
+    /// time (FIX 9948). No proposal is reviewed, checked or landed here.
     pub fn merge_queue_enqueue_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -159,10 +159,10 @@ impl Memory<'_> {
                 &["Propose the change again from the current green commit."],
             ));
         }
-        // A received bundle is ONE queue proposal carrying all its files,
-        // each with its reviewed state change; the caller names none of it.
-        if row.received_candidate().is_some() {
-            return Ok(crate::repo_mutation::received_merge_proposal(
+        // A file bundle is ONE queue proposal carrying all its files, each
+        // with its reviewed state change; the caller names none of it.
+        if row.is_file_bundle() {
+            return Ok(crate::repo_mutation::bundle_merge_proposal(
                 self.vault, &row, base_green,
             )?);
         }

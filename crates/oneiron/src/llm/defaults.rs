@@ -12,6 +12,12 @@ use crate::{
 };
 use oneiron_model::llm::locality_rank;
 
+mod submit;
+pub use submit::{
+    PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
+    PurposeDefaultSubmitter, purpose_default_grant_target,
+};
+
 // The sibling tests name these bare through `use super::*`, as they did when the table
 // type was defined in this file.
 #[cfg(test)]
@@ -54,15 +60,16 @@ impl Vault {
 
     /// The delegated agent door is narrower than the host's owner-authored
     /// setter. Admit the caller, compare and replace inside one write
-    /// transaction.
+    /// transaction. The owner act `admit` returns is signed last, after the
+    /// replace, best effort (FIX 4624).
     pub(crate) fn set_resident_purpose_default_table(
         &self,
         next: &PurposeDefaultTable,
-        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<Option<crate::authority::PolicySettingAct>>,
     ) -> Result<()> {
         next.validate()?;
         let mut txn = self.store.env.write_txn()?;
-        admit(&mut txn)?;
+        let signed = admit(&mut txn)?;
         let prior = read_effective_defaults(&self.store, &txn)?.table().clone();
         if next.purposes.iter().any(|(key, row)| {
             locality_rank(row.locality) > locality_rank(prior.purposes[key].locality)
@@ -80,6 +87,9 @@ impl Vault {
             ));
         }
         POLICY.put(&self.store, &mut txn, &(), next)?;
+        if let Some(act) = signed {
+            self.record_policy_setting_op_in_txn(&mut txn, act);
+        }
         txn.commit()?;
         Ok(())
     }

@@ -291,13 +291,14 @@ impl Vault {
             }
             (rebinds, carriers, fold.vault_id)
         };
-        // A value this machine cannot open yet leaves its carrier pending.
+        // A value this machine cannot open yet, its carrier key not answered
+        // here among them (FIX 7402), leaves its carrier pending.
         let opened: Vec<_> = match (carriers.is_empty(), vault_id) {
             (false, Some(vault_id)) => match self.machine_secret_outside_txn() {
                 Ok(secret) => carriers
                     .into_iter()
                     .filter_map(|held| {
-                        let value = held.open_value(&vault_id, secret.machine, &secret.secret)?;
+                        let value = self.open_custody_value(&held, &vault_id, &secret)?;
                         Some((held, value))
                     })
                     .collect(),
@@ -333,9 +334,12 @@ impl Vault {
     /// after the floor widens, not at the next catch-up or served tick. It is
     /// a second commit, never part of the floor change's: a failure is logged
     /// by its kind only, the floor change stands as committed, and the tick's
-    /// pass tries again. Call it outside any write transaction. Without the
-    /// `sync` feature no carrier waits here, and it does nothing.
+    /// pass tries again. Call it outside any write transaction. It first
+    /// wakes each reader of [`Self::subscribe_policy_manifest_changes`] (FIX
+    /// 11402). Without the `sync` feature no carrier waits here, and the
+    /// wake is all it does.
     pub(crate) fn apply_pending_rebinds_after_commit(&self) {
+        self.store.notify_policy_manifest_changes();
         #[cfg(feature = "sync")]
         if let Err(error) = self.apply_pending_rebinds() {
             tracing::warn!(

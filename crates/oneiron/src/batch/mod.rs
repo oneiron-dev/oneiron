@@ -23,6 +23,7 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
+mod session_delete;
 pub(crate) use phonetic_apply::checkpoint;
 pub(crate) mod phonetic_codes;
 pub use self::phonetic_codes::generate_phonetic_codes;
@@ -46,6 +47,9 @@ pub use self::builder::BatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_committed_rows;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_committed_rows_in_txn;
+pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
 #[cfg(feature = "sync")]
@@ -54,8 +58,11 @@ pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
 
-pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
-use self::base_apply::apply_ops_with_origin;
+pub(crate) use self::authority_log::{
+    validate_replicated_authority_log_beside_for_local_vault,
+    validate_replicated_authority_log_for_local_vault,
+};
+use self::base_apply::{apply_ops_with_authority_beside, apply_ops_with_origin};
 pub(crate) use self::base_apply::{
     apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
 };
@@ -68,12 +75,13 @@ pub(crate) use self::claim_materialization::{
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
-    delete_door_protected, drop_seeded_actor_row,
+    delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
+pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
 pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
@@ -92,7 +100,9 @@ pub(crate) use self::phonetic_apply::{
     PHONETIC_POSTING_KEY_LEN, delete_from_phonetic_postings, phonetic_posting_key,
 };
 use self::prepared_index::PreparedIndexWork;
-pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
+pub(crate) use self::put_apply::{
+    delete_entity_index_rows, put_target_admitted_in, stage_entity_index_rows,
+};
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{
     delete_short_id_rows_for_id, encode_short_id_forward_key, parse_short_id_value,

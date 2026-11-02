@@ -104,6 +104,11 @@ impl HostActionGuard {
     pub(crate) fn root_slip_id(&self) -> Option<[u8; 32]> {
         self.root.as_ref().map(|root| root.claims().slip_id)
     }
+
+    /// The owner this action acts as, for the actor-key fingerprint.
+    pub(crate) fn owner(&self) -> EntityId {
+        self.owner
+    }
 }
 
 /// Whether `error` is a host action's refusal, the typed one or the owner

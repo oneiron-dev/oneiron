@@ -43,7 +43,7 @@
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |
 | `retry(pending: WireJson, verb: String, input: WireJson) -> WireJson` | `client.retry(pending:verb:input:)` | resends a call a verb hook stopped on an ask under its invocation: `pending` is the `PENDING_ASK` failure's `pending` payload, `input` the same input; answers the verb's wire JSON |
-| `lens_frame_event(card_id: String, request: LensFrameEventRequest) -> LensFrameEventReply` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` record on a lens card the connected server rendered; answers the `Local` (`$state`), `Tool` (`outcome`, `readReceipt`) or `Callback` variant |
+| `lens_frame_event(card_id: String, request: LensFrameEventRequest) -> LensFrameEventReply` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` record on a lens card the connected server rendered; answers the `Local` (`$state`, beside the card refinement for a patch-profile caller), `Tool` (`outcome`, `readReceipt`) or `Callback` variant |
 | `close_lens_frame(card_id: String) -> CloseLensFrameReply` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
 
 The two lens-card methods are routes outside the facade (OF-181), not verbs. A
@@ -96,13 +96,14 @@ no generic `call(name, json)`.
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
   inside its record and never as the whole argument: each `serde_json::Value`
   (a claim's value, a task spec, an entity body, `ai.*` params and the
-  others `generate.py` lists), each tuple (`DeckNodeView.placeholder`,
-  `GeometryProps.extent` and `.offset`, `TaskStatusView.asks`, `XlsxArea.first`
-  and `.last`), and the one type on a by-value cycle, `ProjectWriteProof` at
-  `ProjectRecord.write_proof` (its anchor holds an optional proof, and a record
-  cannot hold itself by value). A tree that reaches itself only through a
-  list is an ordinary record: `LensNode` (`GeneratedLens.root`) and
-  `RunTreeNode` (`RunTree.roots`) cross typed. A row whose type the inventory
+  others `generate.py` lists), and the one type on a by-value cycle,
+  `ProjectWriteProof` at `ProjectRecord.write_proof` (its anchor holds an
+  optional proof, and a record cannot hold itself by value). A tuple crosses
+  as a generated record with positional fields (`item0`, ...) whose serde is
+  the tuple's one JSON array, through the tuple codec in `src/codec.rs`.
+  A tree that reaches itself only through a list is an ordinary record:
+  `LensNode` (`GeneratedLens.root`) and `RunTreeNode` (`RunTree.roots`)
+  cross typed. A row whose type the inventory
   could not read would cross as `WireJson` whole on that side; on this table
   no row does. The generated file's header carries the census.
 - Where a generated type would take a hand-written record's name it is

@@ -23,7 +23,10 @@ use crate::federation::{SharedActOutcome, SignedSharedActOutcome, shared_act_out
 use crate::{EntityId, Vault};
 
 impl HostSlipIssuer {
-    /// Signs a one-way ask about `pact_id` with this host's key.
+    /// Signs a one-way ask about `pact_id` with this host's key: one signed
+    /// ask per page of the owner's whole selection (FIX 7941), each under
+    /// this key and the same pact claim, with its page and page count in the
+    /// signed bytes. Queue every page.
     pub fn sign_cooperative_deletion_request(
         &self,
         vault: &Vault,
@@ -31,7 +34,7 @@ impl HostSlipIssuer {
         worlds: Vec<EntityId>,
         epoch_cutoff: u64,
         nonce: [u8; 16],
-    ) -> Result<SignedCooperativeDeletionRequest> {
+    ) -> Result<Vec<SignedCooperativeDeletionRequest>> {
         vault.sign_cooperative_deletion_request(
             pact_id,
             worlds,

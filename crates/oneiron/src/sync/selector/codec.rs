@@ -475,6 +475,8 @@ pub(crate) fn guest_share_envelope_body_listing(
             }
         },
     );
+    // FIX 7608 slice 4: the guest gets a marked repo item's masked copy.
+    let update = super::secret_projection::released_update(vault, update)?;
     Ok((
         GuestShareEnvelopeBody::new(
             grant_scope,

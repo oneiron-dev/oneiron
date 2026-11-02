@@ -86,11 +86,20 @@ impl Memory<'_> {
         for id in &row.proposals {
             self.code_readable(*id, None)?;
         }
-        let task = self.code_conflict_task(row.claim_id)?;
+        // A held conflict keeps its claim with no TASK and says why (FIX 8830).
+        let task = match self.vault.repo_reconciliation_task(row.claim_id)? {
+            Some(task) => {
+                self.code_readable(task, Some(crate::registry::ENTITY_TYPE_TASK))?;
+                Some(task)
+            }
+            None => None,
+        };
         let open = self
             .vault
             .get_claim(&row.claim_id)?
             .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active);
+        let held = (task.is_none() && open)
+            .then(|| crate::task_verb::REPO_RECONCILIATION_TASK_HELD.to_owned());
         Ok(CodeConflictView {
             open,
             conflict: row.claim_id,
@@ -103,6 +112,7 @@ impl Memory<'_> {
             paths: row.conflicted_paths,
             proposals: row.proposals,
             task,
+            held,
         })
     }
 }

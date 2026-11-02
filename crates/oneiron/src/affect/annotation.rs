@@ -2,20 +2,19 @@
 
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
-use xxhash_rust::xxh3::xxh3_128;
 
 use super::{Vad, VadAnnotation, VadAnnotationSource};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::VAD_ANNOTATION_CLAIM;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 pub(crate) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
-const VAD_ANNOTATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:vad-annotation-claim:v1";
 const VAD_KEY_VALENCE: &str = "valence";
 const VAD_KEY_AROUSAL: &str = "arousal";
 const VAD_KEY_DOMINANCE: &str = "dominance";
@@ -56,17 +55,7 @@ pub(crate) fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> VadAnno
     }
 }
 pub(crate) fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<EntityId> {
-    let mut material = Vec::with_capacity(VAD_ANNOTATION_CLAIM_ID_DOMAIN.len() + 1 + ENTITY_ID_LEN);
-    material.extend_from_slice(VAD_ANNOTATION_CLAIM_ID_DOMAIN);
-    material.push(entity_type);
-    material.extend_from_slice(id.as_bytes());
-
-    let mut bytes = xxh3_128(&material).to_le_bytes();
-    if EntityId::from_bytes(bytes).is_err() {
-        bytes[ENTITY_ID_LEN - 1] ^= 0x01;
-    }
-    EntityId::from_bytes(bytes)
-        .map_err(|_| Error::InvariantViolation("VAD annotation claim id derivation failed"))
+    EntityId::derive(VAD_ANNOTATION_CLAIM, &[&[entity_type], id.as_bytes()])
 }
 fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
     Value::Map(vec![

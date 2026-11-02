@@ -215,6 +215,27 @@ impl RunTreeAdapter<'_> {
     /// reuse fails. A signal the side-row wall masked matches its identical
     /// retry by the keyed fingerprint kept beside it (FIX 10066).
     pub fn signal(&self, input: RunSignalInput) -> Result<RunBranchSignal> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let (stored, landed) = self.signal_in_txn(&mut txn, input)?;
+        if landed {
+            txn.commit()?;
+            // In sync builds this wakes a subscribed local caller; foreign hosts
+            // without that path use the durable peek handle instead.
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(stored)
+    }
+
+    /// [`Self::signal`] in the caller's writer (FIX 8533), so a caller can
+    /// commit its own record with the signal. Answers the receipt and whether
+    /// this call landed it; `false` is a replay of the receipt the key
+    /// already holds, which wrote nothing. A caller that commits a landed
+    /// signal then wakes the attempt observers.
+    pub(crate) fn signal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: RunSignalInput,
+    ) -> Result<(RunBranchSignal, bool)> {
         field(&input.run_id)?;
         field(&input.key)?;
         field(&input.actor)?;
@@ -241,23 +262,22 @@ impl RunTreeAdapter<'_> {
                 field(answer)?;
             }
         }
-        let mut txn = self.vault.store.env.write_txn()?;
         let mut record = self
             .queue
-            .get_in_txn(&txn, input.branch)?
+            .get_in_txn(txn, input.branch)?
             .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
         if record.run_id.as_deref() != Some(&input.run_id) {
             return Err(Error::InvalidConfig("Signal run mismatch".into()));
         }
         if let Some(prior) = record.signals.iter().find(|s| s.key == input.key) {
             if (prior.actor != input.actor || prior.kind != input.kind)
-                && !intent::retry_matches(self.vault, &txn, &record, &input)
+                && !intent::retry_matches(self.vault, txn, &record, &input)
             {
                 return Err(Error::InvalidConfig(
                     "Signal key reused with different intent".into(),
                 ));
             }
-            return Ok(prior.clone());
+            return Ok((prior.clone(), false));
         }
         if !live(record.state) {
             return Err(Error::InvalidConfig("Signal branch not live".into()));
@@ -282,7 +302,7 @@ impl RunTreeAdapter<'_> {
                     return Err(Error::InvalidConfig("ask already answered".into()));
                 }
             } else {
-                let at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
+                let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
                 ask.answers.push(RunAskAnswer {
                     who: who.clone(),
                     answer: answer.clone(),
@@ -291,7 +311,7 @@ impl RunTreeAdapter<'_> {
                 });
                 super::ask_wait::signal_waiters_in_txn(
                     self.vault,
-                    &mut txn,
+                    txn,
                     input.branch,
                     handle,
                     at.saturating_mul(1000),
@@ -306,7 +326,7 @@ impl RunTreeAdapter<'_> {
             state: RunSignalState::Pending,
         };
         record.signals.push(signal.clone());
-        self.save(&mut txn, &mut record)?;
+        self.save(txn, &mut record)?;
         // The receipt as the side-row wall stored it, which a retry replays.
         let stored = record
             .signals
@@ -317,13 +337,9 @@ impl RunTreeAdapter<'_> {
         if stored != signal
             && let Some(bytes) = intent_bytes
         {
-            self.keep_intent_in(&mut txn, &mut record, &stored.key, &bytes);
+            self.keep_intent_in(txn, &mut record, &stored.key, &bytes);
         }
-        txn.commit()?;
-        // In sync builds this wakes a subscribed local caller; foreign hosts
-        // without that path use the durable peek handle instead.
-        self.vault.store.notify_attempt_observers();
-        Ok(stored)
+        Ok((stored, true))
     }
 
     /// Keeps the keyed fingerprint of a masked signal's exact intent beside

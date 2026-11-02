@@ -8,8 +8,8 @@ use oneiron_organ_protocol::OrganIdentity;
 
 use crate::budget::Room;
 use crate::error::{HostError, Unavailable};
+use crate::isolation::OrganIsolation;
 use crate::process::OrganProcess;
-use crate::sandbox::OrganIsolation;
 use crate::spec::{HostConfig, OrganSpec, OrganTier};
 
 const CRASH_WINDOW: Duration = Duration::from_secs(600);

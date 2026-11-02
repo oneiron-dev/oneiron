@@ -40,7 +40,9 @@ pub(crate) use self::media::{media_job_owners, media_job_scan};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDbs};
-use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan};
+use crate::store::{
+    ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, opaque_retired_at,
+};
 
 /// Who owns a host row's response, as the host stamps it in the write that
 /// keeps the row: the actor that asked, the subject the response is about,
@@ -101,11 +103,18 @@ pub struct IdempotencyEntry {
     /// answers "response erased" until it expires (KS-2B2).
     #[serde(default)]
     pub erased: bool,
+    /// The writes committed while this entry stood as its request's intent,
+    /// on the threads that served the request, each counted in the write's
+    /// own transaction (FIX 10379): an intent that counts any says they
+    /// landed though its reply was never kept. Zero for any other entry.
+    #[serde(default)]
+    pub committed_writes: u32,
     /// The erase of its stamped caller drops the entry rather than leaving
     /// its erased form: a self-hosted non-core keyed route's verified
     /// individual caller's, as the host marks it (FIX 7357). Any other
     /// owner's erase leaves the erased form, as for every entry. Kept last
-    /// and written only when set, so every other entry's row is as before.
+    /// and written only when set: the compact encoding is positional, so a
+    /// field it skips must have none after it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub erase_drops: bool,
 }
@@ -198,6 +207,16 @@ pub(crate) fn http_scan(value: &[u8]) -> ResponseScan {
 #[doc(hidden)]
 pub fn http_response_read<'a>(key: &[u8], value: &'a [u8]) -> Result<&'a [u8]> {
     ResponseRead::of(ResponseFamily::Http, key, value).present()
+}
+
+/// When the erased marker the cache row `value` holds was stamped retired,
+/// in wall seconds since the Unix epoch (FIX 10710): the host expires that
+/// entry from then as it expires any other from its creation. `None` for
+/// any other row, and for a marker that kept no time, which never expires.
+/// Only the time is read, never the response.
+#[doc(hidden)]
+pub fn http_opaque_retired_at(value: &[u8]) -> Option<u64> {
+    opaque_retired_at(value)
 }
 
 /// The media job row `key` holds as `value`, read before the host decodes
@@ -331,6 +350,7 @@ pub(crate) fn erase_sync_response_owner_in_txn(
     for key in gone {
         rows.delete(wtxn, &key)?;
     }
+    crate::store::erase_invocation_claim_owner_in_txn(dbs, wtxn, owner)?;
     Ok(())
 }
 

@@ -96,8 +96,9 @@ impl<S: AsrStream> AsrStream for LeasedAsrStream<S> {
         match self.inner.end() {
             Ok(()) => lease.end(None).map(drop).map_err(settlement),
             Err(error) => {
-                // The refusal, if any, is on the Settled receipt.
-                lease.cancel().ok();
+                // The refusal, if any, is on the Settled receipt; the
+                // failed end reports to its offer's health (FIX 1743).
+                lease.fail().ok();
                 Err(error)
             }
         }

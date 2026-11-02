@@ -43,6 +43,7 @@ use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngress, RepoProjectionRecord,
 };
 use crate::origin::secret_projection::git::RepoGitProjection;
+use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
 
 pub(crate) mod forward;
 pub(crate) mod recovery;
@@ -138,7 +139,8 @@ fn authority_digest(stamp: &DoorAdmissionStamp) -> Result<[u8; 32]> {
 
 /// The proof `stamp`, an admitted push on the canonical store
 /// `canonical_store`, is received into the private ingress `ingress_store`
-/// at `ingress_root` under, for the copy `projection`. Nothing is written.
+/// at `ingress_root` under, for the copy `projection`, with the recipient
+/// `reveal` its host proved, if any (FIX 10271). Nothing is written.
 ///
 /// # Errors
 /// A stamp that admitted no push: only an admitted push is staged.
@@ -148,6 +150,7 @@ pub(crate) fn prepare_projection_ingress(
     canonical_store: EntityId,
     ingress_store: &str,
     ingress_root: &Path,
+    reveal: Option<RepoProjectionRevealBinding>,
 ) -> Result<RepoProjectionIngressProof> {
     if stamp.push.is_none() {
         return Err(Error::InvariantViolation(
@@ -159,6 +162,7 @@ pub(crate) fn prepare_projection_ingress(
         canonical_store,
         ingress_store: ingress_store.to_owned(),
         authority: authority_digest(stamp)?,
+        reveal,
     };
     Ok(RepoProjectionIngressProof {
         claim: RepoProjectionClaim::of(

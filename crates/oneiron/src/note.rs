@@ -104,16 +104,20 @@ mod tombstone_review;
 mod verbs;
 mod write_gate;
 pub use documents::{
-    NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
-    NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
+    NoteAnchor, NoteDocument as NoteProgramDocument, NoteProgramEdit, NoteProgramEditOutcome,
+    NoteVersion,
 };
-pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, descriptor_in_txn};
+pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND, descriptor_in_txn};
 pub use kinds::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 mod overrides;
+#[cfg(feature = "sync")]
+pub(crate) use lifecycle::note_seal_in_txn;
 pub(crate) use lifecycle::{erase_seal_actor_in_txn, note_sealed_in_txn, seal_note_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use overrides::encode_frame_overrides_in_txn;
 pub(crate) use overrides::note_defaults_in_txn;
 pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
 pub use proposals::{
@@ -476,7 +480,7 @@ pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
-pub(crate) use live_body::live_body_in_txn;
+pub(crate) use live_body::{live_body_from_in_txn, live_body_in_txn};
 mod brief_doors;
 pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod kind_contract;
@@ -566,7 +570,7 @@ mod document_store;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
 pub(crate) use document_store::{
-    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };
 mod files;
 pub use files::{
@@ -576,7 +580,8 @@ pub use files::{
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{
-    FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
+    FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
+    FolderSourceFile, OriginalBytes,
 };
 mod import;
 pub use import::{
@@ -607,7 +612,10 @@ mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
-pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};
+pub use document::{
+    NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution,
+};
+pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEditOutcome};
 
 #[cfg(test)]
 mod program_tests;

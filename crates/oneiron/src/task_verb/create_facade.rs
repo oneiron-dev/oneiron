@@ -1,6 +1,8 @@
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
+mod hook_effect;
+
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
@@ -241,19 +243,16 @@ impl Memory<'_> {
     /// on payload alone would let this caller's ask be answered by a claim
     /// someone else produced.
     ///
-    /// Streamed, and bounded LOUDLY. Inbound claims are attached BY OTHERS, so
-    /// any peer able to write rows about this actor controls how many there
-    /// are — and both ways of handling that have a cost. A ceiling that
-    /// returned "nothing parked" would let such a peer switch this actor's
-    /// dedupe off for good, which is worse than a refusal because the
-    /// duplicate it admits looks like a legitimate second ask. No ceiling at
-    /// all would let the same peer make every create arbitrarily expensive.
+    /// Streamed and complete (FIX 8660). Inbound claims are attached BY
+    /// OTHERS, so any peer able to write rows about this actor controls how
+    /// many there are. A walk that answered "nothing parked", or refused,
+    /// past a count would let such a peer switch this actor's dedupe off,
+    /// and the duplicate it admits would look like a legitimate second ask.
     ///
-    /// So the walk holds one row at a time, stops at the first match, and
-    /// refuses past `DEDUPE_SCAN_CEILING` rather than answering. The create
-    /// fails; it never quietly parks a duplicate. Every read failure
-    /// propagates for the same reason: an unreadable index is not "nothing
-    /// parked".
+    /// So the walk holds one row at a time and reads every inbound row until
+    /// one matches: a match is its only early end, and its count only feeds
+    /// the advisory `EdgePeerRows` check. Every read failure propagates: an
+    /// unreadable index is not "nothing parked".
     ///
     /// And only one parked under the same creator (OF-532): the same ask
     /// from another agent run, or from no run, lands under a different lease
@@ -596,6 +595,9 @@ impl Memory<'_> {
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
                         team,
                         objectives,
+                        // FIX 11592: the instrument this request was admitted
+                        // on; a child with none keeps its creator's.
+                        requester: crate::agent_dispatch::QueuedRequester::of_memory(self),
                         ..AgentSpawnContext::default()
                     },
                 )?;

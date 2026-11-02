@@ -31,6 +31,12 @@ pub enum AuthorityOp {
     SlipConsume {
         slip_id: [u8; 32],
     },
+    /// Revokes every capability whose signed claims name the Grant
+    /// `grant_ref`, and every descendant: those the log holds now and any a
+    /// replica minted under it that merges later (FIX 1978).
+    SlipGrantRevoke {
+        grant_ref: EntityId,
+    },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
@@ -136,6 +142,10 @@ pub enum AuthorityOp {
     /// the carrier of his act, with the request in its causal past (FIX
     /// 4739). A main-log entry, value-free: ids only, never a result.
     OwnerWorkCancel(OwnerWorkCancel),
+    /// One numbered piece of a custody request's permit set past one row,
+    /// signed by the key that signs the request, ahead of it in its causal
+    /// past (FIX 11866). A main-log entry, value-free: ids and digests only.
+    CustodyPermitPiece(CustodyPermitPiece),
     /// One owner choice of the vault's checkpoint root policy, signed by
     /// the install key of a live machine of the vault, in any role (mesh
     /// PR2c, K06). A main-log entry, so every machine the owner admits
@@ -163,6 +173,15 @@ pub enum AuthorityOp {
     /// key of a live machine of the vault, in any role (FIX 5628). A
     /// main-log entry, so every machine the owner admits folds it.
     AgentGrantAct(AgentGrantActRecord),
+    /// One act on a vault setting (the dreamer's wake policy, the inference
+    /// defaults) or on an agent's free-time policy, signed by the install key
+    /// of a live machine of the vault, in any role (FIX 4624, FIX 5660). A
+    /// main-log entry, so every machine the owner admits folds it.
+    PolicySettingSet(PolicySettingSet),
+    /// One owner whole-vault export, signed by the install key of a live
+    /// machine of the vault, in any role, after the copy left (FIX 4624). A
+    /// main-log entry, so every machine the owner admits folds it.
+    ExportAct(ExportActRecord),
     /// The owner's enrollment of one of his devices' own owner signing keys
     /// on the roster (FIX 4920), signed by an existing live owner root and
     /// cosigned by the install key of the carrier of his act. A main-log
@@ -230,6 +249,7 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
             AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate_entry(self)?,
+            AuthorityOp::CustodyPermitPiece(piece) => piece.validate_entry(self)?,
             AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
             AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
             AuthorityOp::ConversationTrainingSet(set) => set.validate_entry(self)?,
@@ -355,6 +375,12 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
+        AuthorityOp::SlipGrantRevoke { grant_ref } => {
+            if *grant_ref.as_bytes() == [0; 16] {
+                return Err(invalid_authority());
+            }
+            Ok(())
+        }
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
@@ -455,12 +481,15 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerWorkRequest(request) => request.validate(),
         AuthorityOp::OwnerWorkResult(result) => result.validate(),
         AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate(),
+        AuthorityOp::CustodyPermitPiece(piece) => piece.validate(),
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
         AuthorityOp::HomeNodePick(pick) => pick.validate(),
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
         AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
+        AuthorityOp::PolicySettingSet(set) => set.validate(),
+        AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
     }

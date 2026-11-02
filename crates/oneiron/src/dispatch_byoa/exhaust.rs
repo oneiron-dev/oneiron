@@ -227,7 +227,8 @@ pub struct ByoaTerminalReceipt {
     pub artifact_version: u64,
     pub result_ref: AttemptResultRef,
     /// Fallback seats a NextSeat route passed over, each with why, in the
-    /// owner's order. Empty for every other capture.
+    /// owner's order. Empty for every other capture. A moved-on replay reads
+    /// the head hop's durable list (FIX 9242).
     pub skipped_seats: Vec<SkippedRunnerSeat>,
 }
 

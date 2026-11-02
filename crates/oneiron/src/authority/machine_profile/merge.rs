@@ -4,6 +4,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
@@ -12,7 +13,11 @@ use super::*;
 /// Higher revision wins; divergent content at one revision is poison carried
 /// by the byte-wise smaller profile, so the merge is the same in every order.
 /// A strictly higher revision clears that poison, as it does for actor
-/// bindings; a removal never clears.
+/// bindings; a removal never clears. Two copies of one entry (equal revision
+/// and profile, same entry) meet their proofs instead of keeping the left
+/// copy's: `say_so` is what both pasts saw, and `act` is the copy that sorts
+/// first, so the merge is the same in every order; the entry itself is never
+/// dropped.
 pub(in crate::authority) fn merge_machine(
     left: &MachineRevision,
     right: &MachineRevision,
@@ -20,10 +25,15 @@ pub(in crate::authority) fn merge_machine(
     let mut merged = match left.profile.revision.cmp(&right.profile.revision) {
         Ordering::Greater => left.clone(),
         Ordering::Less => right.clone(),
-        Ordering::Equal if left.profile == right.profile => MachineRevision {
-            conflicted: left.conflicted || right.conflicted,
-            ..left.clone().min_by_entry(right)
-        },
+        Ordering::Equal if left.profile == right.profile => {
+            let mut one = left.clone().min_by_entry(right);
+            one.conflicted = left.conflicted || right.conflicted;
+            if left.entry == right.entry {
+                one.say_so = meet_say_so(&left.say_so, &right.say_so);
+                one.act = std::cmp::min(left.act.clone(), right.act.clone());
+            }
+            one
+        }
         Ordering::Equal if left.profile < right.profile => MachineRevision {
             conflicted: true,
             ..left.clone()
@@ -35,6 +45,18 @@ pub(in crate::authority) fn merge_machine(
     };
     merged.removed = left.removed || right.removed;
     merged
+}
+
+/// Two copies of one entry's say-so meet as `Revision::meet` meets the
+/// chain-local past: what both saw. A copy that carries none meets to none.
+fn meet_say_so(left: &Option<Arc<SaySo>>, right: &Option<Arc<SaySo>>) -> Option<Arc<SaySo>> {
+    match (left, right) {
+        (Some(left), Some(right)) if left == right => Some(Arc::clone(left)),
+        (Some(left), Some(right)) => Some(Arc::new(SaySo {
+            saw: left.saw.intersection(&right.saw).copied().collect(),
+        })),
+        _ => None,
+    }
 }
 
 fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {

@@ -16,23 +16,46 @@
 //! carries, under the frame floors kept here (the `u16` count, the 4 MiB
 //! decode bound on the content a carrier held before pieces, the piece
 //! fields beside it). No total recipient count is refused.
+//!
+//! A value too large for one carrier rides in numbered envelopes, each the
+//! next run of the value, in pieces of their own (FIX 7953): each envelope's
+//! key id is the one-envelope key id with its index and the count after it,
+//! so none opens at another place, among another count or as a one-envelope
+//! value. The value opens only from the whole transition, every envelope at
+//! its place; a missing piece leaves the change pending.
+//!
+//! While the carrier wire is on, a transition whose value is sealed under
+//! its own carrier key first (transition v3, FIX 7402) opens with its own
+//! magic and signs that key's reference beside its piece fields; the
+//! envelopes each permit opens then hold the value sealed under that key,
+//! whole before it is split, never the value itself (`super::carrier_leaf`).
+//! With the wire off a carrier is exactly as before, and one that names a
+//! key does not decode.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, OpenKey, OpenPolicy, Purpose, SealKey,
-    SealParams, SuiteId, WrapType, seal,
+    Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, ONEV_HEADER_PREFIX_MAX, OpenKey,
+    OpenPolicy, Purpose, SealKey, SealParams, SuiteId, TAG_LEN, WrapType, seal,
 };
 use zeroize::Zeroizing;
 
+use super::super::carrier_custody::{
+    CARRIER_REF_BYTES, CUSTODY_CARRIER_LEAF_WIRE, CUSTODY_TRANSITION_WIRE_VERSION, CarrierRef,
+};
 use super::super::codec::{decode_secret_custody_body, invalid_body};
 use super::super::types::{SecretCustodyRecord, SecretCustodyStatus};
 use super::{CustodyTransition, custody_portable};
 use crate::authority::{AuthorityEntryHash, CustodyRecipientPermit, WrapRecipient};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::CustodyKind;
 
 const MAGIC: &[u8; 4] = b"OCT2";
+/// The magic of a transition whose value is sealed under its own carrier
+/// key (transition v3, FIX 7402): its piece fields are followed by the
+/// transition wire version and the key's reference.
+const MAGIC_LEAF: &[u8; 4] = b"OCT3";
 const SIGNATURE_DOMAIN: &[u8] = b"oneiron/custody-transition/v3";
 const VALUE_LABEL: &[u8] = b"oneiron/custody-value/v1";
 const KEY_ID_LABEL: &[u8] = b"custody/v2";
@@ -42,7 +65,8 @@ const VALUE_EPOCH: u64 = 1;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 /// The codec's frame floor on a carrier's content as it was before pieces,
-/// never a recipient cap: what a single sealed value may fill.
+/// never a recipient cap nor a value's: what a single sealed envelope may
+/// fill, a larger value riding in numbered envelopes (FIX 7953).
 const MAX_TRANSITION_BYTES: usize = 4 << 20;
 /// What a carrier's place among its transition's pieces adds: the set
 /// commitment, its piece, the piece count and its first permit. They ride
@@ -53,6 +77,9 @@ const PIECE_FIELD_BYTES: usize = 32 + 4 + 4 + 4;
 pub(super) const MAX_CARRIER_BYTES: usize = MAX_TRANSITION_BYTES + PIECE_FIELD_BYTES;
 /// The most sealed values one piece carries: its count is two bytes.
 pub(super) const MAX_PIECE_VALUES: usize = u16::MAX as usize;
+/// The most one value envelope adds to the value bytes it seals: its
+/// header, its tag and the value label (FIX 7953).
+pub(super) const VALUE_ENVELOPE_BYTES: usize = ONEV_HEADER_PREFIX_MAX + TAG_LEN + VALUE_LABEL.len();
 
 impl CustodyTransition {
     /// What the signature covers: the vault and every field but the
@@ -66,7 +93,11 @@ impl CustodyTransition {
     }
 
     fn encode_unsigned(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(if self.carrier.is_some() {
+            MAGIC_LEAF
+        } else {
+            MAGIC
+        });
         out.extend_from_slice(self.id.as_bytes());
         out.extend_from_slice(&self.generation.to_be_bytes());
         out.push(status_byte(self.status));
@@ -77,6 +108,10 @@ impl CustodyTransition {
         out.extend_from_slice(&self.piece.to_be_bytes());
         out.extend_from_slice(&self.pieces.to_be_bytes());
         out.extend_from_slice(&self.first.to_be_bytes());
+        if let Some(carrier) = &self.carrier {
+            out.push(CUSTODY_TRANSITION_WIRE_VERSION);
+            out.extend_from_slice(&carrier.encode());
+        }
         put_bytes(out, &self.body);
         // Pieces are packed to at most `MAX_PIECE_VALUES` values.
         out.extend_from_slice(&(self.sealed.len() as u16).to_be_bytes());
@@ -97,9 +132,14 @@ impl CustodyTransition {
         *hasher.finalize().as_bytes()
     }
 
-    /// The permits the value is sealed under, ascending by machine.
+    /// The permits the value is sealed under, ascending by machine, once
+    /// each: a value in numbered envelopes holds its permit beside each.
     pub(crate) fn permits(&self) -> impl Iterator<Item = &CustodyRecipientPermit> + '_ {
-        self.sealed.iter().map(|(permit, _)| permit)
+        let mut last = None;
+        self.sealed
+            .iter()
+            .map(|(permit, _)| permit)
+            .filter(move |permit| last.replace(*permit) != Some(*permit))
     }
 
     /// The carrier bytes.
@@ -111,15 +151,21 @@ impl CustodyTransition {
     }
 
     /// Decodes carrier bytes strictly: every length exact, nothing after the
-    /// signature. Decoding proves nothing; [`Self::verify`] does.
+    /// signature; a carrier key's reference only while the carrier wire is
+    /// on. Decoding proves nothing; [`Self::verify`] does.
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_CARRIER_BYTES {
             return Err(malformed());
         }
         let mut read = Reader(bytes);
-        if read.take(MAGIC.len())? != MAGIC {
+        let magic = read.take(MAGIC.len())?;
+        let leafed = if magic == MAGIC {
+            false
+        } else if CUSTODY_CARRIER_LEAF_WIRE && magic == MAGIC_LEAF {
+            true
+        } else {
             return Err(malformed());
-        }
+        };
         let id = EntityId::from_bytes(read.array::<16>()?)?;
         let generation = u32::from_be_bytes(read.array()?);
         let status = status_from_byte(read.array::<1>()?[0])?;
@@ -130,6 +176,14 @@ impl CustodyTransition {
         let piece = u32::from_be_bytes(read.array()?);
         let pieces = u32::from_be_bytes(read.array()?);
         let first = u32::from_be_bytes(read.array()?);
+        let carrier = if leafed {
+            if read.array::<1>()?[0] != CUSTODY_TRANSITION_WIRE_VERSION {
+                return Err(malformed());
+            }
+            Some(CarrierRef::decode(&read.array::<CARRIER_REF_BYTES>()?).ok_or_else(malformed)?)
+        } else {
+            None
+        };
         let body = read.bytes()?.to_vec();
         let count = usize::from(u16::from_be_bytes(read.array()?));
         // Grown as values decode: a count is not taken on trust.
@@ -158,6 +212,7 @@ impl CustodyTransition {
             piece,
             pieces,
             first,
+            carrier,
             body,
             sealed,
             signer,
@@ -168,10 +223,11 @@ impl CustodyTransition {
     /// Whether this transition is whole: signed for `vault_id` by the key it
     /// names, over a portable record that agrees with it, its value sealed
     /// exactly when it is not revoked, under permits ascending by machine,
-    /// one each, with no zero digest. Who signed, and for which request, is
-    /// [`Self::verify`]'s question, asked where the record is written: a
-    /// window keeps relaying a transition whose request this vault has not
-    /// folded yet.
+    /// one each, each permit's envelopes together, with no zero digest, and
+    /// a carrier key, when it names one, of its own record at its
+    /// generation. Who signed, and for which request, is [`Self::verify`]'s
+    /// question, asked where the record is written: a window keeps relaying
+    /// a transition whose request this vault has not folded yet.
     pub(crate) fn verify_signed(&self, vault_id: &[u8; 32]) -> Result<()> {
         let key = VerifyingKey::from_bytes(&self.signer).map_err(|_| unsigned())?;
         key.verify_strict(
@@ -194,11 +250,16 @@ impl CustodyTransition {
         let ascending = self
             .sealed
             .windows(2)
-            .all(|pair| pair[0].0.machine < pair[1].0.machine);
+            .all(|pair| pair[0].0 == pair[1].0 || pair[0].0.machine < pair[1].0.machine);
         let zero = self
             .permits()
             .any(|permit| permit.profile == [0; 32] || permit.encryption_key == [0; 32]);
-        if !ascending || zero {
+        let foreign_key = self.carrier.is_some_and(|carrier| {
+            carrier.kind != CustodyKind::CustodyTransition
+                || carrier.credential != self.id
+                || carrier.generation != self.generation
+        });
+        if !ascending || zero || foreign_key {
             return Err(malformed());
         }
         Ok(())
@@ -209,37 +270,57 @@ impl CustodyTransition {
         decode_secret_custody_body(&self.body)
     }
 
-    /// The value sealed to `machine`, opened with its secret under the
-    /// permit it was sealed for. `None` when the transition holds no
-    /// envelope for it or the envelope does not open.
-    pub(crate) fn open_value(
-        &self,
+    /// The value sealed to `machine` across `pieces`, one whole transition's
+    /// pieces in order, opened with its secret under the permit it was
+    /// sealed for: its one envelope, or each numbered envelope opened at its
+    /// place and the runs joined in order (FIX 7953). `None` when the pieces
+    /// hold no envelope for it or one does not open; what was joined is
+    /// wiped.
+    pub(super) fn open_value(
+        pieces: &[Self],
         vault_id: &[u8; 32],
         machine: EntityId,
         secret: &HybridSecretKey,
     ) -> Option<Zeroizing<Vec<u8>>> {
-        let (permit, envelope) = self.sealed.iter().find(|(to, _)| to.machine == machine)?;
-        let envelope = Envelope::parse(envelope).ok()?;
-        let key_id = value_key_id(&self.binding(), permit);
+        let binding = pieces.first()?.binding();
+        let held: Vec<&(CustodyRecipientPermit, Vec<u8>)> = pieces
+            .iter()
+            .flat_map(|piece| &piece.sealed)
+            .filter(|(to, _)| to.machine == machine)
+            .collect();
+        let count = u32::try_from(held.len()).ok().filter(|count| *count > 0)?;
         let recipient = WrapRecipient::Machine(machine).envelope_recipient();
-        let policy = OpenPolicy {
-            purpose: Purpose::SecretFile,
-            vault_id,
-            recipient: &recipient,
-            key_id: &key_id,
-            wraps: &[WrapType::HybridCapsule],
-            aead_suites: &[AEAD],
-            kem_suites: &[KEM],
-            min_epoch: VALUE_EPOCH,
-            argon2_max: Argon2Cost::RFC9106_SECOND,
-        };
-        let payload = envelope.open(OpenKey::Hybrid(secret), &policy).ok()?;
-        let value = payload.strip_prefix(VALUE_LABEL)?;
-        Some(Zeroizing::new(value.to_vec()))
+        // Each run is shorter than its envelope, so the joined value never
+        // moves and leaves no unwiped copy behind.
+        let mut value = Zeroizing::new(Vec::with_capacity(
+            held.iter().map(|(_, envelope)| envelope.len()).sum(),
+        ));
+        for ((permit, envelope), index) in held.into_iter().zip(0_u32..) {
+            let key_id = if count == 1 {
+                value_key_id(&binding, permit)
+            } else {
+                numbered_value_key_id(&binding, permit, index, count)
+            };
+            let envelope = Envelope::parse(envelope).ok()?;
+            let policy = OpenPolicy {
+                purpose: Purpose::SecretFile,
+                vault_id,
+                recipient: &recipient,
+                key_id: &key_id,
+                wraps: &[WrapType::HybridCapsule],
+                aead_suites: &[AEAD],
+                kem_suites: &[KEM],
+                min_epoch: VALUE_EPOCH,
+                argon2_max: Argon2Cost::RFC9106_SECOND,
+            };
+            let payload = envelope.open(OpenKey::Hybrid(secret), &policy).ok()?;
+            value.extend_from_slice(payload.strip_prefix(VALUE_LABEL)?);
+        }
+        Some(value)
     }
 
     /// What each value envelope's key id binds beside its permit.
-    fn binding(&self) -> ValueBinding {
+    pub(super) fn binding(&self) -> ValueBinding {
         ValueBinding {
             id: self.id,
             generation: self.generation,
@@ -259,23 +340,54 @@ pub(super) struct ValueBinding {
     pub(super) request: AuthorityEntryHash,
 }
 
-pub(super) fn seal_value(
+/// The envelopes `value` rides in to `permit`'s machine under `binding`
+/// (FIX 7953): one envelope when it is at most `room` bytes, the most one
+/// piece of its own carries, else numbered envelopes of `room` bytes each
+/// but the last, so each rides in a piece within the frame floors. A body
+/// that leaves a piece no room keeps one envelope, which the carrier floor
+/// then refuses as before.
+pub(super) fn split_value_envelopes(
     vault_id: &[u8; 32],
     binding: &ValueBinding,
     permit: &CustodyRecipientPermit,
     public: &HybridPublicKey,
     value: &[u8],
+    room: usize,
+) -> Result<Vec<Vec<u8>>> {
+    if value.len() <= room || room == 0 {
+        let key_id = value_key_id(binding, permit);
+        return Ok(vec![seal_value(vault_id, &key_id, permit, public, value)?]);
+    }
+    let count = u32::try_from(value.len().div_ceil(room))
+        .map_err(|_| invalid_body("a custody value seals as more envelopes than it counts"))?;
+    value
+        .chunks(room)
+        .zip(0_u32..)
+        .map(|(run, index)| {
+            let key_id = numbered_value_key_id(binding, permit, index, count);
+            seal_value(vault_id, &key_id, permit, public, run)
+        })
+        .collect()
+}
+
+/// Seals `run` of a value to `permit`'s machine as one envelope under
+/// `key_id`.
+fn seal_value(
+    vault_id: &[u8; 32],
+    key_id: &[u8],
+    permit: &CustodyRecipientPermit,
+    public: &HybridPublicKey,
+    run: &[u8],
 ) -> Result<Vec<u8>> {
-    let key_id = value_key_id(binding, permit);
     let recipient = WrapRecipient::Machine(permit.machine).envelope_recipient();
-    let mut payload = Zeroizing::new(Vec::with_capacity(VALUE_LABEL.len() + value.len()));
+    let mut payload = Zeroizing::new(Vec::with_capacity(VALUE_LABEL.len() + run.len()));
     payload.extend_from_slice(VALUE_LABEL);
-    payload.extend_from_slice(value);
+    payload.extend_from_slice(run);
     let params = SealParams {
         suite: AEAD,
         purpose: Purpose::SecretFile,
         epoch: VALUE_EPOCH,
-        key_id: &key_id,
+        key_id,
         recipient: &recipient,
         vault_id,
     };
@@ -309,6 +421,20 @@ fn value_key_id(binding: &ValueBinding, permit: &CustodyRecipientPermit) -> Vec<
     out.extend_from_slice(KEY_ID_LABEL);
     out.extend_from_slice(hasher.finalize().as_bytes());
     out
+}
+
+/// The key id of numbered envelope `index` of `count`: the one-envelope key
+/// id, then the index and the count, within the envelope's 64-byte id.
+fn numbered_value_key_id(
+    binding: &ValueBinding,
+    permit: &CustodyRecipientPermit,
+    index: u32,
+    count: u32,
+) -> Vec<u8> {
+    let mut key_id = value_key_id(binding, permit);
+    key_id.extend_from_slice(&index.to_be_bytes());
+    key_id.extend_from_slice(&count.to_be_bytes());
+    key_id
 }
 
 pub(super) fn status_byte(status: SecretCustodyStatus) -> u8 {

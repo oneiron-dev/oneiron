@@ -25,12 +25,14 @@ mod contribution;
 mod coordination_codec;
 mod dispatcher;
 mod payload;
+mod read_set;
 mod reader;
 mod reader_brief;
 mod reader_clock;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
+mod replay_parts;
 mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
@@ -39,6 +41,7 @@ mod scoped_child;
 mod scoped_child_io;
 pub mod shadow_runner;
 mod spawn_replay;
+pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
 mod team_submit;
@@ -67,6 +70,12 @@ pub use self::compaction_home::{
     bind_compaction_caller, compaction_home_budget, load_compaction_home,
     resolve_compaction_identity,
 };
+pub use self::consent_wait::{
+    AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
+    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
+    CodeConsentWaitView,
+};
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
     CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
@@ -78,15 +87,11 @@ pub(crate) use self::consent_wait::{
     settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
 };
-pub use self::consent_wait::{
-    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
-    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
-};
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
     ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
-    ContributionReplayUnavailable, ForkMismatch, ForkTreatment, ReplayAnchor, ScoredFork,
-    contribution_fork_receipts, run_contribution_forks,
+    ContributionReplayUnavailable, ForkMismatch, ForkScoring, ForkTreatment, ReplayAnchor,
+    ScoredFork, contribution_fork_receipts, run_contribution_forks,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
@@ -95,6 +100,8 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::payload::agent_verb_observations_of;
+pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
@@ -113,18 +120,19 @@ pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCaptu
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
-    refusal as result_refusal, resolve as resolve_result, unknown_handle,
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
+    refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::step_replay_capsules;
+pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
     erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
     response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
-    executor_compaction_session_id, executor_speech_message_id_in_run,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
+    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
@@ -141,14 +149,18 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
     code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
     deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
-pub(crate) use self::storage::{StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn};
+pub(crate) use self::storage::{
+    StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
+    session_type_diagnostics_row,
+};
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
     put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
@@ -157,6 +169,18 @@ pub(crate) use self::storage::{
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
+// FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
+// checkpoint images, as row-held responses.
+pub(crate) use self::replay_parts::{
+    ReplayPart, ReplayParts, RequestPart, recompose_replay_row, recompose_step_start,
+    recomposed_len, replay_row_parts, retire_replay_row_parts, retire_step_start_parts,
+    step_start_parts,
+};
+pub(crate) use self::storage::{
+    drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
+    release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
+    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::{
@@ -239,9 +263,9 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall, SessionHookDisposition,
-    SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState,
-    SessionWriteAdmission, SessionWriteCeiling,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfAgentVerbCall,
+    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
+    SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

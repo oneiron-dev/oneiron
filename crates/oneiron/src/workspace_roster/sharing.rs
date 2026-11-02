@@ -42,6 +42,9 @@ pub enum RoomSharingClamp {
     /// ambiguous one, or one not active): only public content may be
     /// disclosed while they are in the room.
     Unknown { members: usize },
+    /// A live call brings a listener the members do not cover: only public
+    /// content may be disclosed while it is live.
+    LiveCall,
 }
 
 /// A room's sharing as its members read it.
@@ -140,8 +143,12 @@ impl Memory<'_> {
             .ok_or_else(refused)?;
         let terms = ceiling.terms.get();
         let fold = vault.authority_view_readonly_in_txn(&txn)?;
+        let live = vault.room_live_speaker_entries_in(&txn, room)?;
         let (mut contacts, mut unknown) = (0, 0);
         for member in &ceiling.roster {
+            if live.entry_refs().contains(member) {
+                continue;
+            }
             match crate::disclosure::room_party_in(vault, &txn, &fold, *member)? {
                 RoomParty::Contact(_) => contacts += 1,
                 RoomParty::Unknown => unknown += 1,
@@ -160,6 +167,9 @@ impl Memory<'_> {
         }
         if unknown > 0 {
             clamps.push(RoomSharingClamp::Unknown { members: unknown });
+        }
+        if live.reads_unknown() {
+            clamps.push(RoomSharingClamp::LiveCall);
         }
         Ok(RoomSharingView {
             room,

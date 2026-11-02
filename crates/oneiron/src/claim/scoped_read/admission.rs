@@ -20,6 +20,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 
@@ -61,6 +62,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 }
@@ -158,11 +160,12 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
-        self.actor_key.proof.as_ref().is_none_or(|proof| {
-            let claims = proof.claims();
-            self.credential_channel_allows(claims)
-                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
-        })
+        self.record_bound_allows(id)
+            && self.actor_key.proof.as_ref().is_none_or(|proof| {
+                let claims = proof.claims();
+                self.credential_channel_allows(claims)
+                    && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+            })
     }
 
     /// The credential's channel caveat, apart from its records caveat
@@ -288,7 +291,8 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         for peer in &self.peer_reads {
-            let peer = self.vault.scoped_read(peer.clone());
+            let mut peer = self.vault.scoped_read(peer.clone());
+            peer.judged_at = self.judged_at;
             match peer.owner_live_in(txn) {
                 Ok(()) => {}
                 Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
@@ -589,6 +593,16 @@ impl ScopedRead<'_> {
             self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
                 .map(|allowed| allowed.then_some(()))
         })
+    }
+
+    /// What `id`, a row this lane does not read, adds to a receipt's
+    /// suppressed count: exactly [`ReadAdmission::suppression`] for it, one
+    /// for an ordinary policy denial and none for a row any other rule keeps
+    /// absent (world, credential, room turn, secret custody), so a caller's
+    /// sum of it discloses nothing the lane's own reads would not.
+    pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
+        let txn = self.grant_read_txn()?;
+        Ok(self.admit_in(&txn, id, || Ok(None::<()>))?.suppression())
     }
 }
 

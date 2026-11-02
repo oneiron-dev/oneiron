@@ -10,7 +10,7 @@
 //! finds a start with no end hands off as interrupted, its effects unknown,
 //! and never runs it again.
 
-use oneiron::agent_dispatch::{AgentDispatcher, agent_dispatch_actor};
+use oneiron::agent_dispatch::{AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
 use oneiron::code_run::{AgentVerbDoor, HostSelfDispatcher, SelfAgentVerbCall};
 use oneiron::dreamer_runner::CompleteDreamerAttempt;
@@ -80,17 +80,19 @@ pub(super) fn before_seat(
         }
         TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. } => {}
     }
+    // FIX 8104: a program started at an earlier entry whose end was never
+    // recorded is not run again: the run hands off, its effects unknown. An
+    // entered run's start is ended here too (FIX 8947), so its pin never
+    // stays started.
+    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
+        let report = TaskWorkflowReport::Interrupted;
+        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
+    }
     // A run that entered before its end was recorded ran its first entry
     // without the program: running it now would say something new to a run
     // whose task its record holds.
     if !matches!(entered_run(vault, run_id), Ok(None)) {
         return Ok(BeforeSeat::Unbound);
-    }
-    // FIX 8104: a program started at an earlier entry whose end was never
-    // recorded is not run again: the run hands off, its effects unknown.
-    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
-        let report = TaskWorkflowReport::Interrupted;
-        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
     }
     let report = match pinned.active() {
         None => TaskWorkflowReport::Unavailable,
@@ -118,7 +120,15 @@ pub(super) fn before_seat(
                     return Ok(BeforeSeat::Unbound);
                 }
             }
-            match preflight_task_workflow(door, record, args, &origin, InvocationId::mint())? {
+            let secret_args = pinned.active_secret_args().cloned().unwrap_or_default();
+            match preflight_task_workflow(
+                door,
+                record,
+                args,
+                &secret_args,
+                &origin,
+                InvocationId::mint(),
+            )? {
                 WorkflowPreflight::Done(output) => TaskWorkflowReport::Ran {
                     output,
                     checks: read_checks(door, &dispatcher, &pinned.goal().browser_checks)?,
@@ -336,7 +346,7 @@ pub(super) fn complete(
         result_ref: AttemptResultRef::new(receipt.to_hex())?,
         now,
     })?;
-    let actor = agent_dispatch_actor(&claimed.status.input)?;
+    let actor = agent_dispatch_run_actor(&claimed.status.input, attempt.id)?;
     let binding =
         HostSelfDispatcher::for_leased_agent_attempt(vault, actor, attempt)?.task_host_binding()?;
     let typed = match &binding {

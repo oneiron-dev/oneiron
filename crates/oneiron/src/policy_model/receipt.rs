@@ -1,9 +1,14 @@
 //! Gate-ledger rows for policy verdicts.
 //!
-//! Enforcement that carries a signal is receipted; a clean allow the model
-//! examined is not. That asymmetry is deliberate — the ledger records the times
-//! the engine acted or declined to look, so an act it never recorded is an act
-//! it never took.
+//! A decision the owner plane made is receipted by the door that made it,
+//! once: a clean allow it examined included (FIX 7805), as one hash-only row
+//! with no notice, so the ledger holds every time the engine looked. A plane
+//! that is off looked at nothing and records nothing, and a door that only
+//! enforces a decision another door recorded writes no second row.
+//!
+//! Each row names no claim, so it is sealed in the vault's own key custody
+//! under the policy partition (FIX 7806) rather than stored as plain
+//! MessagePack; it reads back through the ledger's one decode door.
 //!
 //! # The receipt is the policy-improvement loop
 //!
@@ -20,8 +25,9 @@
 //! stated reason. Under a rationale-bearing output contract the reason
 //! reaches the ledger as a [`GateSystemNoticeRecord`] on the `policy.audit`
 //! channel with the `audit` audience (see [`policy_model_rationale_notice`]),
-//! holding the decision, the row and a digest of the reason, never its words
-//! (FIX 10035): a reason can quote the candidate. The words stay on the
+//! holding the decision, the row and a vault-keyed MAC of the reason (none
+//! on a keyless vault), never its words (FIX 10035, 10532): a reason can
+//! quote the candidate. The words stay on the
 //! verdict the caller holds. The row is addressed to the substrate owner
 //! reading their own receipts, so a host rendering reader-facing notices
 //! filters it out by channel rather than by inspecting bodies.
@@ -77,7 +83,7 @@ impl Vault {
                 queue_ref.rsplit(':').next().expect("queue token")
             ));
         }
-        self.store.append_gate_decision_in_txn(
+        self.store.append_policy_gate_decision_in_txn(
             wtxn,
             &GateDecisionRecord {
                 version: 0,
@@ -95,6 +101,7 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: verdict.binding.content_hash.to_vec(),
                 read_frontier_hash: verdict.binding.read_frontier_hash,
+                context: Default::default(),
                 redacted_at: None,
             },
         )?;
@@ -130,6 +137,10 @@ pub(super) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<
     }
     if let Some(role) = audit.acting_pattern_role {
         reasons.push(format!("gate.policy_model.pattern_role.{}", role.as_str()));
+    }
+    // The fault that ended the read after its reply came back (FIX 1202).
+    if let Some(error) = audit.read_error {
+        reasons.push(format!("gate.policy_model.read_error.{}", error.as_str()));
     }
     // Model-supplied strings were never validated by anyone, so they are
     // tokenized here before they can shape a ledger key. What reaches this

@@ -426,7 +426,7 @@ public final class Vault {
         try OneironStorageError.check(status)
     }
 
-    /// The `limit` (at most 1000) entities nearest `query`, best first; `query`'s length must be
+    /// The `limit` entities nearest `query`, however many, best first; `query`'s length must be
     /// the vault's dimensions.
     public func searchVector(_ query: [Double], limit: UInt32 = 10) throws -> [ScoredEntity] {
         var array = OneironScoredEntityArray(ptr: nil, len: 0, cap: 0)
@@ -444,7 +444,7 @@ public final class Vault {
 
     /// A context pack over `text` and `vector` as UTF-8 in `format` (`json` when nil or
     /// unknown; `yaml`, `toon`, `markdown`, `plaintext`), at most `limit` items (10 when nil,
-    /// at most 1000). A pack naming `media` is refused `modelUnavailable` once every input
+    /// any count). A pack naming `media` is refused `modelUnavailable` once every input
     /// validates: this library serves no `ai.embed` rung, and never packs without the media.
     public func contextPack(
         text: String? = nil,
@@ -527,7 +527,18 @@ public final class Engine {
 
     deinit { _ = oneiron_engine_free(handle) }
 
-    public static func start(path: String, host: EngineHost, dimensions: Int = 0) throws -> Engine {
+    /// Opens the vault at `path` and serves it in this process. The config is the one
+    /// `oneiron serve --config <configFile>` resolves for this path, with `dimensions` when it
+    /// is not 0; a `memoryBytes` or `cpuMillisPerSecond` of 0 is unbounded. Returns once
+    /// `host.ready` has run.
+    public static func start(
+        path: String,
+        host: EngineHost,
+        dimensions: Int = 0,
+        configFile: String? = nil,
+        memoryBytes: UInt64 = 0,
+        cpuMillisPerSecond: UInt32 = 0
+    ) throws -> Engine {
         var table = OneironAppHost()
         table.user_data = Unmanaged.passRetained(EngineHostBox(host)).toOpaque()
         table.keychain = { userData, namePtr, nameLen, sink in
@@ -549,7 +560,12 @@ public final class Engine {
         var rawHandle: OpaquePointer?
         var mutablePath = path
         let status = mutablePath.withUTF8 { pathBytes in
-            oneiron_engine_start(pathBytes.baseAddress, pathBytes.count, dimensions, nil, 0, table, 0, 0, &rawHandle)
+            withOptionalUTF8(configFile) { configPtr, configLen in
+                oneiron_engine_start(
+                    pathBytes.baseAddress, pathBytes.count, dimensions, configPtr, configLen,
+                    table, memoryBytes, cpuMillisPerSecond, &rawHandle
+                )
+            }
         }
         try OneironStorageError.checkEngine(status)
         guard let handle = rawHandle else { throw OneironStorageError.missingHandle }

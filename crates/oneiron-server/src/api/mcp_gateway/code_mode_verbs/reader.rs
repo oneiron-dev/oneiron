@@ -45,6 +45,12 @@ impl AgentVerbDoor for ReaderChildDoor {
         }
     }
 
+    /// A reader child holds no credential: its host turn's hooks read
+    /// nothing (FIX 9841). A keyless reply stays keyless.
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        None
+    }
+
     /// The parent caller's rule: on this device nothing is withheld; off
     /// it, a result leaves again only while every row it was served from
     /// may, and one with no row set stays.

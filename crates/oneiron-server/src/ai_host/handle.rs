@@ -5,6 +5,12 @@
 use super::*;
 
 impl AiHandle {
+    /// The control the Dreamer's passes read their pause through, when this
+    /// host attached under one: `None` where no owner pause can hold a pass.
+    pub(crate) fn dreamer_control(&self) -> Option<DreamerControl> {
+        self.dreamer_control.clone()
+    }
+
     pub(crate) fn host_compaction(
         &self,
     ) -> Option<(
@@ -31,6 +37,7 @@ impl AiHandle {
             runtime,
             status: Arc::new(StatusCell::new(AiStatus {
                 dreamer: idle(),
+                dreamer_one_writer_reads: 0,
                 workflows: idle(),
                 chat,
                 compaction: CompactionStatus::off(match models {
@@ -61,6 +68,7 @@ impl AiHandle {
             device: false,
             writer_compaction: Arc::default(),
             confession: confession_wording::of(models),
+            dreamer_control: None,
         }
     }
 
@@ -228,14 +236,34 @@ impl AiHandle {
         &self.runtime
     }
 
-    /// Tells the Dreamer's session policy what the app saw. A no-op without
-    /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
+    /// Whether a running Dreamer takes session hints.
+    pub(crate) fn takes_session_hints(&self) -> bool {
+        self.hints.is_some()
+    }
+
+    /// Tells the Dreamer's session policy what the app saw, in arrival order
+    /// (FIX 8602): under real memory pressure the call waits its turn, off
+    /// the runtime's workers, until the fact is kept, the Dreamer is gone, or
+    /// `deadline` passes — the caller's own, never one started here. A no-op
+    /// without a running Dreamer: no session is opened that nothing would
+    /// close.
+    pub fn session_hint(
+        &self,
+        key: oneiron::session_lifecycle::SessionKey,
+        hint: SessionHint,
+        deadline: Option<std::time::Instant>,
+    ) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(key, hint, None) {
-            tracing::warn!(?error, ?hint, "dreamer session hint dropped");
+        let kept = match hints.push_session_hint(key, hint, None) {
+            Err(oneiron_driver::TickPushError::MemoryPressure) => crate::server::blocking(|| {
+                hints.push_session_hint_waiting(key, hint, None, deadline)
+            }),
+            kept => kept,
+        };
+        if let Err(error) = kept {
+            tracing::warn!(?error, ?hint, "dreamer session hint not kept");
         }
     }
 

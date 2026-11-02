@@ -21,11 +21,17 @@
 //! provider recovers. Its `ai.options` lists the speech rows that call could
 //! take. Any other `ai.*` media call and a hook replay are the owner's, and
 //! refused, except to an owner's own program (`owner_program_rows`, FIX
-//! 5911). A browser or desktop row drives the run's own guest under the
-//! browser pack, its checked connection and the vault's standing grants. The
-//! board rows, `self.focus.*` and a keyed `describe`, run the engine's board
-//! dispatcher over the agent's own board on the run's own STREAM connection,
-//! which goes when the door does. Each row's verb hooks fire once around it.
+//! 5911), whose media calls, video jobs included, spend on the run's line
+//! and whose `ai.options` lists them all (FIX 6083). A browser or desktop
+//! row drives the run's own guest under the browser pack, its checked
+//! connection and the vault's standing grants. The board rows,
+//! `self.focus.*` and a keyed `describe`, run the engine's board dispatcher
+//! over the agent's own board on the run's own STREAM connection, which goes
+//! when the door does. Its `describe(self)` reads the run's own self brief,
+//! and its `vault.weave.lens` renders the agent's own lens on the run's
+//! line, its card held for the run (FIX 2086). A successful answer the run
+//! reads as it stands carries the frame that connection queued, beside its
+//! output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -38,8 +44,8 @@ use oneiron::code_run::{
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
-    create_question, edit_question, pause_question, question_answers, read_question,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
+    closed_outcome_windows, create_question, edit_question, pause_question, question_answers,
+    read_question, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
@@ -49,8 +55,8 @@ use oneiron::memory::{
 };
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
@@ -64,6 +70,7 @@ use serde_json::Value;
 
 use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
+use crate::ai_host::live_lease::LeaseLine;
 use crate::api::{
     RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
 };
@@ -72,7 +79,9 @@ use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdict};
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
+mod board_carrier;
 mod host_rows;
+mod resident_rows;
 
 use self::host_rows::host_row;
 
@@ -97,11 +106,20 @@ pub(crate) struct RunHostDoor {
     guests: RunGuests,
     /// The run's own board STREAM connection, dropped with the door.
     board: StreamConnectionId,
+    /// The run's id, which its live lens cards are held for.
+    run_id: EntityId,
     /// The run's name on its model lines.
     run: String,
     /// The line the run's entry in flight spends on, which its `ai.speech`
     /// is admitted on (FIX 3194); empty between entries.
     line: Mutex<Option<RunAdmission>>,
+    /// The live lease of the entry in flight, whose look its `ai.speech`
+    /// takes before it is admitted (FIX 11747); empty between entries and
+    /// for an entry that spends under no scope.
+    lease: Mutex<Option<LeaseLine>>,
+    /// The attempt the run's entry in flight serves (hex), which keys its
+    /// media calls (FIX 2245); empty between entries and for a turn program.
+    attempt: Mutex<Option<String>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
     /// its key. Its rows' surfaces take it from the call's origin. `None`
@@ -120,7 +138,10 @@ impl RunHostDoor {
             guests: RunGuests::new(server, run_id),
             board: StreamConnectionId(format!("run:{}", run_id.to_hex())),
             run: format!("agent-run:{}", run_id.to_hex()),
+            run_id,
             line: Mutex::new(None),
+            lease: Mutex::new(None),
+            attempt: Mutex::new(None),
             server: Arc::clone(server),
             actor,
             runtime,
@@ -163,6 +184,18 @@ impl RunHostDoor {
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
     }
 
+    /// Binds the live lease the run's next entry books its scope's spend on
+    /// (FIX 11747). `None` clears it once the entry ends.
+    pub(crate) fn bind_lease(&self, lease: Option<LeaseLine>) {
+        *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
+    }
+
+    /// Binds the attempt the run's next entry serves, which keys its media
+    /// calls (FIX 2245). `None` clears it once the entry ends.
+    pub(crate) fn bind_attempt(&self, attempt: Option<String>) {
+        *self.attempt.lock().unwrap_or_else(PoisonError::into_inner) = attempt;
+    }
+
     /// CUA E8b: what this run's browser reached for TASK `task`, kept as
     /// the agent's solved-run evidence when its done-means' browser checks
     /// hold on the page (`goal`, under the run's recorded `type_ref`), under
@@ -175,8 +208,13 @@ impl RunHostDoor {
         goal: &oneiron::task_verb::DoneMeans,
     ) {
         let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
-        self.guests
-            .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
+        // FIX 10723: the capture writes for the run whose lease the origin
+        // seals, as the run's own rows do (FIX 3103).
+        let run_writes = RunWriteToken::of_origin(origin);
+        with_run_write_token(run_writes.as_ref(), || {
+            self.guests
+                .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
+        });
     }
 }
 
@@ -192,28 +230,44 @@ impl AgentVerbDoor for RunHostDoor {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let attempt = self
+            .attempt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         if call.verb.is_browser() {
             // The run's thread holds the call while its guest acts; its step
             // verdicts spend on the run's line (FIX 3574).
             let memory = agent_memory(&self.server, self.actor, origin, invocation);
-            return self.guests.call(
-                &self.server,
-                &self.runtime,
-                call,
-                origin,
-                &memory,
-                VerdictAsker::Agent(self.actor, line),
-                self.actor.entity_ref(),
+            return self.observed(
+                call.verb,
+                self.guests.call(
+                    &self.server,
+                    &self.runtime,
+                    call,
+                    origin,
+                    &memory,
+                    VerdictAsker::Agent(self.actor, line),
+                    self.actor.entity_ref(),
+                ),
             );
         }
         let held = matches!(call.verb, AgentVerb::AiVerdict)
             .then(|| self.guests.held_image(&call.input))
             .flatten();
-        let board = is_board_row(call.verb, &call.input).then(|| self.board.clone());
+        let lease = matches!(call.verb, AgentVerb::AiSpeech)
+            .then(|| {
+                self.lease
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            })
+            .flatten();
+        let resident = resident_row(call.verb, &call.input);
+        let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
         // thread waits for it.
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
         let actor = self.actor;
         let origin = origin.clone();
@@ -221,12 +275,37 @@ impl AgentVerbDoor for RunHostDoor {
         let input = call.input.clone();
         // FIX 3103: the row writes for the run whose lease the origin seals.
         let run_writes = RunWriteToken::of_origin(&origin);
-        self.runtime.spawn_blocking(move || {
-            let _ = sender.send(with_run_write_token(run_writes.as_ref(), || match board {
-                Some(board) => {
+        let work = move || {
+            // The run's speech is admitted after its lease's look, as the
+            // entry's own model calls are (FIX 11747).
+            if let Some(lease) = &lease {
+                lease.on(server.vault()).book_and_revise();
+            }
+            with_run_write_token(run_writes.as_ref(), || match resident {
+                Some(ResidentRow::Board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                         .map(|(output, rows)| (output, Some(rows)))
                 }
+                Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
+                    &server,
+                    actor,
+                    &origin,
+                    invocation,
+                    &board,
+                    line.as_ref(),
+                    input,
+                )
+                .map(|(output, rows)| (output, Some(rows))),
+                Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
+                    &server,
+                    actor,
+                    run_id,
+                    &origin,
+                    invocation,
+                    line.as_ref(),
+                    input,
+                )
+                .map(|(output, rows)| (output, Some(rows))),
                 // An owner's own program takes the owner's rows (FIX 5911).
                 None if super::owner_program_rows::is_owner_row(verb) => {
                     super::owner_program_rows::answer(
@@ -237,6 +316,7 @@ impl AgentVerbDoor for RunHostDoor {
                         verb,
                         input,
                         line.as_ref(),
+                        attempt.as_deref(),
                     )
                 }
                 None => answer_as_agent(
@@ -248,27 +328,67 @@ impl AgentVerbDoor for RunHostDoor {
                     input,
                     held,
                     line.as_ref(),
+                    attempt.as_deref(),
                 ),
-            }));
-        });
+            })
+        };
+        let receiver = if verb == AgentVerb::VaultRecall {
+            // Engine 00:59 for parked L09: only VaultRecall leaves the shared
+            // blocking pool; every other verb keeps the runtime path.
+            super::recall_hyde::spawn_hyde_recall_mpsc(work)
+        } else {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            self.runtime.spawn_blocking(move || {
+                let _ = sender.send(work());
+            });
+            receiver
+        };
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
-        match answered {
-            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer { output, rows })),
-            // A verb hook's stop goes back to the run as the typed stop, and
-            // a model call no provider answered as the typed outage, which
-            // the run parks on (FIX 3194).
-            Err(error) => match (error.hook, error.retry_after) {
-                (Some(stop), _) => Err(oneiron::Error::from(*stop)),
-                (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
-                    Err(oneiron::Error::ProviderUnavailable { retry_after })
-                }
-                (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+        self.observed(
+            verb,
+            match answered {
+                Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
+                // A verb hook's stop goes back to the run as the typed stop, and
+                // a model call no provider answered as the typed outage, which
+                // the run parks on (FIX 3194).
+                Err(error) => match (error.hook, error.retry_after) {
+                    (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+                    (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
+                        Err(oneiron::Error::ProviderUnavailable { retry_after })
+                    }
+                    (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+                },
             },
-        }
+        )
+    }
+
+    /// A granted `reveal.wait` the run's step made before a park, made again
+    /// as the resumed step replays it (FIX 2360): on the agent's own surface,
+    /// the value read again under `lease`; nothing is spent, stamped or
+    /// extended. A refusal leaves the step its kept answer.
+    fn replay_reveal(
+        &self,
+        call: &SelfAgentVerbCall,
+        lease: EntityId,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let memory = agent_memory(&self.server, self.actor, origin, invocation);
+        let answered = serde_json::from_value::<sdk::RevealWaitRequest>(call.input.clone())
+            .map_err(|_| MemoryError::bad_request("reveal.wait takes the reveal id"))
+            .and_then(|input| sdk::replay_reveal_as_caller(&memory, input, lease))
+            .and_then(|answer| {
+                serde_json::to_value(answer)
+                    .map_err(|_| MemoryError::bad_request("reveal.wait answer does not encode"))
+            });
+        Ok(match answered {
+            Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
+            Err(error) => Err(AgentVerbRefusal { code: error.code }),
+        })
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
@@ -297,6 +417,12 @@ impl AgentVerbDoor for RunHostDoor {
             .read_key()
             .map(Some)
             .map_err(|error| AgentVerbRefusal { code: error.code })
+    }
+
+    /// The host turn's hooks read as the run's own agent does, on this
+    /// device, under the waking slip when one binds the door (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.admitting_memory().read_key().ok()
     }
 
     /// Its keyed search drops only rows the agent's lane may not read.
@@ -340,10 +466,7 @@ impl AgentVerbDoor for RunHostDoor {
         Ok(match receiver.recv() {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
-            Ok(Ok(output)) => Ok(AgentVerbAnswer {
-                output,
-                rows: Some(Vec::new()),
-            }),
+            Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
             Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
             Err(_) => Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
@@ -361,8 +484,31 @@ impl Drop for RunHostDoor {
     }
 }
 
+/// Which of the run's own seats answers a row: its board, its self brief or
+/// its agent's weave lens (FIX 2086). `None` for every other row.
+#[derive(Clone, Copy)]
+enum ResidentRow {
+    Board,
+    SelfBrief,
+    WeaveLens,
+}
+
+/// The seat of the run's own that answers `verb` with `input`, if any.
+fn resident_row(verb: AgentVerb, input: &Value) -> Option<ResidentRow> {
+    if is_board_row(verb, input) {
+        return Some(ResidentRow::Board);
+    }
+    match verb {
+        AgentVerb::Describe if input.get("self").and_then(Value::as_bool) == Some(true) => {
+            Some(ResidentRow::SelfBrief)
+        }
+        AgentVerb::VaultWeaveLens => Some(ResidentRow::WeaveLens),
+        _ => None,
+    }
+}
+
 /// Whether a call is a board row: `self.focus.*`, or a `describe` of one
-/// board key. `describe(self)` is not: it reads a credential's self brief.
+/// board key. `describe(self)` is not: it reads the run's own self brief.
 fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
     match verb {
         AgentVerb::SelfFocusRefresh
@@ -433,9 +579,10 @@ fn board_as_agent(
 /// The rows it answers with are the ones that surface listed as served, and
 /// those its row picked beside the surface's reads (`None` when those are
 /// not known);
-/// `held` is the run's own screenshot an `ai.verdict` may name, and `line`
-/// the run's own line its `ai.speech` spends on. Blocking: call it on a
-/// blocking thread of the server's runtime.
+/// `held` is the run's own screenshot an `ai.verdict` may name, `line`
+/// the run's own line its `ai.speech` spends on, and `attempt` the attempt
+/// its media calls are keyed by. Blocking: call it on a blocking thread of
+/// the server's runtime.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the agent's call"
@@ -449,6 +596,7 @@ pub(crate) fn answer_as_agent(
     input: Value,
     held: Option<HeldImage>,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
@@ -471,7 +619,16 @@ pub(crate) fn answer_as_agent(
         verb_hook_boundary::row(&memory, name, input, |input| {
             sdk::validate_input(name, &input)?;
             HELD_IMAGE.sync_scope(held, || {
-                host_row(server, actor, &memory, verb, input, line, &mut evidence)
+                host_row(
+                    server,
+                    actor,
+                    &memory,
+                    verb,
+                    input,
+                    line,
+                    attempt,
+                    &mut evidence,
+                )
             })
         })?
     } else {
@@ -530,6 +687,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsPause
             | AgentVerb::VaultQuestionsBackfill
             | AgentVerb::VaultQuestionsRead
+            | AgentVerb::VaultQuestionsOutcomeWindows
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
             | AgentVerb::ConnectorCall
@@ -549,7 +707,7 @@ fn agent_lane(server: &SyncServer, actor: WriteActor) -> MemoryResult<ScopedRead
 }
 
 /// A standing question's dial, checked inside the host's own, as the
-/// credential door checks it.
+/// credential door checks it: a `human` ceiling stays human (FIX 11232).
 fn inside_host_dial(
     server: &SyncServer,
     dial: oneiron::llm::decision::DecisionDial,
@@ -557,11 +715,11 @@ fn inside_host_dial(
 ) -> MemoryResult<oneiron::llm::decision::DecisionDial> {
     server
         .decision_host()
-        .dial(DecisionRung::Big)
+        .dial(dial.ceiling.max(DecisionRung::Big))
         .narrow(dial)
         .map_err(|_| {
             MemoryError::bad_request(format!(
-                "{}'s dial widens the host's: start at or above its first rung, end at big or \
+                "{}'s dial widens the host's: start at or above its first rung, end at human or \
                  below, and keep a valid band inside its band",
                 verb.as_str()
             ))

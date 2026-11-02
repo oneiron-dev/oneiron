@@ -141,6 +141,7 @@ impl Vault {
             ("retrieval.salience", blend.salience),
             ("retrieval.confidence", blend.confidence),
             ("retrieval.gravity", blend.gravity),
+            ("retrieval.relevance", blend.relevance),
         ] {
             config.weights.insert(key.into(), f64::from(weight));
         }

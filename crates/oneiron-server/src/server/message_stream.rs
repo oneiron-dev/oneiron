@@ -1,15 +1,22 @@
 //! Host-owned stream timer and local presence relay. No durable partial queue.
+//! Each partial's trusted scope goes in its own store beside the hub
+//! ([`MessageScopes`], FIX 9537).
 use super::core::BroadcastPayload;
 use super::presence::PresenceCharge;
 use crate::config::SyncServerConfig;
-use oneiron::sync::{EphemeralStore, decode_ephemeral_states};
+use oneiron::sync::{EphemeralStore, ScopedPresenceFrame, decode_ephemeral_states};
 use std::sync::Arc;
 use tokio::sync::broadcast;
+
+mod scoped;
+
+pub(crate) use scoped::MessageScopes;
 
 pub(super) fn spawn_message_stream_producer(
     vault: &Arc<oneiron::Vault>,
     hub: &Arc<EphemeralStore>,
     presence: &Arc<PresenceCharge>,
+    scopes: &Arc<MessageScopes>,
     outgoing: &broadcast::Sender<BroadcastPayload>,
     config: &SyncServerConfig,
 ) {
@@ -20,6 +27,7 @@ pub(super) fn spawn_message_stream_producer(
     let vault = Arc::downgrade(vault);
     let hub = Arc::downgrade(hub);
     let presence = Arc::downgrade(presence);
+    let scopes = Arc::downgrade(scopes);
     let outgoing = outgoing.clone();
     let payload_limit = config.max_ephemeral_payload_bytes;
     let ttl = config.ephemeral_timeout_ms;
@@ -29,8 +37,9 @@ pub(super) fn spawn_message_stream_producer(
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    let (Some(vault), Some(hub), Some(presence)) = (vault.upgrade(), hub.upgrade(), presence.upgrade()) else { break; };
+                    let (Some(vault), Some(hub), Some(presence), Some(scopes)) = (vault.upgrade(), hub.upgrade(), presence.upgrade(), scopes.upgrade()) else { break; };
                     presence.lock().expire(&hub);
+                    scopes.expire(&hub);
                     match vault.pump_message_streams() {
                         Ok(report) => for (message, _) in report.refused {
                             tracing::warn!(?message, reason = "stream_finalization_refused", "stream idle finalization refused; output retained");
@@ -44,8 +53,8 @@ pub(super) fn spawn_message_stream_producer(
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(broadcast::error::RecvError::Closed) => break,
                     };
-                    let (Some(hub), Some(presence)) = (hub.upgrade(), presence.upgrade()) else { break; };
-                    if let Some(frame) = apply_bounded_partial(&hub, &presence, &frame, payload_limit, ttl) {
+                    let (Some(hub), Some(presence), Some(scopes)) = (hub.upgrade(), presence.upgrade(), scopes.upgrade()) else { break; };
+                    if let Some(frame) = apply_bounded_partial(&hub, &presence, &scopes, &frame, payload_limit, ttl) {
                         let _ = crate::broadcast::broadcast(&outgoing, 0, frame);
                     }
                 }
@@ -56,14 +65,16 @@ pub(super) fn spawn_message_stream_producer(
 
 /// Applies one native presence frame to the hub, charged to the retained
 /// line like a socket's (rule 5): past a full line it meets the memory floor
-/// and is not kept.
+/// and is not kept. Its scope is recorded first, under its key.
 fn apply_bounded_partial(
     hub: &EphemeralStore,
     presence: &PresenceCharge,
-    frame: &[u8],
+    scopes: &MessageScopes,
+    partial: &ScopedPresenceFrame,
     payload_limit: usize,
     ttl: i64,
 ) -> Option<Vec<u8>> {
+    let frame = &partial.frame;
     if frame.first() != Some(&oneiron::sync::TAG_EPHEMERAL) {
         return None;
     }
@@ -83,6 +94,7 @@ fn apply_bounded_partial(
     if !charge.fit(scratch.encode_all().len()) {
         return None;
     }
+    scopes.record(&states[0].key, partial.scope);
     hub.apply(payload).ok()?;
     drop(charge);
     oneiron::sync::encode_ephemeral(&hub.encode(&states[0].key))

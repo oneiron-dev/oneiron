@@ -24,7 +24,7 @@ async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = super::owner_binding::facade_owner(server, auth, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server, &owner).map_err(MemoryError::from))
+    super::clock_ingress::run_blocking(move || act(&server, &owner).map_err(MemoryError::from))
         .await
         .map_err(|_| internal(verb))?
 }
@@ -56,10 +56,12 @@ pub(crate) async fn vault_gate_policy_get(
 }
 
 /// Who puts a gate policy manifest (FIX 8177): the owner under its proof,
-/// as before (`true`), or a person on their own verified slip (`false`),
-/// whose policy power the manifest writer finds again in its own write
-/// transaction; neither an Admin nor a Delegate label admits anyone by
-/// itself. Anyone else keeps the owner refusal it had.
+/// as before (`true`), or a person on their own verified slip holding the
+/// policy power (`false`), checked read-only here so a powerless person's
+/// pre-hooks never fire (FIX 8516) and found again by the manifest writer
+/// in its own write transaction; neither an Admin nor a Delegate label
+/// admits anyone by itself. Anyone else, a powerless person included,
+/// keeps the owner refusal it had.
 pub(super) fn policy_putter(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -68,9 +70,13 @@ pub(super) fn policy_putter(
     super::owner_binding::facade_owner(server, auth, verb)
         .map(|owner| (owner, true))
         .or_else(|refusal| {
-            super::shared_act_doors::person(server, auth, verb)
-                .map(|person| (person, false))
-                .map_err(|_| refusal)
+            let person = super::shared_act_doors::person(server, auth, verb)
+                .ok()
+                .filter(|person| {
+                    policy_manifest_doors::holder_has_policy_power(server.vault(), person)
+                        .unwrap_or(false)
+                });
+            person.map(|person| (person, false)).ok_or(refusal)
         })
 }
 
@@ -84,7 +90,7 @@ pub(crate) async fn vault_gate_policy_put(
         Err(refusal) => Err(refusal),
         Ok((proof, owner)) => {
             let server = Arc::clone(server);
-            tokio::task::spawn_blocking(move || {
+            super::clock_ingress::run_blocking(move || {
                 let vault = server.vault();
                 let put = if owner {
                     policy_manifest_doors::put_policy_manifest_as_owner(vault, &proof, input)

@@ -199,6 +199,11 @@ impl Memory<'_> {
             saved: String::new(),
             assertions: turn.assertions.clone(),
             quote: message.quote.clone(),
+            // The opener's own proof, so its terminal reads as it does (FIX 1667).
+            read_proof: self
+                .read_proof
+                .as_ref()
+                .map(crate::authority::StoredReadProof::of),
         };
         let handle = MessageStreamHandle {
             message: id,
@@ -265,17 +270,11 @@ impl Memory<'_> {
                     if state.base.len() > MAX_MESSAGE_STREAM_BYTES {
                         return Err(MessageStreamError::BufferOverflow);
                     }
-                    #[cfg(not(feature = "sync"))]
-                    if state.seed.continuation {
-                        return Err(MessageStreamError::InvalidRequest(
-                            "continuation requires entity documents (sync feature)",
-                        ));
-                    }
                     admit_opening(self.vault, txn, &mut state)?;
                     if state.text().len() > MAX_MESSAGE_STREAM_BYTES {
                         return Err(MessageStreamError::BufferOverflow);
                     }
-                    authorize(self.vault, txn, &state.seed, &state.text())?;
+                    authorize(self.vault, txn, &state.seed, &state.text(), false)?;
                     // Container constraints are checked again by the canonical writer.
                     super::super::validation::validate_existing_witness_turn(
                         &self.vault.store,
@@ -373,7 +372,13 @@ impl Memory<'_> {
         if delta.is_empty() {
             stage(&*state, &text)?;
             let txn = self.vault.store.env.read_txn()?;
-            authorize(self.vault, &txn, &state.seed, &text)?;
+            authorize(
+                self.vault,
+                &txn,
+                &state.seed,
+                &text,
+                !state.pending.is_empty(),
+            )?;
         } else {
             let raw = format!("{}{}", state.raw, delta);
             let mut lifted = state.lifted.clone();
@@ -402,7 +407,7 @@ impl Memory<'_> {
                         if state.relift {
                             admit_axes_in_txn(self.vault, txn, &mut row, &mut lifted)?;
                         }
-                        authorize(self.vault, txn, &row, &text)?;
+                        authorize(self.vault, txn, &row, &text, !pending.is_empty())?;
                         storage::checkpoint(self.vault, txn, &row)?;
                         Ok((pending, withheld, row.metadata))
                     })?;
@@ -438,7 +443,13 @@ impl Memory<'_> {
         }
         let text = state.text();
         let txn = self.vault.store.env.read_txn()?;
-        authorize(self.vault, &txn, &state.seed, &text)?;
+        authorize(
+            self.vault,
+            &txn,
+            &state.seed,
+            &text,
+            !state.pending.is_empty(),
+        )?;
         drop(txn);
         // Every accepted delta is already checkpointed, so this text is saved.
         #[cfg(feature = "sync")]
@@ -572,11 +583,16 @@ fn should_emit(mode: MessageWriteMode, text: &str, new_chars: usize) -> bool {
         },
     }
 }
+/// Admits `seed`'s writer to commit `text`. `edits_document` is whether
+/// the commit carries an edit of the MESSAGE's own: a continuation asks its
+/// document's grant only for one, since an empty one edits nothing (FIX
+/// 4840).
 pub(super) fn authorize(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     seed: &Seed,
     text: &str,
+    edits_document: bool,
 ) -> MessageStreamResult<()> {
     verify_actor_binding_in_txn(vault, txn, seed.actor, seed.class()?)?;
     if vault.local_hard_delete_marker_exists_in_txn(txn, &seed.message_id)? {
@@ -592,8 +608,7 @@ pub(super) fn authorize(
             "off-record streams require the session door",
         ));
     }
-    #[cfg(feature = "sync")]
-    if seed.continuation {
+    if seed.continuation && edits_document {
         crate::entity_doc::authorize_message_continuation_in_txn(
             vault,
             txn,
@@ -697,9 +712,7 @@ fn committed_body(
         return Err(MessageStreamError::InvalidRequest("not a MESSAGE"));
     }
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    #[cfg(feature = "sync")]
     let resolved = crate::entity_doc::resolve_record_body(&vault.store, txn, message, body)?;
-    #[cfg(feature = "sync")]
     let body = resolved.as_slice();
     Ok(Some(
         rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("message body"))?,

@@ -19,6 +19,32 @@ use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const FIRST_BACKOFF: Duration = Duration::from_secs(5);
 
+/// Sleeps `wait`, unless a provider recovery ends it first (FIX 1112): true
+/// when a recovery woke the wait. A wait the operator must end sleeps plain.
+async fn sleep_or_recovery(
+    wait: Duration,
+    recoveries: &mut tokio::sync::watch::Receiver<u64>,
+    wakeable: bool,
+) -> bool {
+    if !wakeable {
+        tokio::time::sleep(wait).await;
+        return false;
+    }
+    tokio::select! {
+        () = tokio::time::sleep(wait) => false,
+        recovered = recoveries.changed() => {
+            if recovered.is_ok() {
+                true
+            } else {
+                // The runtime is gone: no recovery comes, and the backoff
+                // runs out as before.
+                tokio::time::sleep(wait).await;
+                false
+            }
+        }
+    }
+}
+
 /// Whether the worker keeps filling the vault's own text index while the
 /// text kind slot binds a declared space (the one-space preset, OF-370). No
 /// text search reads the index then, but `GET /api/search/vector` does, and
@@ -43,11 +69,13 @@ impl SyncServer {
         &self,
     ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
-        Ok(crate::owner::embedder::EmbedderReport::served(
+        let mut report = crate::owner::embedder::EmbedderReport::served(
             self.embedder.as_deref().map(EmbedderSlot::config),
             &doctor,
             self.embedder.as_deref().map(EmbedderSlot::dense_state),
-        ))
+        );
+        report.warning = self.embedder.as_deref().and_then(EmbedderSlot::ref_warning);
+        Ok(report)
     }
 
     /// The active provider's identity, or `None` at rung 0.
@@ -131,6 +159,7 @@ impl SyncServer {
     ) -> Option<Arc<PendingEmbeddingReconciler>> {
         let mut backoff = FIRST_BACKOFF;
         let mut complained = false;
+        let mut recoveries = self.ai.model_runtime().recoveries();
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(FIRST_BACKOFF).await;
@@ -163,8 +192,18 @@ impl SyncServer {
                         }
                         complained = true;
                     }
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    // A changed model or transform needs the operator; a
+                    // provider recovery never wakes those waits.
+                    let wakeable = error.kind() != oneiron::ErrorKind::EmbeddingTransformChanged
+                        && error.kind() != oneiron::ErrorKind::EmbeddingModelChanged;
+                    if sleep_or_recovery(backoff, &mut recoveries, wakeable).await {
+                        tracing::info!(
+                            "a provider recovered; the embedding worker tries again at once"
+                        );
+                        backoff = FIRST_BACKOFF;
+                    } else {
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
                 }
             }
         }
@@ -183,8 +222,7 @@ impl SyncServer {
                 .ok_or(oneiron::Error::InvariantViolation(
                     "embedding worker started without an embedder",
                 ))?;
-            let embedder: Arc<dyn QueryEmbedder> =
-                slot.ensure_ready(|admission| admission.into_vault(server.vault()))?;
+            let embedder: Arc<dyn QueryEmbedder> = slot.ensure_ready_for(server.vault())?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -215,6 +253,7 @@ impl SyncServer {
     ) {
         let mut backoff = FIRST_BACKOFF;
         let mut failing = false;
+        let mut recoveries = self.ai.model_runtime().recoveries();
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(idle).await;
@@ -270,8 +309,18 @@ impl SyncServer {
                         failing = true;
                     }
                     self.readmit_embedder(admit).await;
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    // A changed model or transform needs the operator; a
+                    // provider recovery never wakes those waits.
+                    let wakeable = error.kind() != oneiron::ErrorKind::EmbeddingTransformChanged
+                        && error.kind() != oneiron::ErrorKind::EmbeddingModelChanged;
+                    if sleep_or_recovery(backoff, &mut recoveries, wakeable).await {
+                        tracing::info!(
+                            "a provider recovered; the embedding worker tries again at once"
+                        );
+                        backoff = FIRST_BACKOFF;
+                    } else {
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
                 }
                 // The blocking pool only fails to join on shutdown or a panic
                 // inside the pass. Either way the loop has nothing left to
@@ -312,10 +361,7 @@ impl SyncServer {
         let readmitted = tokio::task::spawn_blocking(move || {
             let _admission = admission;
             let slot = server.embedder.as_ref()?;
-            Some(
-                slot.ensure_ready(|admission| admission.into_vault(server.vault()))
-                    .map(drop),
-            )
+            Some(slot.ensure_ready_for(server.vault()).map(drop))
         })
         .await;
         if let Ok(Some(Err(error))) = readmitted {
@@ -399,7 +445,7 @@ impl SyncServer {
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
-            provider: slot.ensure_ready(|admission| admission.into_vault(self.vault()))?,
+            provider: slot.ensure_ready_for(self.vault())?,
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(

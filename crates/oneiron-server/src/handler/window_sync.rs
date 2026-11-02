@@ -41,6 +41,30 @@ pub(super) async fn handle_window_sync(
     // fail-closed even if a future caller bypasses the wire decoder.
     let key = WindowKey::try_new(window_key)
         .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
+    // max_update_payload bounds each frame of a write a peer sends, part by
+    // part, BEFORE any state mutates; the payload its envelope joins from
+    // them is bounded by the envelope's own length field (FIX 8247, L14 s45
+    // 10:34). An envelope's header has its own allowance, as over the floor.
+    let enveloped = oneiron::sync::transport::WindowPadKind::of_sub_tag(sub_tag).is_some()
+        || sub_tag == window_sub_tags::WINDOW_PAD_PART;
+    let allowance = if enveloped {
+        oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
+    } else {
+        0
+    };
+    if matches!(
+        sub_tag,
+        window_sub_tags::UPDATE
+            | window_sub_tags::RESIDENCE_UPDATE
+            | window_sub_tags::SELECTOR_VV_REQUEST
+            | window_sub_tags::WINDOW_PAD_PART
+    ) && payload.len() > server.config.max_update_payload.saturating_add(allowance)
+    {
+        return Err(ProtocolError::FrameTooLarge {
+            size: payload.len(),
+            max: server.config.max_update_payload,
+        });
+    }
     // A window's bytes come in their envelope, put back together on this socket (FIX 7107).
     let envelope = match super::window_pads::accept(conn_state, &key, sub_tag, payload)? {
         super::window_pads::Inbound::Frame => None,
@@ -52,22 +76,6 @@ pub(super) async fn handle_window_sync(
         .map_or((sub_tag, payload), |(sub_tag, envelope)| {
             (*sub_tag, envelope.payload.as_slice())
         });
-
-    // Enforce max_update_payload BEFORE the window doc is fetched/created:
-    // an oversized update must not mutate any server state. An envelope's
-    // payload is judged, never its header or capsule.
-    if matches!(
-        sub_tag,
-        window_sub_tags::UPDATE
-            | window_sub_tags::RESIDENCE_UPDATE
-            | window_sub_tags::SELECTOR_VV_REQUEST
-    ) && payload.len() > server.config.max_update_payload
-    {
-        return Err(ProtocolError::FrameTooLarge {
-            size: payload.len(),
-            max: server.config.max_update_payload,
-        });
-    }
 
     if sub_tag == window_sub_tags::PROMOTION_REQUEST {
         // Every opened-item machine of this vault asks for the embedding setup window (OF-370),
@@ -389,6 +397,30 @@ pub(super) async fn handle_window_sync(
                     })?;
                 return Ok(ControlFlow::Continue(()));
             }
+            // FIX 7608 slice 4: a copy edit lands on its source before anything
+            // persists, and is admitted again as the source edit it is. A ruled
+            // hold persists, imports, relays and acknowledges nothing: the
+            // device keeps the update and sends it again.
+            let admitted = oneiron::sync::selector::admit_repo_sync_frame(
+                server.vault.as_ref(),
+                window_key,
+                update,
+                Some(&doc),
+            )
+            .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
+            let oneiron::sync::selector::RepoSyncAdmission::Admit(update) = admitted else {
+                return Ok(ControlFlow::Continue(()));
+            };
+            if let std::borrow::Cow::Owned(translated) = &update {
+                oneiron::sync::window::validate_window_update_residence_with_vault(
+                    server.vault.as_ref(),
+                    &doc,
+                    translated,
+                    &key,
+                )
+                .map_err(map_update_admission_err)?;
+            }
+            let update = update.as_ref();
             // Durability BEFORE the observed import and fan-out (ARCH-0023b
             // Observer A duty: "MUST persist synchronously"; FIX 5999).
             // `subscribe_local_update` does not fire for imports, so the update
@@ -429,12 +461,14 @@ pub(super) async fn handle_window_sync(
             // the same operations in memory before its own append lands, and the acknowledgment
             // below must name durable bytes.
             if imported.pending.is_some() || doc.oplog_vv() != before {
-                let broadcast_msg =
-                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                        .into_result()
-                        .map_err(|e| {
-                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
-                        })?;
+                // An update past one frame goes whole to each socket's release
+                // door, which sends it as its envelope's bounded parts (FIX 8247).
+                let broadcast_msg = oneiron::sync::transport::encode_unsplit_window_sync(
+                    window_key,
+                    window_sub_tags::UPDATE,
+                    update,
+                )
+                .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
             }
             // The acknowledgment is the update's receipt; a sealed owner-lane
@@ -521,6 +555,27 @@ fn export_frame(
         withhold(withheld.as_ref()),
     )
     .map_err(map_delta_export_err)?;
+    // FIX 7608 slice 4 (C3): a socket last sent another generation of this
+    // window's masked repo copies gets the replacement, at any vector.
+    let export = super::window_copy::bind_generation(
+        server.vault.as_ref(),
+        conn_state,
+        key,
+        doc,
+        &VersionVector::decode(remote_vv).unwrap_or_default(),
+        export,
+        protocol::installs_window_replacements(conn_state.protocol_version),
+        || {
+            oneiron::sync::window::export_window_replacement_for(
+                server.vault.as_ref(),
+                key,
+                doc,
+                conn_state.promotion_baselines.get(key),
+                withhold(withheld.as_ref()),
+            )
+        },
+    )
+    .map_err(map_delta_export_err)?;
     let (sub_tag, bytes) = match export {
         WindowExport::Update(bytes) => (window_sub_tags::UPDATE, bytes),
         WindowExport::Replacement(bytes)
@@ -535,9 +590,10 @@ fn export_frame(
         }
         WindowExport::Replacement(_) => return Err(ProtocolError::ReplacementUnsupported),
     };
-    protocol::encode_window_sync(key.as_str(), sub_tag, &bytes)
-        .into_result()
-        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+    // A catch-up past one frame goes whole to the release door, which sends it
+    // as its envelope's bounded parts (FIX 8247).
+    oneiron::sync::transport::encode_unsplit_window_sync(key.as_str(), sub_tag, &bytes)
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
 }
 
 /// The `REPLACEMENT` frame for a peer that must install this window whole: the history-free
@@ -562,9 +618,14 @@ fn replacement_frame(
     )
     .map_err(map_delta_export_err)?
     .map(|snapshot| {
-        protocol::encode_window_sync(key.as_str(), window_sub_tags::REPLACEMENT, &snapshot)
-            .into_result()
-            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+        // A snapshot past one frame goes whole to the release door, which
+        // sends it as its envelope's bounded parts (FIX 8247).
+        oneiron::sync::transport::encode_unsplit_window_sync(
+            key.as_str(),
+            window_sub_tags::REPLACEMENT,
+            &snapshot,
+        )
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
     })
     .transpose()
 }

@@ -29,6 +29,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "failure_signals" => struct_fields::<FailureSignalsConfigOverride>(),
         "self_heal" => struct_fields::<SelfHealConfigOverride>(),
         "recall" => struct_fields::<RecallConfigOverride>(),
+        "policy" => struct_fields::<crate::config::PolicyConfig>(),
         "skills" => struct_fields::<SkillsConfigOverride>(),
         "keystore" => struct_fields::<KeystoreConfigOverride>(),
         "limits" => struct_fields::<LimitsConfigOverride>(),
@@ -42,6 +43,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
+        "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
@@ -143,6 +145,7 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
         connector.validate(name)?;
     }
     config.line.validate()?;
+    config.channel_endpoints.validate()?;
     if let Some(linear) = &config.linear {
         linear.validate()?;
     }

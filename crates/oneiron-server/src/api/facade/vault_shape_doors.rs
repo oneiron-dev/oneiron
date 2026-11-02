@@ -9,42 +9,28 @@
 //! conversation-learning answer, when a creation carries one (FIX 5603).
 use std::sync::Arc;
 
-use oneiron::EntityId;
 use oneiron::authority::{ActSurface, HostSlipIssuer};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use oneiron::vault_shape::{ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest};
 
 use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// A receipt beside the rows it stands on, `None` when they are unknown.
-type ShapeApplyListing = (ShapeApplyReceipt, Option<Vec<EntityId>>);
-
 /// `vault.shape.apply`: lands a plan, or resumes the apply of one. Beside
 /// it, the rows its receipt stands on ([`oneiron::Vault::apply_shape_listing`]):
-/// what the re-plan read, the seed revision, each landing's live reads and
-/// writes. `None` for a resumed apply, and once an item lands through a
-/// door whose reads it does not follow. A refusal lists no row.
+/// what the first apply's re-plan read, the seed revision, each landing's
+/// live reads and writes, kept by the apply's journal so a resumed apply
+/// lists them too (FIX 3411, 3513). A refusal lists the rows read before
+/// it; a refusal before any read lists none. `None` once a read ran whose
+/// rows the apply does not follow, and for a blocking task that did not
+/// finish.
 pub(crate) async fn vault_shape_apply(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     surface: ActSurface,
     input: ShapeApplyRequest,
 ) -> MaybeListed<ShapeApplyReceipt> {
-    match vault_shape_apply_answer(server, auth, surface, input).await {
-        Ok((receipt, rows)) => (Ok(receipt), rows),
-        Err(refusal) => (Err(refusal), Some(Vec::new())),
-    }
-}
-
-/// [`vault_shape_apply`]'s answer, beside its listing.
-async fn vault_shape_apply_answer(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    surface: ActSurface,
-    input: ShapeApplyRequest,
-) -> MemoryResult<ShapeApplyListing> {
     const VERB: &str = "vault.shape.apply";
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -52,12 +38,14 @@ async fn vault_shape_apply_answer(
     let server = Arc::clone(server);
     // A hosted operator's root gets the typed refusal, never a fallback
     // caller (FIX 4371).
-    super::owner_binding::host_preflight(&server, auth)?;
+    if let Err(refusal) = super::owner_binding::host_preflight(&server, auth) {
+        return (Err(refusal), Some(Vec::new()));
+    }
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
-        return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyListing> {
+        return super::clock_ingress::run_blocking(move || -> MaybeListed<ShapeApplyReceipt> {
             // Each attempt lists into a set of its own.
-            let apply = |slips: Option<&HostSlipIssuer>| -> MemoryResult<ShapeApplyListing> {
-                Ok(server.vault().apply_shape_listing(
+            let apply = |slips: Option<&HostSlipIssuer>| -> MaybeListed<ShapeApplyReceipt> {
+                let (receipt, rows) = server.vault().apply_shape_listing(
                     ShapeApplier::Owner {
                         owner: &owner,
                         slips,
@@ -66,7 +54,8 @@ async fn vault_shape_apply_answer(
                     &input,
                     now,
                     &mut |_| Ok(true),
-                )?)
+                );
+                (receipt.map_err(MemoryError::from), rows)
             };
             // With the host's slip issuer, a member the shape lowers or
             // removes loses their slips; a host with none still applies.
@@ -74,21 +63,22 @@ async fn vault_shape_apply_answer(
                 .unwrap_or_else(|_| apply(None))
         })
         .await
-        .map_err(|_| internal(VERB))?;
+        .unwrap_or_else(|_| (Err(internal(VERB)), None));
     }
-    let (actor, class) = super::facade_actor(&server, auth).map_err(|_| {
-        MemoryError::new(
+    let Ok((actor, class)) = super::facade_actor(&server, auth) else {
+        let refusal = MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{VERB} applies as the vault owner or an authenticated principal"),
             &["Present the owner's credential, or a slip that names a principal."],
-        )
-    })?;
+        );
+        return (Err(refusal), Some(Vec::new()));
+    };
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality())
             .shape_apply_as_principal_listing(&input)
     })
     .await
-    .map_err(|_| internal(VERB))?
+    .unwrap_or_else(|_| (Err(internal(VERB)), None))
 }

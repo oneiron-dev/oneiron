@@ -286,9 +286,6 @@ fn validate_options(file: &AudioFile<'_>, options: &ProducerOptions) -> AudioRes
             .is_some_and(|hint| hint.trim().is_empty())
         || options.batch_default.model_id().trim().is_empty()
         || options.diarization_model_id.trim().is_empty()
-        || options.cleanup_policy.as_ref().is_some_and(|policy| {
-            policy.max_candidates_per_word == 0 || policy.max_candidate_bytes == 0
-        })
         || options.glossary.iter().any(|entry| entry.trim().is_empty())
         || matches!(&options.batch_default, BatchDefault::MeasuredE1 { evidence_ref, .. }
             if evidence_ref.trim().is_empty())

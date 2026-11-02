@@ -6,24 +6,50 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::connector_key::ChannelMessageSubscription;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/connectors/subscriptions", get(list).post(subscribe))
-        .route("/connectors/subscriptions/revoke", post(revoke))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/subscriptions",
+                summary: "The agent's connector event subscriptions, standing and revoked.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/subscriptions",
+                summary: "Subscribes the agent to the messages the channel's built-in pack routes to it.",
+                row: None,
+            },
+            post(subscribe),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/subscriptions/revoke",
+                summary: "The subscription wakes nothing more; its key stays.",
+                row: None,
+            },
+            post(revoke),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +59,7 @@ struct ListQuery {
     agent: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SubscribeRequest {
     /// The agent that answers, as 32 hex.
@@ -42,7 +68,7 @@ struct SubscribeRequest {
     channel: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevokeRequest {
     /// The subscription to stop, as 32 hex.
@@ -65,9 +91,33 @@ struct Subscriptions {
     subscriptions: Vec<SubscriptionRow>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Revoked {
     subscription: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions/revoke`'s body (FIX
+/// 11103): [`RevokeRequest`].
+pub(crate) fn revoke_subscription_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevokeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions/revoke`'s answer (FIX
+/// 11103): [`Revoked`].
+pub(crate) fn subscription_revoked_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Revoked>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions`'s body (FIX 11611):
+/// [`SubscribeRequest`].
+pub(crate) fn subscribe_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SubscribeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions`'s answer (FIX 11611):
+/// [`ChannelMessageSubscription`].
+pub(crate) fn channel_subscription_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChannelMessageSubscription>()
 }
 
 fn invalid(error: oneiron::Error) -> OwnerError {
@@ -115,10 +165,10 @@ async fn list(
 async fn subscribe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SubscribeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SubscribeRequest>,
 ) -> OwnerReply<ChannelMessageSubscription> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ChannelMessageSubscription> {
         let agent = entity_id("agent", &request.agent)?;
         server
@@ -135,10 +185,10 @@ async fn subscribe(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeRequest>,
 ) -> OwnerReply<Revoked> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Revoked> {
         let id = entity_id("subscription", &request.subscription)?;
         server

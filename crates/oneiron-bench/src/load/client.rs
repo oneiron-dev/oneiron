@@ -39,6 +39,21 @@ fn decode_seed(hex: &str) -> Result<[u8; 32], String> {
         .map_err(|_| "binding key is not 32 bytes".to_owned())
 }
 
+/// The scope a bench claim is written at: base reality, the owner's
+/// substrate facet (the facet a write stamps when no mask is active), every
+/// relationship and the default project.
+pub(super) fn claim_scope(owner: &str) -> Result<Value, String> {
+    let person = oneiron::EntityId::from_hex(owner).map_err(|e| format!("owner {owner}: {e}"))?;
+    let facet =
+        oneiron::claim::substrate_facet_id(person).map_err(|e| format!("substrate facet: {e}"))?;
+    Ok(json!({
+        "world_id": oneiron::claim::base_world_id().to_hex(),
+        "scope_facet_id": facet.to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    }))
+}
+
 impl Agent {
     /// One client for every agent of a run: its pool keeps a connection per
     /// concurrent request, and each blocking client would add its own runtime.
@@ -113,7 +128,7 @@ impl Agent {
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
     /// not the holder proof made before it.
-    fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+    pub(super) fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
@@ -192,6 +207,8 @@ impl Agent {
                 "learned_at": record.occurred_at(),
                 "confidence": 0.9,
                 "source": "user_stated",
+                // `vault.claims.upsert` takes an explicit four-axis scope.
+                "scope": claim_scope(owner).unwrap_or(Value::Null),
             }),
         };
         let verb = match record {
@@ -246,6 +263,26 @@ impl Agent {
                 ranking: Vec::new(),
             },
         }
+    }
+
+    /// `request` with this agent's slip and a fresh holder proof, for a
+    /// route off the facade (`/v1/ai/*`).
+    pub(super) fn authorized(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> Result<reqwest::blocking::RequestBuilder, String> {
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let proof = oneiron::authority::holder_proof(
+            &self.slip,
+            &self.key,
+            wall.saturating_add_signed(self.skew),
+        )
+        .map_err(|e| format!("proof: {e}"))?;
+        Ok(request
+            .header("authorization", &self.bearer)
+            .header("x-oneiron-binding", proof.to_string()))
     }
 }
 

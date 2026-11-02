@@ -69,6 +69,17 @@ impl RunWriteToken {
         })
     }
 
+    /// The shared allocation this token names and the heap bytes it holds:
+    /// the lease's counts and fields, and its owner at capacity. Tokens that
+    /// share one lease name one allocation, so a holder that keeps many
+    /// counts it once.
+    pub(crate) fn heap_allocation(&self) -> (usize, usize) {
+        let bytes = (2 * std::mem::size_of::<usize>())
+            .saturating_add(std::mem::size_of::<RunLease>())
+            .saturating_add(self.0.owner.capacity());
+        (Arc::as_ptr(&self.0) as usize, bytes)
+    }
+
     pub(super) fn attempt(&self) -> AttemptId {
         self.0.attempt
     }
@@ -208,10 +219,11 @@ pub(crate) fn note_direct_derivation_in_txn(
 /// Records, in an authorized promotion's `wtxn`, the DerivedFrom edges among
 /// `landed`, the ops it replayed, each under the run its journal entry
 /// captured: never the promoter's, and nothing for an op no run journaled.
-/// Capture-only, in one savepoint: a witness that fails is dropped whole and
-/// the promotion stands.
+/// A run whose lease has ended has its credited outcomes reconciled (FIX
+/// 3241). Capture-only, in one savepoint: a witness that fails is dropped
+/// whole and the promotion stands.
 pub(crate) fn note_promoted_ops_in_txn<'a>(
-    store: &Store,
+    vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     landed: impl IntoIterator<Item = (&'a BatchOp, Option<&'a RunWriteToken>)>,
 ) {
@@ -228,15 +240,17 @@ pub(crate) fn note_promoted_ops_in_txn<'a>(
     if runs.is_empty() {
         return;
     }
-    derivation_witness::capture_in_txn(store, wtxn, "promotion", |txn| {
+    derivation_witness::capture_in_txn(&vault.store, wtxn, "promotion", |txn| {
         for (token, pairs) in &runs {
-            derivation_witness::record_pairs_in_txn(
-                store,
+            if derivation_witness::record_pairs_in_txn(
+                &vault.store,
                 txn,
                 token,
                 pairs,
                 WitnessProducer::Promotion,
-            )?;
+            )? {
+                derivation_witness::reconcile_landed_in_txn(vault, txn, token);
+            }
         }
         Ok(())
     });

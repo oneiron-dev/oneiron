@@ -19,11 +19,15 @@ use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 /// the host holds never passes there: a managed vault's host acts as nobody
 /// (FIX 2222), and operator help on it goes through the owner's support
 /// grants (FIX 4408). It never names a managed vault's attested owner: a
-/// door that may take him asks [`check_request_auth`].
+/// door that may take him asks [`check_request_auth`]. On a self-hosted
+/// vault the operator's own credential (FIX 1814) passes it too, at the
+/// operator's doors (`path` under `/v1/operator/`) alone, as itself: never
+/// a caller, a person or an owner's proof.
 pub(super) fn check_api_auth(
     headers: &HeaderMap,
+    path: &str,
     server: &SyncServer,
-) -> Result<CoreAuth, ApiError> {
+) -> Result<AdminCaller, ApiError> {
     if server.managed_issuer.is_some() {
         let auth = CoreAuth::for_server(headers, server)?;
         if auth.is_host_holder() {
@@ -34,9 +38,22 @@ pub(super) fn check_api_auth(
         if !auth.is_owner_grade() {
             return Err(crate::auth::caller_slip_too_narrow("this legacy door"));
         }
-        return Ok(auth);
+        return Ok(AdminCaller::Credential(auth));
+    }
+    if let Some(operator) = crate::auth::verified_operator(headers, path, server) {
+        return Ok(AdminCaller::Operator(operator));
     }
     require_owner_auth(headers, &server.config, server.vault().as_ref())
+        .map(AdminCaller::Credential)
+}
+
+/// Who passes a host-level admin door ([`check_api_auth`]).
+pub(super) enum AdminCaller {
+    /// An owner-grade credential, as the door always took.
+    Credential(CoreAuth),
+    /// The operator's own credential on a self-hosted vault (FIX 1814): a
+    /// credential class that names no caller.
+    Operator(crate::auth::OperatorCredential),
 }
 
 /// [`check_api_auth`] for a door a managed vault's supervisor may attest the
@@ -200,8 +217,13 @@ fn transport_memory<'a>(
     if let Some(binding) = auth.and_then(CoreAuth::invocation_slip) {
         memory = memory.with_invocation_slip(binding);
     }
-    if let Some(instrument) = auth.and_then(verb_ask_instrument) {
+    if let Some(instrument) = auth.and_then(|auth| verb_ask_instrument(vault, auth)) {
         memory = memory.with_credential_instrument(instrument);
+    }
+    // The attested owner apart from the vault's authority id (FIX 11129),
+    // so a rootless managed vault's owner is still known on the handle.
+    if let Some(holder) = auth.and_then(attested_owner_holder) {
+        memory = memory.with_attested_owner(holder);
     }
     if let Some(auth) = auth {
         // Only this host verifies the credential again, so a verb hook's
@@ -259,17 +281,65 @@ pub(crate) fn mcp_credential_memory<'a>(
 
 /// The exact instrument a verified slip's request was admitted on, as a
 /// verb hook's ask names it: only a slip whose request kept its instrument
-/// for queued work has one, so the host can verify it again.
-fn verb_ask_instrument(auth: &CoreAuth) -> Option<VerbAskInstrument> {
-    auth.invocation_slip()?;
+/// for queued work has one, so the host can verify it again. A managed
+/// vault's attested owner, who presents no slip, has his own
+/// ([`attested_owner_instrument`]).
+fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+    if auth.invocation_slip().is_none() {
+        return attested_owner_instrument(vault, auth);
+    }
     let claims = auth.verified_slip()?.claims();
     Some(VerbAskInstrument {
-        source: VerbAskCredentialSource::Slip,
+        source: VerbAskCredentialSource::Slip {
+            slip: claims.slip_id,
+            fingerprint: auth.instrument()?,
+        },
         vault: claims.vault_id,
-        slip: claims.slip_id,
-        fingerprint: auth.instrument()?,
         ceiling: auth.authority_ceiling(),
     })
+}
+
+/// The instrument a verb hook's ask names for a managed vault's attested
+/// owner (FIX 11063): the person, the vault's authority id and the authority
+/// projected for him, which records what his call was admitted under and
+/// is never compared. Settlement runs his call again only while the vault
+/// records him as its live owner then, and work his call queues runs only
+/// while it does when it runs (FIX 11090). `None` for any other caller, and
+/// for him while the vault has no authority id or it does not read: a
+/// hook's ask on his call then saves no reference and resumes on his retry,
+/// never as the host's own. He is still bound apart from it
+/// ([`attested_owner_holder`], FIX 11129), so his Continue, Retry, armed
+/// program and owed wake stand on his person, and a live-owner check that
+/// cannot read answers its typed unavailable error, never a refusal of his
+/// (FIX 11132).
+fn attested_owner_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+    let holder = attested_owner_holder(auth)?;
+    let authority = match vault.authority_vault_id() {
+        Ok(authority) => authority?,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the attested owner's vault authority did not read; a hook's ask on his call saves no reference and resumes on his retry"
+            );
+            return None;
+        }
+    };
+    Some(VerbAskInstrument {
+        source: VerbAskCredentialSource::AttestedOwner { holder },
+        vault: authority,
+        ceiling: auth.authority_ceiling(),
+    })
+}
+
+/// The managed vault's owner `auth` is, at owner grade, as
+/// [`CoreAuth::for_attested_owner`] built him: no slip of anyone's. A
+/// booking door's stale sign-in is nobody's owner and names none
+/// ([`CoreAuth::is_attested_booking_holder`]), and neither does any caller
+/// that presented a slip.
+pub(crate) fn attested_owner_holder(auth: &CoreAuth) -> Option<oneiron::EntityId> {
+    let holder = auth.managed_owner()?;
+    (auth.is_owner_grade() && auth.verified_slip().is_none() && auth.invocation_slip().is_none())
+        .then_some(holder)
 }
 
 /// The read `auth` makes, where its connection sits: a caller off this
@@ -411,11 +481,15 @@ pub(super) fn scoped_read_for_host_root(
         return Err(ApiError::forbidden_scope("owner"));
     }
     let vault = server.vault().as_ref();
-    if let Some(secret) = server.config.auth_secret.as_deref() {
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
-            .map_err(|_| ApiError::unauthorized())?;
+    if server.config.auth_secret.is_some() {
+        // The self-host root signs with this install's own issuer seed
+        // (FIX-LIST 3018); a host holding none reads nothing as the root.
+        let issuer = server
+            .host_root_issuer
+            .as_deref()
+            .ok_or_else(ApiError::unauthorized)?;
         let proof = vault
-            .verified_host_root_slip(&issuer)
+            .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
         return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }

@@ -35,8 +35,13 @@
 //! stamp string — [`ProposalTextArtifact`] builds every stamp from the
 //! authenticated [`WriteActor`] in hand. Attribution fallback does not authenticate
 //! provenance: finalization refuses any history with missing or untrusted receipts.
+//!
+//! A stamp and its receipt name the actor by its opaque stamp token (FIX
+//! 10930), never its id: the token's claim resolves it here, and a token
+//! nothing resolves (its actor erased) names no one.
 
 mod receipts;
+pub(crate) use receipts::{birth_process, cut_receipted_message};
 
 use std::ops::ControlFlow;
 
@@ -53,6 +58,7 @@ use crate::Vault;
 use crate::entity_doc::EntityDoc;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::provenance::ActorStamp;
 use crate::sync::loro_support::{import_doc, map_get_bytes, map_insert_bytes};
 use crate::sync::window::PROPOSAL_TEXT_COMMIT_MSG_PREFIX;
 use crate::write_envelope::WriteActor;
@@ -135,11 +141,13 @@ impl ProposalTextArtifact {
         // Bind the fresh peer before choosing the birth timestamp, even when
         // registration crosses a second boundary.
         crate::edit_distance::register_peer_actor(vault, doc.peer_id(), actor)?;
+        // The opening commit names the actor's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp(vault, *actor)?;
         let at = crate::unix_seconds_now();
         let message = receipts::receipted_message(
             &doc,
             StampKind::Open,
-            actor,
+            (actor, stamp),
             source_turn_ref,
             receipt,
             at,
@@ -165,7 +173,7 @@ impl ProposalTextArtifact {
                 }
                 Ok(())
             },
-            Some(&message),
+            &message,
         )?;
         Ok(Self {
             doc,
@@ -209,20 +217,24 @@ impl ProposalTextArtifact {
         self.doc.doc.get_text(TEXT_CONTAINER).to_string()
     }
 
-    /// Applies `edit` to the body and commits it under `actor`'s stamp.
+    /// Applies `edit` to the body and commits it under `actor`'s stamp, which
+    /// names the actor's stamp token in `vault` (FIX 10930).
     ///
     /// The commit happens even when `edit` fails: the ops it managed to apply
     /// before failing are already in the pending transaction, and leaving them
     /// there would fold them into the NEXT commit — under whatever actor
     /// happened to write next. Stamping what the actor actually wrote, then
-    /// surfacing the failure, keeps attribution honest.
+    /// surfacing the failure, keeps attribution honest. The token is read
+    /// before `edit` runs, so no failure to read it leaves ops unstamped.
     pub fn edit_as(
         &mut self,
+        vault: &Vault,
         actor: &WriteActor,
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
+        let stamp = crate::provenance::actor_stamp(vault, *actor)?;
         let outcome = edit(&self.doc.doc.get_text(TEXT_CONTAINER));
-        self.commit_receipted(StampKind::Edit, actor, None)?;
+        self.commit_receipted(StampKind::Edit, (actor, stamp), None)?;
         outcome
     }
 
@@ -233,12 +245,13 @@ impl ProposalTextArtifact {
     }
 
     /// Freezes the artifact: resolves the op window, replays it into
-    /// per-actor spans, persists the proposed/final pair, and returns the
-    /// record.
+    /// per-actor spans, retains the document beside the record, and returns
+    /// the record.
     ///
-    /// Persistence is not optional — ED-09's reservoir resolves its training
-    /// pairs from these rows by artifact ref, so a finalize that only returned
-    /// the record would silently make the export impossible.
+    /// Persistence is not optional — ED-09's reservoir reads its training
+    /// pairs through these rows by artifact ref, so a finalize that only
+    /// returned the record would silently make the export impossible. The
+    /// record holds refs only; the texts live in the retained document.
     pub fn finalize(self, vault: &Vault) -> Result<FinalizedProposalText> {
         let proposed_frontiers = self.window_base()?;
         if self.provenance(vault)?.is_none() {
@@ -248,19 +261,17 @@ impl ProposalTextArtifact {
         }
         let final_frontiers = self.doc.doc.oplog_frontiers();
 
-        // The base fork doubles as the replay scratch: read the proposed text
-        // out of it, then feed it the window one change at a time.
+        // The base fork is the replay scratch: feed it the window one change
+        // at a time.
         let scratch = self
             .doc
             .doc
             .fork_at(&proposed_frontiers)
             .map_err(|_| Error::CorruptedIndex("proposal artifact window base"))?;
-        let proposed_text = scratch.get_text(TEXT_CONTAINER).to_string();
 
         let ops_by_actor =
             self.replay_window(vault, &scratch, &proposed_frontiers, &final_frontiers)?;
-        let final_text = self.doc.doc.get_text(TEXT_CONTAINER).to_string();
-        if scratch.get_text(TEXT_CONTAINER).to_string() != final_text {
+        if scratch.get_text(TEXT_CONTAINER).to_string() != self.text() {
             return Err(Error::InvariantViolation(
                 "proposal artifact replay did not reconstruct the final text",
             ));
@@ -271,11 +282,9 @@ impl ProposalTextArtifact {
             proposed_ref: LoroOpRef::from_bytes(proposed_frontiers.encode()),
             final_ref: LoroOpRef::from_bytes(final_frontiers.encode()),
             ops_by_actor,
-            proposed_text,
-            final_text,
             source_turn_ref: self.source_turn_ref,
         };
-        put_finalized_proposal_text(vault, &record)?;
+        put_finalized_proposal_text(vault, &record, &self.doc)?;
         Ok(record)
     }
 
@@ -287,56 +296,11 @@ impl ProposalTextArtifact {
     /// validation; it cannot hide itself or any earlier edit. Incomparable
     /// openings have no unique base and fail closed.
     fn window_base(&self) -> Result<Frontiers> {
-        let heads = self.doc.doc.oplog_frontiers().to_vec();
-        let mut opens = Vec::new();
-        self.doc
-            .doc
-            .travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
-                if matches!(
-                    parse_stamp(meta.message.as_deref()),
-                    Some((StampKind::Open, _))
-                ) {
-                    opens.push(meta);
-                }
-                ControlFlow::Continue(())
-            })
-            .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
-        if opens.is_empty() {
-            return Err(Error::CorruptedIndex(
-                "proposal artifact has no open commit",
-            ));
-        }
-        let frontiers: Vec<_> = opens
-            .iter()
-            .map(|meta| change_last_op(meta).map(Frontiers::from_id))
-            .collect::<Result<_>>()?;
-        for candidate in &frontiers {
-            let mut earliest = true;
-            for other in &frontiers {
-                let ordering = self
-                    .doc
-                    .doc
-                    .cmp_frontiers(candidate, other)
-                    .map_err(|_| Error::CorruptedIndex("proposal opening frontier"))?;
-                if !matches!(
-                    ordering,
-                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-                ) {
-                    earliest = false;
-                    break;
-                }
-            }
-            if earliest {
-                return Ok(candidate.clone());
-            }
-        }
-        Err(Error::CorruptedIndex(
-            "proposal artifact has incomparable opening frontiers",
-        ))
+        Ok(earliest_opening(&self.doc.doc)?.1)
     }
 
     /// Replays every change in the window into `scratch`, one change at a
-    /// time, in causal order — so each span carries the exact text on either
+    /// time, in causal order — so each span names the exact version on either
     /// side of its own ops even when the window contains concurrent edits.
     fn replay_window(
         &self,
@@ -349,7 +313,7 @@ impl ProposalTextArtifact {
         window.sort_by_key(|change| (change.lamport, change.peer_id));
 
         let mut spans = Vec::with_capacity(window.len());
-        let mut before_text = scratch.get_text(TEXT_CONTAINER).to_string();
+        let mut before_ref = LoroOpRef::from_bytes(scratch.oplog_frontiers().encode());
         for change in window {
             let updates = self
                 .doc
@@ -361,7 +325,7 @@ impl ProposalTextArtifact {
                 )]))
                 .map_err(|_| Error::CorruptedIndex("proposal artifact window export"))?;
             import_doc(scratch, &updates)?;
-            let after_text = scratch.get_text(TEXT_CONTAINER).to_string();
+            let after_ref = LoroOpRef::from_bytes(scratch.oplog_frontiers().encode());
 
             let attribution = self.attribute(vault, &change)?;
             spans.push((
@@ -372,8 +336,8 @@ impl ProposalTextArtifact {
                     len: u32::from(change.len),
                     lamport: change.lamport,
                     timestamp: change.timestamp,
-                    before_text: std::mem::replace(&mut before_text, after_text.clone()),
-                    after_text,
+                    before_ref: std::mem::replace(&mut before_ref, after_ref.clone()),
+                    after_ref,
                 },
             ));
         }
@@ -408,14 +372,31 @@ impl ProposalTextArtifact {
         Ok(changes)
     }
 
-    /// Resolves who wrote a change: an honored stamp, else the peer's
-    /// registration at commit time, else the device peer.
+    /// Resolves who wrote a change: an honored stamp, else a stamp whose
+    /// token resolves to no one or that spells an erased actor reads as
+    /// unknown, else the peer's registration at commit time, else the device
+    /// peer.
     fn attribute(&self, vault: &Vault, change: &WindowChange) -> Result<OpAttribution> {
         let at = u64::try_from(change.timestamp).unwrap_or(0);
-        if let Some((_, actor)) = parse_stamp(change.message.as_deref())
-            && peer_actor_stamp_is_honored(vault, change.peer_id, at, &actor)?
+        if let Some((_, stamp)) = parse_stamp(change.message.as_deref()) {
+            // A token nothing here resolves names no one: its actor was
+            // erased (FIX 10930). It never falls back to the peer's binding.
+            let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)? else {
+                return Ok(OpAttribution::Unknown);
+            };
+            if actor.actor_class() == stamp.class
+                && peer_actor_stamp_is_honored(vault, change.peer_id, at, &actor)?
+            {
+                return Ok(OpAttribution::Stamped(actor));
+            }
+        }
+        // A stamp spelling an erased actor names no one (FIX 10933): it never
+        // falls back to the peer's binding.
+        if let Some(message) = change.message.as_deref()
+            && let Some((_, id, _, _)) = cut_receipted_message(message)
+            && id == crate::receipt::ERASED_CALL_IDENTITY
         {
-            return Ok(OpAttribution::Stamped(actor));
+            return Ok(OpAttribution::Unknown);
         }
         Ok(peer_actor_at(vault, change.peer_id, at)?
             .map_or(OpAttribution::DevicePeer, OpAttribution::Registered))
@@ -432,36 +413,84 @@ struct WindowChange {
     message: Option<String>,
 }
 
-/// The engine-written commit message for one artifact write.
+/// The engine-written commit message for one artifact write, naming the
+/// writer's stamp token and class (FIX 10930).
 ///
 /// There is no door that accepts a stamp string: every stamp is built here
-/// from an authenticated [`WriteActor`], which is what makes a caller-forged
-/// stamp structurally impossible rather than merely rejected.
-fn stamp(kind: StampKind, actor: &WriteActor) -> String {
+/// from an authenticated [`WriteActor`]'s token, which is what makes a
+/// caller-forged stamp structurally impossible rather than merely rejected.
+fn stamp(kind: StampKind, stamp: ActorStamp) -> String {
     format!(
         "{PROPOSAL_TEXT_COMMIT_MSG_PREFIX} {} {STAMP_ACTOR_PREFIX}{}.{}",
         kind.as_str(),
-        actor.entity_ref().to_hex(),
-        actor_class_token(actor.actor_class()),
+        stamp.token.to_hex(),
+        actor_class_token(stamp.class),
     )
 }
 
-/// Inverse of [`stamp`]. Tolerant by design: any message that is not ours —
-/// absent, another layer's, a legacy one — simply carries no stamp.
-fn parse_stamp(message: Option<&str>) -> Option<(StampKind, WriteActor)> {
+/// Inverse of [`stamp`]: the kind and the stamp token it names. Tolerant by
+/// design: any message that is not ours — absent, another layer's, a legacy
+/// one — simply carries no stamp.
+fn parse_stamp(message: Option<&str>) -> Option<(StampKind, ActorStamp)> {
     let mut tokens = message?.split_whitespace();
     if tokens.next() != Some(PROPOSAL_TEXT_COMMIT_MSG_PREFIX) {
         return None;
     }
     let kind = StampKind::parse(tokens.next()?)?;
-    let (entity_hex, class_token) = tokens
+    let (token_hex, class_token) = tokens
         .next()?
         .strip_prefix(STAMP_ACTOR_PREFIX)?
         .split_once('.')?;
-    let entity_ref = EntityId::from_hex(entity_hex).ok()?;
-    Some((
-        kind,
-        WriteActor::new(entity_ref, actor_class_from_token(class_token)?),
+    let token = EntityId::from_hex(token_hex).ok()?;
+    let class = actor_class_from_token(class_token)?;
+    Some((kind, ActorStamp { token, class }))
+}
+
+/// The causally earliest opening commit of `doc`, and the version right
+/// after it: see [`ProposalTextArtifact::window_base`]. Incomparable openings
+/// have no unique earliest and fail closed.
+fn earliest_opening(doc: &LoroDoc) -> Result<(ChangeMeta, Frontiers)> {
+    let heads = doc.oplog_frontiers().to_vec();
+    let mut opens = Vec::new();
+    doc.travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
+        if matches!(
+            parse_stamp(meta.message.as_deref()),
+            Some((StampKind::Open, _))
+        ) {
+            opens.push(meta);
+        }
+        ControlFlow::Continue(())
+    })
+    .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
+    if opens.is_empty() {
+        return Err(Error::CorruptedIndex(
+            "proposal artifact has no open commit",
+        ));
+    }
+    let frontiers: Vec<_> = opens
+        .iter()
+        .map(|meta| change_last_op(meta).map(Frontiers::from_id))
+        .collect::<Result<_>>()?;
+    for (index, candidate) in frontiers.iter().enumerate() {
+        let mut earliest = true;
+        for other in &frontiers {
+            let ordering = doc
+                .cmp_frontiers(candidate, other)
+                .map_err(|_| Error::CorruptedIndex("proposal opening frontier"))?;
+            if !matches!(
+                ordering,
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ) {
+                earliest = false;
+                break;
+            }
+        }
+        if earliest {
+            return Ok((opens.swap_remove(index), candidate.clone()));
+        }
+    }
+    Err(Error::CorruptedIndex(
+        "proposal artifact has incomparable opening frontiers",
     ))
 }
 

@@ -9,6 +9,7 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SAVED_QUERY_WATERMARK, CONTENT),
     (&t::SAVED_QUERY_MEMBERSHIP_EVENT, CONTENT),
+    (&t::SAVED_QUERY_HEALTH, CONTENT),
     (&t::SAVED_QUERY_MEMO, CONTENT),
     (&t::SAVED_QUERY_PACK_MIGRATION_MAP, CONTENT),
     (&t::SAVED_QUERY_REPAIR, CONTENT),
@@ -29,6 +30,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
+    // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
+    (&t::SECRET_CUSTODY_RESTORE_PENDING, LIVE),
+    (&t::SECRET_CUSTODY_RESTORE_RELEASE, LIVE),
     (&t::SECRET_CUSTODY_TRANSITION, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_WITNESS, LIVE),
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
@@ -78,7 +82,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_STEWARDSHIP_RULES, LIVE),
     (&t::PLUGIN_SUGGESTIONS_ENABLED, LIVE),
     (&t::DREAMER_WAKE_POLICY, LIVE),
-    (&t::EDIT_DISTANCE_MINER_K, LIVE),
     (&t::INBOX_REVIEW_DIAL, LIVE),
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
@@ -106,15 +109,27 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_POLICY_CHANGE, LIVE),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
+    // A holder's delivery and ack of a removal archive are facts about bytes
+    // that left the vault: a restore stands them as the live vault holds them.
+    (&t::SHARED_ACT_REMOVAL_DELIVERY, LIVE),
+    (
+        &t::SHARED_ACT_REMOVAL_EXPORT_RECORDS,
+        SHARED_VAULT_MEMBERSHIP,
+    ),
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
+    // A device's record of the archives it took in stands with the archives
+    // it keeps: a restore neither re-imports one nor forgets one.
+    (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SKILL_CALLABLE_CASE, CONTENT),
+    (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
     // A restore cannot refund a spent exploration slice or re-open a trial's
     // exposure: trials, their routed runs and the slice ledger stand as the
@@ -129,7 +144,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_AUDIT, CONTENT),
     (&t::SKILL_ATTRIBUTION_CAUSE, CONTENT),
     (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
+    (&t::SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
+    (&t::SKILL_ATTRIBUTION_DECISION_RECEIPTS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DERIVATION_WITNESS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),
@@ -141,6 +158,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_LATE_CREDIT, CONTENT),
     (&t::SKILL_ATTRIBUTION_POSITIVE_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL, CONTENT),
+    (&t::SKILL_ATTRIBUTION_SITE_EXPOSURE, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_RECEIPT_CAPTURED, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR, CONTENT),
@@ -151,9 +169,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_CAPABILITY, CONTENT),
     (&t::SKILL_HUB_CLAIM_REFINEMENT_RESERVE, CONTENT),
     (&t::SKILL_HUB_IMPORT_RECEIPT, CONTENT),
+    (&t::SKILL_HUB_MARKETPLACE_ADVISORY_ASK, LIVE),
     (&t::SKILL_HUB_MARKETPLACE_BLOCKED_HASH, LIVE),
     (&t::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION, LIVE),
     (&t::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL, LIVE),
+    (&t::SKILL_HUB_MARKETPLACE_SKILL_FIT, LIVE),
     (&t::SKILL_HUB_ORIGIN, CONTENT),
     (&t::SKILL_HUB_PACKAGE, CONTENT),
     (&t::SKILL_HUB_REF_SYNC, CONTENT),
@@ -214,6 +234,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
     (&t::SPAWN_PLANNED_INTENT, LIVE),
+    (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
     (&t::AFFECT_STATE_COMPOSITE_PRODUCER, CONTENT),
     (&t::STORAGE_ABI_VERSION, CONTENT),
@@ -223,6 +244,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TAGGING_PROVISIONAL, CONTENT),
     (&t::TAGGING_PROVISIONAL_HINT, CONTENT),
     (&t::TAGGING_TAG_SET, CONTENT),
+    (&t::TASK_ACCEPTED_REVIEW, CONTENT),
     (&t::TASK_ASK_BAND, CONTENT),
     (&t::TASK_ASK_LINK_SIGNER, LIVE),
     (&t::TASK_ASK_OPTION_LINK, LIVE),
@@ -237,7 +259,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_BROWSER_WORKFLOW_ATTEMPT, CONTENT),
     (&t::TASK_BY_OWNER_BACKFILLED, CONTENT),
     (&t::TASK_BY_OWNER_FORWARD, CONTENT),
-    (&t::TASK_CONSULT_PARTY_BACKFILLED, CONTENT),
     (&t::TASK_CREATE_ORIGIN, CONTENT),
     (&t::TASK_FACT_SUPPRESSED, LIVE),
     (&t::TASK_FOLLOW_UP_MARKER, CONTENT),
@@ -282,6 +303,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // What a kept TURN lacks is this vault's residency, not history: a restore
     // neither promotes a demoted window nor rebuilds the list (FIX 3859).
     (&t::TURN_MISSING_MESSAGES, LIVE),
+    // A tag pass a tear left owed is owed on the turn as the image holds it,
+    // as the sieve's owed reads are (FIX 6262).
+    (&t::TURN_TAG_OWED, CONTENT),
     (&t::TYPED_BODY_DOC, CONTENT),
     (&t::TYPED_BODY_FORK, CONTENT),
     (&t::TYPED_BODY_FORK_DOC, CONTENT),
@@ -293,6 +317,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TYPED_QUESTION_RESTS_ON, CONTENT),
     (&t::TYPED_QUESTION_ROOT_SOURCES, CONTENT),
     (&t::TYPED_QUESTION_UNIT_WATCH, CONTENT),
+    (&t::TYPED_QUESTION_UNIT_ASK, CONTENT),
     (&t::TYPED_QUESTION, CONTENT),
     (&t::TYPED_QUESTION_WATCH, CONTENT),
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
@@ -313,6 +338,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VAULT_SHAPE_APPLY, CONTENT),
+    (&t::VAULT_SHAPE_WIRE, CONTENT),
     (&t::VOICE_OWNER_REF, LIVE),
     (&t::VOICE_OWNER_REF_OWNER_INDEX, LIVE),
     (&t::VOICE_REF_IDENTITY, LIVE),
@@ -337,6 +363,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_DIGEST_SCHEDULE, CONTENT),
     (&t::WEAVE_WRONG_ITEM_LABEL, CONTENT),
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
+    (&t::WEB_CONNECTOR_SETTING, CONTENT),
+    (&t::WEB_CONNECTOR_USAGE, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),

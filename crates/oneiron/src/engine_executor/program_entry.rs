@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use super::cancel::StepCancellation;
 use super::driver::EngineNativeExecutor;
-use super::host::RecordingJsHost;
+use super::host::{CallableChecks, PINNED_PROGRAM_STEP, RecordingJsHost};
 use super::record::{
     StepResultDigests, completed_step_count, parked_wait, prepared_step_state_hash,
     previous_state_hash, record_terminal_output, verify_code_consent_park, wait_key,
@@ -436,7 +436,10 @@ impl<'a> EngineNativeExecutor<'a> {
         .with_recoverable_outputs(&self.storage, &record, recoverable)?
         .with_skill_executor(&config.model)
         .with_result_share(&self.result_share)
-        .with_program_injection(injection);
+        .with_program_injection(injection)
+        .with_callable_checks(
+            CallableChecks::new(self.code_check, PINNED_PROGRAM_STEP).pinned(entry_start),
+        );
         let pinned = SelfCall::SkillsCall(SelfSkillCall {
             skill: entry.skill,
             args: entry.args.clone(),
@@ -494,6 +497,7 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             calls.push(program_resume_call(row, None)?);
         }
+        record.record_callable_rows(host.result_rows());
         record.bridge_calls.extend(host.bridge_calls);
         record.outputs.extend(host.captured);
         let bindings: Vec<(String, String)> = host

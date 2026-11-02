@@ -76,12 +76,11 @@ impl RoomThreadSettings {
             "stage" => RoomThreadFill::Stage,
             _ => return None,
         };
+        // No bound refuses a setting for its size (rule 5): the thread fold
+        // that applies it counts each against its row.
         if rows_per_list == 0
-            || rows_per_list > 100_000
             || tokens_per_list == 0
-            || tokens_per_list > 1_000_000
             || waits_per_thread == 0
-            || waits_per_thread > 100_000
             || entries.iter().any(|(key, _)| {
                 !matches!(
                     key.as_str(),

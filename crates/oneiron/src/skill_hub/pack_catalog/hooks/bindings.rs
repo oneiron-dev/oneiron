@@ -1,6 +1,6 @@
 //! Pack hook bindings: the stored row, its read doors and the owner's bind
 //! and enable switches.
-//! Entry: `PackHookBinding`. Defines its own items; the binding scan and install stay in `hooks`.
+//! Entry: `PackHookBinding`. Defines its own items; the binding scan stays in `hooks`, its writes in `install`.
 
 use super::*;
 
@@ -77,17 +77,18 @@ impl PackHookBinding {
     pub fn author_id(&self) -> EntityId {
         match &self.author {
             HookAuthor::Owner => self.owner,
+            HookAuthor::Agent { agent } => *agent,
             HookAuthor::ForeignActor { actor, .. } => *actor,
         }
     }
 
-    /// That actor's class: the owner is a person; a publisher acts as an
-    /// agent, at its own Grant.
+    /// That actor's class: the owner is a person; a resident agent acts as
+    /// itself, and a publisher as an agent, at its own Grant.
     #[must_use]
     pub const fn author_class(&self) -> HookActorClass {
         match self.author {
             HookAuthor::Owner => HookActorClass::Human,
-            HookAuthor::ForeignActor { .. } => HookActorClass::Agent,
+            HookAuthor::Agent { .. } | HookAuthor::ForeignActor { .. } => HookActorClass::Agent,
         }
     }
 }
@@ -107,7 +108,8 @@ pub(crate) fn is_hook_binding(body: &crate::ClaimBody) -> bool {
 
 impl Vault {
     /// Every live hook binding, enabled or not. The hook runner reads these.
-    /// A hub hook whose publisher's Grant was revoked is not live.
+    /// A hub hook whose publisher's Grant was revoked is not live, nor is a
+    /// binding whose owner has not yet answered its critical confirm.
     pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let txn = self.store.env.read_txn()?;
         self.pack_hook_bindings_in_txn(&txn)
@@ -120,6 +122,9 @@ impl Vault {
     ) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let mut live = Vec::new();
         for (id, row) in bindings_in_txn(&self.store, txn)? {
+            if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)? {
+                continue;
+            }
             if let HookAuthor::ForeignActor { grant, .. } = &row.author
                 && !crate::consent::standing_grant_is_active_in_txn(&self.store, txn, grant)?
             {
@@ -178,6 +183,7 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or(Error::EntityNotFound)?;
+            let previous = row.clone();
             row.enabled = enabled;
             let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
             let at = crate::unix_seconds_now();
@@ -189,7 +195,15 @@ impl Vault {
                     TimeRange { start: at, end: at },
                     at,
                 )
-                .apply(txn)
+                .apply(txn)?;
+            crate::runtime_hooks::sync_binding_cursor_in_txn(
+                self,
+                txn,
+                binding,
+                Some(&previous),
+                &row,
+            )?;
+            Ok(())
         })?;
         self.verb_hook_bindings_changed();
         Ok(())

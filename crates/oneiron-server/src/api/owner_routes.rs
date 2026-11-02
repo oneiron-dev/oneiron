@@ -18,10 +18,10 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::MethodRouter;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::housekeeping::HousekeepingReport;
 use oneiron::run_tree::GateConsentBundleAction;
@@ -29,7 +29,9 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::{json_payload, query_params};
+use super::openapi::OwnerRoute;
+use super::query_params;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
@@ -38,196 +40,212 @@ use crate::owner::{
     off_record, pack_drift, persona, runs,
 };
 use crate::server::SyncServer;
+mod account_routes;
 mod agent_grant_routes;
-mod backup_setting_routes;
-mod browser_takeover_routes;
-mod budget_hold_routes;
-mod checkpoint_policy_routes;
+mod authority_clock_routes;
+pub(super) mod backup_setting_routes;
+pub(super) mod browser_takeover_routes;
+pub(super) mod budget_hold_routes;
+pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
-mod concern_routes;
-mod conflict_routes;
+pub(super) mod concern_routes;
+pub(super) mod conflict_routes;
 pub(crate) mod connector_admission_routes;
-mod connector_consent_routes;
+pub(super) mod connector_consent_routes;
 pub(crate) mod connector_slate_routes;
-mod connector_subscription_routes;
-mod conversation_learning_routes;
+pub(super) mod connector_subscription_routes;
+pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
-pub(super) use self::courtesy_delete_routes as cooperative_deletion_routes;
-mod craft_candidate_routes;
-mod decision_ask_routes;
-mod desktop_takeover_routes;
-mod diary_routes;
+pub(super) mod craft_candidate_routes;
+pub(super) mod decision_ask_routes;
+pub(super) mod desktop_takeover_routes;
+pub(super) mod diary_routes;
 mod disclosure_routes;
-mod dreamer_maintenance_routes;
-mod dreamer_routes;
-mod embedding_space_routes;
+pub(super) mod dreamer_maintenance_routes;
+pub(super) mod dreamer_routes;
+pub(super) mod embedding_space_routes;
 mod export_audit_routes;
-mod federation_connect_routes;
+pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
+mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
-mod history_routes;
-mod house_routes;
+pub(super) mod history_routes;
+pub(super) mod house_routes;
+mod hub_table;
 mod inbox_routes;
-mod intent_routes;
-mod learning_setting_routes;
+pub(super) mod intent_routes;
+pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
-mod model_setting_routes;
-mod owner_key_enrollment_routes;
-mod owner_work_routes;
-mod pack_preview_routes;
-mod pack_routes;
-mod pad_routes;
-mod peer_confidence_routes;
-mod proactivity_routes;
-mod recovery_kit_routes;
-mod recovery_kit_target_routes;
-mod room_thread_setting_routes;
-mod root_routes;
-mod secret_control_routes;
-mod secret_found_routes;
-mod secret_lift_routes;
-mod secret_reveal_routes;
-mod secret_use_routes;
-mod shared_training_setup_routes;
-mod skill_judge_routes;
-mod space_posting_routes;
-mod steer_routes;
+pub(super) mod model_setting_routes;
+#[cfg(target_os = "linux")]
+pub(super) mod outbox_diverged_routes;
+pub(super) mod owner_key_enrollment_routes;
+pub(super) mod owner_work_routes;
+pub(super) mod pack_preview_routes;
+pub(super) mod pack_routes;
+pub(super) mod pad_routes;
+pub(super) mod peer_confidence_routes;
+pub(super) mod proactivity_routes;
+pub(super) mod recovery_kit_routes;
+pub(super) mod recovery_kit_target_routes;
+pub(super) mod room_thread_setting_routes;
+pub(super) mod root_routes;
+pub(super) mod schema;
+pub(super) mod secret_control_routes;
+pub(super) mod secret_found_routes;
+pub(super) mod secret_lift_routes;
+pub(super) mod secret_reveal_routes;
+pub(super) mod secret_use_routes;
+pub(super) mod shared_training_setup_routes;
+pub(super) mod skill_judge_routes;
+pub(super) mod space_posting_routes;
+pub(super) mod steer_routes;
+mod stream_recovery_routes;
 mod support_grant_routes;
+mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
-mod vault_key_routes;
-mod weave_routes;
-mod widen_proposal_routes;
-mod wire_health_routes;
-mod world_privacy_routes;
-mod world_privacy_work_routes;
+pub(super) mod vault_key_routes;
+pub(super) mod weave_routes;
+pub(super) mod widen_proposal_routes;
+pub(super) mod wire_health_routes;
+pub(super) mod world_privacy_routes;
+pub(super) mod world_privacy_work_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
+/// One owner route leaf's table: each route's OpenAPI row beside the
+/// handler that serves it, one entry per method and path (FIX 8931).
+pub(super) type OwnerTable = Vec<(OwnerRoute, MethodRouter<Arc<SyncServer>>)>;
+
+/// Every `/v1/owner` route outside the off-record ones, each leaf's table
+/// read once: [`routes`] serves this list and [`owner_route_rows`] hands its
+/// rows to the OpenAPI document, so no route is served without its row.
+fn owner_tables() -> OwnerTable {
+    [
+        hub_table::owner_table(),
+        account_routes::owner_table(),
+        authority_clock_routes::owner_table(),
+        budget_hold_routes::owner_table(),
+        checkpoint_policy_routes::owner_table(),
+        commitment_routes::owner_table(),
+        conflict_routes::owner_table(),
+        connector_admission_routes::owner_table(),
+        connector_consent_routes::owner_table(),
+        connector_slate_routes::owner_table(),
+        connector_subscription_routes::owner_table(),
+        diary_routes::owner_table(),
+        disclosure_routes::owner_table(),
+        dreamer_maintenance_routes::owner_table(),
+        dreamer_routes::owner_table(),
+        free_time_routes::owner_table(),
+        embedding_space_routes::owner_table(),
+        export_audit_routes::owner_table(),
+        history_routes::owner_table(),
+        folder_source_routes::owner_table(),
+        house_routes::owner_table(),
+        inbox_routes::owner_table(),
+        intent_routes::owner_table(),
+        concern_routes::owner_table(),
+        learning_setting_routes::owner_table(),
+        machine_routes::owner_table(),
+        model_setting_routes::owner_table(),
+        room_thread_setting_routes::owner_table(),
+        backup_setting_routes::owner_table(),
+        widen_proposal_routes::owner_table(),
+        craft_candidate_routes::owner_table(),
+        pad_routes::owner_table(),
+        legal_hold_routes::owner_table(),
+        guest_routes::owner_table(),
+        support_grant_routes::owner_table(),
+        support_repair_routes::owner_table(),
+        agent_grant_routes::owner_table(),
+        proactivity_routes::owner_table(),
+        weave_routes::owner_table(),
+        pack_routes::owner_table(),
+        pack_preview_routes::owner_table(),
+        courtesy_delete_routes::owner_table(),
+        federation_connect_routes::owner_table(),
+        feedback_triage_routes::owner_table(),
+        decision_ask_routes::owner_table(),
+        desktop_takeover_routes::owner_table(),
+        browser_takeover_routes::owner_table(),
+        peer_confidence_routes::owner_table(),
+        skill_judge_routes::owner_table(),
+        wire_health_routes::owner_table(),
+        handoff_alarm_routes::owner_table(),
+        space_posting_routes::owner_table(),
+        vault_key_routes::owner_table(),
+        recovery_kit_routes::owner_table(),
+        secret_control_routes::owner_table(),
+        secret_use_routes::owner_table(),
+        secret_reveal_routes::owner_table(),
+        secret_found_routes::owner_table(),
+        secret_lift_routes::owner_table(),
+        steer_routes::owner_table(),
+        stream_recovery_routes::owner_table(),
+        training_swap_routes::owner_table(),
+        usage_repair_routes::owner_table(),
+        conversation_learning_routes::owner_table(),
+        shared_training_setup_routes::owner_table(),
+        world_privacy_routes::owner_table(),
+        world_privacy_work_routes::owner_table(),
+        owner_key_enrollment_routes::owner_table(),
+        owner_work_routes::owner_table(),
+        root_routes::owner_table(),
+        recovery_kit_target_routes::owner_table(),
+        super::owner_origin::owner_table(),
+        super::packs::owner_table(),
+        carrier_table(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/status", get(status))
-        .route("/backups", get(list_backups).post(take_backup))
-        .route("/backups/rehearse", post(rehearse_backup))
-        .route("/maintain", post(run_housekeeping))
-        .route("/secret-scan", get(secret_scan).post(set_secret_scan))
-        .route("/healer/oversight", get(healer_oversight))
-        .route("/healer/failures", get(healer_failures))
-        .route("/healer/failures/drill", get(drill_failure))
-        .route("/healer/residue", get(healer_residue))
-        .route("/imports/preview", post(preview_import))
-        .route("/imports/approve", post(approve_import))
-        .route("/imports/decline", post(decline_import))
-        .route("/runs", get(pending_runs))
-        .route("/runs/review", get(review_run))
-        .route("/runs/approve", post(approve_run))
-        .route("/runs/decline", post(decline_run))
-        .route("/cleanup", get(cleanup_review).post(configure_cleanup))
-        .route("/cleanup/accept", post(accept_cleanup))
-        .route("/cleanup/reject", post(reject_cleanup))
-        .route("/cleanup/restore", post(restore_archived))
-        .route("/cleanup/revert-run", post(revert_cleanup_run))
-        .route("/cleanup/review", post(cleanup_decide::review_proposal))
-        .route("/cleanup/decide", post(cleanup_decide::decide_proposal))
-        .route("/notes/tombstones", get(note_tombstone_review))
-        .route("/notes/tombstones/accept", post(accept_note_tombstone))
-        .route("/notes/tombstones/decline", post(decline_note_tombstone))
-        .route("/persona", get(preview_persona))
-        .route("/persona/export", post(export_persona))
-        .route("/graph-fs", get(read_graph_fs))
-        .route("/feedback/preview", post(preview_feedback))
-        .route("/feedback/send", post(send_feedback))
-        .route("/feedback/inbox", get(feedback_inbox))
-        .route("/pack-drift", get(pack_drift_repairs))
-        .route("/model-catalog", get(model_catalog).put(set_model_catalog))
-        .route("/model-catalog/sync", post(sync_model_catalog))
-        .merge(budget_hold_routes::routes())
-        .merge(checkpoint_policy_routes::routes())
-        .merge(commitment_routes::routes())
-        .merge(conflict_routes::routes())
-        .merge(connector_admission_routes::routes())
-        .merge(connector_consent_routes::routes())
-        .merge(connector_slate_routes::routes())
-        .merge(connector_subscription_routes::routes())
-        .merge(diary_routes::routes())
-        .merge(disclosure_routes::routes())
-        .merge(dreamer_maintenance_routes::routes())
-        .merge(dreamer_routes::routes())
-        .merge(free_time_routes::routes())
-        .merge(embedding_space_routes::routes())
-        .merge(export_audit_routes::routes())
-        .merge(history_routes::routes())
-        .merge(house_routes::routes())
-        .merge(inbox_routes::routes())
-        .merge(intent_routes::routes())
-        .merge(concern_routes::routes())
-        .merge(learning_setting_routes::routes())
-        .merge(machine_routes::routes())
-        .merge(model_setting_routes::routes())
-        .merge(room_thread_setting_routes::routes())
-        .merge(backup_setting_routes::routes())
-        .merge(widen_proposal_routes::routes())
-        .merge(craft_candidate_routes::routes())
-        .merge(pad_routes::routes())
-        .merge(legal_hold_routes::routes())
-        .merge(guest_routes::routes())
-        .merge(support_grant_routes::routes())
-        .merge(agent_grant_routes::routes())
-        .merge(proactivity_routes::routes())
-        .merge(weave_routes::routes())
-        .merge(pack_routes::routes())
-        .merge(pack_preview_routes::routes())
-        .merge(courtesy_delete_routes::routes())
-        .merge(federation_connect_routes::routes())
-        .merge(feedback_triage_routes::routes())
-        .merge(decision_ask_routes::routes())
-        .merge(desktop_takeover_routes::routes())
-        .merge(browser_takeover_routes::routes())
-        .merge(peer_confidence_routes::routes())
-        .merge(skill_judge_routes::routes())
-        .merge(wire_health_routes::routes())
-        .merge(handoff_alarm_routes::routes())
-        .merge(space_posting_routes::routes())
-        .merge(vault_key_routes::routes())
-        .merge(recovery_kit_routes::routes())
-        .merge(secret_control_routes::routes())
-        .merge(secret_use_routes::routes())
-        .merge(secret_reveal_routes::routes())
-        .merge(secret_found_routes::routes())
-        .merge(secret_lift_routes::routes())
-        .merge(steer_routes::routes())
-        .merge(training_swap_routes::routes())
-        .merge(usage_repair_routes::routes())
-        .merge(conversation_learning_routes::routes())
-        .merge(shared_training_setup_routes::routes())
-        .merge(world_privacy_routes::routes())
-        .merge(world_privacy_work_routes::routes())
-        .merge(owner_key_enrollment_routes::routes())
-        .merge(owner_work_routes::routes())
-        .merge(root_routes::routes())
-        .merge(recovery_kit_target_routes::routes())
-        .merge(super::owner_origin::routes())
-        .merge(super::packs::routes())
+    serve(owner_tables())
+}
+
+/// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,
+/// where no vault VM runs.
+fn carrier_table() -> OwnerTable {
+    #[cfg(target_os = "linux")]
+    let table = outbox_diverged_routes::owner_table();
+    #[cfg(not(target_os = "linux"))]
+    let table = Vec::new();
+    table
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
 /// participant routes, they stay out of the wire receipts, which keep who
 /// called which route in the vault (ARCH-0052: no durable session trace).
 pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route(
-            "/off-record",
-            get(off_record_session).post(enter_off_record),
-        )
-        .route("/off-record/mode", post(flip_off_record))
-        .route("/off-record/witness", post(witness_off_record))
-        .route("/off-record/promote", post(promote_off_record))
-        .route("/off-record/save", post(save_off_record))
-        .route("/off-record/close", post(close_off_record))
+    serve(hub_table::off_record_table())
+}
+
+/// Every row the owner route tables declare, the off-record ones included:
+/// the `/v1/owner` routes the OpenAPI document lists (FIX 8931).
+pub(super) fn owner_route_rows() -> Vec<OwnerRoute> {
+    owner_tables()
+        .into_iter()
+        .chain(hub_table::off_record_table())
+        .map(|(route, _)| route)
+        .collect()
+}
+
+/// A router that serves each entry of `table` at its path; axum merges the
+/// methods one path takes into one method router.
+fn serve(table: OwnerTable) -> Router<Arc<SyncServer>> {
+    table
+        .into_iter()
+        .fold(Router::new(), |router, (route, method_router)| {
+            router.route(route.path, method_router)
+        })
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
@@ -247,10 +265,11 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
     // support grant being its path (FIX 2222).
     if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
         let action = action.map_err(super::host_action::host_action_refusal)?;
+        // A typed refusal the recheck carries keeps its code (FIX 6032).
         return server
             .vault()
             .authenticate_host_action_owner(&action, GateDecisionId::now())
-            .map_err(|_| refused());
+            .map_err(|error| super::error_map::carried_refusal(&error).unwrap_or_else(refused));
     }
     if !auth.is_owner_grade() {
         return Err(refused());
@@ -393,6 +412,11 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
                 ApiError::not_found("secret_manifest", None)
             }
             oneiron::ErrorKind::GitHttpRepoNotFound => ApiError::not_found("repo", None),
+            // FIX 4955: the root a kit's pieces rebuild, for its confirmation.
+            oneiron::ErrorKind::UnverifiedKitRestore | oneiron::ErrorKind::KitConfirmationStale => {
+                recovery_kit_target_routes::kit_root_refusal(&error)
+                    .unwrap_or_else(|| core_engine_error("owner action failed", *error))
+            }
             // Each reason is a fixed sentence about the request's shape; none
             // carries a value.
             oneiron::ErrorKind::InvalidSecretCustodyBody => {
@@ -410,11 +434,14 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
     }
 }
 
-/// Runs blocking vault work (snapshots, restores) off the runtime.
+/// Runs blocking vault work (snapshots, restores) off the runtime. Inside
+/// an owner's restriction-only act the closure reads that clock on its own
+/// thread (FIX 11523), as a facade door's does; anywhere else it runs as it
+/// is.
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
+    super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
         .map_err(owner_error)
@@ -534,7 +561,7 @@ async fn run_housekeeping(
     Ok(Json(report))
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RehearseRequest {
     /// A backup file name from `GET /v1/owner/backups`; the newest by default.
@@ -545,11 +572,11 @@ struct RehearseRequest {
 async fn rehearse_backup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RehearseRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RehearseRequest>,
 ) -> OwnerReply<backup::Rehearsal> {
     root_admin(&auth, &server)?;
     let host = host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let rehearsal =
         blocking(move || host.rehearse(server.vault(), request.file.as_deref())).await?;
     Ok(Json(rehearsal))
@@ -577,7 +604,7 @@ async fn secret_scan(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetSecretScan {
     mode: oneiron::policy_model::SecretScanMode,
@@ -586,10 +613,10 @@ struct SetSecretScan {
 async fn set_secret_scan(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetSecretScan>, JsonRejection>,
+    payload: OwnerJsonBody<SetSecretScan>,
 ) -> OwnerReply<oneiron::policy_model::SecretScanReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         Ok(vault.set_secret_scan_mode(&owner, request.mode, vault.now_recorded_at())?)
@@ -642,15 +669,15 @@ async fn healer_residue(
 async fn preview_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<imports::ImportBatch>, JsonRejection>,
+    payload: OwnerJsonBody<imports::ImportBatch>,
 ) -> OwnerReply<imports::ImportPreview> {
     let owner = owner(&auth, &server)?;
-    let batch = json_payload(payload)?;
+    let batch = payload.read(&server).await?;
     let preview = blocking(move || imports::preview(server.vault(), &owner, batch)).await?;
     Ok(Json(preview))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideImport {
     batch: imports::ImportBatch,
@@ -661,10 +688,10 @@ struct DecideImport {
 async fn approve_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideImport>, JsonRejection>,
+    payload: OwnerJsonBody<DecideImport>,
 ) -> OwnerReply<imports::ImportApproved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let approved =
         blocking(move || imports::approve(server.vault(), &owner, &request.batch, &request.digest))
             .await?;
@@ -674,10 +701,10 @@ async fn approve_import(
 async fn decline_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideImport>, JsonRejection>,
+    payload: OwnerJsonBody<DecideImport>,
 ) -> OwnerReply<imports::ImportDeclined> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let declined =
         blocking(move || imports::decline(server.vault(), &owner, &request.batch, &request.digest))
             .await?;
@@ -719,7 +746,7 @@ async fn review_run(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideRun {
     run_id: Option<String>,
@@ -731,7 +758,7 @@ struct DecideRun {
 async fn approve_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
 ) -> OwnerReply<runs::RunResolved> {
     decide_run(auth, server, payload, GateConsentBundleAction::Approve).await
 }
@@ -739,7 +766,7 @@ async fn approve_run(
 async fn decline_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
 ) -> OwnerReply<runs::RunResolved> {
     decide_run(auth, server, payload, GateConsentBundleAction::Decline).await
 }
@@ -747,11 +774,11 @@ async fn decline_run(
 async fn decide_run(
     auth: CoreAuth,
     server: Arc<SyncServer>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
     action: GateConsentBundleAction,
 ) -> OwnerReply<runs::RunResolved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let destination = auth.destination();
     let resolved = blocking(move || {
         let run =
@@ -782,15 +809,15 @@ async fn cleanup_review(
 async fn configure_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<cleanup::CleanupSettings>, JsonRejection>,
+    payload: OwnerJsonBody<cleanup::CleanupSettings>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let settings = json_payload(payload)?;
+    let settings = payload.read(&server).await?;
     let review = blocking(move || cleanup::configure(server.vault(), &owner, &settings)).await?;
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideCleanup {
     /// A proposal id from `GET /v1/owner/cleanup`.
@@ -800,10 +827,10 @@ struct DecideCleanup {
 async fn accept_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideCleanup>, JsonRejection>,
+    payload: OwnerJsonBody<DecideCleanup>,
 ) -> OwnerReply<cleanup::Accepted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let accepted =
         blocking(move || cleanup::accept(server.vault(), &owner, &request.proposal)).await?;
     Ok(Json(accepted))
@@ -812,10 +839,10 @@ async fn accept_cleanup(
 async fn reject_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideCleanup>, JsonRejection>,
+    payload: OwnerJsonBody<DecideCleanup>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review = blocking(move || {
         cleanup::reject(server.vault(), &owner, &request.proposal)?;
         cleanup::review(server.vault())
@@ -836,10 +863,10 @@ async fn note_tombstone_review(
 async fn accept_note_tombstone(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+    payload: OwnerJsonBody<note_tombstones::Decide>,
 ) -> OwnerReply<note_tombstones::Tombstoned> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let tombstoned =
         blocking(move || note_tombstones::accept(server.vault(), &owner, &request)).await?;
     Ok(Json(tombstoned))
@@ -848,16 +875,16 @@ async fn accept_note_tombstone(
 async fn decline_note_tombstone(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+    payload: OwnerJsonBody<note_tombstones::Decide>,
 ) -> OwnerReply<note_tombstones::TombstoneReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review =
         blocking(move || note_tombstones::decline(server.vault(), &owner, &request)).await?;
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
     /// An id from the `archived` list of `GET /v1/owner/cleanup`.
@@ -870,10 +897,10 @@ struct RestoreArchived {
 async fn restore_archived(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RestoreArchived>, JsonRejection>,
+    payload: OwnerJsonBody<RestoreArchived>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review = blocking(move || {
         cleanup::restore(
             server.vault(),
@@ -887,7 +914,7 @@ async fn restore_archived(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertCleanupRun {
     /// A run's `attempt` from the `runs` list of `GET /v1/owner/cleanup`.
@@ -897,10 +924,10 @@ struct RevertCleanupRun {
 async fn revert_cleanup_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertCleanupRun>, JsonRejection>,
+    payload: OwnerJsonBody<RevertCleanupRun>,
 ) -> OwnerReply<cleanup::RunReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reverted =
         blocking(move || cleanup::revert_run(server.vault(), &owner, &request.attempt)).await?;
     Ok(Json(reverted))
@@ -929,10 +956,10 @@ async fn preview_persona(
 async fn export_persona(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<persona::ExportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<persona::ExportRequest>,
 ) -> OwnerReply<persona::Exported> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let destination = auth.destination();
     let exported =
         blocking(move || persona::export(server.vault(), &owner, &request, destination)).await?;
@@ -942,10 +969,10 @@ async fn export_persona(
 async fn enter_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Enter>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Enter>,
 ) -> OwnerReply<off_record::Session> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let session = blocking(move || off_record::enter(server.vault(), &owner, &request)).await?;
     Ok(Json(session))
 }
@@ -965,10 +992,10 @@ async fn off_record_session(
 async fn flip_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Flip>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Flip>,
 ) -> OwnerReply<off_record::Session> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let session = blocking(move || off_record::flip(server.vault(), &owner, &request)).await?;
     Ok(Json(session))
 }
@@ -976,10 +1003,10 @@ async fn flip_off_record(
 async fn witness_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Witness>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Witness>,
 ) -> OwnerReply<oneiron::memory::WitnessReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || off_record::witness(server.vault(), &owner, &request)).await?;
     Ok(Json(receipt))
 }
@@ -987,10 +1014,10 @@ async fn witness_off_record(
 async fn promote_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Promote>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Promote>,
 ) -> OwnerReply<off_record::Promoted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let promoted = blocking(move || off_record::promote(server.vault(), &owner, &request)).await?;
     Ok(Json(promoted))
 }
@@ -998,10 +1025,10 @@ async fn promote_off_record(
 async fn save_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::SessionName>,
 ) -> OwnerReply<off_record::Saved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let saved = blocking(move || off_record::save(server.vault(), &owner, &request)).await?;
     Ok(Json(saved))
 }
@@ -1009,10 +1036,10 @@ async fn save_off_record(
 async fn close_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::SessionName>,
 ) -> OwnerReply<off_record::Closed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let closed =
         blocking(move || off_record::close(server.vault(), &owner, &request.session_ref)).await?;
     Ok(Json(closed))
@@ -1045,11 +1072,11 @@ async fn read_graph_fs(
 async fn preview_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<feedback::FeedbackRequest>, JsonRejection>,
+    payload: OwnerJsonBody<feedback::FeedbackRequest>,
 ) -> OwnerReply<feedback::Preview> {
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let redactor = crate::feedback_redaction::feedback_redactor(&server);
@@ -1062,11 +1089,11 @@ async fn preview_feedback(
 async fn send_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<feedback::SendRequest>, JsonRejection>,
+    payload: OwnerJsonBody<feedback::SendRequest>,
 ) -> OwnerReply<feedback::Sent> {
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     // FIX 5212: the send carries the bytes the preview kept and runs no
     // filter.
     let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
@@ -1107,7 +1134,7 @@ async fn model_catalog(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetModelCatalog {
     /// `pinned-commit`, `pinned-ref` or `content-hash-frozen`.
@@ -1121,10 +1148,10 @@ struct SetModelCatalog {
 async fn set_model_catalog(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetModelCatalog>, JsonRejection>,
+    payload: OwnerJsonBody<SetModelCatalog>,
 ) -> OwnerReply<oneiron::skill_hub::ModelCatalogSync> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let policy = oneiron::skill_hub::HubSyncPolicy::parse(&request.sync_policy)
         .ok_or_else(|| ApiError::bad_request("unknown sync policy", Some("sync_policy")))?;
     let state = blocking(move || {
@@ -1137,7 +1164,7 @@ async fn set_model_catalog(
 }
 
 /// What one catalog sync did, and the catalog ref after it.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
 struct ModelCatalogSynced {
     /// `installed`, `candidate` or `blocked`.
     outcome: &'static str,

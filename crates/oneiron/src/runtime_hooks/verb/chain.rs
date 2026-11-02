@@ -5,6 +5,7 @@
 //! the room's view and its records stage in the room's own store
 //! ([`session`], [`storage`]; WILL L11-01 S01-2c).
 
+mod projection;
 mod run;
 mod session;
 mod storage;
@@ -12,8 +13,7 @@ mod storage;
 use std::cell::Cell;
 use std::sync::Arc;
 
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::receipt::hex_lower;
 use crate::runtime_hooks::block::HookBlock;
@@ -25,13 +25,13 @@ use crate::runtime_hooks::{HookBodyRuntime, filter, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::task_verb::revoke_lands::Landing;
 use crate::work_line::TaskWorkTurn;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::state::{Carry, Entered, HookDepth, depth};
 use super::storage::VerbHookStorage;
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
-    redact, served,
+    redact,
 };
 
 use run::RunRecord;
@@ -327,7 +327,8 @@ struct Chain<'c> {
     phase: HookPhase,
     runtime: std::result::Result<&'c dyn HookBodyRuntime, &'c str>,
     now: u64,
-    /// The last receipts the caller sees, as JSON.
+    /// The newest receipts, as JSON: each hook reads them only as its own
+    /// input shows them ([`projection`], FIX 10084).
     tail: Value,
     runs: Vec<RunRecord<'c>>,
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
@@ -346,30 +347,6 @@ struct Chain<'c> {
     /// Set on a recorded call's pre chain its retry runs as new, after the
     /// drain's pass forgot the ask it named: each receipt says so (FIX 5693).
     expired: bool,
-}
-
-/// A verb hook's `input`.
-#[derive(Serialize)]
-struct Input<'i> {
-    hook: Value,
-    verb: &'i str,
-    phase: &'static str,
-    invocation: String,
-    actor: String,
-    class: &'static str,
-    scope: Option<&'i str>,
-    args: &'i Value,
-    board_epoch: Option<u64>,
-    receipt_tail: &'i Value,
-    /// Unix milliseconds from the vault clock at dispatch.
-    now: u64,
-    /// The caller's view of the verb's result so far; post only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<&'i Value>,
-    /// The rows that view serves, when it is a pack, as the hook's served
-    /// filter takes them; post only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    served: Option<Vec<served::ServedRow<'i>>>,
 }
 
 impl<'c> Chain<'c> {
@@ -484,9 +461,15 @@ impl<'c> Chain<'c> {
                     }
                 }
                 Some(_) => None,
-                // A refused Skip (including a blocking hook's) cannot
-                // turn compaction into an Ask and stop the pass.
-                None if self.call.verb == COMPACT => None,
+                // A refused Skip stays invalid, never an indirect Ask. A
+                // genuine blocking execution failure takes the Write Ask.
+                None if self.call.verb == COMPACT
+                    && self.runs.last().is_some_and(|run| {
+                        run.reason.as_deref() == Some("a host.compact pre-hook may not skip")
+                    }) =>
+                {
+                    None
+                }
                 None if binding.selector.blocking => match self.call.domain {
                     VerbDomain::Read => Some(self.hide(binding)),
                     VerbDomain::Write => {
@@ -554,7 +537,7 @@ impl<'c> Chain<'c> {
         let mut view = result;
         let mut hidden = None;
         for &(id, binding) in hooks {
-            if !served::admits(&binding.selector.served, &view) {
+            if !self.served_for(id, binding, &view)? {
                 continue;
             }
             match self.run(id, binding, args, Some(&view), None)? {
@@ -595,51 +578,14 @@ impl<'c> Chain<'c> {
             HookOutcome::Skip { .. } if self.call.verb == COMPACT => {
                 Err("a host.compact pre-hook may not skip".to_owned())
             }
-            HookOutcome::Redact { paths }
-                if paths.is_empty()
-                    || paths.len() > redact::MAX_PATHS
-                    || paths.iter().any(|path| path.len() > redact::MAX_PATH_BYTES) =>
-            {
-                Err("a redact names 1 to 64 paths of at most 256 bytes".to_owned())
+            HookOutcome::Redact { paths } if paths.is_empty() => {
+                Err("a redact names one or more paths".to_owned())
             }
             HookOutcome::Annotate { note } if note.trim().is_empty() => {
                 Err("an annotation is empty".to_owned())
             }
             _ => Ok(()),
         }
-    }
-
-    fn input(
-        &self,
-        id: EntityId,
-        binding: &PackHookBinding,
-        args: &Value,
-        result: Option<&Value>,
-    ) -> Result<String> {
-        let input = Input {
-            hook: json!({
-                "binding": id.to_hex(),
-                "code": binding.code.to_hex(),
-                "pack": binding.pack,
-                "name": binding.hook,
-                "version": binding.hook_version,
-                "body_hash": binding.body_hash,
-                "blocking": binding.selector.blocking,
-            }),
-            verb: &self.call.verb,
-            phase: phase_token(self.phase),
-            invocation: self.call.invocation.to_hex(),
-            actor: self.call.actor.to_hex(),
-            class: filter::class_token(self.call.class),
-            scope: self.call.scope.as_deref(),
-            args,
-            board_epoch: self.call.board_epoch,
-            receipt_tail: &self.tail,
-            now: self.now,
-            result,
-            served: result.and_then(|view| served::rows(view, &binding.selector.served)),
-        };
-        serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
     }
 
     fn block(
@@ -655,6 +601,10 @@ impl<'c> Chain<'c> {
             hex_lower(key),
             request,
             self.vault.store.clock.now_recorded_at(),
+            self.call
+                .turn
+                .clone()
+                .map(|target| target.for_phase(self.phase)),
         )?;
         let lineage = self.lineage(id, key);
         self.blocks.push((block_id(key)?, row, lineage));

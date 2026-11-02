@@ -72,7 +72,8 @@ pub use seat_quota::{RunnerSeatQuota, runner_seat_quotas};
 mod owner_doors;
 pub use owner_doors::{
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
-    RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt,
+    RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice, RunnerWorkResumeRequest,
+    RunnerWorkResumeView, SkippedRunnerSeatView,
 };
 mod work_binding;
 pub use work_binding::{
@@ -112,13 +113,13 @@ pub use self::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_INLINE_BYTES,
     BYOA_EXHAUST_MEDIA_TYPE, BYOA_RESULT_REF_PREFIX, ByoEndpointProtocol, ByoEndpointSpec,
     ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec, ByoaDispatchOutcome,
-    ByoaDispatchStatus, CliSandboxSpec, DispatchByoa, ProtocolAttachKind, ProtocolAttachSpec,
-    decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    ByoaDispatchStatus, CliSandboxSpec, DevRunnerRefs, DispatchByoa, ProtocolAttachKind,
+    ProtocolAttachSpec, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
 pub use self::dispatcher::{
     ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor,
 };
-pub use self::error::{ByoaError, ByoaResult};
+pub use self::error::{ByoaError, ByoaResult, SeatProviderTerm};
 pub use self::exhaust::{
     BYOA_DEFAULT_ABANDON_REASON, BYOA_DEFAULT_FAILURE_REASON, ByoaEgressLease, ByoaEgressPort,
     ByoaExhaust, ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust,
@@ -130,6 +131,12 @@ pub use self::staged_input::{ByoaInputStager, StagedInputPin};
 pub(crate) use self::staged_input::{StagedJob, erase_staged_input_in_txn};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;
+
+/// The failure text a scrubbed BYOA row carries (FIX 7618): one fixed
+/// content-free marker, never task text. The erase pass and the late-write
+/// fence stamp it on an erased task's own rows; the capture replay check
+/// accepts it as the original reason.
+pub(crate) const ERASED_TASK_FAILURE_REASON: &str = "byoa_task_erased";
 
 #[cfg(test)]
 mod tests;

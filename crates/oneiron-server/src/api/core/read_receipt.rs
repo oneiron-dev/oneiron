@@ -7,7 +7,8 @@ use utoipa::ToSchema;
     reason = "OpenAPI schema mirror; response serializes the engine type"
 )]
 pub(crate) struct ReadScopeSchema {
-    entity_types: Option<Vec<u8>>,
+    /// Registry kind names, as every wire spells them (FIX 10762).
+    entity_types: Option<Vec<String>>,
     max_sensitivity_band: u8,
     include_stale: bool,
     min_confidence: f32,

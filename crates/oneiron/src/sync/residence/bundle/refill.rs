@@ -79,8 +79,9 @@ fn whole_pads_in(
 /// The entry of `generation` when the home holds its pad object whole in
 /// `txn`, a read after the refill committed, at the revision `after` names.
 /// Only that generation is read: another kept object whose bytes are missing
-/// stays as it is, and does not fail this refill.
-fn read_back_generation_in(
+/// stays as it is, and does not fail this refill. A restore's current
+/// provider refill reads its generation back the same way (PAD-1).
+pub(crate) fn read_back_generation_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     after: &CurrentPadObjects,

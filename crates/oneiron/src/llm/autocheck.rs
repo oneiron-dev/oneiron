@@ -20,6 +20,9 @@ use crate::work_line::{LinePermit, WorkLine};
 use crate::write_envelope::SourceLineage;
 use crate::{EntityId, Result};
 
+mod verdict_cache;
+use verdict_cache::VerdictCache;
+
 // ---------------------------------------------------------------------------
 // Auto-check seam (ONE-1296).
 //
@@ -193,9 +196,12 @@ const HOLD: &str = "hold";
 /// Generation beside a decided hold: the reasons the gate's receipt keeps, from
 /// the host's own model transport. The hold is already decided; reasons cannot
 /// turn it into an allow. A hold with no surviving reason is
-/// [`AutoCheckOutcome::Unavailable`].
+/// [`AutoCheckOutcome::Unavailable`]. `due` is when the gate stops waiting: a
+/// reason written past it would lose the hold, so a host writes none that
+/// late (FIX 654).
 pub trait AutoCheckNotes: Send + Sync {
-    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>) -> Result<Vec<String>>;
+    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>, due: Instant)
+    -> Result<Vec<String>>;
 }
 
 /// The host's auto check as one typed decision through its ladder: allow or
@@ -263,32 +269,25 @@ impl AutoCheckDecisions {
             AutoCheckOutcome::Allow
         } else {
             AutoCheckOutcome::Hold {
-                reasons: self.notes.hold_reasons(candidate)?,
+                reasons: self.notes.hold_reasons(candidate, due)?,
             }
         })
     }
 }
 
-/// The answer as `model`'s calibrated verdict, in the band its confidence
-/// falls in.
+/// The answer as `model`'s calibrated verdict, in the band the verdict table
+/// puts its confidence in: the producer picks the band once, here.
 fn calibrated(model: &ModelId, allow: bool, probability: f64) -> AutoCheckOutcome {
     let confidence_millionths = millionths(probability);
-    [
-        ConfidenceBand::Low,
-        ConfidenceBand::Medium,
-        ConfidenceBand::High,
-        ConfidenceBand::Certain,
-    ]
-    .into_iter()
-    .map(|band| CalibratedVerdict {
-        model: model.clone(),
-        allow,
-        confidence_millionths,
-        band,
-        basis: VerdictBasis::CalibratedModel,
-    })
-    .find(|verdict| verdict.validate().is_ok())
-    .map_or(AutoCheckOutcome::Unavailable, AutoCheckOutcome::Verdict)
+    ConfidenceBand::for_verdict_millionths(confidence_millionths)
+        .map(|band| CalibratedVerdict {
+            model: model.clone(),
+            allow,
+            confidence_millionths,
+            band,
+            basis: VerdictBasis::CalibratedModel,
+        })
+        .map_or(AutoCheckOutcome::Unavailable, AutoCheckOutcome::Verdict)
 }
 
 #[expect(
@@ -401,6 +400,9 @@ impl BoundedAutoChecker {
         let worker = std::thread::Builder::new()
             .name("oneiron-auto-check".to_owned())
             .spawn(move || {
+                // The worker's decided verdicts, reused for the same candidate
+                // under the same effective policy within their TTL (FIX 7816).
+                let mut verdicts = VerdictCache::default();
                 while let Ok(job) = receiver.recv() {
                     let AutoCheckJob {
                         candidate,
@@ -409,9 +411,13 @@ impl BoundedAutoChecker {
                         turn,
                     } = job;
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        decisions.check(&candidate.borrowed(), due).normalized()
+                        verdicts.check(&decisions, &candidate.borrowed(), due)
                     }))
-                    .unwrap_or(AutoCheckOutcome::Unavailable);
+                    .unwrap_or_else(|_| {
+                        // A host that unwound mid-check leaves no half-kept verdict.
+                        verdicts = VerdictCache::default();
+                        AutoCheckOutcome::Unavailable
+                    });
                     drop(candidate);
                     // Only the worker releases an admitted call's capacity,
                     // after the host has returned or unwound, never on timeout:

@@ -7,36 +7,64 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldState, PartialResultHold};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::api::run_tree::parse_attempt_id_param;
-use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/runs/hold", get(hold))
-        .route("/runs/hold/resume", post(resume))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/runs/hold",
+                summary: "The run's hold, with whether its spend scope has spend left read again now.",
+                row: None,
+            },
+            get(hold),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/runs/hold/resume",
+                summary: "Resume one held run (`run`, 32 hex) as the owner and answer its hold. Each attempt it still parks is queued again and resumes from its checkpoint; one someone else paused or settled since is left as it is.",
+                row: None,
+            },
+            post(resume),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HeldRun {
     /// The run's root attempt, as the hold's inbox row names it.
     run: String,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/runs/hold/resume`'s body (FIX 11611): [`HeldRun`].
+pub(crate) fn held_run_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HeldRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/hold/resume`'s answer (FIX 11611):
+/// [`HeldRunView`].
+pub(crate) fn held_run_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HeldRunView>()
+}
+
 /// One held run as its owner reads it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct HeldRunView {
     run: String,
     state: BudgetHoldState,
@@ -115,12 +143,12 @@ async fn hold(
 async fn resume(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HeldRun>, JsonRejection>,
+    payload: OwnerJsonBody<HeldRun>,
 ) -> OwnerReply<HeldRunView> {
     // The owner's proof rides into the resume's own transaction and is
     // revalidated there; the resume records the person it names (FIX 8197).
     let proof = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let root = parse_attempt_id_param(&request.run, "run")?;
     let view = blocking(move || -> OwnerResult<HeldRunView> {
         let dispatcher = AgentDispatcher::new(server.vault());

@@ -64,6 +64,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.register_connector_key_in_txn(&mut wtxn, id, &record)?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&record);
         Ok(record)
     }
     /// Registration IS "catalog entry + key mint" — one entity id, one
@@ -88,6 +89,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.register_connector_key_in_txn(&mut wtxn, &id, &record)?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&record);
         Ok((id, record))
     }
     /// The in-txn registration core shared by BOTH register doors, so the

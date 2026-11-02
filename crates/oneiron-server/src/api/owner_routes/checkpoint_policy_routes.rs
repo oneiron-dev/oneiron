@@ -27,10 +27,8 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
@@ -42,22 +40,64 @@ use oneiron::authority::{
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/checkpoint-policy", get(view).post(select))
-        .route("/checkpoint-policy/clear", post(clear))
-        .route("/checkpoint-policy/roots", get(roots))
-        .route("/checkpoint-policy/roots/deliveries", get(deliveries))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy",
+                summary: "The checkpoint root policy in force, the revision a surface presents back as seen, the owner's choice in force, every live choice and any conflict among them.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/checkpoint-policy",
+                summary: "The owner selects the roots that attest his checkpoint images and their quorum, on any host; a stale seen is a conflict.",
+                row: None,
+            },
+            post(select),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/checkpoint-policy/clear",
+                summary: "The owner clears his checkpoint policy choice; the policy his hosting posture fixes holds again. A stale seen is a conflict.",
+                row: None,
+            },
+            post(clear),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy/roots",
+                summary: "Which roots this host's checkpoint head awaits under the root policy in force: each root accepted, signed_not_counted or pending, the quorum, the hardware rule, the awaited roots and the shortfall; head is null when no head is kept.",
+                row: None,
+            },
+            get(roots),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/checkpoint-policy/roots/deliveries",
+                summary: "For each root held here, each home checkpoint head it signed: the home's machine (null for a home that proved none), the head image and its state, signed_not_uploaded, delivered or accepted.",
+                row: None,
+            },
+            get(deliveries),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SelectPolicy {
     /// The roots, each `<suite>:<hex key>` (`ed25519:` or `p256:`), each
@@ -74,7 +114,13 @@ struct SelectPolicy {
     seen: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy`'s body (FIX 11611):
+/// [`SelectPolicy`].
+pub(crate) fn select_policy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SelectPolicy>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ClearPolicy {
     /// As for a selection.
@@ -82,7 +128,13 @@ struct ClearPolicy {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy/clear`'s body
+/// (FIX 11611): [`ClearPolicy`].
+pub(crate) fn clear_policy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ClearPolicy>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RootReply {
     key: String,
     tier: &'static str,
@@ -90,7 +142,7 @@ struct RootReply {
     host: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PolicyReply {
     posture: &'static str,
     roots: Vec<RootReply>,
@@ -100,14 +152,14 @@ struct PolicyReply {
     owner_selected: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChoiceReply {
     roots: Vec<String>,
     quorum: u8,
     hardware: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct HeadReply {
     /// The choice's authority entry, as 64 hex.
     act: String,
@@ -119,7 +171,7 @@ struct HeadReply {
     at: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PolicyViewReply {
     /// Present back as `seen`.
     revision: String,
@@ -132,6 +184,12 @@ struct PolicyViewReply {
     heads: Vec<HeadReply>,
     /// The live choices in conflict; empty when none.
     conflict: Vec<HeadReply>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/checkpoint-policy`'s answer (FIX 11611),
+/// shared with `POST /v1/owner/checkpoint-policy/clear`: [`PolicyViewReply`].
+pub(crate) fn policy_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PolicyViewReply>()
 }
 
 #[derive(Debug, Serialize)]
@@ -378,12 +436,13 @@ async fn view(
 async fn select(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SelectPolicy>, JsonRejection>,
+    payload: OwnerJsonBody<SelectPolicy>,
 ) -> OwnerReply<PolicyViewReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<PolicyViewReply> {
         let mut roots = body
             .roots
@@ -418,12 +477,13 @@ async fn select(
 async fn clear(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ClearPolicy>, JsonRejection>,
+    payload: OwnerJsonBody<ClearPolicy>,
 ) -> OwnerReply<PolicyViewReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<PolicyViewReply> {
         let seen = seen_of(body.seen.as_deref())?;
         let authority = ActAuthority::Owner(owner, surface);

@@ -117,6 +117,11 @@ pub struct AuthorityFold {
     /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
     /// no entry they sign stands outside the handoff's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
+    /// Every key in the host's custody, as the fold's custody walk judged it
+    /// on the merged history: read through [`AuthorityFold::in_host_custody`]
+    /// (FIX 12196).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) host_custody: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -177,6 +182,24 @@ pub struct AuthorityFold {
     /// force here (FIX 5502).
     pub(crate) conversation_training_vault:
         super::conversation_training_vault::FoldedConversationTrainingVault,
+    /// Each setting's signed acts, keyed by target (FIX 4624, FIX 5660).
+    #[serde(
+        default,
+        skip_serializing_if = "super::policy_setting_choice::FoldedPolicySettings::is_empty"
+    )]
+    pub(crate) policy_settings: super::policy_setting_choice::FoldedPolicySettings,
+    /// Each agent-carried setting or export act the fold admitted, whose
+    /// Grant a view judges on the rows this install holds (contract §4).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) agent_carried_acts:
+        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
+    /// Each live agent world edit's world as read had it no effect, for a
+    /// view that holds its Grant refused (FIX 11426).
+    #[serde(
+        default,
+        skip_serializing_if = "super::agent_world_undo::AgentWorldUndo::is_empty"
+    )]
+    pub(super) agent_world_undo: super::agent_world_undo::AgentWorldUndo,
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
@@ -257,10 +280,19 @@ pub fn actor_binding_is_active(
 }
 
 impl AuthorityFold {
+    /// The entries this install holds back (FIX 1104): each machine revision
+    /// that landed restriction only, and each world edit, grant travel choice
+    /// or owner choice that never counts at full strength here. A read for
+    /// the audit's diagnostics; no authorization reads it from here.
+    #[must_use]
+    pub(crate) fn held_back_entries(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.install.held_back
+    }
+
     /// Whether anything this fold projects rests on how this install counts
     /// machines: an edited world, a chosen grant, a checkpoint policy choice,
-    /// a home pick or a person's conversation training choice. With none,
-    /// staleness and holds change nothing a caller reads.
+    /// a home pick, a person's conversation training choice or a setting's
+    /// act. With none, staleness and holds change nothing a caller reads.
     pub(super) fn rests_on_counting(&self) -> bool {
         !self.worlds.is_empty()
             || !self.grant_travel.is_empty()
@@ -268,6 +300,7 @@ impl AuthorityFold {
             || !self.home_pick.live.is_empty()
             || self.conversation_training.rests_on_counting()
             || self.conversation_training_vault.rests_on_counting()
+            || self.policy_settings.rests_on_counting()
     }
 
     /// True when [`Self::vault_id`] is `None` because the log carries MORE THAN
@@ -373,6 +406,25 @@ pub(super) struct FoldState {
     /// way (FIX 5502).
     pub(super) conversation_training_vault:
         super::conversation_training_vault::ConversationTrainingVaultState,
+    /// Each setting's signed acts, merged the same way, one frontier per
+    /// target (FIX 4624, FIX 5660). Like the two fields below, an image
+    /// carries it only when some act of its kind folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
+    )]
+    pub(super) policy_settings: super::policy_setting_choice::PolicySettingChoiceState,
+    /// Well-signed export acts without effect, merged by union: their
+    /// carrier was not admitted, or their owner not live, at their parents
+    /// (FIX 4624).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) refused_export_acts: BTreeSet<AuthorityEntryHash>,
+    /// Each agent-carried setting or export act the fold admitted, with its
+    /// agent, Grant, kind and advisory time, merged by union: the fold holds
+    /// no Grant row, so a view judges each one's Grant (contract §4).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) agent_carried_acts:
+        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
@@ -394,6 +446,10 @@ pub(super) struct FoldState {
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
     pub(super) actor_rows: BTreeSet<EntityId>,
+    /// Each valid residence directive's id and named machine, by its row,
+    /// merged by union: a residence result past its directive's row reads
+    /// it here (FIX 5412).
+    pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -631,6 +687,16 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &mut merged.conversation_training_vault,
         &right.conversation_training_vault,
     );
+    super::owner_choice::merge_owner_choices(&mut merged.policy_settings, &right.policy_settings);
+    merged
+        .refused_export_acts
+        .extend(right.refused_export_acts.iter().copied());
+    merged.agent_carried_acts.extend(
+        right
+            .agent_carried_acts
+            .iter()
+            .map(|(hash, act)| (*hash, *act)),
+    );
     super::home_candidacy::merge_home_candidacies(
         &mut merged.home_candidacy,
         &right.home_candidacy,
@@ -651,6 +717,12 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .extend(admitters.iter().cloned());
     }
     merged.actor_rows.extend(right.actor_rows.iter().copied());
+    merged.residence_directives.extend(
+        right
+            .residence_directives
+            .iter()
+            .map(|(row, directive)| (*row, *directive)),
+    );
     merged
 }
 

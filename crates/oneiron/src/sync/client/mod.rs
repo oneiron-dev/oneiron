@@ -45,11 +45,15 @@ mod artifacts;
 mod base;
 mod connect;
 mod documents;
+mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;
+mod leaf_keys;
 mod lfs;
 mod note_session;
+mod own_device;
+mod repo_projection;
 mod residence;
 mod sync_frames;
 mod types;
@@ -57,16 +61,22 @@ mod window_pads;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
+pub(crate) use self::leaf_keys::send_leaf_key_requests;
+pub(in crate::sync) use self::own_device::OwnDeviceImport;
+pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
+pub use self::residence::kit_fetch::fetch_custody_with_kit;
 pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
-    SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_index_with_kit,
-    fetch_sealed_bundle_with_kit,
+    SealedBundleRelay, SealedBundleRelayObservation, SearchSource, ThinItem,
+    fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit,
+    sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,
-    pinned_checkpoint_pending, relay_sealed_bundle, retry_refused_retains, search_resident,
+    observe_sealed_bundle_relay, pinned_checkpoint_pending, relay_sealed_bundle,
+    retry_refused_retains, search_resident,
 };
 pub use self::sync_frames::next_backoff;
 pub use self::types::{

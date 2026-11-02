@@ -320,12 +320,11 @@ fn validate_queue_retirements_in_txn(
         let removal = proposal
             .files
             .iter()
-            .find(|file| file.path == *path && file.content.is_none());
-        let proved = proposal.received_candidate().is_some()
+            .position(|file| file.path == *path && file.content.is_none());
+        let proved = proposal.is_file_bundle()
             && proposal.status == crate::repo_mutation::proposal::RepoProposalStatus::Applied
             && removal
-                .and_then(|file| file.source_operation)
-                .map(|op| crate::repo_mutation::received_file_operation(proposal.id, op))
+                .map(|index| proposal.file_operation(index))
                 .transpose()?
                 == Some(retirement.operation_receipt);
         if !proved {

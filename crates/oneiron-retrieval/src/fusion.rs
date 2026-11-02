@@ -31,12 +31,6 @@ pub fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
     });
 }
 
-/// Weight of channel relevance in the log blend. Relevance is the base
-/// factor (ARCH-0004 ranks by relevance x recency x importance, in log
-/// space); the learned table's four signals modulate it. Fixed until the
-/// weight table carries a relevance row. Hashed into the trace fork hash.
-pub const RELEVANCE_LOG_WEIGHT: f64 = 1.0;
-
 /// Highest score the blend hands downstream. A pool of thousands with one
 /// extreme outlier (a PPR seed over its whole neighbourhood) z-normalizes
 /// near `sqrt(n)`, and its `exp()` would pass `f32::MAX`. The cap keeps every
@@ -178,6 +172,29 @@ pub fn retrieval_candidates_from_ranked_lists(
         .collect()
 }
 
+/// Each candidate's channel relevance alone, as its score: the per-list
+/// z-score sum [`retrieval_candidates_from_ranked_lists`] forms, with no
+/// sparse list and no blend signals. A list flat throughout stays neutral,
+/// and a candidate a list did not return takes that list's lowest z. Ids in
+/// ascending byte order; the caller orders them.
+pub fn fuse_ranked_lists(ranked_lists: &[Vec<ScoredEntity>]) -> Vec<ScoredEntity> {
+    fuse_ranked_lists_with_sparse(ranked_lists, &[])
+}
+
+/// The same relevance sum, with the caller's sparse list indices.
+pub fn fuse_ranked_lists_with_sparse(
+    ranked_lists: &[Vec<ScoredEntity>],
+    sparse_indexes: &[usize],
+) -> Vec<ScoredEntity> {
+    retrieval_candidates_from_ranked_lists(ranked_lists, sparse_indexes)
+        .into_iter()
+        .map(|input| ScoredEntity {
+            id: input.id,
+            score: input.relevance as f32,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEntity> {
     linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())
@@ -207,7 +224,7 @@ pub fn linear_log_blend_scores_with_weights(
     let mut scores = Vec::with_capacity(inputs.len());
     let mut base_scores = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
-        let log_score = RELEVANCE_LOG_WEIGHT * columns.relevance[index]
+        let log_score = f64::from(weights.relevance) * columns.relevance[index]
             + f64::from(weights.recency) * columns.recency[index]
             + f64::from(weights.salience) * columns.salience[index]
             + f64::from(weights.confidence) * columns.confidence[index]
@@ -282,6 +299,7 @@ pub fn retrieval_blend_score_components(
         (RetrievalSignal::Salience, columns.salience),
         (RetrievalSignal::Confidence, columns.confidence),
         (RetrievalSignal::Gravity, columns.gravity),
+        (RetrievalSignal::Relevance, columns.relevance),
     ];
     let mut components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
     for (signal, values) in signals {
@@ -313,11 +331,26 @@ struct NormalizedBlendColumns {
 
 fn normalized_blend_columns(inputs: &[RetrievalBlendInput]) -> NormalizedBlendColumns {
     NormalizedBlendColumns {
-        relevance: z_normalized(inputs.iter().map(|input| input.relevance).collect()),
-        recency: z_normalized(inputs.iter().map(|input| input.recency).collect()),
-        salience: z_normalized(inputs.iter().map(|input| input.salience.into()).collect()),
-        confidence: z_normalized(inputs.iter().map(|input| input.confidence.into()).collect()),
-        gravity: z_normalized(inputs.iter().map(|input| input.gravity.into()).collect()),
+        relevance: inputs.iter().map(|input| input.relevance).collect(),
+        recency: z_normalized(inputs.iter().map(|input| input.recency.ln_1p()).collect()),
+        salience: z_normalized(
+            inputs
+                .iter()
+                .map(|input| f64::from(input.salience).ln_1p())
+                .collect(),
+        ),
+        confidence: z_normalized(
+            inputs
+                .iter()
+                .map(|input| f64::from(input.confidence).ln_1p())
+                .collect(),
+        ),
+        gravity: z_normalized(
+            inputs
+                .iter()
+                .map(|input| f64::from(input.gravity).ln_1p())
+                .collect(),
+        ),
     }
 }
 

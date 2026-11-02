@@ -7,29 +7,85 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{
-    CourtesyDeleteAnswerRequest, CourtesyDeleteSendRequest, EmptyRequest,
+    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
+    CourtesyDeleteSent, EmptyRequest,
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
 use crate::owner::{courtesy_delete, hooked_row, hooked_row_admitting};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/courtesy-delete/send", post(send))
-        .route("/courtesy-delete/sent", get(sent))
-        .route("/courtesy-delete/incoming", get(incoming))
-        .route("/courtesy-delete/answer", post(answer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/courtesy-delete/send",
+                summary: "Send.",
+                row: None,
+            },
+            post(send),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/courtesy-delete/sent",
+                summary: "Sent.",
+                row: None,
+            },
+            get(sent),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/courtesy-delete/incoming",
+                summary: "Incoming.",
+                row: None,
+            },
+            get(incoming),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/courtesy-delete/answer",
+                summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
+                row: None,
+            },
+            post(answer),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/send`'s body
+/// (FIX 11611): [`CourtesyDeleteSendRequest`].
+pub(crate) fn courtesy_send_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteSendRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/send`'s answer
+/// (FIX 11611): the queued ask, [`CourtesyDeleteSent`].
+pub(crate) fn courtesy_sent_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteSent>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/answer`'s body
+/// (FIX 11611): [`CourtesyDeleteAnswerRequest`].
+pub(crate) fn courtesy_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteAnswerRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/answer`'s answer
+/// (FIX 11611): the answered ask, [`CourtesyDeleteIncoming`].
+pub(crate) fn courtesy_incoming_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteIncoming>()
 }
 
 /// `POST /v1/owner/courtesy-delete/send`: asks a former peer to drop what
@@ -46,10 +102,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 pub(crate) async fn send(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CourtesyDeleteSendRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CourtesyDeleteSendRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let sent = blocking(move || {
         hooked_row(
             server.vault(),
@@ -124,10 +180,10 @@ pub(crate) async fn incoming(
 pub(crate) async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CourtesyDeleteAnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CourtesyDeleteAnswerRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     // A rewritten `reply_to` meets the answer's own check, as the row's
     // facade door admits it (FIX 5140).
     let admit: oneiron::memory::RewriteAdmit = Arc::new(|verb: &str, rewritten: &Value| {

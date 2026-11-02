@@ -129,6 +129,26 @@ pub struct ManagedRestorePlan {
     /// `null`; never a custody sequence or a default.
     #[serde(deserialize_with = "Option::deserialize")]
     pub wake_sequence_floor: Option<u64>,
+    /// The vault's external backup mode-root policy and the delegations its
+    /// roots signed (FIX 968): only an artifact-backed wake or migrate names
+    /// them, beside its floor, and the restore trusts each signer they
+    /// delegate beside the plan's pins. Absent for a historical restore,
+    /// which keeps its pins alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_mode_roots: Option<BackupModeRootsBytes>,
+}
+
+/// The engine's own encoding of a vault's backup mode-root policy and its
+/// delegations, as lowercase hex on the wire: opaque here. Its `Debug` names
+/// only how long it is.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BackupModeRootsBytes(#[serde(with = "super::hex::bytes")] pub Vec<u8>);
+
+impl std::fmt::Debug for BackupModeRootsBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BackupModeRootsBytes({} bytes)", self.0.len())
+    }
 }
 
 /// What the plan says the artifact is, from a record kept apart from it:

@@ -41,7 +41,7 @@ async fn vault_research_evaluate_split_answer(
 ) -> MemoryResult<CampaignSplitReport> {
     let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let vault = server.vault();
         let principal = owner.revalidate_person(vault)?;
         let taste = server.decision_host().campaign_taste(principal);

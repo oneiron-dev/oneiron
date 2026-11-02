@@ -60,17 +60,41 @@ pub fn review_slides(
     if !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage.into());
     }
+    // A resource refusal is the engine's error (FIX 10587), never an invalid deck.
     let package = Package::open(
         base.bytes,
         base.package_limits,
         &crate::office_body::document_resources(),
     )
-    .map_err(|_| invalid("slide review package"))?;
-    let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
+    .map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review package")
+    })?;
+    let view = DeckView::read(&package).map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review deck view")
+    })?;
+    // A live deck's units read their text where they were rendered (FIX 11981).
+    let shown = match base.shown {
+        Some(bytes) => {
+            let package = Package::open(
+                bytes,
+                base.package_limits,
+                &crate::office_body::document_resources(),
+            )
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review live deck")
+            })?;
+            Some(DeckView::read(&package).map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review live deck view")
+            })?)
+        }
+        None => None,
+    };
     // A located answer is kept in slide EMU when the deck gives its size.
     let slide_size = if question.contract.locates() {
         TemplateView::read(&package)
-            .map_err(|_| invalid("slide review deck size"))?
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review deck size")
+            })?
             .slide_size
     } else {
         None
@@ -137,11 +161,22 @@ pub fn review_slides(
                     continue;
                 }
             };
+            let text = match &shown {
+                None => read.text.clone(),
+                Some(shown) => match shown_text(shown, slide, shape_key.as_deref()) {
+                    Some(text) => text,
+                    None => {
+                        refused.push(refusal(target, SlideUnitRefusalReason::MissingShape));
+                        continue;
+                    }
+                },
+            };
             // An unavailable image is not a negative answer or a malformed call.
             if unit.image.is_empty() || unit.renderer.trim().is_empty() {
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
                 continue;
             }
@@ -175,9 +210,9 @@ pub fn review_slides(
                 }
                 SlideReviewImage::Stored(medium) => (medium.clone(), None),
             };
-            // The host's decider says which rung its pixels ride to, if any.
-            let call = MediaCall::of(dial, vec![medium], |images| {
-                decider.first_taking(question, dial, images)
+            // The host's decider says which rung its pixels or audio ride to, if any.
+            let call = MediaCall::of(dial, vec![medium], |images, audio| {
+                decider.first_taking_media(question, dial, images, audio)
             })
             .map_err(|_| invalid("invalid slide review image"))?;
             let render_hash = call
@@ -191,6 +226,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
                 continue;
             }
@@ -204,15 +240,13 @@ pub fn review_slides(
                         "shape_id": read.anchor.shape.as_ref().and_then(|shape| shape.shape_id),
                         "shape_name": read.name,
                     },
-                    "text": read.text,
+                    "text": text,
                     "renderer": unit.renderer,
                 }))
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            if read.text.len() > limits.max_text_bytes
-                || state_bytes.len() > MAX_DECISION_STATE_BYTES
-            {
+            if text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }
@@ -224,11 +258,15 @@ pub fn review_slides(
                 principal,
                 evidence: &evidence,
                 images: &call.images,
+                audio: &call.audio,
                 state: &state,
                 dial: call.dial,
                 policy,
                 reversibility,
                 deadline: &clock,
+                // A slide review's dial stops below the person.
+                ask_to: None,
+                correlation: None,
             };
             // A Box or Point question asks presence first: its coordinates stand
             // with the presence step beside them, or a confident no stands alone.
@@ -248,14 +286,16 @@ pub fn review_slides(
                     let answered = decision.answer != DecisionAnswer::Abstain;
                     (decision, None, answered, question.contract.clone())
                 };
-            // The deck at its frontier, then each other version an image the
-            // ladder was shown is of (a rendered image is of the deck itself).
+            // The deck at its frontier, then each other version an image or a
+            // clip the ladder was shown is of (a rendered image is of the deck
+            // itself).
             let pin_versions = |decision: &mut TypedDecision| {
                 decision.receipt.evidence_versions = std::iter::once(deck.clone())
                     .chain(
                         call.images
                             .iter()
                             .map(|image| image.evidence.clone())
+                            .chain(call.audio.iter().map(|clip| clip.evidence.clone()))
                             .filter(|version| *version != deck),
                     )
                     .collect();
@@ -268,6 +308,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: Some(decision),
+                    judged_live: None,
                 });
                 continue;
             }
@@ -301,12 +342,14 @@ pub fn review_slides(
                 presence,
                 location,
                 band_mode: band_policy.mode,
+                ceiling: call.dial.ceiling,
                 renderer: unit.renderer.clone(),
                 frontier,
                 media: call.entries,
                 render_hash,
                 evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
                 judged_version: base.version,
+                judged_live: None,
                 comment,
                 labels: labels.clone(),
             });
@@ -406,6 +449,33 @@ pub(super) fn read_unit(
     })
 }
 
+/// The text `slide`'s unit reads on `shown`, a live deck's projection: the
+/// slide of the same part and id there, and on it the one shape `shape_key`
+/// names or every text-bearing shape, as [`read_unit`] reads them. `None`
+/// when the slide or the shape is gone there.
+fn shown_text(shown: &DeckView, slide: &SlideView, shape_key: Option<&str>) -> Option<String> {
+    let slide = shown
+        .slides
+        .iter()
+        .find(|shown| shown.part == slide.part && shown.sld_id == slide.sld_id)?;
+    let Some(key) = shape_key else {
+        return Some(
+            slide
+                .shapes
+                .iter()
+                .filter_map(shape_text)
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        );
+    };
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.creation_id.as_deref() == Some(key))?;
+    Some(shape_text(shape).unwrap_or_default())
+}
+
 pub(super) fn refusal(
     target: &PptxCommentTarget,
     reason: SlideUnitRefusalReason,
@@ -426,6 +496,7 @@ pub(super) fn refusal(
         target: target.clone(),
         reason,
         offer,
+        judged_live: None,
     }
 }
 

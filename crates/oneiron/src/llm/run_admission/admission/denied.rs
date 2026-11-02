@@ -40,6 +40,10 @@ pub enum RunDenied {
     AllocationExhausted,
     #[error("the host refused a fresh allocation: {reason:?}")]
     AllocationRefused { reason: AllocationRefusal },
+    /// The resident's share of the allocation, which the owner pinned, does
+    /// not fit the call (FIX 7767). An unpinned share never refuses.
+    #[error("the owner's pinned share for this resident is spent")]
+    ResidentShareSpent { resident: crate::EntityId },
     #[error("dispatch refused: {refused}")]
     Dispatch { refused: DispatchRefused },
     #[error("a run never edits its own declaration")]
@@ -49,6 +53,10 @@ pub enum RunDenied {
     /// the owner's recipient choice for that world, or an integrity hold.
     #[error("the call's world stays on this device: {reason}")]
     KeptOnDevice { reason: &'static str },
+    /// The world's own order admits no route of the call's ladder (FIX
+    /// 11768): content-free, receipt-visible.
+    #[error("the world's order admits no route this call walks")]
+    WorldRouteNotAdmitted,
 }
 
 impl From<RunDenied> for LlmError {
@@ -57,7 +65,12 @@ impl From<RunDenied> for LlmError {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
             RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
-            | RunDenied::AllocationRefused { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
+            | RunDenied::ResidentShareSpent { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
+            // The account owner's question holds the work: never a spent
+            // budget (FIX 9924).
+            RunDenied::AllocationRefused {
+                reason: AllocationRefusal::HostCheck,
+            } => Self::BudgetDenied(BudgetDenied::HostCheck),
             RunDenied::Dispatch { refused } => Self::BudgetDenied(refused.into()),
             // A privacy hold stays one: never a budget refusal.
             RunDenied::KeptOnDevice { reason } => {
@@ -66,6 +79,10 @@ impl From<RunDenied> for LlmError {
                     resets_at: Vec::new(),
                     reason: Some(reason.to_owned()),
                 })
+            }
+            // A world-order refusal stays one: never a budget refusal.
+            RunDenied::WorldRouteNotAdmitted => {
+                Self::Retryable(RetryableLlmError::WorldRouteNotAdmitted)
             }
             RunDenied::UndeclaredTeacher { .. }
             | RunDenied::UnknownSelector { .. }

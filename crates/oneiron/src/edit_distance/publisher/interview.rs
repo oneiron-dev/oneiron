@@ -212,7 +212,7 @@ pub fn open_generated_interview(
 /// The user's amendments become a Δ the ordinary way — the finalized record is
 /// persisted by `finalize`, so
 /// [`delta_from_recorded_ops`](crate::edit_distance::delta::delta_from_recorded_ops) over
-/// [`finalized_proposal_text`](crate::edit_distance::finalized_proposal_text) yields it. No
+/// [`retained_proposal`](crate::edit_distance::retained_proposal) yields it. No
 /// edit distance is computed here; that is ED-01's job and reusing it is the
 /// point of rung 3.
 ///

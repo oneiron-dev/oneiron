@@ -100,6 +100,7 @@ pub(super) fn put_critical_confirm_item_in_txn(
         grant_ref: None,
         diff_handle: binding.diff_handle,
         read_frontier_hash: binding.read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     store.append_fresh_gate_decision_in_txn(wtxn, &mut decision)?;
@@ -125,6 +126,7 @@ pub(super) fn put_critical_confirm_item_in_txn(
         // Neither a peer body nor an owner's item carries an authenticated
         // local Dreamer envelope.
         dreamer_run_id: None,
+        predicate: Some(body.predicate.clone()),
     };
     // This also writes the exact-confirm index and the ordinary tray indexes.
     store.put_pending_gate_consent_in_txn(wtxn, &pending)?;

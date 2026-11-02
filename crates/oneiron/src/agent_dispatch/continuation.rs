@@ -63,7 +63,7 @@ const APPLICATIONS: SideTable<[u8; 16], PromptInjectApplication, Named> =
 
 /// `/v1/owner/inbox/concern/apply-prompt-inject`'s input: the one prompt
 /// continuation the owner approves.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernPromptInjectRequest {
     /// The card's `health:` handle, the row's `payload_ref`.
@@ -81,7 +81,7 @@ pub struct ConcernPromptInjectRequest {
 }
 
 /// The continuation an approval made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConcernPromptInjectOutcome {
     /// The card's `health:` handle.
     pub card: String,
@@ -339,8 +339,8 @@ impl AgentDispatcher<'_> {
     /// # Errors
     ///
     /// `continuation_unfunded` when the failed scope has no parent, its
-    /// parent is gone or closed, the reservation is refused, or the join no
-    /// longer holds; storage errors.
+    /// parent is gone or closed with no open ancestor, the reservation is
+    /// refused, or the join no longer holds; storage errors.
     fn renew_continuation_spend_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -357,9 +357,13 @@ impl AgentDispatcher<'_> {
         let Some(parent) = failed.parent.as_ref() else {
             return Err(refused(CONTINUATION_UNFUNDED));
         };
-        let funded = SCOPE
-            .get(&self.vault.store, txn, &parent.0)?
-            .is_some_and(|row| row.state == SpendState::Open);
+        let funded = match SCOPE.get(&self.vault.store, txn, &parent.0)? {
+            Some(row) if row.state == SpendState::Open => true,
+            // FIX 10541: a child keeps a closed parent, which books at its
+            // nearest open ancestor; one with none open is unfunded.
+            Some(_) => self.effective_scope_in_txn(txn, parent)?.state == SpendState::Open,
+            None => false,
+        };
         if !funded {
             return Err(refused(CONTINUATION_UNFUNDED));
         }

@@ -10,9 +10,9 @@ use super::{
     VoiceLineAtom,
 };
 use crate::Result;
-use crate::lens::generated_ui::GeneratedUiPrimitive;
+use crate::lens::generated_ui::{GeneratedUiComponentAtom, GeneratedUiPrimitive};
 use crate::lens::self_ui::SelfUiControl;
-use crate::lens::validate::{LensBudget, fallback_lens_text};
+use crate::lens::validate::fallback_lens_text;
 use crate::lens::wire_limits::serialize_tagged;
 
 #[derive(Debug, Clone, PartialEq, schemars::JsonSchema)]
@@ -45,6 +45,9 @@ pub enum LensAtom {
     SelfUi(SelfUiControl),
     Media(MediaAtom),
     ResultSet(GeneratedUiResultSetAtom),
+    /// A component an app catalog declares (FIX 9891): data its app's
+    /// renderer draws, lowered to `fallbackText` on any other surface.
+    Component(GeneratedUiComponentAtom),
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +85,9 @@ enum LensAtomWire {
     SelfUi(SelfUiControl),
     Media(MediaAtom),
     ResultSet(GeneratedUiResultSetAtom),
+    /// A component an app catalog declares (FIX 9891): data its app's
+    /// renderer draws, lowered to `fallbackText` on any other surface.
+    Component(GeneratedUiComponentAtom),
 }
 
 impl From<LensAtomWire> for LensAtom {
@@ -114,6 +120,7 @@ impl From<LensAtomWire> for LensAtom {
             LensAtomWire::SelfUi(control) => Self::SelfUi(control),
             LensAtomWire::Media(atom) => Self::Media(atom),
             LensAtomWire::ResultSet(atom) => Self::ResultSet(atom),
+            LensAtomWire::Component(atom) => Self::Component(atom),
         }
     }
 }
@@ -125,11 +132,6 @@ impl<'de> Deserialize<'de> for LensAtom {
     {
         let atom = Self::from(LensAtomWire::deserialize(deserializer)?);
         atom.validate().map_err(de::Error::custom)?;
-
-        let mut budget = LensBudget::default();
-        atom.count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
-
         Ok(atom)
     }
 }
@@ -207,6 +209,9 @@ impl Serialize for LensAtom {
             Self::ResultSet(props) => {
                 serialize_tagged(serializer, "kind", RESULT_SET_ATOM_KIND, "props", props)
             }
+            Self::Component(props) => {
+                serialize_tagged(serializer, "kind", "component", "props", props)
+            }
         }
     }
 }
@@ -242,6 +247,7 @@ impl LensAtom {
             Self::SelfUi(_) => GeneratedUiPrimitive::SelfUi,
             Self::Media(_) => GeneratedUiPrimitive::Media,
             Self::ResultSet(_) => GeneratedUiPrimitive::ResultSet,
+            Self::Component(_) => GeneratedUiPrimitive::Component,
         }
     }
 
@@ -315,6 +321,7 @@ impl LensAtom {
             // Row labels are display data the host never parses, and a row count is
             // reach metadata. The fallback stays a static literal.
             Self::ResultSet(_) => "result set".to_string(),
+            Self::Component(atom) => return atom.fallback_text(),
         };
         fallback_lens_text(self.kind(), fallback)
     }
@@ -341,38 +348,7 @@ impl LensAtom {
             Self::SelfUi(control) => control.validate(),
             Self::Media(atom) => atom.validate(),
             Self::ResultSet(atom) => atom.validate(),
-        }
-    }
-
-    pub(in crate::lens) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        match self {
-            Self::TextBlock(atom) => budget.add_collection("text block spans", atom.spans.len()),
-            Self::LedgerRow(atom) => budget.add_collection("ledger row cells", atom.cells.len()),
-            Self::ClaimLine(_) | Self::StatusDot(_) | Self::Seal(_) | Self::MetaLine(_) => Ok(()),
-            Self::DossierSection(atom) | Self::Slip(atom) | Self::Charter(atom) => {
-                budget.add_collection("lens section lines", atom.lines.len())
-            }
-            Self::ThreadEntry(_) => Ok(()),
-            Self::Sheet(atom) => atom.count_collection_items(budget),
-            Self::Receipt(atom) => budget.add_collection("receipt lines", atom.lines.len()),
-            Self::Postmark(_) | Self::PackLine(_) | Self::TwoClocks(_) | Self::Throbber(_) => {
-                Ok(())
-            }
-            Self::AnswerSheet(atom) => {
-                budget.add_collection("answer sheet citations", atom.citations.len())
-            }
-            Self::NeighborhoodGraph(atom) => {
-                budget.add_collection("neighborhood graph nodes", atom.nodes.len())?;
-                budget.add_collection("neighborhood graph edges", atom.edges.len())
-            }
-            Self::AsofScrubber(_) | Self::VoiceLine(_) => Ok(()),
-            Self::QuickFilter(atom) => atom.count_collection_items(budget),
-            Self::InspectorSheet(atom) | Self::InspectorRail(atom) | Self::InspectorTrail(atom) => {
-                atom.count_collection_items(budget)
-            }
-            Self::SelfUi(control) => control.count_collection_items(budget),
-            Self::Media(_) => Ok(()),
-            Self::ResultSet(atom) => atom.count_collection_items(budget),
+            Self::Component(atom) => atom.validate(),
         }
     }
 }

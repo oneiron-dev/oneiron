@@ -32,9 +32,11 @@
 
 mod marker;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
 use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::{Deserialize, Serialize};
@@ -115,6 +117,27 @@ pub struct BackupSnapshotReceipt {
     /// a checkpoint, which publishes none, or where signing it failed, which
     /// was logged and leaves the backup without one.
     pub checkpoint_fact: Option<oneiron_crypto::backup::SignedCheckpointFact>,
+    /// What the artifact carries of the vault's host-order legal holds
+    /// (FIX 6598): none for a self-hosted vault; for a hosted one, the
+    /// sealed member's recipient and BLAKE3, or why it carries none, for its
+    /// host to alert on.
+    pub host_holds: super::HostHoldsAvailability,
+    /// The pad rows the image carries with their pad, which current custody
+    /// did not hold the same when it was taken (KS-5, FIX 7313): each pad
+    /// rides these bytes past its custody entry's retirement. Zero once
+    /// every pad was prepared into custody and the image names it by
+    /// reference alone.
+    pub pads_carried: usize,
+    /// The families whose rows the image keeps under its vault-wide seal,
+    /// with how many rows each (KS-7, CALLS PAYLOAD_UNCLASSIFIED): not
+    /// compartmented, so an erase can't reach them in this checkpoint. Empty
+    /// for an image taken with no payload section.
+    pub not_compartmented: BTreeMap<String, u64>,
+    /// Each gap in the checkpoint payload registry the capture rode past
+    /// (KS7-6), one line each naming the family by its name, database and
+    /// prefix, or the database or entity kind, and what became of its rows.
+    /// Empty when the registry is whole.
+    pub payload_registry_gaps: Vec<String>,
 }
 
 /// The suffix of the marker beside a label's newest backup:
@@ -245,7 +268,18 @@ impl BackupMarker {
 /// as well as what it covered. `None` as there, and when the marker's time
 /// does not read.
 pub fn backup_marker(dir: &Path, label: &str) -> Option<BackupMarker> {
-    let marker = marker::read_bound_marker(dir, label)?;
+    backup_marker_with_pins(dir, label, None)
+}
+
+/// [`backup_marker`], and when `pins` are given, `None` too for a backup
+/// whose commitment none of them signed (FIX 10712). It checks the signer of
+/// the backup's tail; [`BackupMarker::held`] stays the strong check.
+pub fn backup_marker_with_pins(
+    dir: &Path,
+    label: &str,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<BackupMarker> {
+    let marker = marker::read_bound_marker_with_pins(dir, label, pins)?;
     let landed = std::fs::symlink_metadata(dir.join(marker_name(label)))
         .and_then(|metadata| std::fs::Metadata::modified(&metadata))
         .ok()?

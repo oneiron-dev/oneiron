@@ -99,6 +99,16 @@ impl ProgramAdmissionJob {
     }
 }
 
+/// The source actor a [`PROGRAM_ADMISSION_KIND`] payload was captured
+/// under (FIX 10718): its scope's actor, when the payload decodes. The
+/// erase pass reads it to scrub an erased actor's payloads; a payload
+/// that does not decode names no actor.
+pub(crate) fn admission_payload_actor(payload: &[u8]) -> Option<EntityId> {
+    serde_json::from_slice::<ProgramAdmissionJob>(payload)
+        .map(|job| job.scope.actor)
+        .ok()
+}
+
 /// The job a filing in an admission run files for (CUA E8b): the filing's
 /// own write keeps the program it filed against the job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +136,10 @@ pub enum ProgramAdmissionOutcome {
     /// The page the proposal's steps reached is not its pre-press page:
     /// the no-model batch ended so, and nothing was proposed.
     ReconstructionStopped { status: SubgoalStatus },
+    /// The no-model batch ended Done but the filled postcondition is unmet
+    /// on its page: the checks it missed, by index; nothing was proposed
+    /// (FIX 10721).
+    PostconditionUnmet { unmet: Vec<usize> },
     /// The proposal names parameters it gives no value.
     ArgsMissing { params: Vec<String> },
     /// The proposal's secret slots take secrets this run does not hold.
@@ -141,6 +155,10 @@ pub enum ProgramAdmissionOutcome {
     Interrupted { filed: Option<EntityId> },
     /// An engine error stopped the job, by its kind alone.
     Failed { kind: String },
+    /// The job's payload did not decode: its receipt keeps empty refs,
+    /// and its sources' kept bindings are dropped, as every ended job's
+    /// are.
+    Undecodable,
 }
 
 /// Why the source caller could not be established (CUA E8b).
@@ -165,6 +183,9 @@ pub enum CallerUnavailable {
     ScopeRefused,
     /// No door rebuilds this caller: a person with no credential.
     ContextUnavailable,
+    /// The managed vault's attested owner the source acted as is no longer
+    /// its live owner (FIX 11690): his lapse, not the door's.
+    OwnerNotLive,
 }
 
 /// Why a job's sources no longer stand (CUA E8b).
@@ -490,6 +511,45 @@ pub fn record_program_admission(
         };
         RECEIPTS.put(vault, wtxn, &job_id, &receipt)?;
         for id in &job.source_evidence {
+            drop_witness_in_txn(vault, wtxn, id)?;
+        }
+        Ok(receipt)
+    })
+}
+
+/// Records an undecodable job `job_id`'s end at `now` (FIX 10716):
+/// its payload never decoded, so its receipt keeps empty refs and the
+/// [`ProgramAdmissionOutcome::Undecodable`] outcome, and in the same write
+/// each leniently read source id's kept binding is dropped, as every
+/// ended job's sources' are.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn record_undecodable_program_admission(
+    vault: &Vault,
+    job_id: EntityId,
+    source_evidence: &[EntityId],
+    now: u64,
+) -> Result<ProgramAdmissionReceipt> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let filed = RECEIPTS
+            .get(&vault.store, wtxn, &job_id)?
+            .and_then(|receipt| receipt.filed);
+        let receipt = ProgramAdmissionReceipt {
+            job: job_id,
+            // Unread: the payload did not decode. The job stands in for
+            // its own finding ref; no finding is ever an attempt id.
+            finding: job_id,
+            fingerprint: [0; 32],
+            source_evidence: source_evidence.to_vec(),
+            run_id: Some(job_id),
+            filed,
+            outcome: Some(ProgramAdmissionOutcome::Undecodable),
+            settled_at: Some(now),
+        };
+        RECEIPTS.put(vault, wtxn, &job_id, &receipt)?;
+        for id in source_evidence {
             drop_witness_in_txn(vault, wtxn, id)?;
         }
         Ok(receipt)

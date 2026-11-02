@@ -15,7 +15,9 @@
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
 mod app_reads;
-pub use app_reads::{scoped_subscription_pending, scoped_subscription_receipts};
+pub use app_reads::{
+    ScopedContinuation, ScopedPage, scoped_subscription_pending, scoped_subscription_receipts,
+};
 
 mod childof;
 pub(in crate::sync) use childof::{defer_child_of, settle_child_of};
@@ -31,7 +33,7 @@ mod parent_retry;
 pub(crate) use parent_retry::has_unresolved_parent_for_source_in_txn;
 pub(in crate::sync) use parent_retry::{
     ParentOutcome, defer_spawned_by, has_pending_source_in_txn, retry_in_txn,
-    submit as submit_parent_in_txn,
+    submit as submit_parent_in_txn, wake_in_txn as wake_parent_retry_in_txn,
 };
 mod recovery;
 pub(crate) use recovery::preflight_canonical_recovery;
@@ -39,6 +41,7 @@ mod regenerates;
 pub(in crate::sync) use regenerates::{
     owe_regenerates, settle_regenerates, wake_regenerates_after_document,
 };
+mod task_fact_edges;
 mod tombstones;
 
 // it resolves through this import, so the moved body stays byte-identical.

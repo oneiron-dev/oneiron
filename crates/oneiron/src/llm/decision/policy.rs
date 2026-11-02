@@ -84,7 +84,7 @@ pub struct PersonThreshold {
 
 /// The "does this need more thinking?" row. A read whose paired P(yes) reaches
 /// `threshold` steps to the next rung while the call has time. No row never steps on
-/// it; the Coach tunes it from quick answers that later proved wrong.
+/// it; the Coach tunes it from quick answers that later proved wrong (FIX 2437).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThinkThreshold {
     pub threshold: f64,
@@ -93,14 +93,15 @@ pub struct ThinkThreshold {
 
 /// Vault-owned policy for the running host. No learned row means shadow at
 /// the dial's seed band, not an implicit permission to enforce a global
-/// threshold. Learned bands and the person row are shared by every clone,
-/// so an owner's update reaches callers that already hold the policy.
+/// threshold. Learned bands, the person row and the think row are shared by
+/// every clone, so an owner's update reaches callers that already hold the
+/// policy.
 /// No person row means a person reading never routes.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionBandPolicy {
     rows: Arc<RwLock<BTreeMap<(EntityId, u32, Reversibility), LearnedBand>>>,
     person: Arc<RwLock<Option<PersonThreshold>>>,
-    think: Option<ThinkThreshold>,
+    think: Arc<RwLock<Option<ThinkThreshold>>>,
     questions_per_call: Option<usize>,
 }
 
@@ -150,15 +151,27 @@ impl DecisionBandPolicy {
         if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
             return Err(invalid("invalid think threshold"));
         }
-        if self.think.is_some_and(|row| row.version >= version) {
+        let mut think = self.think.write().unwrap_or_else(PoisonError::into_inner);
+        if think.is_some_and(|row| row.version >= version) {
             return Err(invalid("think threshold version must advance"));
         }
-        self.think = Some(ThinkThreshold { threshold, version });
+        *think = Some(ThinkThreshold { threshold, version });
+        Ok(())
+    }
+
+    /// Replaces the shared think row with `row`, for every clone (FIX 2437).
+    /// As with [`Self::replace_person_threshold`], the version may go back: a
+    /// retracted revision gives way to the one before it.
+    pub fn replace_think_threshold(&self, row: ThinkThreshold) -> Result<()> {
+        if !(row.threshold > 0.0 && row.threshold <= 1.0) || row.version == 0 {
+            return Err(invalid("invalid think threshold"));
+        }
+        *self.think.write().unwrap_or_else(PoisonError::into_inner) = Some(row);
         Ok(())
     }
 
     pub fn think_threshold(&self) -> Option<ThinkThreshold> {
-        self.think
+        *self.think.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn person_threshold(&self) -> Option<PersonThreshold> {

@@ -10,7 +10,7 @@ pub mod shape;
 
 pub use batch::{
     CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput,
-    CoreBatchWriteReceipt,
+    CoreBatchWriteReceipt, CoreWriteLane,
 };
 pub use conversations::{
     ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt,

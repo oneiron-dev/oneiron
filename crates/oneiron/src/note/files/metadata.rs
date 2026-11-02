@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::super::folder_source::OriginalBytes;
+
 /// The extensions, any case, whose files are UTF-8 text a Files source
 /// takes whole: plain text, markup, data and code. Markdown (`md`) and PDF
 /// (its text layer) are read as an attached folder reads them. Every other
@@ -98,8 +100,8 @@ pub const FILES_TEXT_EXTENSIONS: &[&str] = &[
     "dockerfile",
 ];
 
-/// Why a file of a Files source has no text in the vault: it is held by its
-/// name, and never as text it does not have.
+/// Why a file has no text in the vault: it is held by its name, and
+/// never as text it does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NameOnlyReason {
@@ -173,11 +175,14 @@ impl FileMeta {
     }
 }
 
-/// One file of a Files source the host holds by name only: its path under
-/// the folder, why, and its facts.
+/// One file the host holds by name only: its path under the folder,
+/// why, and its facts. A file whose bytes the walk read carries them, kept
+/// as its original once its ledger row lands (FIX 11276); one whose bytes
+/// were never read carries none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameOnlyFile {
     pub path: String,
     pub why: NameOnlyReason,
     pub facts: FileFacts,
+    pub original: Option<OriginalBytes>,
 }

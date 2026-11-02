@@ -1,10 +1,7 @@
 //! Actor-bound NOTE creation, edit and source-entity bridge.
 
 use super::documents::{NoteDocument, invalid, load_doc, store_doc};
-use super::{
-    NoteBody, NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome,
-    encode_note_body,
-};
+use super::{NoteBody, NoteProgramEdit, NoteProgramEditOutcome, encode_note_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;
@@ -15,6 +12,10 @@ use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_NOT
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+mod source_read;
+
+use self::source_read::SourceAdmission;
 
 impl Vault {
     /// A NOTE's first authored text is its birth op, not a mutable record field.
@@ -363,9 +364,9 @@ impl Vault {
     pub fn edit_note(
         &self,
         note: EntityId,
-        edit: &NoteEdit,
+        edit: &NoteProgramEdit,
         actor: WriteActor,
-    ) -> MemoryResult<NoteEditOutcome> {
+    ) -> MemoryResult<NoteProgramEditOutcome> {
         let result = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
@@ -373,15 +374,16 @@ impl Vault {
                     // A sealed NOTE's edit opens a fork and leaves the seal intact.
                     let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
                     let existed = load_doc(self, txn, note)?.is_some();
-                    if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
+                    if existed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
                         return Err(invalid("whole-text edit requires its read version").into());
                     }
                     let doc = super::documents::live_doc(self, txn, note)?;
                     let semantic = doc.semantic_edit(edit)?;
                     let isolated_rewrite = if semantic.is_none() {
                         match edit {
-                            NoteEdit::WholeText { text, .. } | NoteEdit::Rewrite { text } => {
-                                Some(NoteEdit::Rewrite { text: text.clone() })
+                            NoteProgramEdit::WholeText { text, .. }
+                            | NoteProgramEdit::Rewrite { text } => {
+                                Some(NoteProgramEdit::Rewrite { text: text.clone() })
                             }
                             _ => None,
                         }
@@ -398,11 +400,11 @@ impl Vault {
                             .memory(actor.entity_ref(), actor.actor_class())
                             .apply_note_operation_in_txn(txn, note, &operation, None)?;
                         return Ok(match receipt.outcome {
-                            super::NoteEditOutcome::Applied(_) => {
-                                NoteEditOutcome::Edited { head: doc.head }
+                            super::NoteScalarEditOutcome::Applied(_) => {
+                                NoteProgramEditOutcome::Edited { head: doc.head }
                             }
-                            super::NoteEditOutcome::Proposed(receipt) => {
-                                NoteEditOutcome::ReviewRequired { receipt }
+                            super::NoteScalarEditOutcome::Proposed(receipt) => {
+                                NoteProgramEditOutcome::ReviewRequired { receipt }
                             }
                         });
                     }
@@ -411,10 +413,12 @@ impl Vault {
                         head: note,
                         doc: doc.doc.fork(),
                     };
+                    // The fork's commits name the actor's stamp token (FIX 10930).
+                    let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                     let replacement = candidate.apply(
                         &self.store.clock,
                         isolated_rewrite.as_ref().unwrap_or(edit),
-                        actor.entity_ref(),
+                        stamp,
                         self.store.clock.now_recorded_at(),
                     )?;
                     let rewrite = replacement.is_some();
@@ -430,9 +434,9 @@ impl Vault {
                         rewrite,
                     )?;
                     Ok(if authorized {
-                        NoteEditOutcome::RewriteFork { fork: fork.head }
+                        NoteProgramEditOutcome::RewriteFork { fork: fork.head }
                     } else {
-                        NoteEditOutcome::ProposedFork { fork: fork.head }
+                        NoteProgramEditOutcome::ProposedFork { fork: fork.head }
                     })
                 })
             })?;
@@ -448,6 +452,34 @@ impl Vault {
         source: EntityId,
         kind: &str,
         actor: WriteActor,
+    ) -> MemoryResult<EntityId> {
+        self.create_from_entity_reading(source, kind, actor, None)
+    }
+
+    /// [`Self::create_from_entity`] for a caller its host bound to `reader`
+    /// (FIX 9953): the source and the row the copy cites must be rows
+    /// `reader` reads, and another author's diary entry is read as a NOTE
+    /// read reads it, through that author's diary gate stating `reason`,
+    /// whose log lands with the copy. A copy its gate holds is refused; a
+    /// review the gate asks for stands.
+    pub(crate) fn create_from_entity_read_by(
+        &self,
+        source: EntityId,
+        kind: &str,
+        actor: WriteActor,
+        reader: &crate::claim::ScopedRead<'_>,
+        reason: Option<&str>,
+    ) -> MemoryResult<EntityId> {
+        let read = source_read::SourceRead { reader, reason };
+        self.create_from_entity_reading(source, kind, actor, Some(&read))
+    }
+
+    fn create_from_entity_reading(
+        &self,
+        source: EntityId,
+        kind: &str,
+        actor: WriteActor,
+        read: Option<&source_read::SourceRead<'_, '_>>,
     ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         self.memory(actor.entity_ref(), actor.actor_class())
@@ -477,9 +509,29 @@ impl Vault {
                 } else {
                     (source, source)
                 };
-                create_from_text_in_txn(self, content, text_source, citation, kind, actor)
-                    .map_err(Into::into)
-            })
+                // The source read and its diary log land with the copy (FIX 9953).
+                let admitted = source_read::admit_source_in(
+                    self,
+                    content,
+                    read,
+                    actor,
+                    text_source,
+                    citation,
+                )?;
+                let gate = match admitted {
+                    SourceAdmission::Read(gate) => gate,
+                    SourceAdmission::Held(gate, refusal) => {
+                        content.finish_diary_read(gate)?;
+                        return Ok(Err(refusal));
+                    }
+                };
+                let id =
+                    create_from_text_in_txn(self, content, text_source, citation, kind, actor)?;
+                if let Some(gate) = gate {
+                    content.finish_diary_read(gate)?;
+                }
+                Ok(Ok(id))
+            })?
     }
 
     pub fn create_note_from_asset(

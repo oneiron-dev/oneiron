@@ -51,8 +51,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::skill::LoadedSkillPack;
 use crate::task_type::TaskTypeRef;
 use crate::team::{
-    FrozenPatternPack, PatternLaunchSpec, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest,
-    SpawnErasure, SpawnPhase,
+    ErasedPackSpan, FrozenPatternPack, PatternLaunchSpec, PlannedIntentView, PlannedSpawnHost,
+    PlannedSpawnRequest, SpawnErasure, SpawnPhase,
 };
 
 use super::super::widen_record::invalid;
@@ -141,6 +141,12 @@ struct PlannedIntent {
     /// agent its parent's own dispatch runs as; `None` once an erase has
     /// forgotten it.
     actor: Option<EntityId>,
+    /// The asker's erase selector (FIX 9182): a domain-separated hash of the
+    /// asker's id, kept when a plain scrub forgets the asker, so a later hard
+    /// erase of that asker still finds the intent. It names no one, confers
+    /// nothing and is never shown; the asker's erase clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    asker_erase_key: Option<[u8; 32]>,
     /// The spawning attempt; an owner's root intent has none.
     parent: Option<AttemptId>,
     /// The original ask as its asker gave it, and its digest; neither once
@@ -171,6 +177,11 @@ struct PlannedIntent {
     /// SKILL.md in its task, by its executor run id (S4c-5). Each run
     /// writes its own, and a continuation reads its source run's.
     leader_exposures: BTreeMap<EntityId, TaskExposure>,
+    /// Each of those runs' spans, text-free, once an erase took the
+    /// exposures (`erase`); a continuation claimed after the erase
+    /// tombstones its source run's.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    erased_pack_spans: BTreeMap<EntityId, ErasedPackSpan>,
     /// What the launch queued and bound: the leader, or a solo's one agent,
     /// each member in launch order, and the team.
     root_attempt: Option<AttemptId>,
@@ -371,6 +382,7 @@ impl AgentDispatcher<'_> {
         let mut reserved = match existing {
             None => PlannedIntent {
                 actor: Some(actor),
+                asker_erase_key: Some(erase::asker_erase_key(&actor)),
                 parent,
                 ask: Some(ask()),
                 ask_digest: Some(name.digest),
@@ -387,6 +399,7 @@ impl AgentDispatcher<'_> {
                 pattern_launch: None,
                 pattern_pack: None,
                 leader_exposures: BTreeMap::new(),
+                erased_pack_spans: BTreeMap::new(),
                 root_attempt: None,
                 member_attempts: Vec::new(),
                 team_ref: None,

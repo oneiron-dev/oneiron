@@ -8,8 +8,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -22,22 +21,113 @@ use oneiron::dreamer_runner::maintenance::agent_health::{
 use oneiron::memory::MemoryError;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/inbox/concern", get(card))
-        .route("/inbox/concern/outcome", post(set_outcome))
-        .route("/inbox/concern/move", post(take_move))
-        .route("/inbox/concern/apply", post(apply_edit))
-        .route(
-            "/inbox/concern/apply-prompt-inject",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/inbox/concern",
+                summary: "One card, with the run its attempt is in and that attempt's node marked.",
+                row: None,
+            },
+            get(card),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/outcome",
+                summary: "Sets one card's outcome.",
+                row: None,
+            },
+            post(set_outcome),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/move",
+                summary: "Takes one of the card's moves.",
+                row: None,
+            },
+            post(take_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/apply",
+                summary: "Applies the Coach's skill edit on one card as the owner approves it.",
+                row: None,
+            },
+            post(apply_edit),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/apply-prompt-inject",
+                summary: "Applies the Coach's prompt injection on one card as the owner approves or edits it: the failed attempt goes on as a new one, from its pre-fail checkpoint.",
+                row: None,
+            },
             post(apply_prompt_inject),
-        )
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/outcome`'s body
+/// (FIX 11611): [`ConcernOutcome`].
+pub(crate) fn concern_outcome_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/outcome`'s answer
+/// (FIX 11611): [`ConcernCardSummary`].
+pub(crate) fn concern_card_summary_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernCardSummary>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/move`'s body
+/// (FIX 11611): [`ConcernMoveRequest`].
+pub(crate) fn concern_move_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernMoveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/move`'s answer
+/// (FIX 11611): [`ConcernMoveOutcome`].
+pub(crate) fn concern_move_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernMoveOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply`'s body
+/// (FIX 11611): [`ConcernApplyRequest`].
+pub(crate) fn concern_apply_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernApplyRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply`'s answer
+/// (FIX 11611): [`ConcernApplyOutcome`].
+pub(crate) fn concern_apply_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernApplyOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply-prompt-inject`'s
+/// body (FIX 11611): the approved prompt continuation.
+pub(crate) fn concern_prompt_inject_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<
+        oneiron::agent_dispatch::ConcernPromptInjectRequest,
+    >()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply-prompt-inject`'s
+/// answer (FIX 11611): the continuation the approval made.
+pub(crate) fn concern_prompt_inject_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<
+        oneiron::agent_dispatch::ConcernPromptInjectOutcome,
+    >()
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +156,7 @@ async fn card(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConcernOutcome {
     /// The card's `health:` handle, the row's `payload_ref`.
@@ -79,10 +169,10 @@ struct ConcernOutcome {
 async fn set_outcome(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernOutcome>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernOutcome>,
 ) -> OwnerReply<ConcernCardSummary> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let card = blocking(move || -> OwnerResult<ConcernCardSummary> {
         let outcome = AgentHealthOutcome::from_wire(&request.outcome).ok_or_else(|| {
             OwnerError::Invalid("outcome is confirmed, dismissed or unresolved".to_owned())
@@ -119,18 +209,27 @@ fn move_error(error: MemoryError) -> OwnerError {
 async fn take_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernMoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernMoveRequest>,
 ) -> OwnerReply<ConcernMoveOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let host = Arc::clone(&server);
     let outcome = blocking(move || -> OwnerResult<ConcernMoveOutcome> {
         let vault = server.vault();
         if !matches!(request.r#move, ConcernMove::AskCoach) {
-            return vault
-                .apply_concern_move(&owner, locality, &request)
-                .map_err(move_error);
+            return match vault.apply_concern_move(&owner, locality, &request) {
+                // Only a card that is gone is not found, as on every other
+                // concern route (FIX 8537); a target the move could not
+                // reach keeps its own words.
+                Err(error)
+                    if error.code == oneiron::memory::MEMORY_CODE_NOT_FOUND
+                        && vault.agent_health_card(&request.card)?.is_none() =>
+                {
+                    Err(OwnerError::NotFound("concern_card", request.card.clone()))
+                }
+                moved => moved.map_err(move_error),
+            };
         }
         let Some(card) = vault.agent_health_card(&request.card)? else {
             return Err(OwnerError::NotFound("concern_card", request.card));
@@ -168,10 +267,10 @@ async fn take_move(
 async fn apply_edit(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernApplyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernApplyRequest>,
 ) -> OwnerReply<ConcernApplyOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<ConcernApplyOutcome> {
         match server
             .vault()
@@ -198,10 +297,10 @@ async fn apply_edit(
 async fn apply_prompt_inject(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<oneiron::agent_dispatch::ConcernPromptInjectRequest>, JsonRejection>,
+    payload: OwnerJsonBody<oneiron::agent_dispatch::ConcernPromptInjectRequest>,
 ) -> OwnerReply<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let outcome = blocking(
         move || -> OwnerResult<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
             match server

@@ -11,15 +11,12 @@ use oneiron::{
 
 pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
-    DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
-    parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
-    read_query, read_vector, to_napi_err, ts_to_u64, validate_batch_size, validate_dimensions,
+    DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
+    parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
+    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64, validate_dimensions,
     validate_entity_payload_len,
 };
-use super::codebase::{
-    apply_codebase_context_filters, apply_codebase_filters, core_codebase_snapshot,
-    napi_codebase_snapshot,
-};
+use super::codebase::{CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot};
 use super::email::{core_email_adapter, core_email_inbound};
 use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
@@ -27,6 +24,8 @@ use super::types::{
 };
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 use crate::host_root::HostRootOpenOptions;
+
+mod reads;
 
 /// What this embedded vault says to a context pack naming `media` (OF-370):
 /// it serves no `ai.embed` rung, so it cannot embed the bytes into their
@@ -51,6 +50,22 @@ fn refuse_unserved_media(media: Option<NapiRecallMedia>) -> napi::Result<()> {
     )))
 }
 
+/// `builder` searching `text` and `vector`, each to `limit`, when named.
+fn pack_query<'a>(
+    mut builder: oneiron::ContextPackBuilder<'a>,
+    text: Option<&str>,
+    vector: Option<&[f32]>,
+    limit: usize,
+) -> oneiron::ContextPackBuilder<'a> {
+    if let Some(text) = text {
+        builder = builder.search_text(text, limit);
+    }
+    if let Some(vector) = vector {
+        builder = builder.search_vector(vector, limit);
+    }
+    builder
+}
+
 /// What a bound vault says to a write it has no caller-bound door for
 /// (OF-063): it never writes as the host in its caller's place.
 const BOUND_WRITE_UNSERVED: &str =
@@ -60,7 +75,8 @@ const BOUND_WRITE_UNSERVED: &str =
 ///
 /// A vault from `new` writes as the host. One from [`NapiVault::bound`]
 /// writes as the caller its app host named (OF-063): its puts, batch puts,
-/// edges, vectors and deletes run as that caller, inside its session.
+/// edges, vectors and deletes run as that caller, inside its session, whose
+/// room its content reads compose over base (FIX 8119; `reads`).
 #[napi]
 pub struct NapiVault {
     vault: Arc<Vault>,
@@ -102,6 +118,26 @@ impl NapiVault {
             BOUND_WRITE_UNSERVED,
             &["Make this write on the unbound vault, which writes as the host."],
         )))
+    }
+
+    /// One frame of [`Self::batch_put_entities`], in one transaction.
+    fn put_entity_frame(&self, puts: &[RawEntityPut<'_>]) -> napi::Result<()> {
+        if let Some(memory) = self.bound_memory() {
+            return memory.raw_put_entities(puts).map_err(facade_error);
+        }
+
+        let mut batch = self.vault.batch();
+        for put in puts {
+            batch = batch.put(
+                &put.id,
+                put.entity_type,
+                put.occurred,
+                put.learned_at,
+                put.data,
+            );
+        }
+
+        batch.commit().map_err(to_napi_err)
     }
 }
 
@@ -155,11 +191,13 @@ impl NapiVault {
     /// `new`, then this install's own machine profile from the vault's host
     /// root secret (FIX 4730), so the owner's acts carry from it. With
     /// `initializeRoot`, a store this open creates is rooted under the
-    /// secret first, as a new local-origin vault. A secret that cannot
-    /// profile the install refuses the open with the engine's reason; a
-    /// secret that is not the vault's settled root, over a profile that
-    /// already stands, opens and says so in `wrongHostRoot`. `deviceClass`
-    /// is `new`'s (FIX 3833).
+    /// secret first, as a new local-origin vault. With
+    /// `holdCheckpointRootSigner` (FIX 5343) the vault holds this
+    /// install's root as its checkpoint signer, unless the secret went
+    /// unused. A secret that cannot profile the install refuses the open
+    /// with the engine's reason; a secret that is not the vault's settled
+    /// root, over a profile that already stands, opens and says so in
+    /// `wrongHostRoot`. `deviceClass` is `new`'s (FIX 3833).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
@@ -196,7 +234,9 @@ impl NapiVault {
     /// owner grade, once their transaction proves the actor; its delete runs
     /// the `vault.delete` door (owner-only; an id naming no record is refused
     /// `INVENTED_REFERENCE`). A codebase snapshot or inbound route, which has
-    /// no caller-bound door, is refused there.
+    /// no caller-bound door, is refused there. Inside a session that is off
+    /// record, its puts, edges and vectors stage in the room, and its entity,
+    /// type and edge reads read the room over base (FIX 8119).
     #[napi]
     pub fn bound(
         &self,
@@ -272,10 +312,7 @@ impl NapiVault {
     #[napi]
     pub fn get_entity(&self, id: Buffer) -> napi::Result<Option<Buffer>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get(&eid)
-            .map(|opt| opt.map(std::convert::Into::into))
-            .map_err(to_napi_err)
+        Ok(self.entity_body(&eid)?.map(std::convert::Into::into))
     }
 
     /// Delete an entity by ID. Returns true if the entity existed.
@@ -292,7 +329,7 @@ impl NapiVault {
     #[napi]
     pub fn entity_exists(&self, id: Buffer) -> napi::Result<bool> {
         let eid = parse_entity_id(&id)?;
-        self.vault.entity_exists(&eid).map_err(to_napi_err)
+        self.entity_stored(&eid)
     }
 
     // ─── Edges ─────────────────────────────────────────────────
@@ -318,7 +355,7 @@ impl NapiVault {
     #[napi]
     pub fn edges_out(&self, src: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let src_id = parse_entity_id(&src)?;
-        let edges = self.vault.edges_out(&src_id).map_err(to_napi_err)?;
+        let edges = self.edges_of(&src_id, true)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
             let vad = e.vad;
@@ -340,7 +377,7 @@ impl NapiVault {
     #[napi]
     pub fn edges_in(&self, tgt: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let tgt_id = parse_entity_id(&tgt)?;
-        let edges = self.vault.edges_in(&tgt_id).map_err(to_napi_err)?;
+        let edges = self.edges_of(&tgt_id, false)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
             let vad = e.vad;
@@ -369,10 +406,7 @@ impl NapiVault {
     ) -> napi::Result<Vec<NapiScoredEntity>> {
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
         let f32_query = read_vector(&query, self.dimensions, "query vector")?;
-        let results = self
-            .vault
-            .search_vector(&f32_query, limit)
-            .map_err(to_napi_err)?;
+        let results = self.vector_hits(&f32_query, limit)?;
         Ok(results
             .into_iter()
             .map(|s| NapiScoredEntity {
@@ -391,7 +425,7 @@ impl NapiVault {
     ) -> napi::Result<Vec<NapiScoredEntity>> {
         let query = read_query(query)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
-        let results = self.vault.search_text(&query, limit).map_err(to_napi_err)?;
+        let results = self.text_hits(&query, limit)?;
         Ok(results
             .into_iter()
             .map(|s| NapiScoredEntity {
@@ -412,10 +446,9 @@ impl NapiVault {
     ) -> napi::Result<Vec<NapiScoredEntity>> {
         let query = read_query(query)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
-        let builder = self.vault.query().search_text(&query, limit).limit(limit);
-        let results = apply_codebase_filters(builder, repo_ref, project_id)?
-            .run()
-            .map_err(to_napi_err)?;
+        let scope = CodebaseScope::parse(repo_ref, project_id)?;
+        let results = self
+            .query_hits(|builder| scope.query(builder.search_text(&query, limit).limit(limit)))?;
         Ok(results
             .into_iter()
             .map(|s| NapiScoredEntity {
@@ -548,17 +581,14 @@ impl NapiVault {
             .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
             .transpose()?;
         refuse_unserved_media(media)?;
-        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
-
-        if let Some(text) = &query_text {
-            builder = builder.search_text(text, limit);
-        }
-
-        if let Some(vec) = &query_vector {
-            builder = builder.search_vector(vec, limit);
-        }
-
-        let output = builder.run_serialized().map_err(to_napi_err)?;
+        let output = self.pack_bytes(|builder| {
+            pack_query(
+                builder.format(pack_format).limit(limit),
+                query_text.as_deref(),
+                query_vector.as_deref(),
+                limit,
+            )
+        })?;
         String::from_utf8(output)
             .map_err(|e| napi::Error::from_reason(format!("context pack output is not utf8: {e}")))
     }
@@ -595,19 +625,15 @@ impl NapiVault {
             .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
             .transpose()?;
         refuse_unserved_media(media)?;
-        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
-
-        if let Some(text) = &query_text {
-            builder = builder.search_text(text, limit);
-        }
-
-        if let Some(vec) = &query_vector {
-            builder = builder.search_vector(vec, limit);
-        }
-
-        let output = apply_codebase_context_filters(builder, repo_ref, project_id)?
-            .run_serialized()
-            .map_err(to_napi_err)?;
+        let scope = CodebaseScope::parse(repo_ref, project_id)?;
+        let output = self.pack_bytes(|builder| {
+            scope.pack(pack_query(
+                builder.format(pack_format).limit(limit),
+                query_text.as_deref(),
+                query_vector.as_deref(),
+                limit,
+            ))
+        })?;
         String::from_utf8(output)
             .map_err(|e| napi::Error::from_reason(format!("context pack output is not utf8: {e}")))
     }
@@ -636,10 +662,15 @@ impl NapiVault {
 
     // ─── Batch Writes ──────────────────────────────────────────
 
-    /// Write multiple entities in a single atomic transaction.
+    /// Write multiple entities, in frames of `NAPI_BATCH_FRAME_ENTITIES`
+    /// (FIX 11125): every entity is checked first, then each frame is written
+    /// in order in one atomic transaction, so a batch within one frame is
+    /// one transaction, as before, and a larger one is written whole rather
+    /// than refused. A frame that fails stops the call with its own error;
+    /// the frames before it stay written.
     #[napi]
     pub fn batch_put_entities(&self, entities: Array<'_>) -> napi::Result<()> {
-        let entities: Vec<NapiBatchEntity> = read_bounded_array(&entities, validate_batch_size)?;
+        let entities: Vec<NapiBatchEntity> = read_bounded_array(&entities, |_| Ok(()))?;
         for e in &entities {
             validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
         }
@@ -657,22 +688,8 @@ impl NapiVault {
                 data: e.data.as_ref(),
             });
         }
-        if let Some(memory) = self.bound_memory() {
-            return memory.raw_put_entities(&puts).map_err(facade_error);
-        }
-
-        let mut batch = self.vault.batch();
-        for put in &puts {
-            batch = batch.put(
-                &put.id,
-                put.entity_type,
-                put.occurred,
-                put.learned_at,
-                put.data,
-            );
-        }
-
-        batch.commit().map_err(to_napi_err)
+        puts.chunks(NAPI_BATCH_FRAME_ENTITIES)
+            .try_for_each(|frame| self.put_entity_frame(frame))
     }
 
     // ─── Tree Queries ──────────────────────────────────────────
@@ -681,17 +698,14 @@ impl NapiVault {
     #[napi]
     pub fn get_entity_type(&self, id: Buffer) -> napi::Result<Option<u32>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get_entity_type(&eid)
-            .map(|opt| opt.map(u32::from))
-            .map_err(to_napi_err)
+        Ok(self.entity_type_of(&eid)?.map(u32::from))
     }
 
     /// Return all entity IDs of a given type.
     #[napi]
     pub fn entities_by_type(&self, entity_type: u32) -> napi::Result<Vec<Buffer>> {
         let etype = parse_u8(entity_type, "entity_type")?;
-        let ids = self.vault.entities_by_type(etype).map_err(to_napi_err)?;
+        let ids = self.ids_of_type(etype)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -708,10 +722,7 @@ impl NapiVault {
         let tgt_type = target_type
             .map(|t| parse_u8(t, "target_type"))
             .transpose()?;
-        let ids = self
-            .vault
-            .targets(&src_id, edge_kind, tgt_type)
-            .map_err(to_napi_err)?;
+        let ids = self.peers_of(&src_id, edge_kind, tgt_type, true)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -728,10 +739,7 @@ impl NapiVault {
         let src_type = source_type
             .map(|t| parse_u8(t, "source_type"))
             .transpose()?;
-        let ids = self
-            .vault
-            .sources(&tgt_id, edge_kind, src_type)
-            .map_err(to_napi_err)?;
+        let ids = self.peers_of(&tgt_id, edge_kind, src_type, false)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -739,10 +747,7 @@ impl NapiVault {
     #[napi]
     pub fn subtree(&self, root: Buffer, max_depth: u32) -> napi::Result<Vec<NapiSubtreeEntry>> {
         let root_id = parse_entity_id(&root)?;
-        let entries = self
-            .vault
-            .subtree(&root_id, max_depth)
-            .map_err(to_napi_err)?;
+        let entries = self.subtree_of(&root_id, max_depth)?;
         Ok(entries
             .into_iter()
             .map(|(id, depth)| NapiSubtreeEntry {
@@ -756,7 +761,7 @@ impl NapiVault {
     #[napi]
     pub fn ancestors(&self, node: Buffer) -> napi::Result<Vec<Buffer>> {
         let node_id = parse_entity_id(&node)?;
-        let ids = self.vault.ancestors(&node_id).map_err(to_napi_err)?;
+        let ids = self.ancestors_of(&node_id)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -765,8 +770,6 @@ impl NapiVault {
     pub fn would_create_cycle(&self, node: Buffer, target: Buffer) -> napi::Result<bool> {
         let node_id = parse_entity_id(&node)?;
         let target_id = parse_entity_id(&target)?;
-        self.vault
-            .would_create_cycle(&node_id, &target_id)
-            .map_err(to_napi_err)
+        self.cycle_through(&node_id, &target_id)
     }
 }

@@ -47,6 +47,7 @@
 //! codecs are the shared ones in `oneiron_crypto::backup`; the engine reads
 //! version 2 only.
 mod manifest;
+mod payload_inventory;
 mod sink;
 
 use std::fs::File;
@@ -62,6 +63,7 @@ use oneiron_crypto::backup::{
 };
 
 use self::manifest::StreamEntry;
+pub(super) use self::payload_inventory::write_payload_inventory;
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::admission::{
@@ -97,7 +99,7 @@ fn binding_mismatch() -> Error {
 /// host without the vault unlocks it from a wrap the artifact carries
 /// ([`CheckpointKey::unlock`]) and says whom it trusts.
 pub struct CheckpointKey {
-    vault_id: [u8; 32],
+    pub(super) vault_id: [u8; 32],
     kek: Kek,
     /// The data key's custody-head subkey, which opens a custody head's
     /// host-readable compartments on a host without the vault (KS-4).
@@ -114,6 +116,12 @@ pub struct CheckpointKey {
     /// set only by [`CheckpointKey::with_wake_sequence_floor`]; `None` for a
     /// historical restore and a local open, which compare nothing.
     wake_floor: Option<u64>,
+    /// The family a host's worker opened from the artifact's host-private
+    /// member, for a cold restore (`with_artifact_host_holds`, FIX 6817).
+    pub(super) artifact_host_holds: Option<Box<super::ArtifactHostOrderHolds>>,
+    /// The signers the vault's mode roots delegated, trusted beside `trust`
+    /// (`trusting_mode_roots`, FIX 968).
+    pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -169,6 +177,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -206,6 +216,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: Some(Box::new(expected.clone())),
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -232,13 +244,15 @@ impl CheckpointKey {
         self.opened.as_ref()
     }
 
-    /// [`CheckpointKey::unlock`] with this install's keystore at the platform
-    /// defaults, from the device wrap it holds a slot for, trusting the
-    /// signers whose seeds that keystore holds. `vault_dir` is the vault's
-    /// directory, which the keystore must lie outside.
-    pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
-        let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
-            .map_err(crate::world_keys::keystore_error)?;
+    /// [`CheckpointKey::unlock`] with this install's keystore, trusting its signers;
+    /// `None` is a host with none, which unlocks nothing (FIX 12225).
+    pub fn unlock_on_this_device(
+        path: &Path,
+        keystore: Option<&std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    ) -> Result<Self> {
+        let keystore = keystore
+            .cloned()
+            .ok_or_else(commitment::no_keystore_for_restore)?;
         Ok(
             Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
                 .trusting_device(keystore),
@@ -293,6 +307,8 @@ impl Vault {
             opened: None,
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -313,6 +329,8 @@ impl Vault {
                 opened: None,
                 expected: None,
                 wake_floor: None,
+                artifact_host_holds: None,
+                delegated: None,
             },
         ))
     }
@@ -408,9 +426,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) custody: Option<crate::store::CustodyRequirement>,
     /// The checkpoint sequence its verified commitment signs (OF-570 (e)).
     pub(super) sequence: u64,
-    /// The payload compartments it carries, apart from its bodies (KS-7).
-    #[allow(dead_code, reason = "KS7-5 opens the compartments")]
-    pub(super) payload: Option<SealedPayload<'k>>,
+    /// The snapshot id its verified commitment signs.
+    pub(super) snapshot: [u8; 32],
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -420,6 +437,8 @@ pub(super) struct SealedBodies<'k> {
     sealer: Sealer<'k>,
     /// Each body's manifest line and its frames (offset, length).
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
+    /// The payload compartments it carries, apart from its bodies (KS-7).
+    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// Opens the artifact at `path` with `key`: its manifest, checked against the
@@ -473,6 +492,7 @@ pub(super) fn open_artifact_file(
     let commitment_bytes = read_at(&mut file, signed_at + 4, commitment_len)?;
     let commitment = commitment::verify(
         &key.trust,
+        key.delegated_signers(),
         &key.vault_id,
         &commitment_bytes,
         &read_at(&mut file, record_at + 4, record_len)?,
@@ -596,16 +616,16 @@ pub(super) fn open_artifact_file(
             file,
             sealer,
             streams,
+            payload,
         },
         custody: manifest.custody,
         sequence: commitment.sequence,
-        payload,
+        snapshot: prelude.snapshot,
     })
 }
 
 /// The payload compartments an opened artifact carries (KS-7), read apart
 /// from its bodies: each bundle's stream after the last body's.
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 pub(super) struct SealedPayload<'k> {
     pub(super) section: PayloadSection,
     file: File,
@@ -615,8 +635,12 @@ pub(super) struct SealedPayload<'k> {
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
 }
 
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 impl SealedPayload<'_> {
+    /// The vault its compartments are sealed for.
+    pub(super) fn vault_id(&self) -> [u8; 32] {
+        self.sealer.key.vault_id
+    }
+
     /// The `index`th payload stream's bytes, each chunk checked against the
     /// manifest and opened as it is read, the whole checked after.
     pub(super) fn stream(&mut self, index: usize) -> Result<Vec<u8>> {

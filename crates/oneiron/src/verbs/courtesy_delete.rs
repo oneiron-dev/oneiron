@@ -47,6 +47,9 @@ pub struct CourtesyDeleteSendRequest {
 pub struct CourtesyDeleteSent {
     /// The ask's request id, as 32 hex.
     pub request: String,
+    /// Every page's request id of the paged selection, in queue order; the
+    /// first is `request` (FIX 11802).
+    pub pages: Vec<String>,
     /// The ended pact, as 64 hex.
     pub pact: String,
     pub recipient: String,
@@ -185,7 +188,7 @@ pub fn courtesy_delete_host_only<T, I>(
         format!(
             "{verb} runs on a server's own authority key and courtesy outbox; an embedded vault has neither"
         ),
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 
@@ -205,7 +208,8 @@ fn rfc3339_secs(unix_seconds: u64) -> String {
 #[must_use]
 pub fn courtesy_delete_sent_ask(notice: CooperativeDeletionNotice) -> CourtesyDeleteSent {
     CourtesyDeleteSent {
-        request: notice.request_id,
+        request: notice.request_id.clone(),
+        pages: vec![notice.request_id],
         pact: notice.connection_id,
         recipient: notice.recipient_id,
         status: notice.status.as_str().to_owned(),

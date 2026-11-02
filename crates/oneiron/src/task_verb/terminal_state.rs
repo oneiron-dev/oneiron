@@ -59,6 +59,9 @@ impl TaskTerminalDisposition {
 pub(super) enum TaskLapseCause {
     /// The absolute deadline the consult's asker set passed unanswered.
     ConsultDeadlineElapsed { deadline_at: u64 },
+    /// That deadline passed while the consult still waited for its
+    /// ConsultAssignee fact: nobody ever stood to answer it.
+    ConsultAssigneeMissing { deadline_at: u64 },
 }
 
 impl TaskLapseCause {
@@ -67,6 +70,18 @@ impl TaskLapseCause {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::ConsultDeadlineElapsed { .. } => "consult_deadline_elapsed",
+            Self::ConsultAssigneeMissing { .. } => {
+                super::consult_assignee_wait::CONSULT_ASSIGNEE_MISSING
+            }
+        }
+    }
+
+    /// The deadline whose passing enacted the lapse.
+    #[must_use]
+    pub(super) const fn deadline_at(self) -> u64 {
+        match self {
+            Self::ConsultDeadlineElapsed { deadline_at }
+            | Self::ConsultAssigneeMissing { deadline_at } => deadline_at,
         }
     }
 }

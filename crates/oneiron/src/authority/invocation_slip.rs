@@ -24,6 +24,20 @@ impl InvocationSlipBinding {
     pub fn credential_token(&self) -> Result<String> {
         self.slip.to_token()
     }
+
+    /// The slip this binding keeps, as signed (FIX 6108): no authority.
+    pub(super) const fn slip(&self) -> &CapabilitySlip {
+        &self.slip
+    }
+
+    /// Whether this binding still proves the request it was admitted on:
+    /// the logged mint, the host's and every caveat's signature, and the
+    /// holder's over its challenge ([`CapabilitySlip::verify_origin`]). No
+    /// standing is judged.
+    pub(super) fn verify_origin(&self, fold: &super::AuthorityFold) -> Result<()> {
+        self.slip
+            .verify_origin(fold, &self.challenge, &self.signature)
+    }
 }
 
 impl std::fmt::Debug for InvocationSlipBinding {
@@ -119,5 +133,18 @@ impl Vault {
             return Err(invalid_authority());
         }
         Ok(verified)
+    }
+
+    /// Whether the slip `binding` keeps was positively withdrawn in `txn`
+    /// (FIX 11592): the fold records it, or an ancestor, revoked. Queued work
+    /// its request carried ends on that alone; a slip that merely no longer
+    /// verifies, or a fold that does not read, is not this.
+    pub(crate) fn invocation_slip_revoked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &InvocationSlipBinding,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(fold.slips.is_revoked(&binding.slip.claims.slip_id))
     }
 }

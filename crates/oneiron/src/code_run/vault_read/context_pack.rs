@@ -180,6 +180,8 @@ pub struct CoreContextPackStats {
     pub cosine_ghosts_dampened: usize,
     /// CLAIM records suppressed by the read-path gates.
     pub claims_suppressed: usize,
+    /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
+    pub deadline_exceeded: bool,
     /// Token accounting.
     pub tokens: CoreContextPackTokenStats,
     /// Items truncated.

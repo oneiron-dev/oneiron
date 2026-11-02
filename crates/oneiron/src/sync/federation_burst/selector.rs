@@ -66,7 +66,15 @@ pub fn prepare_selector_fetch(
     payload: &[u8],
 ) -> Result<PreparedSelectorFetch> {
     let peer = peer_for_request(vault, principal, scope, payload)?;
-    let (decision, work) = admit_work(vault, &peer, key, WorkKind::Selector, payload, 1, None)?;
+    let (decision, work) = admit_work(
+        vault,
+        &peer,
+        key,
+        WorkKind::Selector,
+        payload,
+        (1, &[]),
+        None,
+    )?;
     Ok(PreparedSelectorFetch {
         selector: peer.selector.clone(),
         peer,
@@ -103,7 +111,17 @@ pub fn replay_selector_fetch(
             ));
         }
     };
-    work.revalidate_authority_in_txn(vault, &txn, &peer)?;
+    // A read held under an older grant or pact scope, or past its wait, ends
+    // with its typed receipt, and the peer sends a new request (FIX 7997,
+    // 7999).
+    let ended = work.ended_in_txn(vault, &txn, &peer, vault.now_recorded_at())?;
+    if let Some(state) = ended {
+        drop(txn);
+        work.retire(vault, &peer, state)?;
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::FederationReplayMismatch,
+        ));
+    }
     Ok(PreparedSelectorFetch {
         selector: peer.selector.clone(),
         peer,

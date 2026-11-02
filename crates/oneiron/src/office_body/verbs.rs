@@ -17,7 +17,7 @@ use super::{
     ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
     XlsxStyle, XlsxTable,
 };
-use crate::batch::secret_scan::LiftedKeys;
+use crate::batch::secret_scan::{LiftedKeys, mask_unplaced_json};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -132,16 +132,13 @@ pub struct OfficeBodyEditRequest {
     pub made_by: Option<serde_json::Value>,
 }
 
-/// `vault.artifacts.body.fork.open`: a fork of the live body for machine work
-/// in the run `run_root_ref`. A DOCX or XLSX fork joins `proposal_ref`, an
-/// unsettled proposal on the same artifact; absent, it opens its own under
-/// the fork's id.
+/// `vault.artifacts.body.fork.open`: a fork of the live body for machine work.
+/// A DOCX or XLSX fork joins `proposal_ref`, an unsettled proposal on the
+/// same artifact; absent, it opens its own under the fork's id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyForkOpenRequest {
     pub artifact_ref: String,
-    #[serde(default)]
-    pub run_root_ref: Option<String>,
     #[serde(default)]
     pub proposal_ref: Option<String>,
 }
@@ -367,7 +364,7 @@ fn invalid(reason: &str) -> MemoryError {
 
 impl Memory<'_> {
     pub(super) fn body_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     pub(super) fn body_ref(&self, reference: &str) -> MemoryResult<EntityId> {
@@ -449,7 +446,21 @@ impl Memory<'_> {
             return Ok(read.view);
         }
         let keys = read.keys;
-        self.lifted_view(read.view, || Ok(keys))
+        // A text that still shows a key no mark places reads as the door's
+        // placeholder to a masked reader, its owner's proposal filed, at an
+        // earlier frontier and at the head of a live body (FIX 8996, FIX 12233).
+        if !self.reads_lifted_keys_masked()? {
+            return Ok(read.view);
+        }
+        let mut value = serde_json::to_value(&read.view)
+            .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
+        let lifted = keys.mask_json(&mut value);
+        if !(mask_unplaced_json(&mut value) || lifted) {
+            return Ok(read.view);
+        }
+        Ok(serde_json::from_value(value).map_err(|_| {
+            crate::Error::InvariantViolation("a masked office body view did not decode")
+        })?)
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader
@@ -550,18 +561,12 @@ impl Memory<'_> {
 
     /// `vault.artifacts.body.fork.open`. The fork's run is the try a host
     /// bound this surface to, proved in the writer that commits the fork
-    /// (FIX 3551); `run_root_ref` stays the caller's label, never what a run
-    /// scope matches. A surface no host bound opens a fork of no run.
+    /// (FIX 3551). A surface no host bound opens a fork of no run.
     pub fn artifacts_body_fork_open(
         &self,
         input: &OfficeBodyForkOpenRequest,
     ) -> MemoryResult<OfficeBodyFork> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        let run_root = input
-            .run_root_ref
-            .as_deref()
-            .map(|reference| self.body_ref(reference))
-            .transpose()?;
         let proposal = input
             .proposal_ref
             .as_deref()
@@ -574,7 +579,7 @@ impl Memory<'_> {
                 wtxn,
                 &artifact,
                 actor,
-                run_root.as_ref(),
+                None,
                 origin,
                 proposal.as_ref(),
             )?)

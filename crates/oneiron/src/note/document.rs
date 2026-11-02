@@ -2,6 +2,7 @@
 
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
+use crate::provenance::ActorStamp;
 use crate::{EntityId, WriteActor};
 use loro::cursor::{Cursor, Side};
 use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
@@ -15,7 +16,7 @@ pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
 /// are ordered, so each operation sees the preceding operations in its batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NoteEdit {
+pub struct NoteScalarEdit {
     pub start: usize,
     pub delete: usize,
     pub insert: String,
@@ -63,7 +64,7 @@ pub struct NoteDocumentView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NoteEditOutcome {
+pub enum NoteScalarEditOutcome {
     Applied(NoteDocumentView),
     Proposed(CommitReceipt),
 }
@@ -98,25 +99,29 @@ impl NotePin {
             return Err(invalid("NOTE citation exceeds bound"));
         }
         frontier(&self.frontier)?;
-        for (bytes, side) in [
-            (&self.start_cursor, Side::Left),
-            (&self.end_cursor, Side::Right),
-        ] {
-            let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
-            if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
-                return Err(invalid("NOTE cursor is not in the body"));
-            }
-            // Both endpoints name quoted characters, never a moving document
-            // boundary. The sides describe the edges of those characters.
-            if cursor.id.is_none() || cursor.side != side {
-                return Err(invalid("NOTE cursor is not a quoted character boundary"));
-            }
-        }
+        quoted_cursor(&self.start_cursor, Side::Left)?;
+        quoted_cursor(&self.end_cursor, Side::Right)?;
         if self.quote_hash != *blake3::hash(self.quote_text.as_bytes()).as_bytes() {
             return Err(invalid("NOTE quote hash mismatch"));
         }
         Ok(())
     }
+}
+
+/// A cited span's endpoint, decoded and checked for its shape: in the body
+/// text, on a quoted character, on `side`. A pin's validation and a live
+/// span's read judge it alike (FIX 10747).
+fn quoted_cursor(bytes: &[u8], side: Side) -> Result<Cursor> {
+    let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
+    if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
+        return Err(invalid("NOTE cursor is not in the body"));
+    }
+    // Both endpoints name quoted characters, never a moving document
+    // boundary. The sides describe the edges of those characters.
+    if cursor.id.is_none() || cursor.side != side {
+        return Err(invalid("NOTE cursor is not a quoted character boundary"));
+    }
+    Ok(cursor)
 }
 
 pub(super) struct NoteDocument {
@@ -150,9 +155,9 @@ impl NoteDocument {
         doc.get_text(BODY)
             .insert(0, body)
             .map_err(|_| invalid("NOTE birth insert"))?;
-        stamp_author(&doc, author);
+        stamp_birth(&doc);
         let born = Self { doc, id };
-        super::operations::record_authorship(
+        super::operations::record_birth_authorship(
             &born,
             &super::NoteAuthorship {
                 operation: id,
@@ -289,13 +294,15 @@ impl NoteDocument {
         Ok(())
     }
 
-    pub(super) fn set_title(&self, title: &str, actor: &WriteActor) -> Result<()> {
+    /// Sets the title, its commit naming the writer's stamp token `stamp`
+    /// (FIX 10930).
+    pub(super) fn set_title(&self, title: &str, stamp: ActorStamp) -> Result<()> {
         validate_title(title)?;
         self.doc
             .get_map(META)
             .insert("title", title)
             .map_err(|_| invalid("NOTE title insert"))?;
-        stamp(&self.doc, actor);
+        commit_stamped(&self.doc, stamp);
         Ok(())
     }
 
@@ -314,7 +321,9 @@ impl NoteDocument {
         Ok(pins)
     }
 
-    pub(super) fn add_pin(&self, pin: &NotePin, actor: &WriteActor) -> Result<()> {
+    /// Adds `pin`, its commit naming the writer's stamp token `stamp` (FIX
+    /// 10930).
+    pub(super) fn add_pin(&self, pin: &NotePin, stamp: ActorStamp) -> Result<()> {
         pin.validate()?;
         if self.pins()?.len() >= 256 {
             return Err(invalid("NOTE citation cap reached"));
@@ -325,7 +334,7 @@ impl NoteDocument {
             .get_map("pins")
             .insert(&key, value)
             .map_err(|_| invalid("NOTE pin insert"))?;
-        stamp(&self.doc, actor);
+        commit_stamped(&self.doc, stamp);
         Ok(())
     }
 
@@ -382,15 +391,16 @@ impl NoteDocument {
 
     /// The live characters a cited span's cursors name and their text, when
     /// both still stand and the text hashes to `quote_hash`; `None` is
-    /// drift. A span with no claim resolves alike (FIX 9814).
+    /// drift. A span with no claim resolves alike (FIX 9814), its cursors
+    /// checked for a pin's shape first (FIX 10747).
     pub(super) fn live_span(
         &self,
         start_cursor: &[u8],
         end_cursor: &[u8],
         quote_hash: &[u8; 32],
     ) -> Result<Option<(usize, usize, String)>> {
-        let start = Cursor::decode(start_cursor).map_err(|_| invalid("NOTE start cursor"))?;
-        let end = Cursor::decode(end_cursor).map_err(|_| invalid("NOTE end cursor"))?;
+        let start = quoted_cursor(start_cursor, Side::Left)?;
+        let end = quoted_cursor(end_cursor, Side::Right)?;
         // Resolve only live character IDs. get_cursor_pos falls back to
         // historical replay for deleted anchors, which cannot run safely on
         // StateOnly documents whose dependencies have been erased (Loro 1.13).
@@ -414,13 +424,14 @@ impl NoteDocument {
     }
 
     /// Edit a fork of the client's actual base; merge its stamped operations
-    /// into the live document. Concurrent batches therefore never overwrite a
+    /// into the live document, each commit naming the writer's stamp token
+    /// `stamp` (FIX 10930). Concurrent batches therefore never overwrite a
     /// whole markdown body or use offsets against the wrong frontier.
     pub(super) fn edit(
         &self,
         base: &[u8],
-        edits: &[NoteEdit],
-        actor: &WriteActor,
+        edits: &[NoteScalarEdit],
+        stamp: ActorStamp,
         cited_by: &[NotePin],
     ) -> Result<bool> {
         if edits.len() > 256 {
@@ -461,9 +472,9 @@ impl NoteDocument {
             if text.len_utf8() > MAX_NOTE_BYTES {
                 return Err(invalid("NOTE body exceeds bound"));
             }
-            stamp(&base_doc.doc, actor);
+            commit_stamped(&base_doc.doc, stamp);
         }
-        stamp(&base_doc.doc, actor);
+        commit_stamped(&base_doc.doc, stamp);
         let updates = base_doc
             .doc
             .export(ExportMode::updates(&self.doc.oplog_vv()))
@@ -486,15 +497,24 @@ impl NoteDocument {
     }
 }
 
-fn stamp(doc: &LoroDoc, actor: &WriteActor) {
-    stamp_author(doc, super::NoteActor::Actor(actor.entity_ref()));
+/// The engine stamp of a live write, naming the writer's stamp token in the
+/// actor's place (FIX 10930).
+fn commit_stamped(doc: &LoroDoc, stamp: ActorStamp) {
+    commit_naming(doc, &stamp.token.to_hex());
 }
 
-/// The engine stamp naming `author`, or no one once erased.
-fn stamp_author(doc: &LoroDoc, author: super::NoteActor) {
-    doc.commit_with(
-        CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={}", author.to_wire())),
-    );
+/// The engine stamp of a birth: it names no one (FIX 10930). A birth is
+/// derived alike on every replica from the stored core, so it can name no
+/// device's stamp token, and its message is then the same on every replica
+/// whether or not the author was erased there. The author stays in the
+/// birth's authorship record.
+fn stamp_birth(doc: &LoroDoc) {
+    commit_naming(doc, &super::NoteActor::Erased.to_wire());
+}
+
+/// Commits `doc` under the engine stamp naming `named`.
+fn commit_naming(doc: &LoroDoc, named: &str) {
+    doc.commit_with(CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")));
 }
 
 /// A title is human metadata, not a body hash. Keep the socket check bounded.

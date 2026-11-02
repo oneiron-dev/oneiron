@@ -2,13 +2,13 @@
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
+use crate::EntityId;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
-use crate::{EntityId, WriteActor};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -172,7 +172,7 @@ impl Memory<'_> {
         now: u64,
         source: Option<Vec<crate::skill_hub::HubFile>>,
     ) -> MemoryResult<SkillAuthoringReceipt> {
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         verify_live_actor(self.vault, txn, actor)?;
         if self
             .vault
@@ -263,6 +263,10 @@ impl Memory<'_> {
     /// Forks a stored skill in one transaction. Import ancestry remains
     /// visible. The fork is generated for agent/daemon callers, never relabeled
     /// human-authored merely because the native owner fork door does so.
+    /// The fork copies only what the caller may read: this handle's bound
+    /// read admits the parent and the carrier its files load from in the
+    /// fork's writer, before either is read; an unreadable one answers as a
+    /// missing one.
     pub fn skill_fork(
         &self,
         parent: EntityId,
@@ -272,8 +276,9 @@ impl Memory<'_> {
     ) -> MemoryResult<SkillAuthoringReceipt> {
         let unlinked =
             crate::skill::forked_skill_prose_links(self, self.vault, &parent, "self.skills.fork")?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let receipt = self.with_verified_actor_write_txn(|txn| {
-            let actor = WriteActor::new(self.actor, self.actor_class);
+            let actor = self.write_actor();
             verify_live_actor(self.vault, txn, actor)?;
             require_authorship_in_txn(
                 self.vault,
@@ -292,7 +297,14 @@ impl Memory<'_> {
             if self.vault.get_raw_in(txn, &id)?.is_some() {
                 return Err(Error::ConcurrentWrite("skill fork target already exists").into());
             }
+            super::coping_doors::require_readable(&lane, txn, &[parent])?;
             let stored = self.vault.read_skill_record_in_txn(txn, &parent)?;
+            if let Some(carrier) = self
+                .vault
+                .runtime_package_carrier_in_txn(txn, &parent, &stored)?
+            {
+                super::coping_doors::require_readable(&lane, txn, &[carrier])?;
+            }
             if stored.skill_id == skill_id {
                 return Err(authority_denied("fork must use its own skill identity").into());
             }
@@ -357,7 +369,7 @@ impl Memory<'_> {
         record: &mut SkillRecord,
         now: u64,
     ) -> MemoryResult<(EntityId, crate::store::GateDecisionId)> {
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         record.source = if self.actor_class == EdgeActorClass::Human {
             ClaimSource::UserStated
         } else {

@@ -8,26 +8,32 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::entity_id;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/intents", post(state_intent))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/intents",
+            summary: "The owner states an intent in his own words (FIX 8949): `text` (required, his exact words) and an optional `message` (32 hex, the MESSAGE they came from). They land as an Approved, UserStated `profile.intent` claim about him, citing that MESSAGE when one is named. Answers `{claim}`, the claim's id as 32 hex.",
+            row: None,
+        },
+        post(state_intent),
+    )]
 }
 
 /// The owner's intent: his exact words, and the MESSAGE (32 hex) they came
 /// from, when there is one.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct StateIntent {
     text: String,
@@ -36,19 +42,29 @@ struct StateIntent {
 }
 
 /// The intent's claim, as 32 hex.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct IntentStated {
     claim: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/intents`'s body (FIX 11103): [`StateIntent`].
+pub(crate) fn state_intent_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<StateIntent>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/intents`'s answer (FIX 11103): [`IntentStated`].
+pub(crate) fn intent_stated_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<IntentStated>()
 }
 
 /// `POST /v1/owner/intents`: one intent, in the owner's words.
 async fn state_intent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<StateIntent>, JsonRejection>,
+    payload: OwnerJsonBody<StateIntent>,
 ) -> OwnerReply<IntentStated> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let stated = blocking(move || {
         let message = request
             .message

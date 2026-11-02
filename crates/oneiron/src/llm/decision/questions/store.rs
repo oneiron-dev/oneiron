@@ -4,6 +4,7 @@
 
 use super::super::types::invalid;
 use super::records::*;
+use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 use serde::Serialize;
@@ -125,10 +126,38 @@ pub(super) const QUESTION_LABEL: SideTable<LabelKey, OutcomeLabel, Named> =
 /// Stores the asker's new standing question from its author's
 /// `definition`: the engine mints its id and sets its version to 1. The
 /// authenticated `asker` is its principal, and its class is kept on the
-/// version (FIX 1588).
+/// version (FIX 1588). No caller's lane saved it, so it reads under the
+/// principal's own ([`FrozenReadLane::principal`]).
 pub fn create_question(
     vault: &Vault,
     asker: WriteActor,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    create_question_reading(vault, asker, FrozenReadLane::principal(), definition, now)
+}
+
+/// [`create_question`] saved through `lane`, the asker's own live read lane
+/// at its door: the engine freezes that lane onto the version (OF-506, FIX
+/// 1857), so every later read of the question stays inside it.
+///
+/// # Errors
+/// As [`create_question`], and [`FrozenReadLane::freeze`]'s refusal of a
+/// lane whose bound has no frozen form.
+pub fn create_question_with_lane(
+    vault: &Vault,
+    asker: WriteActor,
+    lane: &ScopedRead<'_>,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    create_question_reading(vault, asker, lane.freeze()?, definition, now)
+}
+
+fn create_question_reading(
+    vault: &Vault,
+    asker: WriteActor,
+    read_lane: FrozenReadLane,
     definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
@@ -143,6 +172,7 @@ pub fn create_question(
         definition,
         created_at: now,
         asker_class: Some(asker.actor_class().into()),
+        read_lane,
     };
     vault.with_write_txn_grouped(|txn| {
         let id = record.definition.question.id;
@@ -235,10 +265,57 @@ pub fn read_question_schedule(
 /// whole replacement `definition` over `expected_version`: the engine pins
 /// its id to `id` and its version to the next one, in the writing
 /// transaction. The new version keeps the authenticated `asker`'s class
-/// (FIX 1588).
+/// (FIX 1588), and reads under the principal's own lane.
 pub fn edit_question(
     vault: &Vault,
     asker: WriteActor,
+    id: EntityId,
+    expected_version: u32,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    edit_question_reading(
+        vault,
+        asker,
+        FrozenReadLane::principal(),
+        id,
+        expected_version,
+        definition,
+        now,
+    )
+}
+
+/// [`edit_question`] saved through `lane`, the asker's own live read lane at
+/// its door: the new version keeps that lane frozen (OF-506, FIX 1857).
+///
+/// # Errors
+/// As [`edit_question`], and [`FrozenReadLane::freeze`]'s refusal of a lane
+/// whose bound has no frozen form.
+pub fn edit_question_with_lane(
+    vault: &Vault,
+    asker: WriteActor,
+    lane: &ScopedRead<'_>,
+    id: EntityId,
+    expected_version: u32,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    let read_lane = lane.freeze()?;
+    edit_question_reading(
+        vault,
+        asker,
+        read_lane,
+        id,
+        expected_version,
+        definition,
+        now,
+    )
+}
+
+fn edit_question_reading(
+    vault: &Vault,
+    asker: WriteActor,
+    read_lane: FrozenReadLane,
     id: EntityId,
     expected_version: u32,
     definition: QuestionDefinitionInput,
@@ -284,6 +361,7 @@ pub fn edit_question(
             definition,
             created_at: now,
             asker_class: Some(asker.actor_class().into()),
+            read_lane,
         };
         secret_scan_before_put(&record)?;
         QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version }, &record)?;

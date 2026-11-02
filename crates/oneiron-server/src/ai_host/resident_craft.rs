@@ -12,8 +12,10 @@
 //! manifest names what it was shown. A call with no attempt to stamp reads
 //! one snapshot and keeps the exact pack beside the reply. The message
 //! names each note's claim and revision beside its text, so a captured
-//! request that is sent again shows, and stamps, exactly what it showed.
-//! A craft that does not read leaves the call as it always ran.
+//! request that is sent again shows, and stamps, exactly what it showed; it
+//! is sent again only while each note still reads at that revision, with
+//! live support ([`craft_withdrawn`], FIX 8985). A craft that does not read
+//! leaves the call as it always ran.
 //!
 //! A wave plan speaks with its planner's instructions for its requester: it
 //! is shown both crafts, each attributed (FIX 5777). The requester's travels
@@ -26,9 +28,9 @@ use std::collections::BTreeSet;
 
 use oneiron::actor_claims::{
     CraftNote, craft_message_entries, craft_message_text, resident_craft_pack,
-    resident_craft_pack_scoped,
+    resident_craft_pack_scoped, supported_craft_note,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry};
+use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use oneiron::memory::Memory;
 use oneiron::prompt::{PromptLayout, place_turn_context};
 use oneiron::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault};
@@ -47,16 +49,20 @@ pub(crate) struct SnapshotCraft {
 }
 
 /// The craft message a call on the queue attempt `attempt` sends as
-/// `resident`, read at `at`: each note loaded on the attempt through the
-/// resident's pack door. `None` without craft, or when it does not read.
+/// `resident`, read at `at`, with the row each note was read from: each
+/// note loaded on the attempt through the resident's pack door. `None`
+/// without craft, or when it does not read.
 pub(crate) fn queue_craft(
     vault: &Vault,
     attempt: AttemptId,
     resident: &EntityId,
     at: u64,
-) -> Option<LlmMessage> {
+) -> Option<(LlmMessage, Vec<EntityId>)> {
     match vault.load_resident_craft(attempt, resident, at) {
-        Ok(notes) => craft_message_text(&notes).map(system),
+        Ok(notes) => {
+            let rows = notes.iter().map(|note| note.claim).collect();
+            craft_message_text(&notes).map(|text| (system(text), rows))
+        }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a resident's craft did not read; its call goes on without it");
             None
@@ -194,11 +200,17 @@ pub(crate) fn stamp_planner_craft_exposure(
 
 /// The craft a captured `request` showed: the rows its craft messages
 /// name, the requester's and a wave plan's planner's alike (FIX 5912), then
-/// those of the turn context right before the request's last user message
-/// when that context is, whole, a craft carrier (FIX 6676), in their order,
-/// each claim revision once, stamped at `at`. Empty for one that shows
-/// none. No other user message is read.
-pub(crate) fn captured_craft(request: &LlmRequest, at: u64) -> Vec<ManifestEntry> {
+/// `trusted`, the rows the host's own snapshot read when it assembled the
+/// request and kept beside it (FIX 9439), in their order, each claim
+/// revision once, stamped at `at`. Empty for one that shows none. No user
+/// message is read: a craft carrier in the turn's context is known by the
+/// rows kept with it, never by its text, so a user's words shaped like one
+/// name nothing.
+pub(crate) fn captured_craft(
+    request: &LlmRequest,
+    trusted: &[ManifestEntry],
+    at: u64,
+) -> Vec<ManifestEntry> {
     let mut seen = BTreeSet::new();
     request
         .messages
@@ -206,9 +218,41 @@ pub(crate) fn captured_craft(request: &LlmRequest, at: u64) -> Vec<ManifestEntry
         .filter(|message| message.role == LlmMessageRole::System)
         .filter_map(|message| shown_craft(&message_text(message), at))
         .flatten()
-        .chain(carried_craft(&request.messages, at).into_iter().flatten())
+        .chain(trusted.iter().map(|entry| ManifestEntry {
+            at,
+            ..entry.clone()
+        }))
         .filter(|entry| seen.insert((entry.reference.clone(), entry.version.clone())))
         .collect()
+}
+
+/// Why the craft rows `entries` name may not be shown again (FIX 8985), as
+/// a captured request sent again from its kept prefix would show them. Each
+/// note must still read, at the revision it shows, with live support
+/// ([`supported_craft_note`]): one erased, or whose every cited TURN is, is
+/// `craft_unsupported`; one revised since is `craft_changed`; one that does
+/// not read now is `craft_unreadable`. `None` while every one may be shown
+/// again. Rows that are no actor claim are not craft.
+pub(crate) fn craft_withdrawn(vault: &Vault, entries: &[ManifestEntry]) -> Option<&'static str> {
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+    {
+        let Ok(claim) = EntityId::from_hex(&entry.reference) else {
+            return Some("craft_unreadable");
+        };
+        let body = match supported_craft_note(vault, &claim) {
+            Ok(Some(body)) => body,
+            Ok(None) => return Some("craft_unsupported"),
+            Err(_) => return Some("craft_unreadable"),
+        };
+        match CraftNote::new(claim, body) {
+            Ok(note) if note.revision == entry.version => {}
+            Ok(_) => return Some("craft_changed"),
+            Err(_) => return Some("craft_unreadable"),
+        }
+    }
+    None
 }
 
 /// The rows one system message's `text` shows: a craft message's own, or
@@ -293,24 +337,6 @@ fn carried(resident: &EntityId, craft: &LlmMessage) -> Option<LlmMessage> {
     })
 }
 
-/// The craft the carrier in `messages`' turn context names (FIX 6676): the
-/// user message right before the last user message, read only when its
-/// text is, whole, a carrier holding the craft carrier's own legend.
-fn carried_craft(messages: &[LlmMessage], at: u64) -> Option<Vec<ManifestEntry>> {
-    let latest = messages
-        .iter()
-        .rposition(|message| message.role == LlmMessageRole::User)?;
-    let context = messages.get(latest.checked_sub(1)?)?;
-    if context.role != LlmMessageRole::User {
-        return None;
-    }
-    let carrier: CraftCarrier = serde_json::from_str(&message_text(context)).ok()?;
-    if carrier.resident_craft.legend != CRAFT_CARRIER_LEGEND {
-        return None;
-    }
-    craft_message_entries(&carrier.resident_craft.craft.to_string(), at)
-}
-
 fn system(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
@@ -318,7 +344,7 @@ fn system(text: String) -> LlmMessage {
     }
 }
 
-fn message_text(message: &LlmMessage) -> String {
+pub(super) fn message_text(message: &LlmMessage) -> String {
     message
         .content
         .iter()

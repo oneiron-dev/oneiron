@@ -71,6 +71,18 @@ pub trait CompactionBackend: Send + Sync {
     fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         None
     }
+    /// How many times the model seats behind this backend have come back
+    /// from an outage (FIX 1112). A run whose pass was held for the turn
+    /// tries again at its next breakpoint once this moves. A backend with no
+    /// such signal reads 0, and its holds last the turn as before.
+    fn recoveries(&self) -> u64 {
+        0
+    }
+    /// Whether a pass held on its payer (FIX 3740) may try again: the
+    /// owners said yes. A backend that bills no room payer reads `true`.
+    fn funded(&self) -> bool {
+        true
+    }
     /// Called once per flight, off the step loop, before its passes. A
     /// backend that writes as its agent (FIX 4465) freezes what the flight's
     /// calls wear, or says, typed, why this flight cannot be written as its
@@ -214,6 +226,9 @@ pub struct CompactionRequest {
     /// `DerivedFrom` set, so erasing one retires the summary and a reader
     /// who may not read one reads no summary.
     pub sources: Vec<EntityId>,
+    /// Whether the engine read this window's text from `sources` itself,
+    /// rather than receiving caller-asserted or outcome-scanned ids (FIX 6999).
+    pub window_read_from_sources: bool,
     /// What the agent asked the summary to keep (`self.compact({note})`,
     /// `self.fold(span, {note})`), as free text. Unlike a pin it need not
     /// occur in the window, and no check holds the summary to it.
@@ -269,6 +284,7 @@ impl CompactionRequest {
             },
             pins,
             sources,
+            window_read_from_sources: false,
             note: None,
             log: WindowLog::Conversation,
         })
@@ -764,6 +780,7 @@ impl CompactionDriver {
             window,
             Vec::new(),
             sources,
+            false,
             WindowLog::Conversation,
         )
     }
@@ -775,6 +792,7 @@ impl CompactionDriver {
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let prior = match log {
@@ -792,6 +810,7 @@ impl CompactionDriver {
             sources,
             prior,
             None,
+            window_read_from_sources,
             log,
         )
     }
@@ -809,6 +828,7 @@ impl CompactionDriver {
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
         note: Option<String>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
@@ -834,6 +854,7 @@ impl CompactionDriver {
             watermark,
             pins,
             sources,
+            window_read_from_sources,
             note,
             log,
         };

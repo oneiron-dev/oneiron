@@ -16,9 +16,9 @@ use crate::entity_id::EntityId;
 use crate::origin::mirror_strategy::OriginMirrorSyncStrategy;
 
 /// What one authenticated read saw at a mirror's ref before the plan froze.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum MirrorObservedTip {
+pub enum MirrorObservedTip {
     /// The mirror held no such ref: the push leases on its absence.
     Absent,
     /// The ref stood at this object, 40 lower hex: the push leases on it.
@@ -40,9 +40,9 @@ impl MirrorObservedTip {
 }
 
 /// Where one ref of a plan stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MirrorRefOutcome {
+pub enum MirrorRefOutcome {
     /// In a batch not yet claimed.
     Pending,
     /// Its batch (or its same-plan resend) was claimed and its child may be
@@ -69,6 +69,11 @@ pub(crate) enum MirrorRefOutcome {
     /// A full-auto ref the mirror already holds, or holds a descendant of:
     /// nothing to send, and never a rewind.
     Covered,
+    /// Never sent: the mirror is public or unstated and the publication
+    /// gate held the ref's history (FIX 7608 slice 9, A1; CALLS HOLD-AUTO).
+    /// The plan stays open: each later run reads it at the mirror and asks
+    /// the gate again before its same-plan send.
+    Held,
 }
 
 impl MirrorRefOutcome {
@@ -90,9 +95,19 @@ impl MirrorRefOutcome {
         matches!(self, Self::Applied | Self::ObservedApplied | Self::Covered)
     }
 
-    /// Whether only a reconcile read can say what became of it.
+    /// Whether only a reconcile read can say what became of it (a held
+    /// ref: what the mirror holds there before it asks the gate again).
     pub(crate) const fn unproven(self) -> bool {
-        matches!(self, Self::Dispatched | Self::Rejected | Self::Unknown)
+        matches!(
+            self,
+            Self::Dispatched | Self::Rejected | Self::Unknown | Self::Held
+        )
+    }
+
+    /// Whether the plan's later batches may go out past it: it needs
+    /// nothing more, or only the publication gate holds it.
+    pub(crate) const fn lets_plan_go_on(self) -> bool {
+        self.settled() || matches!(self, Self::Held)
     }
 }
 
@@ -150,9 +165,9 @@ pub(crate) struct MirrorPushPlan {
 }
 
 /// A batch's claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum MirrorBatchClaim {
+pub enum MirrorBatchClaim {
     Pending,
     /// Claimed at `at`, before its child ran.
     Claimed {

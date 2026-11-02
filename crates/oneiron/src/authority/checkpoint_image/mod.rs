@@ -58,8 +58,19 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 12: the fold admits frontier joins, and an image carries their bodies
 /// (FIX 7908). 13: an act-free custodial machine revision lands only as a
 /// bootstrap or its carry (FIX 7920), and a pact keeps each party's narrowing
-/// (FIX 7933).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 13;
+/// (FIX 7933). 14: an owner handover signs its grant ids and an image carries
+/// its body (FIX 5765). 15: an image keeps the fold state at each covered row
+/// off its frontier as replay evidence (FIX 3007), carries the bodies of home
+/// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
+/// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
+/// the fold keeps each setting's signed acts, the refused export acts and
+/// each agent-carried act's Grant, and an image carries the bodies of both
+/// ops (FIX 4624, FIX 5660). 17: the fold keeps each Grant a signed
+/// `SlipGrantRevoke` withdrew and its revoke proofs carry one (FIX 1978), a
+/// pact that ends keeps no plaintext scope, and one keyed digest over two
+/// scopes suspends the pact (FIX 7907). 18: a replay delta keeps a map
+/// field's changed entries alone (FIX 11262). 19: anchors sign joins (FIX 8498).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 19;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -69,8 +80,20 @@ pub const AUTHORITY_CHECKPOINT_V2_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// The context of an archive's content id ([`authority_archive_id`]).
 pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1";
 
+mod archive;
+mod replay;
 mod row;
 
+use archive::archive_id_of;
+pub use archive::{
+    AuthorityArchiveContent, AuthorityArchiveCustodian, AuthorityArchiveManifest,
+    authority_archive_id,
+};
+pub(super) use archive::{local_archive_custodian_in_txn, local_archive_manifest};
+pub(super) use replay::{
+    AUTHORITY_REPLAY_OVERFLOW, AUTHORITY_RESIDENCE_BODY_OVERFLOW, ReplayEvidence, ReplayPoint,
+    parents_first_of,
+};
 pub use row::AuthorityCheckpointRow;
 use row::shape_row;
 
@@ -147,105 +170,6 @@ pub struct AuthorityCheckpointUnresolved {
     pub stale_approvals: Vec<AuthorityEntryHash>,
 }
 
-/// One cold archive that holds covered rows' original signed scaffold: a
-/// content set and the machines that hold it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityArchiveManifest {
-    /// The archive's content id: [`authority_archive_id`] of this vault and
-    /// `rows`.
-    pub archive: [u8; 32],
-    /// The covered rows it holds, ascending.
-    pub rows: Vec<AuthorityEntryHash>,
-    /// The machines that hold them, ascending, at least one. Advertised
-    /// availability: a reader fetches and verifies each row itself.
-    pub custodians: Vec<AuthorityArchiveCustodian>,
-}
-
-/// A machine of the same vault that holds an archive's rows: its id and the
-/// machine key a connection proves it by ([`PeerMachine::Proven`]). A
-/// locator only: never a checkpoint root, a quorum key or a permission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityArchiveCustodian {
-    pub machine: EntityId,
-    pub proof_key: [u8; 32],
-}
-
-/// What an archive id commits: one vault's exact signed rows, by hash. Each
-/// row hash commits that row's canonical signed bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityArchiveContent {
-    pub vault_id: AuthorityVaultId,
-    /// Ascending, unique and nonempty.
-    pub rows: Vec<AuthorityEntryHash>,
-}
-
-/// An archive's content id: `BLAKE3-derive_key(AUTHORITY_ARCHIVE_ID_CONTEXT,
-/// vault_id ‖ row count (u64 BE) ‖ each row hash, ascending)`. A virtual
-/// content-set commitment: not a location, a checkpoint id or a proof that
-/// any copy is durable. Rows that are empty, unsorted or repeated refuse.
-pub fn authority_archive_id(content: &AuthorityArchiveContent) -> Result<[u8; 32]> {
-    archive_id_of(&content.vault_id, &content.rows)
-}
-
-fn archive_id_of(vault_id: &AuthorityVaultId, rows: &[AuthorityEntryHash]) -> Result<[u8; 32]> {
-    if rows.is_empty() || !ascending(rows) {
-        return Err(refused("authority archive content"));
-    }
-    let mut hasher = blake3::Hasher::new_derive_key(AUTHORITY_ARCHIVE_ID_CONTEXT);
-    hasher.update(vault_id);
-    hasher.update(&u64::try_from(rows.len()).unwrap_or(u64::MAX).to_be_bytes());
-    for row in rows {
-        hasher.update(row);
-    }
-    Ok(*hasher.finalize().as_bytes())
-}
-
-/// The one local-custody manifest a builder writes: `held_covered`, the
-/// covered rows this vault physically holds in original signed bytes
-/// (ascending), with this install's own proved machine as the only
-/// custodian. None when it holds none of them or no machine of its own is
-/// proved here: an image never names custody it cannot stand behind.
-pub(super) fn local_archive_manifest(
-    vault_id: &AuthorityVaultId,
-    held_covered: Vec<AuthorityEntryHash>,
-    custodian: Option<AuthorityArchiveCustodian>,
-) -> Result<Option<AuthorityArchiveManifest>> {
-    let Some(custodian) = custodian.filter(|_| !held_covered.is_empty()) else {
-        return Ok(None);
-    };
-    Ok(Some(AuthorityArchiveManifest {
-        archive: archive_id_of(vault_id, &held_covered)?,
-        rows: held_covered,
-        custodians: vec![custodian],
-    }))
-}
-
-/// This install's own machine as an archive custodian, when `fold` proves
-/// it: the install's machine id, with the signer loaded for it, whose
-/// machine key is the one `fold` names for that machine
-/// ([`AuthorityFold::machine_proof_key`]). None before the install has a
-/// machine, with no signer loaded, or when the fold names another key.
-pub(super) fn local_archive_custodian_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    fold: &AuthorityFold,
-) -> Result<Option<AuthorityArchiveCustodian>> {
-    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
-        return Ok(None);
-    };
-    let Some(signer) = vault
-        .loaded_install_signer()
-        .filter(|signer| signer.machine == machine)
-    else {
-        return Ok(None);
-    };
-    let proof_key = signer.machine_key.verifying_key().to_bytes();
-    Ok((fold.machine_proof_key(machine) == Some(proof_key))
-        .then_some(AuthorityArchiveCustodian { machine, proof_key }))
-}
-
 /// A portable authority checkpoint image (OF-469, checkpoint v2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -263,6 +187,17 @@ pub struct AuthorityCheckpointV2 {
     /// The fold state at each frontier row, keyed as `frontier`; None for a
     /// frontier row the fold holds no state for (a rejected row).
     pub(super) per_parent: BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+    /// The fold state at each covered row off the frontier, or the explicit
+    /// mark that the image keeps none (FIX 3007, [`ReplayEvidence`]).
+    pub(super) replay: ReplayEvidence,
+    /// Whether the image dropped its residence directive and result bodies
+    /// to fit the size cap (FIX 11400,
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`]): true where [`Self::within_cap`]
+    /// dropped them, as before #4095 carried them, so a fold past it asks
+    /// for that history as at fold 14. False, and omitted from the encoding,
+    /// where the image keeps them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) residence_overflow: bool,
     pub(super) aggregate: CheckpointAggregate,
     pub(super) safety: CheckpointSafety,
     pub unresolved: AuthorityCheckpointUnresolved,
@@ -364,6 +299,69 @@ impl AuthorityCheckpointV2 {
         &self.aggregate.fold
     }
 
+    /// The fold state the image keeps at covered row `hash`: a frontier
+    /// row's, or its replay point's (FIX 3007). `Some(None)` where the fold
+    /// holds no state there, and None where the image keeps no evidence of
+    /// one.
+    pub(super) fn state_at(&self, hash: &AuthorityEntryHash) -> Option<Option<FoldState>> {
+        match self.per_parent.get(hash) {
+            Some(state) => Some(state.clone()),
+            None => self.replay.state_at(hash),
+        }
+    }
+
+    /// Whether the image keeps evidence of the fold state at `hash`, read
+    /// without decoding it.
+    pub(super) fn keeps_state(&self, hash: &AuthorityEntryHash) -> bool {
+        self.per_parent.contains_key(hash) || self.replay.holds(hash)
+    }
+
+    /// Whether the fold holds no state at covered row `hash`, as the image
+    /// shows it.
+    pub(super) fn holds_rejected(&self, hash: &AuthorityEntryHash) -> bool {
+        matches!(self.per_parent.get(hash), Some(None)) || self.replay.rejected(hash)
+    }
+
+    /// `self` as it encodes, its replay evidence dropped for
+    /// [`AUTHORITY_REPLAY_OVERFLOW`] where the image would otherwise pass
+    /// the size cap (CALLS AUTHORITY_REPLAY_OVERFLOW), then its residence
+    /// directive and result bodies dropped for
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it still would (FIX
+    /// 11400, CALLS AUTHORITY_RESIDENCE_BODY_OVERFLOW). An image that fits
+    /// keeps both; where both fallbacks still pass the cap the caller
+    /// refuses as today, with no new refusal here.
+    pub(super) fn within_cap(mut self) -> Result<Self> {
+        let size = rmp_serde::to_vec_named(&self)
+            .map_err(|_| refused("checkpoint image does not encode"))?
+            .len();
+        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+            return Ok(self);
+        }
+        self.replay = AUTHORITY_REPLAY_OVERFLOW;
+        let size = rmp_serde::to_vec_named(&self)
+            .map_err(|_| refused("checkpoint image does not encode"))?
+            .len();
+        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+            return Ok(self);
+        }
+        for row in self.rows.values_mut() {
+            let is_residence = row.body.as_ref().is_some_and(|body| {
+                decode_authority_log_entry_body(body).is_ok_and(|entry| {
+                    matches!(
+                        entry.op,
+                        AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_)
+                    )
+                })
+            });
+            if is_residence {
+                row.body = None;
+                row.body_required = false;
+            }
+        }
+        self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
+        Ok(self)
+    }
+
     fn shape(&self) -> Result<()> {
         if self.fold_schema != AUTHORITY_CHECKPOINT_FOLD_SCHEMA {
             return Err(refused("checkpoint image fold schema"));
@@ -372,6 +370,13 @@ impl AuthorityCheckpointV2 {
             return Err(refused("checkpoint image vault"));
         }
         self.shape_rows()?;
+        self.replay.shape(
+            &self.vault_id,
+            self.covered
+                .iter()
+                .filter(|hash| !self.per_parent.contains_key(*hash))
+                .copied(),
+        )?;
         self.shape_state()?;
         self.shape_held_back()?;
         self.root_policy.canonical_bytes()?;
@@ -381,7 +386,9 @@ impl AuthorityCheckpointV2 {
     /// Covered, frontier and rows: sorted, unique, ancestor-closed from the
     /// genesis, each body present exactly where its summary requires one
     /// (the genesis always does), and each carried body the row it
-    /// summarizes.
+    /// summarizes. A residence row dropped for
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] requires and carries none, as
+    /// before #4095 carried them (FIX 11400).
     fn shape_rows(&self) -> Result<()> {
         if !ascending(&self.covered)
             || !ascending(&self.frontier)
@@ -621,7 +628,9 @@ impl Vault {
 
     /// [`Vault::build_authority_checkpoint_v2_in_txn`] folded under `posture`
     /// and, with `only`, of the held rows it names alone: the image a root
-    /// rebuilds another host's from, to check it (FIX 4882).
+    /// rebuilds another host's from, to check it (FIX 4882). Its residence
+    /// bodies fall back for [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it
+    /// would otherwise pass the cap (FIX 11400).
     pub(super) fn build_authority_checkpoint_v2_as_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -667,7 +676,7 @@ impl Vault {
         }
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
-        let capture = super::fold_resume::FoldCapture::for_image(frontier.clone());
+        let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());
         let (consent, local) = super::fold_engine::own_log_inputs(posture, pin.as_ref());
         // No first-seen time and no clock: nothing time-dependent is decided.
         let fold = super::fold_engine::fold_authority_log_inner(
@@ -688,6 +697,7 @@ impl Vault {
             .ok_or_else(|| refused("the covered authority history has no settled root"))?;
         let super::fold_resume::ImageFold {
             per_parent,
+            mut replay,
             merged,
             fold: mut once,
             safety,
@@ -746,6 +756,12 @@ impl Vault {
                 Ok((*hash, AuthorityCheckpointRow::of(entry, body)))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
+        // A covered row no fold judged (an invalid signature) holds no state.
+        if let ReplayEvidence::Rows(points) = &mut replay {
+            for hash in covered.iter().filter(|hash| !frontier.contains(*hash)) {
+                points.entry(*hash).or_insert(ReplayPoint::Rejected);
+            }
+        }
         let image = AuthorityCheckpointV2 {
             fold_schema: AUTHORITY_CHECKPOINT_FOLD_SCHEMA,
             vault_id,
@@ -754,6 +770,8 @@ impl Vault {
             frontier: frontier.into_iter().collect(),
             rows,
             per_parent,
+            replay,
+            residence_overflow: false,
             aggregate: CheckpointAggregate {
                 posture,
                 peers,
@@ -769,11 +787,12 @@ impl Vault {
         };
         // One serde round trip normalizes what a decoder would (an empty
         // scope set is the bottom), so the image re-encodes to its own bytes.
-        let normalized: AuthorityCheckpointV2 = rmp_serde::from_slice(
+        let normalized = rmp_serde::from_slice::<AuthorityCheckpointV2>(
             &rmp_serde::to_vec_named(&image)
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
-        .map_err(|_| refused("checkpoint image does not decode"))?;
+        .map_err(|_| refused("checkpoint image does not decode"))?
+        .within_cap()?;
         normalized.encode()?;
         Ok(normalized)
     }

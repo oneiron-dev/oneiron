@@ -12,13 +12,6 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// FIX 8907: `verbs` (the SDK home, once `task_verb::sdk`) still names these
-// task types as `super::…`; this private import keeps those bytes.
-use crate::task_verb::{
-    AttemptHandle, QueueTaskBrief, TaskAskSpec, TaskAskWord, TaskAssignee, TaskCreateSpec,
-    TaskReportBody, TaskTtl,
-};
-
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub mod config;
@@ -154,6 +147,7 @@ pub mod outbound_grant;
 pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod web_connector;
 pub mod web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
@@ -420,9 +414,8 @@ pub use crate::failure_ladder::{
 pub use crate::federation::FederationGrantScope;
 pub use crate::feedback::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
-    FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
-    FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
-    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES,
+    FEEDBACK_ENGINE_VERSION_MAX_BYTES, FEEDBACK_LOGICAL_SEND_PREFIX,
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
     FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
     FEEDBACK_SEND_VERB, FEEDBACK_VERBS, FeedbackApproval, FeedbackApprovalScope, FeedbackBundle,

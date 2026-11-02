@@ -9,6 +9,7 @@ use crate::dreamer_consolidation::provenance::KeptDecision;
 
 mod cited;
 mod corrections;
+mod decided;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
@@ -19,7 +20,7 @@ pub(in crate::dreamer_consolidation) use wire::{
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
     resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
+use wire::{authored_fallback, entity_id_from_hex, parse_candidate};
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -48,6 +49,7 @@ impl ConsolidationExecutor<'_> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
+        let keyless = call.inference.selected_keyless();
         let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
             .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
@@ -85,6 +87,7 @@ impl ConsolidationExecutor<'_> {
                 // the claim fields. The reply meets the contract here instead.
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: keyless,
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
@@ -97,7 +100,8 @@ impl ConsolidationExecutor<'_> {
     /// The candidates one child's `scope` can take from `response`, before
     /// the claim each corrects is decided, and how many it cannot. Its
     /// labels, quotes and declared people bind through `ctx`, its call's
-    /// own map. Decode never fails the partition over one candidate: one it
+    /// own map. Each keeps `sources`, the rows of the call that produced
+    /// it. Decode never fails the partition over one candidate: one it
     /// cannot take (a candidate breaking a rule such as the evidence rules,
     /// or one in a reply stored before the step checked candidates) is not
     /// written, and is counted.
@@ -106,6 +110,7 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         scope: &'s crate::llm::Scope,
         ctx: ReplyContext<'_>,
+        sources: &[EntityId],
     ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
         let items = extraction_reply(response)?.candidates;
         let items = items.as_slice();
@@ -120,11 +125,15 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
+        let authored = authored_fallback(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, ctx, scope) {
-                Ok(candidate) => parsed.push(candidate),
+            match parse_candidate(item, ctx, scope, authored) {
+                Ok(mut candidate) => {
+                    candidate.sources = sources.to_vec();
+                    parsed.push(candidate);
+                }
                 Err(reason) => {
                     skipped += 1;
                     tracing::warn!(
@@ -201,6 +210,15 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     evidence_turn_refs: Vec<EntityId>,
     project: EntityId,
     prospective_queries: Vec<String>,
+    /// The rows of the extraction call that produced it (FIX 11526).
+    sources: Vec<EntityId>,
+}
+
+impl ParsedCandidate<'_> {
+    /// The rows of the extraction call that produced it.
+    pub(in crate::dreamer_consolidation) fn sources(&self) -> &[EntityId] {
+        &self.sources
+    }
 }
 
 /// One parsed candidate as the branch takes it, or why it is not written.
@@ -238,9 +256,11 @@ fn build_resolved(
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
+    let sources = Some(parsed.sources().to_vec());
     let (proposal, locators) =
         resolve_proposal(parsed, corrects, decisions, partition, attempt_id, now_ms)?;
-    let extracted = super::super::evidence::ExtractedCandidate::new(proposal, locators)?;
+    let extracted =
+        super::super::evidence::ExtractedCandidate::new(proposal, locators)?.with_sources(sources);
     // Only a head the listing shows is a correction target.
     Ok(match corrects {
         Some(prior) => extracted.correcting(prior.claim_id),
@@ -286,19 +306,23 @@ fn resolve_proposal(
     };
     let value = json_to_rmpv(&parsed.value);
     let rel = match (corrects, parsed.rel) {
-        (Some(prior), _) => prior.body.rel,
-        (None, None) => scope.relationship,
+        (Some(prior), _) => prior.body.rel.clone(),
+        (None, None) => scope.relationship.clone(),
         // A relationship the call listed, by its label (FIX 7575).
-        (None, Some(CandidateRel::Listed(rel))) => Some(rel),
+        (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
         // A value that is no listed label is read as before.
-        (None, Some(CandidateRel::Unlisted(value))) => Some(
+        (None, Some(CandidateRel::Unlisted(value))) => crate::claim::relationship_scope_of(Some(
             value
                 .as_str()
                 .and_then(entity_id_from_hex)
                 .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-        ),
+        )),
     };
-    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
+    // A bound branch writes inside its relationship set: the whole set or a
+    // narrower one, never a relationship outside it or `all`.
+    if let Some(bound) = &scope.relationship
+        && !rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+    {
         return Err(invalid_consolidation(
             "extraction relationship crossed branch scope",
         ));
@@ -310,9 +334,7 @@ fn resolve_proposal(
         parsed.confidence,
     )
     .with_lexical_hints(parsed.prospective_queries);
-    if let Some(rel) = rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(rel.clone());
     if let Some(world) = partition.world_ref {
         candidate = candidate.with_world(world);
     }
@@ -347,7 +369,7 @@ fn resolve_proposal(
         &facts.value,
         partition.world_ref,
         partition.facet_ref,
-        rel,
+        rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;

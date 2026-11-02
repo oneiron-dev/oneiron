@@ -387,6 +387,6 @@ pub(crate) fn accept_graduation_offer_in_txn(
             "this scope is not offering graduation; a retracted offer cannot be accepted",
         )));
     }
-    crate::edit_distance::graduation::record_go_auto_answer_in_txn(vault, wtxn, scope, at)?;
+    crate::edit_distance::graduation::record_go_auto_answer_in_txn(vault, wtxn, owner, scope, at)?;
     vault.create_standing_grant_in_txn(wtxn, owner, bound)
 }

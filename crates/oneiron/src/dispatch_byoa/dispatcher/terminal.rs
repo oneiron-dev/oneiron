@@ -3,20 +3,21 @@
 //! reference attached and its row settled, in one write transaction.
 
 use crate::attempt_queue::{
-    AbandonAttempt, AbandonOutcome, AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt,
-    FailOutcome, FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
+    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, CompleteAttempt, CompleteOutcome,
+    FailAttempt, FailOutcome, FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
     read_blob_artifact_head_in_txn,
 };
+use crate::dispatch_byoa::ERASED_TASK_FAILURE_REASON;
 use crate::dispatch_byoa::connector::{BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE};
 use crate::dispatch_byoa::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
     invalid,
 };
 use crate::dispatch_byoa::exhaust::{
-    ByoaEgressPort, ByoaExhaustEnvelope, ByoaTerminalDisposition, ByoaTerminalReceipt,
+    ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition, ByoaTerminalReceipt,
     CaptureByoaExhaust, append_exhaust_envelope, byoa_exhaust_artifact_id,
     byoa_exhaust_artifact_name, byoa_result_ref, canonical_result_version,
     disposition_matches_state, ensure_byoa_runtime_actor, normalize_capture_reason,
@@ -24,7 +25,7 @@ use crate::dispatch_byoa::exhaust::{
 };
 use crate::dispatch_byoa::repo_binding::mark_stale_capture_in_txn;
 use crate::dispatch_byoa::validate::validate_exhaust;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{ArtifactError, Error};
 use crate::temporal::TimeRange;
 
@@ -135,10 +136,14 @@ where
             else {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             };
+            // FIX 7618: a scrubbed row carries the fixed marker, not the
+            // reason the first capture landed with; the exhaust bytes below
+            // still prove the retry is the same capture.
             if matches!(
                 envelope.disposition,
                 ByoaTerminalDisposition::Failed | ByoaTerminalDisposition::Abandoned
             ) && record.last_error.as_deref() != Some(reason.as_str())
+                && record.last_error.as_deref() != Some(ERASED_TASK_FAILURE_REASON)
             {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             }
@@ -159,6 +164,40 @@ where
                 skipped_seats: Vec::new(),
             });
         }
+        self.land_terminal_capture_in_txn(
+            wtxn,
+            queue,
+            TerminalLanding {
+                artifact_id,
+                occurred,
+                envelope,
+                body,
+                provenance,
+                reason,
+                attempt_id: request.attempt_id,
+                now: request.now,
+            },
+        )
+    }
+
+    /// Lands a first capture in `wtxn`: refuses a colliding artifact, writes
+    /// the artifact and its envelope version, attaches the result reference
+    /// and settles the row through the queue's fenced doors.
+    fn land_terminal_capture_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue: AttemptQueue<'_>,
+        request: TerminalLanding,
+    ) -> ByoaResult<ByoaTerminalReceipt> {
+        let TerminalLanding {
+            artifact_id,
+            occurred,
+            envelope,
+            body,
+            provenance,
+            reason,
+            ..
+        } = request;
         // An unattached artifact can never be a partial successful capture:
         // all custody writes now share this transaction. Refuse collisions,
         // including empty chains with perfectly matching caller-made metadata.
@@ -271,4 +310,17 @@ where
             skipped_seats: Vec::new(),
         })
     }
+}
+
+/// A first capture's checked parts, and the request fields its landing
+/// still reads.
+struct TerminalLanding {
+    artifact_id: EntityId,
+    occurred: TimeRange,
+    envelope: ByoaExhaustEnvelope<ByoaExhaust>,
+    body: BlobArtifactBody,
+    provenance: BlobVersionProvenance,
+    reason: String,
+    attempt_id: AttemptId,
+    now: u64,
 }

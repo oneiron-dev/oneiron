@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{
-    Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance, PendingEmbeddingInput,
+    EgressPredicate, Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance,
+    PendingEmbeddingInput,
 };
 use oneiron::error::StoreError;
 use oneiron::federation::derivation::DerivationScope;
@@ -29,11 +30,17 @@ use serde_json::value::RawValue;
 
 use super::brokered::Reach;
 use super::local::evidence::{self, RunProfile};
-use super::remote::RungHold;
+use super::remote::{ConfiguredEgress, RungHold};
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 use crate::models::BrokerContext;
 use crate::runtime::{GpuPool, GpuRegistryError};
+
+mod answer_error;
+mod destination;
+use answer_error::AnswerError;
+use destination::{EmbeddingDestination, PodTarget};
+pub(crate) use destination::{PodRelease, VaultRelease};
 
 pub(super) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// Characters per token used to turn the provider-agnostic `max_input_tokens`
@@ -88,6 +95,10 @@ struct Side<'a> {
     input_type: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instruction: Option<&'a str>,
+    /// This client reads the `error` member that ends an answer whose later
+    /// batch failed after its rows started (FIX 10702).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    error_member: bool,
 }
 
 /// What the remote reads beyond OpenAI's fields.
@@ -123,6 +134,10 @@ struct EmbeddingsResponse {
     /// answer.
     #[serde(default)]
     provenance: Option<Box<RawValue>>,
+    /// Why `embedder serve` ended this answer before its last row, in place
+    /// of its tail, when this client asked for it (FIX 10702).
+    #[serde(default)]
+    error: Option<AnswerError>,
 }
 
 /// One answer's vectors, in request order, and the device and runtime it
@@ -177,8 +192,8 @@ enum Admitted {
     /// must agree with ([`Listing::agrees_with`]).
     Listing(Listing),
     /// A remote rung, held to the vault's space without a listing of its own
-    /// ([`HttpEmbedder::hold_as_rung`]).
-    Rung(Arc<Mutex<RungHold>>),
+    /// and to the owner's egress rule ([`HttpEmbedder::hold_as_rung`]).
+    Rung(Arc<Mutex<RungHold>>, Arc<ConfiguredEgress>),
 }
 
 /// What the remote's `/models` listing said about the configured model.
@@ -273,71 +288,33 @@ pub(crate) struct HttpEmbedder {
     /// once it is set. The primary endpoint's is set before its probe
     /// ([`super::build_slot`]), a remote rung's when it is built.
     paid: OnceLock<Arc<dyn PaidRequests>>,
+    /// The pods' paid door: a pod document batch is admitted on it, not the
+    /// endpoint's, once it is set ([`Self::pay_pods_through`]).
+    pod_paid: OnceLock<Arc<dyn PaidRequests>>,
     /// The serve host's GPU pool, once set: document batches lease a pod
     /// from it ([`Self::route_batches_through`]).
     pods: OnceLock<PodRoute>,
+    /// Where the paid doors write their rows, kept so the pods' door, built
+    /// when the pool binds later, writes to the same sink.
+    receipts: OnceLock<Arc<dyn oneiron::llm::run_admission::RunReceiptSink>>,
 }
 
-/// Which serving lane a request rides (ARCH-0019 §5). A query and the startup
-/// probe are interactive and stay on the configured endpoint; a document
-/// batch is retry-tolerant and may go to a leased GPU pod.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lane {
-    Interactive,
-    Batch,
-}
-
-/// The pool document batches lease a pod from, and how the pods are reached
-/// with their own key, never the endpoint's.
+/// The pool document batches lease a pod from (ARCH-0019 §5, the batch
+/// lane; a query and the startup probe stay on the configured endpoint), how
+/// the pods are reached with their own key, never the endpoint's, and what
+/// each row is judged by before it may go to one (FIX 9486,
+/// [`destination`]).
 struct PodRoute {
     pool: GpuPool,
     /// The holding vault's account, when one is bound: each request is then a
     /// derivation job whose answer is sealed to that account.
     scope: Option<DerivationScope>,
     client: Reach,
-}
-
-impl PodRoute {
-    /// Sends one request to a leased pod, or to the configured endpoint when
-    /// no pod is healthy. An answer from a pod whose lease lapsed meanwhile
-    /// (preempted, or unhealthy at the last poll) is dropped, and the
-    /// worker's retry sends the rows again.
-    fn post(&self, http: &HttpEmbedder, texts: &[&str], side: Side<'_>) -> oneiron::Result<Answer> {
-        let Some(scope) = self.scope else {
-            let lease = match self.pool.acquire() {
-                Ok(lease) => lease,
-                Err(GpuRegistryError::Unavailable) => {
-                    return http.post_at(&http.client, &http.endpoint, texts, side, Ok);
-                }
-                Err(error) => return Err(pod_error(&error)),
-            };
-            let answer = http.post_at(&self.client, lease.url(), texts, side, Ok)?;
-            return if lease.is_live() {
-                Ok(answer)
-            } else {
-                Err(pod_error(&GpuRegistryError::LeaseExpired))
-            };
-        };
-        let computation = format!("embed:{}", http.model_key).into_bytes();
-        let job = match self
-            .pool
-            .acquire_derivation(scope, computation, batch_digest(texts))
-        {
-            Ok(job) => job,
-            Err(GpuRegistryError::Unavailable) => {
-                return http.post_at(&http.client, &http.endpoint, texts, side, Ok);
-            }
-            Err(error) => return Err(pod_error(&error)),
-        };
-        let url = job.url().to_owned();
-        http.post_at(&self.client, &url, texts, side, |body| {
-            let sealed = job.complete(body).map_err(|error| pod_error(&error))?;
-            sealed
-                .read(scope.owner())
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| pod_error(&GpuRegistryError::InvalidInput))
-        })
-    }
+    /// The section's configured per-row egress list, when it has one; with
+    /// none, the world release alone judges each row.
+    egress: Option<Arc<dyn EgressPredicate>>,
+    /// The vault's world release toward a pod.
+    release: Arc<dyn PodRelease>,
 }
 
 /// What a derivation job is over: the batch's texts, each length-prefixed.
@@ -429,7 +406,9 @@ impl HttpEmbedder {
             client,
             truncations: AtomicU64::new(0),
             paid: OnceLock::new(),
+            pod_paid: OnceLock::new(),
             pods: OnceLock::new(),
+            receipts: OnceLock::new(),
         }))
     }
 
@@ -441,6 +420,8 @@ impl HttpEmbedder {
         pool: GpuPool,
         scope: Option<DerivationScope>,
         timeout: Duration,
+        egress: Option<Arc<dyn EgressPredicate>>,
+        release: Arc<dyn PodRelease>,
     ) -> oneiron::Result<()> {
         let client = Reach::pods(&pool, timeout)?;
         tracing::info!(
@@ -448,16 +429,34 @@ impl HttpEmbedder {
             bound = scope.is_some(),
             "embedder batches route through the GPU pool"
         );
+        let pool_clone = pool.clone();
         if self
             .pods
             .set(PodRoute {
                 pool,
                 scope,
                 client,
+                egress,
+                release,
             })
             .is_err()
         {
             tracing::warn!(endpoint = %self.endpoint, "an endpoint embedder's GPU pool is set once");
+        } else if let Some(receipts) = self.receipts.get() {
+            // The pods' batches are admitted on their own door; when it
+            // cannot be built they ride the endpoint's door instead.
+            if let Err(error) = super::admitted::pay_pod_batches(
+                self,
+                &pool_clone,
+                &self.model_key,
+                Arc::clone(receipts),
+            ) {
+                tracing::warn!(
+                    endpoint = %self.endpoint,
+                    %error,
+                    "the pods' paid door was not built; pod batches ride the endpoint's door"
+                );
+            }
         }
         Ok(())
     }
@@ -543,9 +542,12 @@ impl HttpEmbedder {
     /// would: an answer that names the model it loaded must name the vault's,
     /// one that names a transform must name the one the vault admitted from
     /// its provider, and under a model's measured floors one that names its
-    /// profile must name the measured one ([`RungHold::holds`]).
-    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>) {
-        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Rung(hold);
+    /// profile must name the measured one ([`RungHold::holds`]). An answer
+    /// also meets the owner's evidence rule in `egress`, the rule the rung's
+    /// rows are sent by ([`ConfiguredEgress::admits_profile`], FIX 9488).
+    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>, egress: Arc<ConfiguredEgress>) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Admitted::Rung(hold, egress);
     }
 
     /// Sends every embedding request of this remote through `door`, from
@@ -553,6 +555,26 @@ impl HttpEmbedder {
     pub(crate) fn pay_through(&self, door: Arc<dyn PaidRequests>) {
         if self.paid.set(door).is_err() {
             tracing::warn!(endpoint = %self.endpoint, "a remote embedder's paid door is set once");
+        }
+    }
+
+    /// Keeps `receipts`, where the paid doors write their rows: the pods'
+    /// door is built when the pool binds later, and writes there too. Kept
+    /// once.
+    pub(crate) fn keep_receipts(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) {
+        if self.receipts.set(receipts).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's receipts are kept once");
+        }
+    }
+
+    /// Sends this remote's pod document batches through `door`, from now
+    /// on. A door set once stays.
+    pub(crate) fn pay_pods_through(&self, door: Arc<dyn PaidRequests>) {
+        if self.pod_paid.set(door).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's pods' paid door is set once");
         }
     }
 
@@ -603,33 +625,100 @@ impl HttpEmbedder {
         }
     }
 
-    /// Posts `texts` as one request, through the paid door when this remote
-    /// has one; the answer is held to what the vault admitted.
+    /// Posts `texts` as one request to `destination`, through the paid door
+    /// when this remote has one; the answer is held to what the vault
+    /// admitted. A pod batch is admitted on the pods' own door. A derivation
+    /// request acquires its job before its door is chosen, so a pool with no
+    /// healthy pod rides the primary door, as before the pod door existed.
     fn post_embeddings(
         &self,
         texts: &[&str],
         side: Side<'_>,
-        lane: Lane,
+        destination: &EmbeddingDestination,
     ) -> oneiron::Result<Answer> {
-        let Some(door) = self.paid.get() else {
-            return self.post_once(texts, side, lane);
+        if let EmbeddingDestination::Pod(PodTarget::Derivation(scope)) = destination {
+            if let Some(pods) = self.pods.get() {
+                return self.post_derivation(texts, side, *scope, pods);
+            }
+        }
+        let (door, client) = match destination {
+            // The pods' door, or the endpoint's until the pool binds.
+            EmbeddingDestination::Pod(_) => (
+                self.pod_paid.get().or_else(|| self.paid.get()),
+                self.pods
+                    .get()
+                    .map(|pods| &pods.client)
+                    .unwrap_or(&self.client),
+            ),
+            EmbeddingDestination::Primary => (self.paid.get(), &self.client),
+        };
+        let Some(door) = door else {
+            return self.post_once(texts, side, destination);
         };
         // A broker or key that is not there refuses the request before its
         // permit starts.
-        self.client.preflight()?;
+        client.preflight()?;
         // The door settles on the vectors; the mark rides beside them.
         let mut mark = None;
         let vectors = door.send(texts, &mut || {
-            let answer = self.post_once(texts, side, lane)?;
+            let answer = self.post_once(texts, side, destination)?;
             mark = answer.mark;
             Ok(answer.vectors)
         })?;
         Ok(Answer { vectors, mark })
     }
 
-    fn post_once(&self, texts: &[&str], side: Side<'_>, lane: Lane) -> oneiron::Result<Answer> {
-        match self.pods.get() {
-            Some(pods) if lane == Lane::Batch => pods.post(self, texts, side),
+    /// Posts one derivation request: its job is acquired over these rows
+    /// first and shared with the send, so door, preflight and send agree. A
+    /// pool with no healthy pod sends the admitted rows through the primary,
+    /// which may take any row.
+    fn post_derivation(
+        &self,
+        texts: &[&str],
+        side: Side<'_>,
+        scope: DerivationScope,
+        pods: &PodRoute,
+    ) -> oneiron::Result<Answer> {
+        let computation = format!("embed:{}", self.model_key).into_bytes();
+        let job = match pods
+            .pool
+            .acquire_derivation(scope, computation, batch_digest(texts))
+        {
+            Ok(job) => job,
+            Err(GpuRegistryError::Unavailable) => {
+                let primary = EmbeddingDestination::Primary;
+                return self.post_embeddings(texts, side, &primary);
+            }
+            Err(error) => return Err(pod_error(&error)),
+        };
+        let door = self.pod_paid.get().or_else(|| self.paid.get());
+        let Some(door) = door else {
+            return pods.post_with_job(self, job, scope, texts, side);
+        };
+        pods.client.preflight()?;
+        let mut job = Some(job);
+        let mut mark = None;
+        let vectors = door.send(texts, &mut || {
+            let job = job.take().ok_or_else(|| {
+                oneiron::Error::InvariantViolation("the derivation job was already sent")
+            })?;
+            let answer = pods.post_with_job(self, job, scope, texts, side)?;
+            mark = answer.mark;
+            Ok(answer.vectors)
+        })?;
+        Ok(Answer { vectors, mark })
+    }
+
+    fn post_once(
+        &self,
+        texts: &[&str],
+        side: Side<'_>,
+        destination: &EmbeddingDestination,
+    ) -> oneiron::Result<Answer> {
+        match (destination, self.pods.get()) {
+            (EmbeddingDestination::Pod(target), Some(pods)) => {
+                pods.post_to(self, target, texts, side)
+            }
             _ => self.post_at(&self.client, &self.endpoint, texts, side, Ok),
         }
     }
@@ -665,15 +754,27 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
+        if let Some(error) = &parsed.error {
+            return Err(error.failure(parsed.data.len(), texts.len()));
+        }
         let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
             Admitted::Unchecked => true,
             Admitted::Listing(listing) => listing.agrees_with(&parsed),
-            Admitted::Rung(hold) => hold.lock().unwrap_or_else(PoisonError::into_inner).holds(
-                &self.common.model_id,
-                parsed.model_id.as_deref(),
-                parsed.transform.as_deref(),
-                parsed.profile.as_ref(),
-            ),
+            Admitted::Rung(hold, egress) => {
+                let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+                if !egress.admits_profile(parsed.profile.as_ref(), hold.measured) {
+                    return Err(oneiron::Error::UpstreamToolFailure {
+                        tool: EMBEDDER_TOOL,
+                        code: "the remote rung's answer names no measured run profile, which the owner's egress rule asks of it".to_owned(),
+                    });
+                }
+                hold.holds(
+                    &self.common.model_id,
+                    parsed.model_id.as_deref(),
+                    parsed.transform.as_deref(),
+                    parsed.profile.as_ref(),
+                )
+            }
         };
         if !agrees {
             return Err(oneiron::Error::UpstreamToolFailure {
@@ -867,7 +968,11 @@ impl HttpEmbedder {
 
     /// Embeds `inputs` as documents, one request or several, each sent only
     /// once `release` lets the rows it carries leave, and each vector marked
-    /// with the device and runtime that computed it.
+    /// with the device and runtime that computed it. With a GPU pool, the
+    /// batch's destination is chosen first and each row judged for it
+    /// ([`destination`], FIX 9486): the rows that may go to the pod go
+    /// there, the rest to this endpoint, and the vectors come back in row
+    /// order.
     fn embed_documents(
         &self,
         inputs: &[PendingEmbeddingInput],
@@ -877,6 +982,53 @@ impl HttpEmbedder {
             return Ok(Vec::new());
         }
         let wire = self.wire()?;
+        let (destination, to_pod) = match self.pods.get() {
+            None => (EmbeddingDestination::Primary, vec![false; inputs.len()]),
+            Some(pods) => {
+                let destination = destination::select_batch_destination(pods)?;
+                let to_pod = destination::partition_released_rows(&destination, pods, inputs)?;
+                (destination, to_pod)
+            }
+        };
+        let primary = EmbeddingDestination::Primary;
+        let mut placed: Vec<Option<(Vec<f32>, EmbeddingProvenance)>> = vec![None; inputs.len()];
+        for (target, wanted) in [(&destination, true), (&primary, false)] {
+            let picked: Vec<usize> = (0..inputs.len())
+                .filter(|index| to_pod[*index] == wanted)
+                .collect();
+            if picked.is_empty() {
+                continue;
+            }
+            let group: Vec<PendingEmbeddingInput> =
+                picked.iter().map(|index| inputs[*index].clone()).collect();
+            let vectors = self.embed_group(&group, release, wire, target)?;
+            if vectors.len() != picked.len() {
+                return Err(oneiron::Error::InvariantViolation(
+                    "embedder endpoint answered another number of rows than it sent",
+                ));
+            }
+            for (index, vector) in picked.into_iter().zip(vectors) {
+                placed[index] = Some(vector);
+            }
+        }
+        placed
+            .into_iter()
+            .map(|row| {
+                row.ok_or(oneiron::Error::InvariantViolation(
+                    "embedder endpoint left a row unanswered",
+                ))
+            })
+            .collect()
+    }
+
+    /// [`Self::embed_documents`] for the rows of one destination, in order.
+    fn embed_group(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+        wire: Wire,
+        destination: &EmbeddingDestination,
+    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         let texts: Vec<String> = inputs
             .iter()
@@ -891,12 +1043,13 @@ impl HttpEmbedder {
         match wire {
             Wire::OpenAi => {
                 release(&rows)?;
-                Ok(self.marked(self.post_embeddings(&refs, Side::default(), Lane::Batch)?))
+                Ok(self.marked(self.post_embeddings(&refs, Side::default(), destination)?))
             }
             Wire::Oneiron => {
                 let side = Side {
                     input_type: Some("document"),
                     instruction: None,
+                    error_member: true,
                 };
                 let mut vectors = Vec::with_capacity(refs.len());
                 let mut sent = 0;
@@ -906,7 +1059,7 @@ impl HttpEmbedder {
                     vectors.extend(self.marked(self.post_embeddings(
                         request,
                         side,
-                        Lane::Batch,
+                        destination,
                     )?));
                 }
                 Ok(vectors)
@@ -928,15 +1081,20 @@ impl QueryEmbedder for HttpEmbedder {
         let mut vectors = match self.wire()? {
             Wire::OpenAi => {
                 let prefixed = self.truncate(self.common.query_text(text));
-                self.post_embeddings(&[prefixed.as_str()], Side::default(), Lane::Interactive)?
+                self.post_embeddings(
+                    &[prefixed.as_str()],
+                    Side::default(),
+                    &EmbeddingDestination::Primary,
+                )?
             }
             Wire::Oneiron => self.post_embeddings(
                 &[text],
                 Side {
                     input_type: Some("query"),
                     instruction: self.query_instruction.as_deref(),
+                    error_member: true,
                 },
-                Lane::Interactive,
+                &EmbeddingDestination::Primary,
             )?,
         }
         .vectors;
@@ -1069,7 +1227,11 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
         .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
     // Unmarked, so any remote answers it as a document; held to the listing
     // admitted, if any (none at startup, the listed one before a move).
-    match embedder.post_embeddings(&[PROBE_TEXT], Side::default(), Lane::Interactive) {
+    match embedder.post_embeddings(
+        &[PROBE_TEXT],
+        Side::default(),
+        &EmbeddingDestination::Primary,
+    ) {
         Ok(answer) => {
             let got = answer.vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {

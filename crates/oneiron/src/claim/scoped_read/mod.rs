@@ -23,7 +23,9 @@ mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
 mod facet_gate;
+mod frozen;
 mod graph_reads;
+mod instruction_files;
 mod loop_decision_read;
 mod named_reads;
 mod note_visibility;
@@ -47,8 +49,8 @@ mod weave_correction;
 mod weave_lens;
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_PLAN_REPAIRS, WEAVE_LENS_READ_RATE_AXIS,
-    WEAVE_LIVE_LENS_REREADS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan, WeaveLensPlanLine,
-    WeaveLensPlanSection, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
+    WEAVE_LIVE_LENS_REREADS, WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection,
+    WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_lens,
 };
 pub(crate) use weave_lens::{
     weave_lens_answer_plan, weave_lens_attempt_input, weave_lens_attempt_period,
@@ -58,6 +60,7 @@ mod weave_report;
 mod weave_serve;
 mod weave_trigger;
 pub(crate) use claim_admission::ClaimReadStatus;
+pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
@@ -79,6 +82,7 @@ mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
 mod agent_grants;
+mod authority_fingerprint;
 mod guest_bound;
 mod owner_authority;
 mod records_cover;
@@ -133,14 +137,20 @@ pub struct ScopedRead<'a> {
     /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
     /// artifact door opts in.
     records_cover: records_cover::ArtifactRecordsCover,
+    /// When this read judges a claim's time-bound standing: a recall's
+    /// `as_of`, or `None` for now (FIX 12226). See
+    /// `ScopedRead::with_judged_at`.
+    judged_at: Option<u64>,
 }
 
 mod admission;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
+mod profile_sources;
 mod retrieval_loop;
 mod search;
 mod visibility;
+pub(crate) use visibility::Admitted;
 
 #[cfg(test)]
 mod slip_tests;

@@ -27,7 +27,7 @@ async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = owner_proof(auth, server, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server, &owner).map_err(MemoryError::from))
+    super::clock_ingress::run_blocking(move || act(&server, &owner).map_err(MemoryError::from))
         .await
         .map_err(|_| internal(verb))?
 }
@@ -178,6 +178,30 @@ pub(crate) async fn vault_models_trials_run(
                     locality,
                     |record, backend, context| execute_trial(server, record, backend, context),
                 )
+            },
+        )
+        .await,
+        trial_rows,
+    )
+}
+
+/// `vault.models.trials.resend_arm`: the owner's resend of one arm of
+/// unknown outcome (FIX 10464); the next run sends it.
+pub(crate) async fn vault_models_trials_resend_arm(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ModelTrialArmRef,
+) -> Listed<ModelTrialView> {
+    let locality = auth.locality();
+    naming(
+        as_owner(
+            server,
+            auth,
+            "vault.models.trials.resend_arm",
+            move |server, owner| {
+                server
+                    .vault()
+                    .resend_model_trial_arm_as_owner(owner, input, locality)
             },
         )
         .await,

@@ -26,6 +26,11 @@
 //! actor scrub took, every `ARM_SOURCE_SWEEP`, and until it does each
 //! read and publication of the arm asks, in a short read of its own, whether
 //! the actor is still here, and answers typed unavailable once it is not.
+//!
+//! An arm's program is type-checked on the host's service as it is, never
+//! loaded or waited on for the arm (FIX 10389, fork d): under the arm's own
+//! identity, its check run only while the arm's lease holds the arm, its
+//! feedback read under that lease alone ([`ServerShadowRunner::read_feedback`]).
 
 mod arm_store;
 mod model;
@@ -42,9 +47,11 @@ use oneiron::code_run::shadow_runner::{
     ShadowUnavailableReason as Reason, admit_published_inline, prepare_shadow_step_source,
     shadow_source_gone,
 };
-use oneiron::code_run::{ExecutorStepStart, step_replay_capsules};
+use oneiron::code_run::{ExecutorStepStart, ProgramStepFeedback, step_replay_capsules};
 use oneiron::compaction::output::OutputRef;
-use oneiron::engine_executor::{JsCodeModeRuntime, StepCancellation, run_shadow_step};
+use oneiron::engine_executor::{
+    ArmTypeFeedback, JsCodeModeRuntime, StepCancellation, TypeFeedback, run_shadow_step,
+};
 use oneiron::{EntityId, Error, LlmResponse, Result, Vault};
 
 use self::arm_store::{ArmEntry, ArmRegistry};
@@ -128,6 +135,31 @@ impl ServerShadowRunner {
             .store()
             .read(body)?
             .ok_or_else(|| ShadowUnavailable::new(Reason::SourceMissing, "body")))
+    }
+
+    /// The type feedback of the program the arm `lease` holds ran, as its
+    /// check stands now, while the lease holds the arm (FIX 10389, fork d):
+    /// a check that landed after the arm answered included, masked as the
+    /// arm's writes are. Unavailable once the lease holds no arm or the arm
+    /// ran no program of its own (`SourceMissing`), and once an erase or
+    /// actor scrub of the arm's source actor took its content
+    /// (`SourceWithheld`, FIX 5718), which releases the arm.
+    ///
+    /// # Errors
+    ///
+    /// The masking's storage and custody errors.
+    pub fn read_feedback(&self, lease: &ShadowArmLease) -> Result<Outcome<ProgramStepFeedback>> {
+        let Some(arm) = self.arms.get(lease) else {
+            return Ok(Err(ShadowUnavailable::new(Reason::SourceMissing, "lease")));
+        };
+        if let Some(withheld) = arm.store().source_withheld() {
+            self.arms.release(lease);
+            return Ok(Err(withheld));
+        }
+        Ok(arm
+            .store()
+            .latest_feedback()?
+            .ok_or_else(|| ShadowUnavailable::new(Reason::SourceMissing, "type_feedback")))
     }
 
     /// Releases `lease`: its arm's bodies go once no reader holds them.
@@ -284,7 +316,11 @@ impl Arm {
             Ok(answer) => answer,
             Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
-        let ran = match self.run_step(prepared, answer, Arc::clone(&arm)).await? {
+        let checked = (request.arm_id, lease, &*server);
+        let ran = match self
+            .run_step(prepared, answer, Arc::clone(&arm), checked)
+            .await?
+        {
             Ok(ran) => ran,
             Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
@@ -297,6 +333,7 @@ impl Arm {
         result.effect_trace = Some(ran.effect_trace);
         result.bridge_trace = Some(ran.bridge_trace);
         result.bridge = Some(ran.bridge);
+        result.type_feedback = ran.type_feedback;
         Ok(ran.status)
     }
 
@@ -323,15 +360,27 @@ impl Arm {
     }
 
     /// Heals `answer` and runs its program for `prepared`'s step, on a
-    /// blocking worker that makes the step's JS runtime and its bridge.
+    /// blocking worker that makes the step's JS runtime and its bridge. Its
+    /// program is checked on `server`'s service as it is, under arm `arm_id`
+    /// while `lease` holds it (FIX 10389, fork d).
     async fn run_step(
         &self,
         prepared: PreparedShadowStep,
         answer: LlmResponse,
         arm: Arc<ArmEntry>,
+        (arm_id, lease, server): (EntityId, ShadowArmLease, &SyncServer),
     ) -> Result<Outcome<ShadowStepRun>> {
         let runtimes = Arc::clone(&self.runtimes);
         let cancel = self.cancel.clone();
+        let service: Option<TypeFeedback> = server
+            .code_execution_host()
+            .and_then(|host| host.engine_native())
+            .and_then(|host| host.provider().code_check().cloned());
+        let arms = Arc::downgrade(&self.arms);
+        let live: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            arms.upgrade()
+                .is_some_and(|arms| arms.get(&lease).is_some())
+        });
         let ran = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtimes.as_ref()() else {
                 let resource = Reason::ResourceUnavailable {
@@ -340,7 +389,12 @@ impl Arm {
                 return Ok(Err(ShadowUnavailable::new(resource, "runtime")));
             };
             let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-            run_shadow_step(&prepared, &answer, runtime, arm.store(), &cancel).map(Ok)
+            let feedback = ArmTypeFeedback {
+                service: service.as_ref(),
+                arm: arm_id,
+                live,
+            };
+            run_shadow_step(&prepared, &answer, runtime, arm.store(), &cancel, &feedback).map(Ok)
         })
         .await;
         ran.map_err(|error| Error::InvalidConfig(format!("shadow step worker: {error}")))?

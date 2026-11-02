@@ -25,8 +25,8 @@
 //! the authority log and the shared-act tables, which hold no row, and an
 //! act's effect reads the act, the roster and the grants its receipt names:
 //! so beside its answer each lists the records it names, and none past
-//! them. A receipt with a removal's export goes unlisted: no list covers the
-//! records its export counted, after the first execution.
+//! them. A receipt with a removal's export lists the records its export
+//! counted, as kept beside its receipt.
 use std::sync::Arc;
 
 use oneiron::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
@@ -42,6 +42,7 @@ use oneiron::task_verb::sdk::{
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -72,6 +73,12 @@ pub(super) fn person(
             &["Present your own verified human credential."],
         )
     };
+    // A managed member with no slip of his own and no owner attestation,
+    // whom his supervisor signed this request, or his `/mcp` call, for at a
+    // member door (FIX 1302): that person's proof, judged as any other's.
+    if let Some(person) = managed_person_proof(server, auth, verb) {
+        return person.map_err(|_| refused());
+    }
     // A managed vault's forwarded person comes on his own slip (FIX 5122),
     // judged as on any other install.
     let slip = auth
@@ -97,6 +104,28 @@ pub(super) fn person(
         .vault()
         .bind_request_credential(person, slip.clone())
         .map_err(|_| refused())
+}
+
+/// The proof of the person a supervisor-signed person action names for
+/// this request or his `/mcp` call (FIX 1302, `auth::managed_person`), at
+/// a member door it serves (`auth::MANAGED_PERSON_DOORS`): a live human
+/// person, as a slip holder's proof is, with no slip to bind, so the proof
+/// is this request's alone. The engine's roster, role and Grant checks then
+/// judge that person in the acting writer. `None` for any other caller or
+/// door, which keeps [`person`]'s own path.
+fn managed_person_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Option<oneiron::Result<AuthenticatedOwner>> {
+    let holder = auth
+        .managed_person()
+        .filter(|_| crate::auth::MANAGED_PERSON_DOORS.contains(&verb))?;
+    Some(
+        server
+            .vault()
+            .authenticate_owner(holder, &holder.to_hex(), true, GateDecisionId::now()),
+    )
 }
 
 /// The vault owner's proof, as `/v1/owner` takes it from the request.
@@ -126,7 +155,7 @@ async fn off_runtime<T: Send + 'static>(
     act: impl FnOnce(&Arc<SyncServer>) -> MemoryResult<T> + Send + 'static,
 ) -> MemoryResult<T> {
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server))
+    clock_ingress::run_blocking(move || act(&server))
         .await
         .map_err(|_| internal(verb))?
 }
@@ -149,11 +178,17 @@ pub(super) async fn as_person_naming<P: Send + 'static, T: Send + 'static>(
     (answer, rows)
 }
 
-/// A receipt's rows: none past those it names, or `None` for one with a
-/// removal's export, whose counted records no list names after the first
-/// execution (`sdk::execute_shared_act_listing`).
-pub(super) fn receipt_rows(receipt: &SharedActExecutionReceipt) -> Option<Vec<oneiron::EntityId>> {
-    receipt.export.is_none().then(Vec::new)
+/// A receipt's rows: none past those it names, or for one with a
+/// removal's export, the records its export counted, as kept beside its
+/// receipt; `None` for one executed before they were kept.
+pub(super) fn receipt_rows(
+    vault: &oneiron::Vault,
+    receipt: &SharedActExecutionReceipt,
+) -> Option<Vec<oneiron::EntityId>> {
+    if receipt.export.is_none() {
+        return Some(Vec::new());
+    }
+    vault.shared_act_export_records(&receipt.id).ok().flatten()
 }
 
 /// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
@@ -237,6 +272,8 @@ pub(crate) async fn vault_shared_execute(
     })
     .await;
     let answer = ran.unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())));
+    // A removed holder's held delivery session is woken (FIX 3396).
+    server.removal_deliveries.wake_after(&answer.0);
     crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
 }
 
@@ -247,12 +284,13 @@ pub(crate) async fn vault_shared_receipt(
     input: SharedReceiptRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.shared.receipt";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         person(server, auth, VERB),
         move |server, reader| sdk::read_shared_receipt(server.vault(), &reader, input),
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -300,6 +338,7 @@ pub(crate) async fn vault_members_add(
     input: SharedMemberAddRequest,
 ) -> MaybeListed<SharedMemberInvited> {
     const VERB: &str = "vault.members.add";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -312,7 +351,7 @@ pub(crate) async fn vault_members_add(
                 sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        |invited| receipt_rows(&invited.receipt),
+        move |invited| receipt_rows(vault.vault(), &invited.receipt),
     )
     .await
 }
@@ -325,6 +364,7 @@ pub(crate) async fn vault_members_change(
     input: SharedMemberRoleRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.change";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -334,7 +374,7 @@ pub(crate) async fn vault_members_change(
                 sdk::change_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -347,6 +387,7 @@ pub(crate) async fn vault_members_remove(
     input: SharedMemberRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.remove";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -356,7 +397,7 @@ pub(crate) async fn vault_members_remove(
                 sdk::remove_shared_member_as(server.vault(), &admin, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -369,6 +410,7 @@ pub(crate) async fn vault_members_leave(
     input: SharedVaultRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.leave";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
@@ -378,7 +420,7 @@ pub(crate) async fn vault_members_leave(
                 sdk::leave_shared_vault_as(server.vault(), &member, Some(slips), input)
             })
         },
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
