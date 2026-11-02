@@ -6,7 +6,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::{Vault, VaultWriterLease};
 
 mod spent_nonces;
-pub(super) use spent_nonces::SpentKey;
+pub(super) use spent_nonces::{SpentKey, spend_guard};
 pub(crate) use spent_nonces::SpentNonces;
 
 /// How far, either way, a proof's signed timestamp may sit from the vault's
@@ -402,12 +402,12 @@ fn unmarked_not_before(oldest: Option<u64>, now: u64) -> u64 {
 ///
 /// A nonce an admission spent in memory is spent, its row landed or not
 /// (FIX 12023 W0), and this writer's own spend is staged there until its
-/// transaction is decided, so no admission spends the nonce beside it. In a
-/// process that holds no writer lease on the vault, the spend holds the
-/// lease while it spends, so no process spends the nonce in memory beside
-/// it; the lease another process holds refuses it with
-/// [`Error::VaultServedElsewhere`] (P1-b). Every door that spends a
-/// request's nonce in a writer spends it here.
+/// transaction is decided, so no admission spends the nonce beside it.
+/// Every door that spends a request's nonce in a writer spends it here,
+/// holding [`spend_guard`] from before its writer opens until it commits:
+/// in a lease-less process that is the writer lease itself, so no process
+/// spends the nonce in memory beside this writer, and a crashed lease
+/// holder's journaled spend is a committed row before the writer reads.
 pub(super) fn record_nonce(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -418,7 +418,6 @@ pub(super) fn record_nonce(
 ) -> Result<()> {
     request_challenge(timestamp, nonce, clock)?;
     let spent = SpentKey::of(binding_key, nonce, timestamp);
-    let _lease = spent_nonces::writer_spend_lease(vault)?;
     if !vault.spent_nonces.stage(vault, spent) {
         return Err(invalid_authority());
     }

@@ -192,31 +192,33 @@ impl Nonces {
         }
     }
 
-    /// The journal in the environment at `root`, opened on first use: a torn
+    /// Opens the journal in the environment at `root` on first use: a torn
     /// tail a failed append left is trimmed, since that spend took the
     /// writer's path and is durable there, and a record after it would
-    /// misalign every record that follows.
-    fn journal_file(&mut self, root: &Path) -> Option<&mut File> {
-        if self.journal.is_none() {
-            match open_journal(&root.join(SPEND_JOURNAL_FILE)) {
-                Ok(file) => {
-                    self.journal_len = file.metadata().map_or(0, |meta| meta.len());
-                    let torn = self.journal_len % (JOURNAL_RECORD_LEN as u64);
-                    if torn > 0 && file.set_len(self.journal_len - torn).is_ok() {
-                        self.journal_len -= torn;
-                    }
-                    self.journal = Some(file);
+    /// misalign every record that follows. `false`: it did not open, said
+    /// in a warn.
+    fn open_journal_if_needed(&mut self, root: &Path) -> bool {
+        if self.journal.is_some() {
+            return true;
+        }
+        match open_journal(&root.join(SPEND_JOURNAL_FILE)) {
+            Ok(file) => {
+                self.journal_len = file.metadata().map_or(0, |meta| meta.len());
+                let torn = self.journal_len % (JOURNAL_RECORD_LEN as u64);
+                if torn > 0 && file.set_len(self.journal_len - torn).is_ok() {
+                    self.journal_len -= torn;
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "the slip-spend journal did not open; the spend takes the writer's path"
-                    );
-                    return None;
-                }
+                self.journal = Some(file);
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "the slip-spend journal did not open; the spend takes the writer's path"
+                );
+                false
             }
         }
-        self.journal.as_mut()
     }
 
     /// Appends one spend's record to the journal at `root` and fdatasyncs it,
@@ -230,9 +232,9 @@ impl Nonces {
         window_end: u64,
         proof_now: u64,
     ) -> bool {
-        let Some(file) = self.journal_file(root) else {
+        if !self.open_journal_if_needed(root) {
             return false;
-        };
+        }
         if self.journal_len.saturating_add(JOURNAL_RECORD_LEN as u64) > JOURNAL_CAP_BYTES {
             tracing::warn!(
                 journal_len = self.journal_len,
@@ -242,9 +244,10 @@ impl Nonces {
         }
         let record = journal_record(key, window_end, proof_now);
         let started = Instant::now();
-        let appended = file
-            .write_all(&record)
-            .and_then(|()| file.sync_data());
+        let Some(file) = self.journal.as_mut() else {
+            return false;
+        };
+        let appended = file.write_all(&record).and_then(|()| file.sync_data());
         tracing::Span::current().record(
             "journal_us",
             u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -351,14 +354,14 @@ fn holds_writer_lease(vault: &Vault) -> bool {
 /// ([`Vault::try_acquire_writer_lease`]), so no process spends a nonce in
 /// memory beside it, since only a lease holder does. `None` when this
 /// process holds the lease already, and on a target without one, where no
-/// process can hold it. The lease another process holds refuses with
-/// [`Error::VaultServedElsewhere`]: that process serves the vault and may
-/// have spent this nonce in memory, its row not landed yet.
+/// process can hold it and no admission spends in memory either: every
+/// spend there takes the durable writer. The lease another process holds
+/// refuses with [`Error::VaultServedElsewhere`]: that process serves the
+/// vault and may have spent this nonce in memory, its row not landed yet.
 ///
-/// It is let go before the spend's writer commits, and that is enough: a
-/// process that takes the lease after it opens its vault after, and so
-/// spends in memory only a slip first seen after that open, never the one
-/// this writer read.
+/// Threads of one process need no second guard: the writer a door opens
+/// serializes them before any spend, and a second try-lock by the same
+/// process would only refuse itself.
 pub(super) fn writer_spend_lease(vault: &Vault) -> Result<Option<VaultWriterLease>> {
     if holds_writer_lease(vault) || cfg!(not(unix)) {
         return Ok(None);
@@ -368,6 +371,28 @@ pub(super) fn writer_spend_lease(vault: &Vault) -> Result<Option<VaultWriterLeas
         Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)) => Err(Error::VaultServedElsewhere),
         Err(error) => Err(error),
     }
+}
+
+/// What a door that spends a request's nonce in its own writer holds from
+/// before that writer opens until it commits (FIX 12023 W0, P1-b): in a
+/// process that holds the vault's writer lease, nothing, since its spends
+/// in memory are this set's own. In a lease-less process, the lease itself,
+/// taken for the spend ([`writer_spend_lease`]): no lease holder spends the
+/// nonce in memory between this writer's read of its row and its commit,
+/// and a process opening under the lease after this door lets go reads the
+/// committed row. Under that lease the door first replays a journal a
+/// crashed lease holder left (P1-a=B), so a spend it answered is a row this
+/// writer reads; an absent or empty journal, the common path, costs one
+/// stat.
+pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<Option<VaultWriterLease>> {
+    let lease = writer_spend_lease(vault)?;
+    if lease.is_some() {
+        let journal = vault.store.canonical_root().join(SPEND_JOURNAL_FILE);
+        if std::fs::metadata(&journal).is_ok_and(|meta| meta.len() > 0) {
+            vault.spent_nonces.replay_journal(vault);
+        }
+    }
+    Ok(lease)
 }
 
 impl SpentNonces {
@@ -644,8 +669,12 @@ impl SpentNonces {
         }
         // After the commit, never before: a crash between the two replays
         // the same records at the next open, which the rows absorb.
-        if let Some(file) = nonces.journal_file(vault.store.canonical_root()) {
-            match file.set_len(0) {
+        if nonces.open_journal_if_needed(vault.store.canonical_root()) {
+            let truncated = match nonces.journal.as_mut() {
+                Some(file) => file.set_len(0),
+                None => Ok(()),
+            };
+            match truncated {
                 Ok(()) => nonces.journal_len = 0,
                 Err(error) => tracing::warn!(
                     error = %error,
