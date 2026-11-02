@@ -250,7 +250,9 @@ impl CheckpointKey {
         path: &Path,
         keystore: Option<&std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
     ) -> Result<Self> {
-        let keystore = keystore.cloned().ok_or_else(commitment::no_keystore_for_restore)?;
+        let keystore = keystore
+            .cloned()
+            .ok_or_else(commitment::no_keystore_for_restore)?;
         Ok(
             Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
                 .trusting_device(keystore),
