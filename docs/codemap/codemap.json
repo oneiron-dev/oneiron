@@ -7297,7 +7297,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -7347,7 +7347,7 @@
      "path": "src/batch/secret_scan/container/retained_iterative.rs",
      "purpose": "The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -27900,7 +27900,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/erase.rs",
      "purpose": "What an erase reaches of the Coach's drafts on live agent-health cards (FIX 9221)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -28034,7 +28034,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/sources.rs",
      "purpose": "The rows a Coach answer on an agent-health card was drafted from (FIX 9220)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -28801,7 +28801,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 4,
       "fn": 2,
       "re-export": 2,
@@ -28871,6 +28871,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/index.rs",
+     "purpose": "Per-id membership over the identity asks, hints and applied identity inverses (FIX 10376): each row under…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/identity/presentation.rs",
      "purpose": "How an ask is shown: candidate labels, options, its view and its card",
      "surface": {
@@ -28894,7 +28904,7 @@
      "path": "src/dreamer_runner/maintenance/identity/settle_undo.rs",
      "purpose": "The Dreamer's automatic identity settles, receipted and revertible (FIX 3327, OF-023)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -35639,13 +35649,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/feedback/intake/report/erase.rs",
      "purpose": "A report cluster's members and their erase (FIX 9856)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -85396,7 +85406,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86434,7 +86444,7 @@
    },
    "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5857,
+   "source_files": 5858,
    "test_files": 902
   },
   "oneiron-android": {
