@@ -326,6 +326,10 @@ side_tables! {
     /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
     /// id16(set).
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
+    /// One model call's evidence and replay record (FIX 12516), keyed by
+    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
+    /// evidence only: never an entity, BM25/vector/Dreamer input.
+    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
