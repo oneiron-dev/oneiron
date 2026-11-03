@@ -7,7 +7,7 @@ use crate::authority::AuthorityFold;
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::vault::LiveEntityRow;
 

@@ -173,7 +173,8 @@ impl ExportBody {
             let mut exported = tree::export_value_tree(&value, entity_type, 0);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
-                if let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(bytes, true) {
+                if let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(bytes, true)
+                {
                     export_scope_references(&body, &mut exported);
                     super::export_actor_references::export_actor_references(&body, &mut exported);
                 }
@@ -316,7 +317,10 @@ fn null_credential_references(value: &mut ExportValue) -> bool {
 
 // The record-position scope stamp is required on every CLAIM; the decoded body
 // proves these top-level positions hold ids, not opaque bytes.
-fn export_scope_references(body: &crate::write_envelope::claim_body::ClaimBody, exported: &mut ExportValue) {
+fn export_scope_references(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+    exported: &mut ExportValue,
+) {
     let ExportValue::Map(entries) = exported else {
         return;
     };
@@ -325,7 +329,9 @@ fn export_scope_references(body: &crate::write_envelope::claim_body::ClaimBody, 
             continue;
         };
         let id = match key.as_str() {
-            "worldId" => body.world.unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            "worldId" => body
+                .world
+                .unwrap_or_else(oneiron_contracts::claim::base_world_id),
             "scopeFacetId" => body.scope_facet,
             "scopeProjectId" => body.scope_project,
             "scopeRelationshipId" => {

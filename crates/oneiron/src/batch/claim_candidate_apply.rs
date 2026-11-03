@@ -214,7 +214,11 @@ pub(crate) fn claim_candidate_birth_facet(
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         })
         .and_then(|raw| {
-            crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+            crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .ok()
         })
         .map(|stored| stored.scope_facet);
     match stored_facet {

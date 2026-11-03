@@ -135,6 +135,8 @@ pub(crate) use claim_vad_owed::{
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod derivation;
+pub mod world_registration_keys;
 mod diagnostics;
 mod gate_decision;
 mod group_commit;

@@ -12,7 +12,6 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use oneiron_contracts::claim::ClaimSource;
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -23,6 +22,7 @@ use crate::registry::{
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_contracts::claim::ClaimSource;
 
 /// Owner-set cleanup posture: propose-first (default) vs auto-with-digest.
 /// Key: `()`.

@@ -12,7 +12,7 @@ use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::ManifestDbs;
 

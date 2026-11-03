@@ -59,7 +59,7 @@ fn matches_token(capability: ArtifactLinkCapability, token: Option<&str>) -> boo
 struct ResolvedArtifactTarget {
     pointer: ArtifactPointer,
     owner: EntityId,
-    scope: crate::federation::Scope,
+    scope: oneiron_authority::federation::Scope,
     snapshot: Option<CodebaseSnapshot>,
 }
 
@@ -201,7 +201,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         world_id: u64,
         principal: EntityId,
-        target_scope: &crate::federation::Scope,
+        target_scope: &oneiron_authority::federation::Scope,
     ) -> Result<bool> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
@@ -238,7 +238,7 @@ impl Vault {
                 && grant.authority_scope.admits(
                     "read",
                     target_scope,
-                    &crate::federation::Scope::top(),
+                    &oneiron_authority::federation::Scope::top(),
                 )
                 && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {

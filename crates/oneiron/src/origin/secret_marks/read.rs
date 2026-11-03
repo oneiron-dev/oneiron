@@ -22,14 +22,14 @@ use rmpv::Value;
 
 use super::{REPO_SECRET_MARK_PREDICATE, RepoSecretMark, RepoSecretPlacement, RepoSecretSource};
 use crate::Vault;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::credential_door::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::secret_custody::{KeyPlaces, MemberStep};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 /// How a reader finds marks. The one way is the authoritative walk of every
 /// readable claim (CALL 8033 option d): O(claims) once per request, with no

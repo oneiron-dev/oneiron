@@ -11,8 +11,8 @@ use super::archive_index::{
 };
 use super::document_import::{import_edge, matches_row, parse_id};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -283,8 +283,10 @@ fn restore_cohort(
     let mut inserted = 0;
     let mut unchanged = 0;
     for (row, id, body) in rows {
-        let expected =
-            ExportBody::from_bytes(&crate::write_envelope::claim_body::encode_claim_body(body)?, row.entity_type);
+        let expected = ExportBody::from_bytes(
+            &crate::write_envelope::claim_body::encode_claim_body(body)?,
+            row.entity_type,
+        );
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         {
@@ -313,8 +315,10 @@ fn restore_cohort(
     for (row, id, body) in rows {
         let actual = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let expected =
-            ExportBody::from_bytes(&crate::write_envelope::claim_body::encode_claim_body(body)?, row.entity_type);
+        let expected = ExportBody::from_bytes(
+            &crate::write_envelope::claim_body::encode_claim_body(body)?,
+            row.entity_type,
+        );
         if !matches_row(row, &actual, &expected) {
             return Err(invalid("archive provenance lifecycle not reconstructed"));
         }

@@ -24,9 +24,10 @@ use std::path::PathBuf;
 use super::{VerifiedSlip, authority_refusal_as, authority_refused};
 use crate::error::Result;
 use crate::federation::{
-    FederationGrantRole, FederationGrantScope, MembershipStanding, Scope,
+    FederationGrantRole, FederationGrantScope, MembershipStanding,
     decode_federation_grant_body,
 };
+use oneiron_authority::federation::Scope;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};

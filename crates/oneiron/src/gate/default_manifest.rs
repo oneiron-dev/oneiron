@@ -1267,7 +1267,8 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
 
 fn federation_grant_default_rows() -> Value {
     use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
-    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    use crate::federation::FederationGrantRole as Role;
+    use oneiron_authority::federation::{Scope, ScopeAxis};
     let scope = |verbs: &[&str]| {
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
@@ -1308,8 +1309,8 @@ fn federation_grant_default_rows() -> Value {
             // content. The mint names its worlds; this row names none.
             Row::ConnectGuestCeiling {
                 scope: Scope {
-                    sensitivity: crate::federation::SensitivityCeiling::AtMost(
-                        crate::federation::Sensitivity::Private,
+                    sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
+                        oneiron_authority::federation::Sensitivity::Private,
                     ),
                     ..scope(&["read", "propose"])
                 },

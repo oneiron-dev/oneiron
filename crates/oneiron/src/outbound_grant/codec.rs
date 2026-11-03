@@ -121,7 +121,7 @@ pub fn encode_standing_outbound_grant_body(grant: &StandingOutboundGrant) -> Res
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
             "authority_scope".into(),
-            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
+            oneiron_authority::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
         ),
         (Value::from(KEY_STATUS), Value::from(grant.status.as_str())),
         (Value::from(KEY_CREATED_AT), Value::from(grant.created_at)),
@@ -187,9 +187,9 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
     let last_used_at = decode_optional_u64(required_value(entries, KEY_LAST_USED_AT)?)?;
     let grant = StandingOutboundGrant {
         authority_scope: if legacy {
-            crate::federation::scope_codec::effect_preset()
+            oneiron_authority::federation::scope_codec::effect_preset()
         } else {
-            crate::federation::scope_codec::decode_scope_value(required_value(
+            oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
                 entries,
                 "authority_scope",
             )?)

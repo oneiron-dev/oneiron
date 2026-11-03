@@ -1,7 +1,7 @@
 //! The provenance class a stored claim offers to readers.
 use super::ClaimBody;
-use oneiron_contracts::claim::ClaimSource;
 use crate::edge::EdgeActorClass;
+use oneiron_contracts::claim::ClaimSource;
 use serde::{Deserialize, Serialize};
 
 /// How a row was made. This is not a scope key or a relevance multiplier.

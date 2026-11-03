@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::effect::{ComposedEffect, ConsentDecision, EffectDigest};
 use super::grant::StandingConsentGrant;

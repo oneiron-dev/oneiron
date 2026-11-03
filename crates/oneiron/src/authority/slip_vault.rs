@@ -2,7 +2,7 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;

@@ -10,11 +10,11 @@
 //! the queue's own read-only gap, and it names each gap rather than
 //! refusing. Nothing here writes a promotion or any other row.
 use crate::Vault;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::code_revision::{CodeCommitMetadata, CodeRevision, QueuePromotionGap};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::repo_mutation::REPO_PROVENANCE_TRAILER_KEY;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 /// How a load judges the revision's promotion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

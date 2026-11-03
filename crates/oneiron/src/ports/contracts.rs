@@ -4,11 +4,11 @@ use crate::attempt_queue::{
     ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
     FailAttempt, FailOutcome,
 };
-use crate::write_envelope::claim_body::ClaimBody;
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;
 use crate::pipeline::ScoredEntity;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange, Vault};
 use std::ops::Deref;

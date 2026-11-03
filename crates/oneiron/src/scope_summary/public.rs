@@ -2,10 +2,10 @@
 
 use super::public_types::*;
 use crate::claim::{ClaimReadStatus, PointRead};
-use crate::ports::ScopedReadResult;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::ports::ScopedReadResult;
 use crate::{EntityId, WriteActor};
 
 fn side_id(value: &str) -> MemoryResult<EntityId> {

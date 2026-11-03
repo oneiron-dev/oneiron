@@ -3,8 +3,8 @@
 //! how far into that page it got, and where the next file's lines resume, so
 //! a page that its output or scan limit cut picks up exactly where it stopped.
 
-use oneiron_contracts::claim::ScopedReadReceipt;
 use crate::error::Result;
+use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::coreutils_text::{LinePosition, join_graph_path, page_lines};
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};

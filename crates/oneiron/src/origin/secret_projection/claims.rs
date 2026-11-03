@@ -39,8 +39,6 @@ use self::codec::{
 use super::recipient::RepoProjectionRevealBinding;
 
 use crate::Vault;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -48,6 +46,8 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid};
 use crate::secret_custody::MASKED_FILE_BAND;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 /// The predicate of every masked Git copy record.
 pub(crate) const REPO_SECRET_PROJECTION_PREDICATE: &str = "repo.secret_projection";

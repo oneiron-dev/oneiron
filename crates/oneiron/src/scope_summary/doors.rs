@@ -6,9 +6,7 @@ use super::codec::{
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
-use crate::write_envelope::claim_body::ClaimSubject;
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
@@ -26,10 +24,12 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use rmpv::Value;
 
 mod note_versions;
@@ -253,7 +253,9 @@ pub(crate) fn validate_summary_put(
     Ok(())
 }
 
-pub(crate) fn merge_summary_ref(body: &crate::write_envelope::claim_body::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
+pub(crate) fn merge_summary_ref(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+) -> Result<Option<(EntityId, EntityId)>> {
     if body.predicate != "merge.summary" {
         return Ok(None);
     }

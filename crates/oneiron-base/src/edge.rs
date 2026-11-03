@@ -1,7 +1,7 @@
 //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`.
 
-use oneiron_contracts::affect::Vad;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use oneiron_contracts::affect::Vad;
 
 /// Defined in `oneiron-contracts`: the write actor names it.
 pub use oneiron_contracts::edge::EdgeActorClass;
@@ -152,10 +152,7 @@ pub struct DecodedEdgeValue {
 }
 
 /// Selects the value layout for writes. Reads dispatch on value length.
-pub fn edge_value_layout_for_kind(
-    kind: EdgeKind,
-    has_provenance_claim: bool,
-) -> EdgeValueLayout {
+pub fn edge_value_layout_for_kind(kind: EdgeKind, has_provenance_claim: bool) -> EdgeValueLayout {
     match kind {
         EdgeKind::AuthoredBy
         | EdgeKind::ScopedTo

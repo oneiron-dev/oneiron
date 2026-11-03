@@ -5,8 +5,6 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::batch::BatchOp;
-use oneiron_contracts::claim::ClaimApprovalStatus;
-use crate::write_envelope::claim_body::ClaimBody;
 use crate::edit_distance::delta::{
     AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
     attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
@@ -20,6 +18,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::ClaimBody;
+use oneiron_contracts::claim::ClaimApprovalStatus;
 
 use super::model::{
     INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
@@ -649,7 +649,9 @@ fn measured_amendment_in_txn(
     let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
         return Ok(None);
     };
-    let landed = approved_body(&crate::write_envelope::claim_body::decode_claim_body(&raw.body, true)?)?;
+    let landed = approved_body(&crate::write_envelope::claim_body::decode_claim_body(
+        &raw.body, true,
+    )?)?;
     let context = DeltaCaptureContext::from_bodies(
         MeasuredEnd {
             at: EndpointRef::approved_claim(*claim, reviewed_at),

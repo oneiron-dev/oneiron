@@ -450,7 +450,7 @@ impl<'v> ScopedRead<'v> {
             && crate::gate::scoped_read_record_allowed(
                 policy,
                 &self.actor_key,
-                &crate::federation::scope_codec::read_preset(),
+                &oneiron_authority::federation::scope_codec::read_preset(),
             );
         if !revealed {
             // A withheld private NOTE shell counts exactly like a missing row.

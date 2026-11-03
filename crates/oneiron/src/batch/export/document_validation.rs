@@ -14,13 +14,13 @@ use super::{
     ExportPack,
 };
 use crate::Vault;
-use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SKILL,
 };
 use crate::serialize::{ExportBody, ExportValue};
+use crate::write_envelope::claim_body::ClaimSubject;
 
 impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// The archive's attached files are read one at a time and checked

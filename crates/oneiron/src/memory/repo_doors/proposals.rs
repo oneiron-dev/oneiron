@@ -32,7 +32,7 @@ use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
 use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{

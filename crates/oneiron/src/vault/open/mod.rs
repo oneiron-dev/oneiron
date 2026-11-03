@@ -214,9 +214,9 @@ impl Vault {
     #[doc(hidden)]
     pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use oneiron_contracts::claim::ClaimSource;
-        use crate::write_envelope::claim_body::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use crate::write_envelope::claim_body::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
+        use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;
@@ -329,8 +329,8 @@ impl Vault {
     #[cfg(feature = "test-support")]
     fn install_fixture_source_permits(&self, actor: EntityId, peer_sources: bool) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use oneiron_contracts::claim::ClaimSource;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;

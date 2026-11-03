@@ -18,7 +18,8 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, record_scope::note_world};
+use crate::federation::record_scope::note_world;
+use oneiron_authority::federation::Scope;
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,

@@ -1,8 +1,8 @@
 //! Predicate grammar and the engine-owned predicate vocabulary used by stored claims.
-use crate::error::{ClaimError, Error, Result};
-use crate::entity_id::EntityId;
-use oneiron_contracts::claim::ClaimApprovalStatus;
 use super::claim_body::PREDICATE_VAULT_DEFAULT_FACET;
+use crate::entity_id::EntityId;
+use crate::error::{ClaimError, Error, Result};
+use oneiron_contracts::claim::ClaimApprovalStatus;
 
 /// Maximum predicate length in bytes (D17).
 pub const MAX_PREDICATE_BYTES: usize = 128;
@@ -262,7 +262,6 @@ pub fn is_expression_preference_predicate(predicate: &str) -> bool {
             | PREDICATE_COMPANION_EXPRESSION_STYLE
     )
 }
-
 
 pub const PREDICATE_PERSON_SUBSTRATE: &str = "person.substrate";
 

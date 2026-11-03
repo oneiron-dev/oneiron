@@ -13,7 +13,7 @@ use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequ
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::error::Result;
-use crate::federation::RepoTarget;
+use oneiron_authority::federation::RepoTarget;
 
 impl Vault {
     /// The anchor the approver's Grant reads, verified against this served

@@ -62,8 +62,8 @@ fn reach_row(actor_ref: &str) -> Result<Value> {
         ),
         (
             Value::from(GRANT_SCOPE_KEY),
-            crate::federation::scope_codec::encode_scope_value(
-                &crate::federation::scope_codec::effect_preset(),
+            oneiron_authority::federation::scope_codec::encode_scope_value(
+                &oneiron_authority::federation::scope_codec::effect_preset(),
             )?,
         ),
         (
@@ -110,7 +110,7 @@ pub(super) fn with_shipped_coach_offer_reach(manifest: Vec<u8>) -> Result<Vec<u8
 fn row_ceiling(grant: &PolicyScopedGrant) -> Option<PolicyApprovalCeiling> {
     if grant.budget.is_some()
         || grant.receipt_required
-        || grant.authority_scope != crate::federation::scope_codec::effect_preset()
+        || grant.authority_scope != oneiron_authority::federation::scope_codec::effect_preset()
     {
         return None;
     }

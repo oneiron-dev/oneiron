@@ -18,6 +18,9 @@ pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
     //! in `crate::edge_regeneration`.
+    #[cfg(feature = "sync")]
+    pub(crate) use crate::edge_regeneration::regeneration_stored;
+    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
     pub use oneiron_base::edge::{
         DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
         EdgeProvenanceFlags, EdgeValueLayout,
@@ -29,9 +32,6 @@ pub mod edge {
         parse_strict_edge_record, parse_strict_edge_record_key, reserved_regenerates,
         validate_edge_weight, validate_public_edge_creation_kind, validate_public_edge_kind,
     };
-    #[cfg(feature = "sync")]
-    pub(crate) use crate::edge_regeneration::regeneration_stored;
-    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
 }
 mod edge_regeneration;
 pub mod entity_id;

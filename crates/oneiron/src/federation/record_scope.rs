@@ -4,9 +4,9 @@
 //! a wildcard selector. A body edit inherits its birth scope; a facet move
 //! requires a new record, never a restamp of the same id. A NOTE's world
 //! alone is read from its live `InWorld` edges at every read (`note_world`).
-use crate::claim::ClaimRecordScope;
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{

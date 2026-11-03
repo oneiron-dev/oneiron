@@ -2,7 +2,7 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
@@ -17,10 +17,10 @@ use std::collections::BTreeSet;
 #[cfg(test)]
 mod tests;
 
-pub use crate::write_envelope::claim_body::{
-    base_world_id, default_project_id, substrate_facet_id, PREDICATE_VAULT_DEFAULT_FACET,
-};
 use crate::write_envelope::claim_body::scope_stamp::{id_value, scope_id, subject_facet};
+pub use crate::write_envelope::claim_body::{
+    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+};
 
 /// The facet a write stamps when no mask is active: the newest active
 /// [`PREDICATE_VAULT_DEFAULT_FACET`] claim on the owner, else the owner's

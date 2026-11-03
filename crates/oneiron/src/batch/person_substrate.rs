@@ -105,7 +105,9 @@ fn is_substrate(data: &[u8], person: EntityId) -> bool {
 }
 /// Caller-selected ids cannot mint base reality or the default project as records.
 pub(super) fn validate_scope_identity(id: EntityId) -> Result<()> {
-    if id == oneiron_contracts::claim::base_world_id() || id == crate::write_envelope::claim_body::default_project_id() {
+    if id == oneiron_contracts::claim::base_world_id()
+        || id == crate::write_envelope::claim_body::default_project_id()
+    {
         return Err(Error::InvalidClaimBody(
             "reserved scope member cannot be minted",
         ));

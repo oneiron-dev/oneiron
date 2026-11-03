@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use crate::EntityId;
 use crate::authority::VerifiedSlip;
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::registry::ENTITY_TYPE_PSYCH_PROFILE;
 
 use super::{AccessGrant, CompanionGrantBounds};

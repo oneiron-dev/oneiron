@@ -8,8 +8,10 @@ use rmpv::Value;
 use super::*;
 use crate::error::{Error, Result};
 
-pub use crate::write_envelope::claim_body::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
 pub(crate) use crate::write_envelope::claim_body::*;
+pub use crate::write_envelope::claim_body::{
+    ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung,
+};
 
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";

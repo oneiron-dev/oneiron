@@ -6,7 +6,8 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, SharedVaultWrite};
+use crate::federation::SharedVaultWrite;
+use oneiron_authority::federation::Scope;
 use crate::write_envelope::WriteActor;
 use std::collections::{BTreeMap, BTreeSet};
 

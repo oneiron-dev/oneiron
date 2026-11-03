@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::federation::scope_codec::{
+use oneiron_authority::federation::scope_codec::{
     decode_scope_value, effect_preset, encode_scope_value, legacy_read_scope,
 };
 use crate::gate::constants::{

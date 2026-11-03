@@ -56,8 +56,8 @@ pub(super) fn dispatch_put_type(
             &body,
             fixed.replicated,
         )?;
-        dispatch.is_lexical_query_hint_claim =
-            body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT;
+        dispatch.is_lexical_query_hint_claim = body.predicate
+            == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT;
         if dispatch.is_lexical_query_hint_claim {
             super::super::lexical_hint::validate_lexical_query_hint(
                 store,
@@ -71,8 +71,11 @@ pub(super) fn dispatch_put_type(
             crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &fixed.id)?
             && crate::batch::EntityMetadataHeader::parse(&prior)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-            && crate::write_envelope::claim_body::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
-                .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
+            && crate::write_envelope::claim_body::decode_claim_body(
+                &prior[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
         {
             return Err(Error::Registry(RegistryError::FacetStampImmutable {
                 src: fixed.id,

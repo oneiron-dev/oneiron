@@ -9,7 +9,7 @@ use rmpv::Value;
 
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::grants::{
     PolicyScopedGrant, scoped_read_actor_matches, scoped_read_grant_has_read_effector,
@@ -42,7 +42,7 @@ pub(crate) struct ResolvedRetrievalFilter {
     /// The verified credential a scoped read retrieves under, if any. A TASK
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
-    pub(crate) credential: Option<crate::federation::Scope>,
+    pub(crate) credential: Option<oneiron_authority::federation::Scope>,
 }
 
 impl ResolvedRetrievalFilter {
@@ -401,7 +401,7 @@ fn parse_minimum(value: &Value) -> Option<f32> {
 /// share one. A grant reads a world only then (Sol R7-004, R11-001).
 pub(crate) fn scoped_read_grant_reads_some_type(
     grant: &PolicyScopedGrant,
-    credential: Option<&crate::federation::Scope>,
+    credential: Option<&oneiron_authority::federation::Scope>,
 ) -> bool {
     RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| match credential {
         Some(scope) => row

@@ -8,7 +8,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
-use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};

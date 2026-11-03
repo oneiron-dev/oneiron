@@ -2,7 +2,8 @@
 //! organization's administration powers.
 
 use super::*;
-use crate::federation::{OrgAdminPower, ScopeAxis, ScopeId};
+use crate::federation::OrgAdminPower;
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 impl Vault {
     /// A facet limit is for agents and rooms, never the owner (owner ruling

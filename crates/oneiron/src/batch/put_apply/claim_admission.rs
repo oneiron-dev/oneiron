@@ -1,6 +1,6 @@
 //! Claim-body and immutable-ledger admission before any put side effect.
-use crate::write_envelope::claim_body::ClaimBody;
 use crate::store::Store;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::{EntityId, Result, TimeRange, WriteEnvelope};
 
 pub(super) struct ClaimPutAdmission<'a> {

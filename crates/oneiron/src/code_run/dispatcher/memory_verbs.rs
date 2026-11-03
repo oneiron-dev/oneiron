@@ -11,8 +11,8 @@ use crate::code_run::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 use crate::error::{Error, Result};
-use oneiron_base::edge::kind_tables::ensure_public_memory_edge_kind;
 use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
+use oneiron_base::edge::kind_tables::ensure_public_memory_edge_kind;
 
 use super::envelope::edge_operation_gate_id;
 use super::read_worlds::{ServedRows, served_row_in};

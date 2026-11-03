@@ -414,9 +414,9 @@ impl Vault {
 fn transferred_admission(
     bounds: Result<super::slip::TransferredBounds>,
     now: u64,
-    served_pact: Option<crate::federation::FederationDirectionScope>,
-) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
-    move |id: EntityId, position: Option<&crate::federation::Scope>| {
+    served_pact: Option<oneiron_authority::federation::FederationDirectionScope>,
+) -> impl Fn(EntityId, Option<&oneiron_authority::federation::Scope>) -> bool {
+    move |id: EntityId, position: Option<&oneiron_authority::federation::Scope>| {
         bounds
             .as_ref()
             .is_ok_and(|bounds| bounds.admits(id, position, now, served_pact.as_ref()))

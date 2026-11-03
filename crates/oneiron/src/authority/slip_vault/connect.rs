@@ -18,9 +18,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, encode_federation_pact_scope, is_guest_slice,
+    is_guest_slice,
     require_connect_grant_in_txn, require_one_connect_per_peer,
 };
+use oneiron_authority::federation::{FederationDirectionScope, FederationPactScope, encode_federation_pact_scope};
 use crate::store::grant_scope_custody;
 
 /// A pact epoch's scope opening key as an offer carries it (FIX 7907,

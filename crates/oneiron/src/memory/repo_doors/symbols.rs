@@ -17,7 +17,7 @@ use super::{
     RepoSymbolsReleaseOutput, RepoSymbolsRenewInput, RepoSymbolsRenewOutput, repo_target,
 };
 use crate::code_symbol::code_symbol_entity_id;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::task_verb::{SymbolLease, SymbolLeaseFence, SymbolLeaseRun};
 use crate::{EntityId, Vault};

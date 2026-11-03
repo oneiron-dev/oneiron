@@ -5,10 +5,10 @@ use rmpv::Value;
 use super::binding_error;
 use crate::EntityId;
 use crate::batch::BatchOp;
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSuccession};
-use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::error::Result;
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSuccession};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 /// Rebuild the permitted body delta instead of trusting caller-supplied axes.
 pub(super) fn demotion_body(
@@ -19,8 +19,8 @@ pub(super) fn demotion_body(
     next: &ClaimBody,
     tail: &[BatchOp],
 ) -> Result<ClaimBody> {
-    use crate::write_envelope::claim_body::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
     use crate::edge::{EdgeKind, validate_edge_weight};
+    use crate::write_envelope::claim_body::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());

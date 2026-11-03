@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 
 use super::principal_standing::grant_pact_standing_lapsed_in_txn;
 use super::withdrawn_grant::grant_known_withdrawn_in_txn;
-use crate::federation::{ScopeAxis, decode_federation_grant_body};
+use crate::federation::decode_federation_grant_body;
+use oneiron_authority::federation::ScopeAxis;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};

@@ -11,10 +11,6 @@ use super::landing_lfs::{admit_landing_lfs_pointers, ref_required_lfs_oids};
 use super::paths::{now_secs, serve_failed};
 use super::serve_cmd::path_arg;
 use crate::Vault;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
-use crate::write_envelope::claim_body::{
-    ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,
-};
 use crate::codebase::RepoRef;
 use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
@@ -31,6 +27,10 @@ use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{
+    ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,
+};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use rmpv::Value;
 
 mod scan;

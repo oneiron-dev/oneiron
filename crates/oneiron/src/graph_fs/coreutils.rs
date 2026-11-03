@@ -4,13 +4,13 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 use std::time::Instant;
 
-use oneiron_contracts::claim::ScopedReadReceipt;
-use crate::write_envelope::claim_body::decode_claim_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
+use crate::write_envelope::claim_body::decode_claim_body;
+use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
 use super::model::{

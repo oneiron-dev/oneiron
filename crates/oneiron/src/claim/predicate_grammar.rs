@@ -101,12 +101,14 @@ pub const CLAIM_PREDICATE_REGISTRY: [&str; 11] = [
     crate::commitment::PREDICATE_COMMITMENT_RECORD,
 ];
 
-pub use crate::write_envelope::claim_predicate::{MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE};
-pub(crate) use crate::write_envelope::claim_predicate::{
-    is_predicate_prefix, is_reserved_predicate, validate_predicate, validate_session_tag,
+pub use crate::write_envelope::claim_predicate::{
+    MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
 };
 pub(super) use crate::write_envelope::claim_predicate::{
     is_edge_reserved_predicate, is_engine_owned_reserved_predicate,
+};
+pub(crate) use crate::write_envelope::claim_predicate::{
+    is_predicate_prefix, is_reserved_predicate, validate_predicate, validate_session_tag,
 };
 
 /// Claim predicate binding a Loro peer id (the device CRDT client id) to the
