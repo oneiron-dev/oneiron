@@ -5,7 +5,7 @@ use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 
 pub use crate::store::checkout_lease::{
-    CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_SETTLEMENT_KEY_PREFIX, CHECKOUT_TOMBSTONE_KEY_PREFIX, CHECKOUT_RESULT_ID_DOMAIN, CheckoutId, GitOid, CheckoutLeaseState, CheckoutHolder, CheckoutFactMutation, CheckoutFactSink, CheckoutLivenessPulse, CheckoutLiveness, CheckoutClaimRequest, CheckoutLeaseGrant, CheckoutLeaseFence, CheckoutSettlementDisposition, CheckoutSettlementRequest, CheckoutSettlementReceipt, PushedHeadReceipt, CheckoutTeardownOutcome, CheckoutRetainReason, CheckoutError, CheckoutResult, CheckoutTeardownInspection, TeardownReceiptMatch, CheckoutMaterializationOptions, CheckoutTaskClass, MaterializationSpec,
+    CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_SETTLEMENT_KEY_PREFIX, CHECKOUT_TOMBSTONE_KEY_PREFIX, CHECKOUT_RESULT_ID_DOMAIN, CheckoutId, GitOid, CheckoutLeaseState, CheckoutHolder, CheckoutFactMutation, CheckoutFactSink, CheckoutLivenessPulse, CheckoutLiveness, CheckoutClaimRequest, CheckoutLeaseGrant, CheckoutLeaseFence, CheckoutSettlementDisposition, CheckoutSettlementRequest, CheckoutSettlementReceipt, PushedHeadReceipt, CheckoutTeardownOutcome, CheckoutRetainReason, CheckoutError, CheckoutResult, CheckoutTeardownInspection, TeardownReceiptMatch, CheckoutMaterializationOptions, CheckoutTaskClass,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

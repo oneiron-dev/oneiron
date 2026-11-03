@@ -2,7 +2,7 @@
 use crate::{EntityId, Error, Result};
 use rmpv::Value;
 use std::collections::BTreeMap;
-pub use crate::store::code_commit_metadata::CodeCommitMetadata;
+use crate::store::code_commit_metadata::CodeCommitMetadata;
 fn invalid() -> Error {
     Error::InvalidClaimBody("invalid canonical code commit metadata")
 }
