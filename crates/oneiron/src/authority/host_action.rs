@@ -109,6 +109,77 @@ impl HostActionGuard {
     pub(crate) fn owner(&self) -> EntityId {
         self.owner
     }
+
+    /// The durable identity of this action on `vault`, for a record that
+    /// outlives the request (FIX 7231): the posture it was proven under,
+    /// the owner, and the install's host root by its mint. Read it only
+    /// from a guard its caller just proved again in the writing snapshot.
+    pub(crate) fn durable_identity(&self, vault: &Vault) -> HostActionIdentity {
+        HostActionIdentity {
+            posture: vault.privacy_posture(),
+            owner: self.owner,
+            root: self.root.as_ref().map(|root| {
+                let claims = root.claims();
+                HostRootIdentity {
+                    slip_id: claims.slip_id,
+                    vault_id: claims.vault_id,
+                    binding_key: claims.binding_key,
+                }
+            }),
+        }
+    }
+}
+
+/// A host action as a durable record keeps it (FIX 7231): what a stored
+/// approval proves again at every recheck in place of the
+/// [`HostActionGuard`], whose presented root cannot be stored. It carries no
+/// credential bytes and no signature, and it rebuilds no proof: it names
+/// the posture, the owner, and the install's host root by its mint, and
+/// [`Self::holds_in`] asks the same rule a guard asks of that mint as the
+/// log holds it now.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HostActionIdentity {
+    /// The posture the action was proven under.
+    posture: crate::HostingPrivacyPosture,
+    owner: EntityId,
+    /// The host root acted under; `None` is the explicit local dev mode.
+    root: Option<HostRootIdentity>,
+}
+
+/// One install's host root, by the mint the log committed: its slip, the
+/// vault it roots and the install's issuer key it is bound to.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HostRootIdentity {
+    slip_id: [u8; 32],
+    vault_id: [u8; 32],
+    binding_key: [u8; 32],
+}
+
+impl HostActionIdentity {
+    /// Whether this action still holds in `txn`: the same posture, the same
+    /// install's root still live and still binding this owner (or, for the
+    /// dev mode, the owner-verb rule still passing), and the owner a live
+    /// PERSON. Off the recorded or a self-hosted posture it is the typed
+    /// refusal; a lapse is the owner refusal ([`host_action_refused`] tells
+    /// both from a failure to judge).
+    pub(crate) fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if vault.privacy_posture() != self.posture {
+            return Err(Error::HostActionRequiresSupportGrant);
+        }
+        vault.host_action_acts_as_in_txn(
+            txn,
+            self.root.as_ref().map(HostRoot::Recorded),
+            self.owner,
+        )
+    }
+}
+
+/// The host root one host action names: presented with the request, or
+/// recorded by a durable identity.
+#[derive(Clone, Copy)]
+enum HostRoot<'a> {
+    Presented(&'a VerifiedSlip),
+    Recorded(&'a HostRootIdentity),
 }
 
 /// Whether `error` is a host action's refusal, the typed one or the owner
@@ -181,7 +252,18 @@ impl Vault {
         root: Option<&VerifiedSlip>,
         owner: EntityId,
     ) -> Result<()> {
-        if self.host_action_owner_in_txn(txn, root)? != owner {
+        self.host_action_acts_as_in_txn(txn, root.map(HostRoot::Presented), owner)
+    }
+
+    /// The one recheck a guard and a durable identity share: `root` (the
+    /// dev mode for `None`) still acts as `owner`.
+    fn host_action_acts_as_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: Option<HostRoot<'_>>,
+        owner: EntityId,
+    ) -> Result<()> {
+        if self.host_action_owner_by_in_txn(txn, root)? != owner {
             return Err(owner_refusal(MemoryError::new(
                 MEMORY_CODE_OWNER_BINDING_REQUIRED,
                 "the owner this host action was resolved for is no longer the one it acts as",
@@ -199,6 +281,16 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         root: Option<&VerifiedSlip>,
+    ) -> Result<EntityId> {
+        self.host_action_owner_by_in_txn(txn, root.map(HostRoot::Presented))
+    }
+
+    /// [`Self::host_action_owner_in_txn`] for a root presented now or
+    /// recorded by a durable identity.
+    fn host_action_owner_by_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: Option<HostRoot<'_>>,
     ) -> Result<EntityId> {
         if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
             return Err(Error::HostActionRequiresSupportGrant);
@@ -226,29 +318,49 @@ impl Vault {
     /// `root` is this vault's live, full, unattenuated host root, as the log
     /// minted it, and binds `owner` as `human` under the key that signed
     /// that mint: the owner it bound at install, never any Human bound
-    /// anywhere else.
+    /// anywhere else. A recorded root is judged by its mint alone: still
+    /// live, full grade, of the same vault and the same install's key.
     fn root_binds_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        root: &VerifiedSlip,
+        root: HostRoot<'_>,
         owner: EntityId,
     ) -> Result<()> {
-        let claims = root.claims();
-        if claims.holder_ref != HOST_HOLDER
-            || claims.parent_id.is_some()
-            || !root.is_full_vault_owner_grade()
-            || !self.capability_slip_is_live_in_txn(txn, root)?
-        {
-            return Err(owner_refusal(not_a_root()));
-        }
+        let slip_id = match root {
+            HostRoot::Presented(root) => {
+                let claims = root.claims();
+                if claims.holder_ref != HOST_HOLDER
+                    || claims.parent_id.is_some()
+                    || !root.is_full_vault_owner_grade()
+                    || !self.capability_slip_is_live_in_txn(txn, root)?
+                {
+                    return Err(owner_refusal(not_a_root()));
+                }
+                claims.slip_id
+            }
+            HostRoot::Recorded(root) => {
+                if !self.capability_slip_id_is_live_in_txn(txn, &root.slip_id)? {
+                    return Err(owner_refusal(not_a_root()));
+                }
+                root.slip_id
+            }
+        };
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let Some(mint) = fold.slips.mints.get(&claims.slip_id) else {
+        let Some(mint) = fold.slips.mints.get(&slip_id) else {
             return Err(owner_refusal(not_a_root()));
         };
         let minted = &mint.action.claims;
         if minted.holder_ref != HOST_HOLDER
             || minted.parent_id.is_some()
             || !roster_has_live_owner(&fold.roster, &mint.signer)
+        {
+            return Err(owner_refusal(not_a_root()));
+        }
+        if let HostRoot::Recorded(root) = root
+            && (!minted.is_full_vault_owner_grade()
+                || minted.vault_id != root.vault_id
+                || fold.vault_id != Some(root.vault_id)
+                || minted.binding_key != root.binding_key)
         {
             return Err(owner_refusal(not_a_root()));
         }
