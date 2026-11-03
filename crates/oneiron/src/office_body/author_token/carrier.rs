@@ -61,6 +61,7 @@ impl Vault {
     ) -> Result<()> {
         let tokens = revision_tokens(self, txn, bytes)?;
         let mut carried: BTreeMap<Vec<u8>, OfficeBodyExportRecord> = BTreeMap::new();
+        let mut live_authors: BTreeMap<Vec<u8>, (BodyActor, String)> = BTreeMap::new();
         for record in records {
             let Some(token) = record.token.as_deref().filter(|token| !token.is_empty()) else {
                 return Err(invalid("a DOCX author carrier has no token"));
@@ -71,6 +72,16 @@ impl Vault {
                 ));
             }
             let key = token.as_bytes().to_vec();
+            if record.actor != BodyActor::Erased {
+                let live = (record.actor, record.author.clone());
+                if let Some(previous) = live_authors.insert(key.clone(), live.clone())
+                    && previous != live
+                {
+                    return Err(invalid(
+                        "DOCX author carrier live actors or display authors disagree",
+                    ));
+                }
+            }
             if let Some(held) = carried.get(&key) {
                 let merged = merge_carrier_facts(held, record)?;
                 carried.insert(key, merged);
@@ -138,6 +149,7 @@ impl Vault {
         let tokens = revision_tokens(self, txn, bytes)?;
         let mut carried: BTreeMap<(EntityId, u64, u64), OfficeBodyExportAuthor> = BTreeMap::new();
         let mut tokens_seen = BTreeMap::new();
+        let mut live_actors: BTreeMap<Vec<u8>, EntityId> = BTreeMap::new();
         for (key, record) in records {
             if record.token.is_empty() || !tokens.contains(record.token.as_bytes()) {
                 return Err(invalid(
@@ -150,6 +162,13 @@ impl Vault {
                 return Err(invalid(
                     "a DOCX revision-author token names two export groups",
                 ));
+            }
+            if let Some(actor) = record.actor {
+                if let Some(previous) = live_actors.insert(record.token.as_bytes().to_vec(), actor)
+                    && previous != actor
+                {
+                    return Err(invalid("DOCX revision-author live actors disagree"));
+                }
             }
             if let Some(held) = carried.get(key) {
                 let merged = merge_export_author_facts(held, record)?;
