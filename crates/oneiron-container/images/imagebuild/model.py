@@ -8,6 +8,7 @@ Nothing here downloads or builds.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import tomllib
 import uuid
@@ -74,6 +75,7 @@ class Plan:
     launchers: list[dict] = field(default_factory=list)
     links: list[dict] = field(default_factory=list)
     dirs: list[dict] = field(default_factory=list)
+    empty_files: list[dict] = field(default_factory=list)
     user: dict | None = None
     image: dict = field(default_factory=dict)
 
@@ -171,6 +173,7 @@ class Model:
             launchers=both("launchers", base),
             links=(list(plumbing_doc.get("links", [])) if plumbing else []) + list(overlay.get("links", [])),
             dirs=both("dirs", base),
+            empty_files=both("empty_files", base),
             user=plumbing_doc.get("user") if plumbing else overlay.get("user"),
             image=image,
         )
@@ -290,6 +293,14 @@ def _check_requests(model: Model, problems: list[str]) -> None:
             dest = entry.get("dest", entry.get("path", ""))
             if not str(dest).startswith("/usr/") and not str(dest).startswith("/opt/"):
                 problems.append(f"packages.toml: {name} places {dest!r} outside /usr or /opt (merged-usr image)")
+        for entry in plan.empty_files:
+            path = str(entry.get("path", ""))
+            # An absolute, normalized path inside the image: no "." or "..",
+            # no trailing or doubled slash, not the root, nothing a TSV row breaks on.
+            if (not path.startswith("/") or path.startswith("//") or path == "/"
+                    or posixpath.normpath(path) != path or any(c in path for c in "\t\n\r\\")):
+                problems.append(f"packages.toml: {name} empty file {path!r} must be an absolute, normalized "
+                                "path inside the image")
         for entry in plan.launchers:
             for key in ("runtime", "entry"):
                 value = str(entry.get(key, ""))
