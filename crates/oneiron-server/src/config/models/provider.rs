@@ -313,8 +313,8 @@ pub struct ProviderConfig {
     /// Host-supplied token conversions for the allocation's named unit.
     pub rates: Vec<UnitRate>,
     /// The Responses socket an OpenAI-compatible provider's calls hold, or
-    /// `None` for the chat HTTP path alone. A broker-held key always takes
-    /// HTTP: the broker runs no socket yet.
+    /// `None` for the chat HTTP path alone. A broker-held OpenAI key uses the
+    /// broker's per-call Responses socket when set, else HTTP.
     pub responses_socket: Option<ResponsesSocket>,
     /// How this provider's JSON request bodies are compressed, or `None` to
     /// send them plain. A broker-held key has none here: the broker

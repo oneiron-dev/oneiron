@@ -278,6 +278,7 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
                 &call.header,
                 checked,
                 call.body,
+                call.whole,
                 &call.secret,
                 &mut stream,
                 deadline,
