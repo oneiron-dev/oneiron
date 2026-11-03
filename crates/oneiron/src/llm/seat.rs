@@ -28,6 +28,11 @@ use crate::{
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
     SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
+/// Whether a masked copy of a `LLM_MODEL_DESCRIPTION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn llm_model_description_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ModelDescription, LegacyJson>(bytes)
+}
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())

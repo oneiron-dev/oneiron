@@ -327,3 +327,7 @@ pub(crate) use training_link::TrainingLinkSlot;
 pub(crate) use usage_sources::erase_usage_source_in_txn;
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
