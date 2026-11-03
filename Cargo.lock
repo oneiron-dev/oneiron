@@ -8040,6 +8040,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "thiserror 2.0.20",
  "tiktoken-rs",
  "tracing",
 ]
