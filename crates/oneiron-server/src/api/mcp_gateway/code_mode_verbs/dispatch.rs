@@ -134,6 +134,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        // The run holds the previous call's answer once it dispatches its
+        // next call (FIX 10633): release what that answer kept now, so a
+        // read's renderer turn cannot survive into this call.
+        self.answer_recorded();
         if call.verb.is_browser() {
             // The run's worker thread holds the call while the guest acts.
             return self.call_browser(call, origin, invocation);
@@ -205,6 +209,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         request: &oneiron::task_verb::sdk::ConnectorAnswerRequest,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        // A new call means the run holds the previous answer (FIX 10633):
+        // release what it kept before this one runs.
+        self.answer_recorded();
         let Some(auth) = self.actor.auth.clone() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "mcp_auth_required".to_owned(),

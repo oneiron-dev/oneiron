@@ -244,6 +244,8 @@ pub trait AgentVerbDoor: Send + Sync {
     /// The run recorded the write's replay row for the answer this door
     /// just gave (FIX 10633): a door that keeps what its answer holds
     /// until then releases it now. A door that keeps nothing ignores it.
+    /// A door whose read answers keep no replay row instead releases when
+    /// its next call starts, once the run holds the previous answer.
     fn answer_recorded(&self) {}
 
     /// Sends the run's answer to the questions one of its connector calls
