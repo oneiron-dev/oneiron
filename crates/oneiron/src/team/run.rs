@@ -34,9 +34,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatcher, CoordinationPattern, TeamRunStamp, attempt_team_stamp,
-    decode_agent_dispatch_input, team_pattern,
+    AgentDispatcher,  TeamRunStamp, attempt_team_stamp,
+    decode_agent_dispatch_input,
 };
+use crate::team::team_shape::CoordinationPattern;
+use crate::team::team_shape::team_pattern;
 use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestKind};
 use crate::autoreason_campaign::authoring::tournament_team_stamp;
 use crate::dreamer_runner::DreamerRunnerStore;

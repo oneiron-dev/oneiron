@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome,  AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::attempt_queue::AttemptId;
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord, CommitmentStatus};
 use crate::consent::AuthenticatedOwner;

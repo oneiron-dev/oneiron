@@ -1402,9 +1402,9 @@ pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
-pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
+pub(crate) fn default_consult_fanout_policy() -> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
     let shipped = shipped_consult_fanout_rows();
-    crate::task_verb::ConsultFanOutPolicy {
+    crate::gate::consult_fanout_values::ConsultFanOutPolicy {
         approval_threshold: shipped.threshold,
         mode: shipped.controls.mode,
         peer_rate: shipped.controls.peer_rate.clone(),

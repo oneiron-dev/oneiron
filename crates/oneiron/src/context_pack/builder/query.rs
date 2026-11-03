@@ -425,7 +425,7 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
     /// [`PipelineBuilder::fold_messages_into_turns`].
-    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::pipeline::TurnFold) -> Self {
+    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::context_pack::turn_fold::TurnFold) -> Self {
         self.pipeline = self.pipeline.fold_messages_into_turns(fold);
         self
     }

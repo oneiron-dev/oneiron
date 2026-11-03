@@ -11,7 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_dispatch::{AgentDispatcher, CareLevel, CoordinationPattern, SpawnOverride};
+use crate::agent_dispatch::{AgentDispatcher, };
+use crate::team::spawn_need::CareLevel;
+use crate::team::team_shape::CoordinationPattern;
+use crate::team::spawn_override::SpawnOverride;
 use crate::code_run::SelfSpawnAsk;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};

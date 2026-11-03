@@ -36,7 +36,9 @@ use super::join_receipt::{
     JOINS, JoinReceiptRef, READY, RecordedAnswer, RosterActor, join_ref, ready_key,
 };
 use super::{project, rooms, thread_audience_allows_in};
-use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
+use crate::agent_dispatch::{AgentDispatcher,   payer_binds_in_txn};
+use crate::workspace_roster::spend_scope::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::conversation::{RoomHost, room_host_in_txn};
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::MembershipStanding;

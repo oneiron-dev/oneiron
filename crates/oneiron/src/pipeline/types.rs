@@ -52,13 +52,7 @@ pub enum Signal {
 pub(super) const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 pub(super) const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
-/// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
-/// 28-day default). The recency signal's source timestamp is the
-/// entity's `learned_at` (v1). This named constant is the engine
-/// default for unlisted dynamic type bytes; the temporal pipeline's
-/// recency decay constant (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`,
-/// the ARCH-0004 §4.5 table value) derives from it.
-pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
+pub use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 
 /// RET-010c recency half-life table, keyed by entity type byte. Values are
 /// explicit contract rows, not derived from type defaults; unknown dynamic
@@ -171,30 +165,7 @@ pub(crate) use crate::store::retrieval_values::{
     CandidateFilter, CandidateGate, SnapshotCandidateFilter,
 };
 
-/// What a run does with a MESSAGE hit
-/// (`PipelineBuilder::fold_messages_into_turns`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TurnFold {
-    /// Every hit stands as itself.
-    Off,
-    /// A MESSAGE hit becomes its TURN when the run admits the turn; any other
-    /// message stays as itself.
-    Fold,
-    /// As [`Self::Fold`], and a MESSAGE that found no admitted turn leaves the
-    /// run: the caller admits messages only as the way to their turns.
-    TurnsOnly,
-}
-
-impl TurnFold {
-    /// The mode's name in replay inputs and the fork hash.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Fold => "fold",
-            Self::TurnsOnly => "turns_only",
-        }
-    }
-}
+pub(crate) use crate::context_pack::turn_fold::TurnFold;
 
 #[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
@@ -414,42 +385,7 @@ impl EntityMetadataCache {
     }
 }
 
-/// Facet filter mode for the post-fusion claim facet filter (ARCH-0039
-/// facet modes table; ARCH-0022 retrieval-filter rule).
-///
-/// Selected per query via [`PipelineBuilder::facet`]. Not setting a facet on
-/// the builder is the contract's third mode — *(no facet)* — and performs no
-/// filtering at all (backward compatible).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FacetMode {
-    /// Only core + active-facet claims surface — a claim whose `FacetOf`
-    /// edges all target other facets is removed from the results (never
-    /// leak RP claims into IRL). Claims with no `FacetOf` edge (core /
-    /// unfaceted) and entities of every non-CLAIM type pass untouched.
-    /// Strict never rescores.
-    Strict,
-    /// Return all, boost the active facet: nothing is removed; claims with
-    /// a `FacetOf` edge to the active facet have their fused score
-    /// multiplied by `boost` (cross-facet analysis, psych mirror
-    /// generation). The multiplier is CALLER-SUPPLIED — the contract pins
-    /// no constant — and must be finite and positive; it is applied at
-    /// most once per claim regardless of how many `FacetOf` edges match.
-    Prefer {
-        /// Score multiplier for active-facet claims. Must be finite and
-        /// `> 0`, enforced fail-closed at [`PipelineBuilder::run`] time
-        /// with [`Error::InvalidConfig`].
-        boost: f32,
-    },
-}
-
-/// Relationship retrieval scope behavior for a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelMode {
-    /// Remove claims bound to another relationship.
-    Filter,
-    /// Retain other-relationship claims, after all in-scope rows.
-    Demote,
-}
+pub use crate::claim::retrieval_scope::{FacetMode, RelMode};
 
 /// World retrieval scope for the post-fusion claim world filter (ARCH-0004
 /// claim-filtering: `worldId = vault.baseWorld` unless the query targets a

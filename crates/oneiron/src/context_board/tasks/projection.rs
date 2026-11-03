@@ -5,7 +5,9 @@ use super::render::{bare_job_row, intent_row};
 use crate::consult_ladder::LadderTerminalDisposition;
 use crate::outbound::{ConnectorSendTask, ConnectorSendTaskOutcome};
 use crate::attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus};
-use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
+use crate::context_board::consult_result::ConsultResultPresence;
+use crate::context_board::task_kind::TaskKind;
+use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 use crate::{EntityId, Result, Vault};
 
 /// Maximum concrete TASKS rows rendered before the additive overflow footer.

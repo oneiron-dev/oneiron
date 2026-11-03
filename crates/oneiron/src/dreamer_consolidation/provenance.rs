@@ -383,7 +383,7 @@ pub fn peer_answer_provenance_chain(
     let (disposition, result_ref) =
         crate::task_verb::settled_task_result_binding(vault, lineage.consult_task_ref)?
             .ok_or_else(|| invalid_consolidation("consult task carries no settled result"))?;
-    if disposition != crate::task_verb::TaskTerminalDisposition::Completed {
+    if disposition != crate::failure_ladder::task_terminal::TaskTerminalDisposition::Completed {
         return Err(invalid_consolidation("consult task did not complete"));
     }
     if result_ref != lineage.answer_turn_ref && Some(result_ref) != lineage.result_artifact_ref {

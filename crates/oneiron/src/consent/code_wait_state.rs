@@ -118,3 +118,7 @@ pub(crate) struct CodeConsentCallSite {
     pub(crate) request_digest: [u8; 32],
 }
 
+/// The reason a wait settles with when its original caller's own credential
+/// no longer stands. No answer revives it.
+pub(crate) const CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED: &str =
+    "code_wait_original_authority_refused";
