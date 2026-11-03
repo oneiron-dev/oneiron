@@ -276,7 +276,7 @@ pub mod repo_mutation;
 pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub use oneiron_store::connector_key_status;
 pub mod file_secret_marks;
 pub(crate) use oneiron_store::key_material;
