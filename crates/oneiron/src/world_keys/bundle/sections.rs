@@ -57,7 +57,12 @@ impl SealedBundleSection {
             let count = u16::try_from(segment.len()).map_err(|_| refused("too many parts"))?;
             out.extend_from_slice(&count.to_be_bytes());
             for part in segment {
-                put_counted(out, &part.to_bytes())?;
+                let byte_len = part.len();
+                let len =
+                    u32::try_from(byte_len).map_err(|_| refused("a sealed part is too large"))?;
+                out.reserve(4 + byte_len);
+                out.extend_from_slice(&len.to_be_bytes());
+                part.write_to(&mut *out)?;
             }
         }
         Ok(())
