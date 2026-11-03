@@ -145,9 +145,10 @@ impl SharedEnvRegistry {
     /// Opens every configured env, runs each unleft lane, and returns the
     /// registry holding them. A malformed entry and a bad env (a missing
     /// dir, an unreadable leave state, an unreadable lane slip, an
-    /// unbuildable lane, a refused first admission, a non-loopback `ws://`
-    /// home) each log one line and are skipped; serve runs on without
-    /// them. A repeated membership keeps its first entry.
+    /// unbuildable lane, or a non-loopback `ws://` home) each log one line
+    /// and are skipped; serve runs on without them. A first admission refused
+    /// by a reap freeze waits for thaw instead. A repeated membership keeps
+    /// its first entry.
     ///
     /// `vault_config` is the same engine config the served vault opened
     /// with (dimensions, map size, embedding space, seal); each env vault
@@ -184,8 +185,9 @@ impl SharedEnvRegistry {
     /// Opens one configured entry, runs its lane unless it has left, and
     /// inserts it: the singular open behind [`Self::open_all`], and the seam
     /// the future join flow calls once it has enrolled a new membership. A
-    /// malformed entry, failures, refused admissions, and repeated
-    /// memberships log and leave the registry as it was.
+    /// malformed entry, failures, and repeated memberships log and leave the
+    /// registry as it was. A refused first admission defers only the lane run;
+    /// the opened env still joins housekeeping and wake scheduling.
     pub(crate) async fn insert(
         &self,
         entry: &crate::config::SharedEnvConfig,
@@ -220,13 +222,7 @@ impl SharedEnvRegistry {
             Ok(Ok(env)) => {
                 let lane = match env.lane {
                     Some(connection) => {
-                        let Some(first) = admission() else {
-                            tracing::warn!(
-                                vault_id = env.key.0,
-                                "shared env skipped: its first run is not admitted"
-                            );
-                            return;
-                        };
+                        let first = admission();
                         let (stop, stop_rx) = tokio::sync::oneshot::channel();
                         let task = tokio::spawn(run_lane(
                             Arc::clone(&connection),
@@ -428,21 +424,39 @@ impl SharedEnvRegistry {
 }
 
 /// Drives one env's lane until `stop`: the connection's own reconnecting
-/// run, paused across reap freezes like device sync's. `first` is admitted
-/// before the first run and held until it ends; each run past a thaw takes
-/// a fresh admission from the freeze, and a stop while paused ends the task
-/// there. An ordinary end — disconnect, stop, error — is never a leave:
-/// only the leave check's confirmed receipt detaches, and this task only
-/// ends.
+/// run, paused across reap freezes like device sync's. `first` is the
+/// admission the insert could take, or `None` while frozen: that lane waits
+/// for the thaw before its first run. Each admission is held only through
+/// its run, and a stop while paused ends the task there. An ordinary end —
+/// disconnect, stop, error — is never a leave: only the leave check's
+/// confirmed receipt detaches, and this task only ends.
 async fn run_lane(
     connection: Arc<SyncConnection>,
     mut stop: tokio::sync::oneshot::Receiver<()>,
     mut freeze: Option<crate::device_sync::ReapFreeze>,
-    first: Box<dyn Send>,
+    first: Option<Box<dyn Send>>,
     vault_id: u64,
 ) {
     // Dropped only once the run it admits has ended; none while paused.
-    let mut _admitted: Option<Box<dyn Send>> = Some(first);
+    let mut _admitted: Option<Box<dyn Send>> = first;
+    if _admitted.is_none() {
+        let Some(freeze) = freeze.as_mut() else {
+            tracing::warn!(
+                vault_id = vault_id,
+                "shared env lane's first run is not admitted"
+            );
+            return;
+        };
+        let Some(admitted) = freeze.resumed(&mut stop).await else {
+            tracing::info!(
+                vault_id = vault_id,
+                "shared env lane stopped before its first run"
+            );
+            return;
+        };
+        _admitted = Some(admitted);
+        tracing::info!(vault_id = vault_id, "shared env lane starts after the thaw");
+    }
     // How one run ended short of its own end.
     enum End {
         Stop,
