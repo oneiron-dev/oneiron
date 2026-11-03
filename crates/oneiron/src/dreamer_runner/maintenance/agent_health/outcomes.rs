@@ -294,16 +294,38 @@ fn reviewer_cell(reviewer: &str) -> Result<LearningCell> {
 
 /// Re-applies every unprojected owner receipt on every card, read whole, the
 /// newest of each review state alone, each in its own savepoint: the nightly
-/// review runs it first. Returns the receipts it applied.
+/// review runs it first. Returns the receipts it applied. The work is
+/// collected under a read transaction first, and the writer opens only when
+/// some card holds an unprojected owner receipt (FIX 8083).
 ///
 /// # Errors
 ///
 /// Storage errors reading or writing the cards. A learning write's own
 /// failure is logged and left for the next night.
 pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
+    let work: Vec<([u8; 16], [u8; 1], [u8; 16])> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut work = Vec::new();
+        for (key, card) in CARDS.scan(&vault.store, &rtxn)? {
+            if card
+                .review_outcomes
+                .iter()
+                .any(|held| held.by_owner && !held.projected)
+            {
+                work.push(key);
+            }
+        }
+        work
+    };
+    if work.is_empty() {
+        return Ok(0);
+    }
     vault.with_write_txn_grouped(|txn| {
         let mut applied = 0;
-        for (key, mut card) in CARDS.scan(&vault.store, txn)? {
+        for key in &work {
+            let Some(mut card) = CARDS.get(&vault.store, txn, key)? else {
+                continue;
+            };
             let pending: BTreeSet<String> = card
                 .review_outcomes
                 .iter()
@@ -318,7 +340,7 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
                 }
             }
             if changed {
-                CARDS.put(&vault.store, txn, &key, &card)?;
+                CARDS.put(&vault.store, txn, key, &card)?;
             }
         }
         Ok(applied)

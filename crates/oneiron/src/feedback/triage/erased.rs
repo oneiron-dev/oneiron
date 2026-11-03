@@ -57,6 +57,14 @@ pub(crate) fn erase_handoff_in_txn(
     if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, id)? {
         return Ok(());
     }
+    // Evidence is always an ASSET. Only a present, parsed non-ASSET row
+    // proves no handoff can match; missing or unparseable rows still scan.
+    let live_type = crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, id, |raw| {
+        Ok(crate::batch::EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+    })?;
+    if matches!(live_type, Some(Some(t)) if t != crate::registry::ENTITY_TYPE_ASSET) {
+        return Ok(());
+    }
     let mut settled = Vec::new();
     for row in HANDOFFS.iter_from(store, &*txn, &[])? {
         let Ok((key, handoff)) = row else {

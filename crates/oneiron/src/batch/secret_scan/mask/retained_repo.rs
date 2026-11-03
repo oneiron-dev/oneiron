@@ -531,6 +531,12 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
+        // FIX 11550: a PDF object stream's decoded bytes.
+        MemberStep::PdfObjectStream { object, generation } => {
+            out.push(6);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
     }
 }
 
@@ -583,6 +589,11 @@ impl<'b> Spooled<'b> {
                 generation: self.u16()?,
             },
             3 => MemberStep::PdfStrings {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            // FIX 11550: a PDF object stream's decoded bytes.
+            6 => MemberStep::PdfObjectStream {
                 object: self.u32()?,
                 generation: self.u16()?,
             },
