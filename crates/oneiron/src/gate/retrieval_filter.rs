@@ -288,6 +288,9 @@ impl RetrievalPolicyFloor {
         }
     }
 
+    /// A new scalar floor read here must join `ClaimReadPolicy::scalar_floors`
+    /// too: a CLAIM's access class keys its confidence and salience by the
+    /// side of each floor they fall on (FIX 11915, L02 05:4x).
     pub(super) fn from_scope(scope: Option<&Value>) -> Option<Self> {
         let mut floor = Self::legacy();
         let entries = match scope {
