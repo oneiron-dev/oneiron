@@ -186,7 +186,7 @@ pub(crate) struct DirSeal {
 impl DirSeal {
     fn seal(&self) -> Result<&BodySeal> {
         self.seal.as_deref().ok_or_else(|| {
-            crate::world_keys::refused("a sealed vault's body-file key is not admitted")
+            crate::key_material::refused("a sealed vault's body-file key is not admitted")
         })
     }
 }

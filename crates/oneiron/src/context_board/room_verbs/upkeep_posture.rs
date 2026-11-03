@@ -92,7 +92,7 @@ impl Memory<'_> {
             if !terms
                 .worlds
                 .worlds
-                .contains(&crate::federation::ScopeId(world))
+                .contains(&oneiron_authority::federation::ScopeId(world))
             {
                 continue;
             }

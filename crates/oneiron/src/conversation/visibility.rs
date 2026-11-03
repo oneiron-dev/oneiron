@@ -388,11 +388,11 @@ fn thread_placed_in(
 /// it is about, so it can never broaden that record's audience; `None` for any
 /// other claim.
 fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
-    if claim.predicate == crate::reaction::PREDICATE_REACTION_OUTCOME {
+    if claim.predicate == crate::store::reaction_predicate::PREDICATE_REACTION_OUTCOME {
         return crate::reaction::outcome_sources(claim).map(Some);
     }
     Ok(
-        crate::reaction::is_reaction_claim_predicate(&claim.predicate).then(|| {
+        crate::claim::reaction_record::is_reaction_claim_predicate(&claim.predicate).then(|| {
             match claim.subject {
                 crate::claim::ClaimSubject::Entity(subject) => vec![subject],
                 _ => Vec::new(),

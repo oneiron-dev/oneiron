@@ -1,6 +1,6 @@
 //! Shadow execution never runs under the witness transaction or writes another row.
 use super::types::*;
-use crate::embed::EmbedderLocality;
+use crate::store::embedding::EmbedderLocality;
 use crate::memory::{Memory, MemoryResult, WitnessTurn};
 use sha2::{Digest, Sha256};
 impl Memory<'_> {

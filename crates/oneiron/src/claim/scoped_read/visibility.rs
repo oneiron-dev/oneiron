@@ -43,12 +43,22 @@ impl<'v> ScopedRead<'v> {
     /// one by one admits them all at one instant (FIX 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
+        self.refs_readable_each_in(&rtxn, sets)
+    }
+
+    /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
+    /// as [`Self::grant_read_txn`] opens one.
+    pub(super) fn refs_readable_each_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        sets: &[Vec<EntityId>],
+    ) -> Result<Vec<bool>> {
+        let policy = self.live_policy_manifest_in(rtxn)?;
         let mut each = Vec::with_capacity(sets.len());
         for ids in sets {
             let mut readable = true;
             for id in ids {
-                if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
+                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
                     readable = false;
                     break;
                 }
@@ -436,7 +446,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Grant bodies contain both private diary ids. They are authority,
         // never a readable graph/search result of their own.
@@ -572,7 +582,7 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
-        if notice.source.producer != crate::workspace_roster::THREAD_NOTICE_PRODUCER {
+        if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
         let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
@@ -678,7 +688,7 @@ impl ScopedRead<'_> {
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts_with_receipt`, which opens a transaction of its own.
-impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
+impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;

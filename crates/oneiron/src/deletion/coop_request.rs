@@ -1,6 +1,6 @@
 //! One-way authenticated courtesy deletion requests. No remote result protocol.
 
-use crate::authority::{
+use oneiron_authority::authority::{
     AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, FederationPactStatus,
     verify_authority_signature,
 };
