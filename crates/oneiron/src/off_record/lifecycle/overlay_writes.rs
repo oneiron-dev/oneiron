@@ -21,7 +21,8 @@ use crate::error::{Error, Result};
 use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, SessionReadContext};
 use crate::ports::EntityStoreRead;
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, SessionWriteRoute};
-use crate::task_verb::sdk::{AgentVerb, CreateNoteRequest};
+use crate::task_verb::sdk::AgentVerb;
+use crate::memory::CreateNoteRequest;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 

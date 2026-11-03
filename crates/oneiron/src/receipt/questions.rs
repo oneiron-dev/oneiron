@@ -25,10 +25,13 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
 use crate::model_decision::{DecisionQuestion, DecisionRung};
 
+/// `ai.verdict`'s clock, in milliseconds, when the request names none.
+pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
+
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
 /// `ai.verdict` call's default.
-pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = crate::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
+pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = AI_VERDICT_DEADLINE_MS;
 
 /// `vault.graph.ask`'s input: one typed question over graph units, through
 /// the host's decision ladder, asked for the caller. Name the units, or a

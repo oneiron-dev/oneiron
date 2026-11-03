@@ -62,7 +62,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
-pub use self::raw_writes::RawEntityPut;
+pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
