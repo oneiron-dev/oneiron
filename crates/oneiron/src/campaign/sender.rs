@@ -233,17 +233,13 @@ impl CampaignChannelSender {
         verb_contract: &'static OutboundVerbContract,
         intent_id_hex: &str,
     ) -> OutboundTransportResult {
-        let txn = match self.vault.store.env.read_txn() {
-            Ok(txn) => txn,
-            Err(_) => return self.invalid(),
-        };
-        if !matches!(
-            is_native_mail_sender_in_txn(&self.vault.store, &txn, keys.sender_ref),
-            Ok(true)
-        ) {
+        let native = (|| {
+            let txn = self.vault.store.env.read_txn().ok()?;
+            is_native_mail_sender_in_txn(&self.vault.store, &txn, keys.sender_ref).ok()
+        })();
+        if native != Some(true) {
             return self.invalid();
         }
-        drop(txn);
         let Some(client) = self.stalwart.as_mut().and_then(|factory| factory()) else {
             return self.invalid();
         };
