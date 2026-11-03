@@ -613,17 +613,22 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 if held == *claim {
                     return Ok(SideMerge::Held);
                 }
-                // REVIEW-4366 round 3: a replay of the receipt held here
-                // with the erased actor's id carries the same (at,
-                // receipt_ref), so the winner-order check below would keep
-                // the id stored; scrub the held form first.
+                // REVIEW-4366 round 4: the same receipt's two actor
+                // forms meet here; the erased form wins where the copies
+                // meet, as a carried turn's actor does, whether or not
+                // this vault holds the actor's marker.
                 if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref)
-                    && let Ok(actor) = EntityId::from_hex(&held.actor)
-                    && vault.carrier_actor_erased_in_txn(txn, &actor)?
+                    && let Some(actor) = crate::deletion::carrier_actor_merged(
+                        held.actor.as_str(),
+                        claim.actor.as_str(),
+                        crate::receipt::ERASED_CALL_IDENTITY,
+                    )
+                    .map(str::to_owned)
+                    && actor != held.actor
                 {
-                    let mut scrubbed = held.clone();
-                    scrubbed.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
-                    CLAIMS.put(store, txn, &turn, &scrubbed)?;
+                    let mut merged = held.clone();
+                    merged.actor = actor;
+                    CLAIMS.put(store, txn, &turn, &merged)?;
                     return Ok(SideMerge::Written);
                 }
                 if (held.at, &held.receipt_ref) > (claim.at, &claim.receipt_ref) {
