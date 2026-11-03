@@ -42,14 +42,17 @@ use crate::typed_body::{
 };
 use crate::write_envelope::WriteActor;
 
+mod live_edit;
+pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::{
+    covering_live_grant, identical_live_edit_grant_active_in_txn, live_edit_admission_in_txn,
+    live_edit_effect, mint_live_edit_grant_in_txn, office_bound, office_effect_for, office_scope,
+};
+
 /// The action class a standing grant names to land an actor's office fork on
 /// an artifact without a person's word.
 pub const OFFICE_BODY_EDIT_CLASS: &str = "entity.office.edit";
 const OFFICE_MERGE_OPERATION: &str = "office.body.merge";
-/// The operation a live DOCX/XLSX edit receipts as (FIX 596): the grant class
-/// and target stay the office edit scope, so existing grants keep covering,
-/// while the use receipt names the live edit rather than a merge.
-const OFFICE_LIVE_EDIT_OPERATION: &str = "office.body.live_edit";
 const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal by its id. The header's artifact is its home, not its key.
@@ -722,37 +725,6 @@ fn office_effect(artifact: &EntityId, opener: &EntityId) -> Result<ComposedEffec
     office_effect_for(OFFICE_MERGE_OPERATION, artifact, opener)
 }
 
-/// A live DOCX/XLSX edit by `editor` on `artifact` as the evaluator reads it
-/// (FIX 596): the same class-agnostic subject and scope as a merge, receipts
-/// under the live-edit operation.
-pub(super) fn live_edit_effect(artifact: &EntityId, editor: &EntityId) -> Result<ComposedEffect> {
-    office_effect_for(OFFICE_LIVE_EDIT_OPERATION, artifact, editor)
-}
-
-fn office_effect_for(
-    operation: &str,
-    artifact: &EntityId,
-    subject: &EntityId,
-) -> Result<ComposedEffect> {
-    ComposedEffect::new(EffectFacts::new(operation)?)
-        .with_action_requirement(office_bound(artifact, subject)?)
-}
-
-fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
-    let (class, envelope) = office_scope(artifact)?;
-    GrantBound::action(ActorBound::new(opener.to_hex())?, class, envelope)
-}
-
-/// The scope of office edits to `artifact`: what a standing grant names to
-/// land a fork there, and whose holders a waiting member is asked of.
-pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
-    let target = format!("entity:{}", artifact.to_hex());
-    Ok((
-        ActionClass::new(OFFICE_BODY_EDIT_CLASS)?,
-        ActionEnvelope::new([target.clone()])?.with_target(target)?,
-    ))
-}
-
 /// The ref of a standing grant that lands `opener`'s work on `artifact`,
 /// minted by someone outside `excluded`; `None` when none does.
 fn covering_grant(
@@ -762,25 +734,6 @@ fn covering_grant(
     opener: &EntityId,
 ) -> Result<Option<String>> {
     covering_grant_for(OFFICE_MERGE_OPERATION, grants, excluded, artifact, opener)
-}
-
-/// The ref of a standing grant that covers a live edit by `editor` on
-/// `artifact` (FIX 596), minted by someone outside `excluded`; `None` when
-/// none does. The candidate mirrors the merge path exactly, so only
-/// class-agnostic `entity.office.edit` grants cover it.
-pub(super) fn covering_live_grant(
-    grants: &[(StandingConsentGrant, Option<EntityId>)],
-    excluded: &BTreeSet<EntityId>,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<Option<String>> {
-    covering_grant_for(
-        OFFICE_LIVE_EDIT_OPERATION,
-        grants,
-        excluded,
-        artifact,
-        editor,
-    )
 }
 
 fn covering_grant_for(
@@ -808,73 +761,6 @@ fn covering_grant_for(
         .iter()
         .find(|grant| grant.bound().contains(&bound))
         .map(|grant| grant.bound().digest().to_hex()))
-}
-
-/// Whether a live DOCX/XLSX edit by `editor` on `artifact` is admitted
-/// (FIX 596): a pure check, recording nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum LiveEditAdmission {
-    /// A live vault owner edits freely.
-    Owner,
-    /// A standing `entity.office.edit` grant covers the editor; its ref, so
-    /// the committing writer records its use beside the edit.
-    Grant { grant_ref: String },
-    /// No owner bypass and no covering grant: the verb raises the owner ask.
-    NeedsAsk,
-}
-
-/// [`LiveEditAdmission`] in the caller's transaction.
-pub(super) fn live_edit_admission_in_txn(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<LiveEditAdmission> {
-    if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, editor)? {
-        return Ok(LiveEditAdmission::Owner);
-    }
-    let grants = issued_grants(vault, txn)?;
-    // No self-answer: a grant the editor minted never covers their own edit.
-    // Vacuous today (only owners mint action grants, and owners bypass), and
-    // load-bearing if a non-owner mint path ever appears.
-    let excluded = BTreeSet::from([*editor]);
-    if let Some(grant_ref) = covering_live_grant(&grants, &excluded, artifact, editor)? {
-        return Ok(LiveEditAdmission::Grant { grant_ref });
-    }
-    Ok(LiveEditAdmission::NeedsAsk)
-}
-
-/// Mints the standing `entity.office.edit` grant for `editor` on `artifact`
-/// as `owner`'s own act answering the live-edit ask (FIX 596): the same
-/// class-agnostic subject the live gate checks, revocable like any grant.
-pub(super) fn mint_live_edit_grant_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    owner: &AuthenticatedOwner,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<crate::consent::ConsentReceipt> {
-    vault.create_standing_grant_in_txn(wtxn, owner, office_bound(artifact, editor)?)
-}
-
-/// Whether an active grant already carries exactly the bound a live-edit
-/// ACCEPT would mint for `editor` on `artifact` (FIX 596, C7): the resolve
-/// skips the re-mint, so repeated ACCEPTs never churn the row. Only an
-/// issuer outside the editor's lineage counts: a self-minted identical row
-/// would not cover the edit and must not wedge the ask.
-pub(super) fn identical_live_edit_grant_active_in_txn(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<bool> {
-    let bound = office_bound(artifact, editor)?.digest();
-    for (grant, issuer) in issued_grants(vault, txn)? {
-        if issuer.is_some_and(|issuer| issuer != *editor) && grant.bound().digest() == bound {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// Writes the settlement once no member waits.

@@ -284,18 +284,6 @@ impl Vault {
         })
     }
 
-    /// Whether a live DOCX/XLSX edit by `editor` on `artifact` is admitted
-    /// (FIX 596), for the verb's post-`InvalidConfig` disambiguation: the
-    /// same check the committing writer runs, recording nothing.
-    pub(super) fn live_edit_admission(
-        &self,
-        artifact: &EntityId,
-        editor: &EntityId,
-    ) -> Result<consent::LiveEditAdmission> {
-        let txn = self.store.env.read_txn()?;
-        consent::live_edit_admission_in_txn(self, &txn, artifact, editor)
-    }
-
     /// Open a fork of the live body at its head for `actor`'s machine work in
     /// the run `run_root`, whose approve-all scope then covers it. A DOCX or
     /// XLSX fork joins `proposal`, an unsettled proposal by id, or
@@ -771,31 +759,5 @@ impl Vault {
         Ok(crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
             .docx_archive_limits(holder)
             .unwrap_or(ArchiveLimits::DEFAULT))
-    }
-}
-
-/// Admits a live DOCX/XLSX edit by `editor` on `artifact` in the committing
-/// writer (FIX 596): the owner proceeds, a covering grant's use is recorded
-/// beside the edit, and without either the writer fails fast so the verb
-/// raises the owner ask. A grant revoked between the verb's read and this
-/// commit fails the commit closed.
-fn admit_live_edit_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<()> {
-    match consent::live_edit_admission_in_txn(vault, wtxn, artifact, editor)? {
-        consent::LiveEditAdmission::Owner => Ok(()),
-        consent::LiveEditAdmission::Grant { grant_ref } => {
-            let effect = consent::live_edit_effect(artifact, editor)?;
-            vault.record_standing_grant_use_in_txn(wtxn, &grant_ref, effect.digest())?;
-            Ok(())
-        }
-        consent::LiveEditAdmission::NeedsAsk => Err(invalid(&format!(
-            "live edits by {} on artifact {} need a standing entity.office.edit grant; the owner is asked",
-            editor.to_hex(),
-            artifact.to_hex(),
-        ))),
     }
 }
