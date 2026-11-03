@@ -55,17 +55,9 @@ impl EsignState {
         }
         (now >= self.document.expires_at).then_some(None)
     }
-    fn has_actionable_recipient(&self) -> bool {
-        self.document.recipients.iter().any(|recipient| {
-            matches!(
-                recipient.role,
-                RecipientRole::Signer | RecipientRole::Approver
-            )
-        })
-    }
     pub fn ready_to_seal(&self) -> bool {
+        // FIX 9607: a CC/viewer-only ceremony is sealable; invent no signer.
         self.document.kind == DocumentKind::Document
-            && self.has_actionable_recipient()
             && ((self.status == DocumentStatus::Pending
                 && (self.rejection.is_some()
                     || self
@@ -137,7 +129,6 @@ impl EsignState {
             EsignEvent::Sent => {
                 if self.status != DocumentStatus::Draft
                     || self.document.kind != DocumentKind::Document
-                    || !self.has_actionable_recipient()
                     || now >= self.document.expires_at
                 {
                     return Err(invalid("document cannot be sent"));
@@ -220,8 +211,9 @@ impl EsignState {
                 self.rejection = Some(reason.clone());
             }
             EsignEvent::Voided { reason } => {
-                if self.ready_to_seal()
-                    || !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
+                // FIX 9608: readiness is not completion; withdrawal ends
+                // only once the ceremony leaves Draft/Pending for good.
+                if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
                     || reason.trim().is_empty()
                 {
                     return Err(invalid("document cannot be voided"));
