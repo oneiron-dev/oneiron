@@ -42625,7 +42625,7 @@
      "path": "src/llm/decision/ladder/slots.rs",
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
