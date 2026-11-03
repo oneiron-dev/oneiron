@@ -152,6 +152,7 @@ impl BrowserSession {
                     && armed.name == row.name
                     && armed.locator == row.locator
                     && armed.page.as_deref() == page
+                    && armed.audience.as_deref() == audience
                     && armed.tab == self.driver.front_target()
                     && armed.document == self.handle_info(&row.target).map(|info| info.scope)
                     && armed.generation == self.manifest.generation
