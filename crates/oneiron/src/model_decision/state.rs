@@ -6,14 +6,17 @@ use serde_json::Value;
 
 /// The call's bounded state, as `state` builds it with every long text cut to the bytes it
 /// is given. The cut starts at half the `longest` text and halves until the whole fits
-/// [`MAX_DECISION_STATE_BYTES`]; `state` says where (`cut_at_bytes`), so a provider knows
-/// it reads a cut text. With nothing left to cut, the ladder refuses the state.
-pub fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) -> Value {
+/// `budget`; `state` says where (`cut_at_bytes`), so a provider knows it reads a cut text.
+/// With nothing left to cut, the deepest cut is answered whole.
+pub fn fit_state_with_budget(
+    longest: usize,
+    budget: usize,
+    state: impl Fn(Option<usize>) -> Value,
+) -> Value {
     let mut cut = None;
     loop {
         let value = state(cut);
-        let fits =
-            serde_json::to_vec(&value).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
+        let fits = serde_json::to_vec(&value).is_ok_and(|bytes| bytes.len() <= budget);
         cut = match cut {
             _ if fits => return value,
             None if longest > 0 => Some(longest / 2),
@@ -21,6 +24,11 @@ pub fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) -> Valu
             _ => return value,
         };
     }
+}
+
+/// [`fit_state_with_budget`] at [`MAX_DECISION_STATE_BYTES`].
+pub fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) -> Value {
+    fit_state_with_budget(longest, MAX_DECISION_STATE_BYTES, state)
 }
 
 /// The one cut order for a state that holds a reserve sample of `items` and a long text of

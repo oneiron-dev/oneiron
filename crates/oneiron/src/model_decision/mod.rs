@@ -20,6 +20,6 @@ pub use provider::{
 };
 pub use roles::*;
 pub use slides_policy::*;
-pub use state::{cut_text, fit_reserve_state, fit_state};
+pub use state::{cut_text, fit_reserve_state, fit_state, fit_state_with_budget};
 pub use types::*;
 pub(crate) use types::{invalid, paired_valid};
