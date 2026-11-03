@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::shape::{
-    AnnouncementAuthority, CoreWriteTextField, core_write_times, entity_id, stage_core_put,
-    text_pairs, write_id,
+    AnnouncementAuthority, CoreWriteTextField, core_write_times, stage_core_put, text_pairs,
+    write_id,
 };
 use crate::Vault;
 use crate::batch::BatchBuilder;
@@ -152,31 +152,7 @@ impl Vault {
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let (batch, entities) = self.stage_core_batch(input, announcement)?;
-        match (lane, commit) {
-            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => batch.commit_read_by(reader),
-            (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
-                batch.commit_below_owner_read_by(reader, |_| Ok(()))
-            }
-            (CoreWriteLane::Target(_), commit) => {
-                let ids = entities
-                    .iter()
-                    .map(|entity| entity_id(&entity.id, "id"))
-                    .collect::<MemoryResult<Vec<_>>>()?;
-                let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-                    if lane.admits_puts_in(txn, &ids)? {
-                        return Ok(());
-                    }
-                    // As missing: the row's kind, body and scope stay unsaid.
-                    Err(crate::Error::EntityNotFound)
-                };
-                match commit {
-                    CoreBatchCommit::Owner => batch.commit_with_target_guard(guard),
-                    CoreBatchCommit::BelowOwner => batch.commit_below_owner_with_guard(guard),
-                }
-            }
-            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => batch.commit(),
-            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => batch.commit_below_owner(),
-        }?;
+        batch.commit_in_core_lane(lane, commit)?;
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
             entities,

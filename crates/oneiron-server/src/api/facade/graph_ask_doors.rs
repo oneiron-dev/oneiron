@@ -21,7 +21,7 @@
 //! (`host_door_lists`): an answer's claim, its unit, every source its
 //! decision names as evidence, each neighbour it left out and the
 //! principal it was asked for; a question's principal, units, artifacts and
-//! saved lane's records rows.
+//! saved lane's named rows (records caveat, then room facets).
 //! A standing question, its head, its backfills and its artifact asks live
 //! in side tables, which hold no row.
 use std::sync::Arc;
@@ -568,7 +568,8 @@ fn outcome_rows(outcome: &GraphAskOutcome) -> Vec<EntityId> {
 }
 
 /// The rows a standing question names: its principal, its units, the
-/// artifacts it asks and its saved lane's records rows (FIX 12286).
+/// artifacts it asks and its saved lane's named rows (records caveat, then
+/// room facets; FIX 12286).
 fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
     std::iter::once(record.principal)
         .chain(record.definition.units.iter().copied())
@@ -579,21 +580,8 @@ fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
                 .iter()
                 .map(|artifact| artifact.artifact),
         )
-        .chain(saved_lane_records(&record.read_lane))
+        .chain(record.read_lane.named_rows())
         .collect()
-}
-
-/// The rows a saved read lane names (FIX 12286): its records caveat, exactly
-/// as the reply serializes it; a value that is no id names none. The lane
-/// keeps the caveat private, so this reads the serialized form the answer
-/// already names rather than widening the engine's surface. The "records"
-/// key is FrozenReadLane's serialized `records` field, not a free-form lookup.
-fn saved_lane_records(lane: &oneiron::claim::FrozenReadLane) -> Vec<EntityId> {
-    let lane = serde_json::to_value(lane).unwrap_or(serde_json::Value::Null);
-    match lane.get("records").and_then(serde_json::Value::as_array) {
-        Some(records) => hex_rows(records.iter().filter_map(serde_json::Value::as_str)),
-        None => Vec::new(),
-    }
 }
 
 /// The rows one of a question's answers names: a graph answer's
