@@ -59,7 +59,8 @@ pub use self::github::{
 };
 pub use self::owner::{
     FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageErased, FeedbackTriageHold,
-    FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    FeedbackTriagePending, FeedbackTriageProgress, FeedbackTriageRun, FeedbackTriageRunRequest,
+    FeedbackTriageStatus, FeedbackTriageStatusRequest,
 };
 pub use self::source::{
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
