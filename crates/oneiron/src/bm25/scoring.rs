@@ -204,6 +204,17 @@ pub(super) fn score_query_terms(
 }
 
 pub(super) fn retain_best(ranked: &mut Vec<(EntityId, f64)>, limit: usize) {
+    // Linear-time top-K partition: entries equal under the rank comparator
+    // share one score AND one id, so any tied pick sorts and dedups to the
+    // same output as sorting the whole vec first. (`usize::MAX` callers keep
+    // the old path: no vec is longer than that.)
+    if ranked.len() > limit {
+        ranked.select_nth_unstable_by(limit, |a, b| {
+            b.1.total_cmp(&a.1)
+                .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+        });
+        ranked.truncate(limit);
+    }
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
             .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
