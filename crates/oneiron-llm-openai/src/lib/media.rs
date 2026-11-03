@@ -12,8 +12,8 @@ use oneiron::llm::BrokerIsolation;
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaProgressFuture,
-    MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaJobState, MediaPart,
+    MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
 };
 use oneiron::llm::{INFERENCE_CALLS_KEY, InferenceCallReceipt};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
@@ -670,13 +670,13 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         }
         Box::pin(async move {
             if request.voice.is_some() {
-                return Err(oneiron::llm::InterruptedMediaCall::nothing(
+                return Err(InterruptedMediaCall::nothing(
                     FatalLlmError::InvalidRequest.into(),
                 ));
             }
             self.embed_released(request, lease, release)
                 .await
-                .map_err(oneiron::llm::InterruptedMediaCall::nothing)
+                .map_err(InterruptedMediaCall::nothing)
         })
     }
 
