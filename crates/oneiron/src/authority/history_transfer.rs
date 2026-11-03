@@ -236,13 +236,12 @@ fn adopted_context_in_txn(
     Option<std::sync::Arc<VerifiedAuthorityCheckpoint>>,
     Option<std::sync::Arc<AdoptedEvidence>>,
 )> {
-    let Some(adopted) =
-        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
+    let Some((adopted, evidence)) =
+        super::checkpoint_adopt::adopted_image_view_in_txn(store, txn)?
     else {
         return Ok((None, None));
     };
-    let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, txn)?;
-    Ok((Some(adopted), evidence))
+    Ok((Some(adopted), Some(evidence)))
 }
 
 impl Vault {

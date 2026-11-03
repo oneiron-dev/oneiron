@@ -19,7 +19,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn;
 use super::*;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -34,16 +33,6 @@ pub(crate) struct AdoptedEvidence {
 }
 
 impl AdoptedEvidence {
-    /// The evidence of the image this vault adopted, verified again in `txn`;
-    /// None when it adopted none. A stored adoption that no longer verifies is
-    /// corruption, never "not adopted".
-    pub(super) fn read_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Option<Self>> {
-        let Some(checkpoint) = cached_adopted_authority_checkpoint_in_txn(store, txn)? else {
-            return Ok(None);
-        };
-        Self::of_verified(&checkpoint).map(Some)
-    }
-
     /// The evidence of `checkpoint`: its carried bodies decoded by hash and
     /// the store id each covered row would have.
     pub(crate) fn of_verified(checkpoint: &VerifiedAuthorityCheckpoint) -> Result<Self> {

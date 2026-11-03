@@ -7,7 +7,10 @@
 //!
 //! The adopted pin and attestations are kept in one row; its pin names the
 //! adopted image, so no second head row exists. Every read verifies again: a
-//! stored row is not trusted for having been stored.
+//! stored row is not trusted for having been stored. Cached readers
+//! (`cached_*`) re-read both stored rows in the caller's `txn` and compare
+//! (plus a BLAKE3 over the image bytes) before returning the once-verified
+//! value; any swapped row misses and falls through to fresh verify.
 //!
 //! Adoption is one transaction: it compares what the caller read (the v2
 //! head, the adopted pin's digest, the authority cache generation), checks
@@ -31,7 +34,7 @@ use crate::store::Store;
 const ADOPTED: SideTable<(), AdoptedCheckpoint, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ADOPTED_PIN);
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AdoptedCheckpoint {
     pin: AuthorityCheckpointPin,
@@ -235,7 +238,7 @@ pub(crate) fn cached_adopted_evidence_in_txn(
     Ok(adopted_image_view_in_txn(store, txn)?.map(|(_, evidence)| evidence))
 }
 
-fn adopted_image_view_in_txn(
+pub(crate) fn adopted_image_view_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<
