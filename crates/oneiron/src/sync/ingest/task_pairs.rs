@@ -62,23 +62,69 @@ pub(super) fn put_or_stage(
         });
         return Ok(());
     }
+    // FIX 7791: a CLAIM whose cloud-filled vector rode beside its body in
+    // this window, and which this vault's space and the claim's world
+    // routes admit, lands that vector through the put instead of paying
+    // for a second embedding. The judgment runs here, where the vault
+    // is; the batch re-verifies the vault-local keys against the landed
+    // body in the put's own transaction, and any refusal leaves the
+    // ordinary pending path untouched.
+    let carried = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        admitted_carried_vector(ctx, wtxn, &id, blob, data)?
+    } else {
+        None
+    };
     // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
     // its own-device lane to the put, and the batch threads it to the witness
     // check, which reads it for this row and these bytes only.
     let own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
-    let put = ctx.vault.batch_in().put_replicated(
-        &id,
-        header.entity_type,
-        occurred,
-        header.learned_at,
-        data,
-    );
+    let batch = ctx.vault.batch_in();
+    let put = match carried {
+        Some(carried) => batch.put_replicated_with_vector(
+            &id,
+            header.entity_type,
+            occurred,
+            header.learned_at,
+            data,
+            carried,
+        ),
+        None => batch.put_replicated(&id, header.entity_type, occurred, header.learned_at, data),
+    };
     match &ctx.authority_beside {
         Some(authority) => {
             put.apply_ingested(wtxn, Some(&|| authority.rows()), own_device.as_ref())
         }
         None => put.apply_ingested(wtxn, None, own_device.as_ref()),
     }
+}
+
+/// The carried vector the window holds for `id`'s claim, when this vault
+/// admits it (FIX 7791): the carrier beside the body in the same window,
+/// judged against this vault's space and the claim's world routes. `blob`
+/// is the row as its window holds it; `data` is the body the put lands.
+/// A claim whose world cannot be read takes no carrier: the routes of an
+/// unread world cannot be judged, so it keeps the pending path.
+fn admitted_carried_vector(
+    ctx: &IngestCtx<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+    data: &[u8],
+) -> Result<Option<crate::sync::claim_vectors::CarriedVector>> {
+    let Some(doc) = ctx.carrier_doc() else {
+        return Ok(None);
+    };
+    let Some(carried) = crate::sync::claim_vectors::take_claim_vector(doc, id) else {
+        return Ok(None);
+    };
+    let Ok(world) = crate::sync::types::entity_world(blob) else {
+        return Ok(None);
+    };
+    let worlds: Vec<EntityId> = world.into_iter().collect();
+    Ok(
+        crate::embed::admit_carried_vector(ctx.vault, &*wtxn, data, &carried, worlds)?
+            .then_some(carried),
+    )
 }
 
 /// The TASK components of one delta or pass: rows that change a stored TASK

@@ -92,7 +92,7 @@ impl<'a> IngestCtx<'a> {
 
     /// The window document the entries come from, whose birth map carries
     /// each row's Rule A envelope.
-    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+    pub(super) fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
         match self.residence? {
             Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
         }

@@ -81,6 +81,94 @@ pub(super) fn stage_vector_row(
     Ok(())
 }
 
+/// The outcome of taking a claim's carried cloud vector (FIX 7791) inside
+/// its body put's transaction.
+#[cfg(feature = "sync")]
+pub(super) enum CarriedTake {
+    /// The stored row, its provenance mark and its fill locality are
+    /// staged; the caller still owes the decoded vector its HNSW insert.
+    Staged(Vec<f32>),
+    /// A revision door took the vector in under the put's pending token.
+    Deferred,
+    /// The carrier does not describe this vault's space, pin or dims; the
+    /// body keeps the ordinary pending-embedding path.
+    Mismatch,
+}
+
+/// The binding take of a carried claim vector (FIX 7791): sync judged the
+/// sender route where the vault is; here, inside the put's own
+/// transaction, the vault-local keys are re-verified against this
+/// transaction's state, and the stored row is staged verbatim -- never
+/// re-encoded -- with the sender's provenance mark and the locality its
+/// fill declares. No mismatch is a hard error into the put: every one
+/// leaves the pending-embedding path exactly as the put minted it.
+#[cfg(feature = "sync")]
+pub(super) fn take_carried_vector_row(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    carried: &crate::sync::claim_vectors::CarriedVector,
+    token: &[u8],
+) -> Result<CarriedTake> {
+    use crate::embed::EmbedderLocality;
+    use crate::ports::{IndexMetaKey, RetrievalIndexInventory as _};
+    use crate::sync::claim_vectors::{LOCALITY_OWNER_SERVER, LOCALITY_THIRD_PARTY};
+
+    let locality = match carried.locality {
+        LOCALITY_OWNER_SERVER => EmbedderLocality::OwnerServer,
+        LOCALITY_THIRD_PARTY => EmbedderLocality::ThirdParty,
+        _ => return Ok(CarriedTake::Mismatch),
+    };
+    let read_meta = |key: IndexMetaKey| -> Result<Option<String>> {
+        store.port_index_meta_with_raw(&*wtxn, key, |bytes| {
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|_| Error::CorruptedIndex("embedding space record"))
+        })
+    };
+    // The space leg: the sender's space must be this vault's own (the
+    // stored id wins over the config's, as at every vector write), and a
+    // vault that declares no space takes no carried vector.
+    let space = match read_meta(IndexMetaKey::ModelId)? {
+        Some(stored) => Some(stored),
+        None => config.embedding_model.clone(),
+    };
+    if space.as_deref() != Some(carried.model_id.as_str()) {
+        return Ok(CarriedTake::Mismatch);
+    }
+    // A transform pin is a match key only where both sides pin one.
+    let receiver_pin = match read_meta(IndexMetaKey::EmbeddingTransform)? {
+        Some(stored) => Some(stored),
+        None => config.embedding_transform.clone(),
+    };
+    if let (Some(sender_pin), Some(receiver_pin)) = (&carried.transform, &receiver_pin)
+        && sender_pin != receiver_pin
+    {
+        return Ok(CarriedTake::Mismatch);
+    }
+    let Ok(vector) = crate::store::decode_vector_row(&carried.row, config.dimensions) else {
+        return Ok(CarriedTake::Mismatch);
+    };
+    if validate_vector(store, config, wtxn, &vector).is_err() {
+        return Ok(CarriedTake::Mismatch);
+    }
+    if crate::vault::entity_revision::defer_index_inputs(
+        store,
+        wtxn,
+        id,
+        None,
+        Some((vector.as_slice(), Some(&carried.provenance))),
+        Some(token),
+    )? {
+        return Ok(CarriedTake::Deferred);
+    }
+    store.vectors().put(wtxn, id.as_bytes(), &carried.row)?;
+    crate::embed::record_embedding_device_in_txn(store, wtxn, id, Some(&carried.provenance))?;
+    crate::embed::stamp_carried_embedding_locality_in_txn(store, wtxn, id, locality)?;
+    Ok(CarriedTake::Staged(vector))
+}
+
 fn validate_vector(
     store: &impl ManifestDbs,
     config: &crate::config::VaultConfig,

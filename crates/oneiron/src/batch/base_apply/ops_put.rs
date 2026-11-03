@@ -232,6 +232,39 @@ pub(super) fn apply_put_arm(
     state
         .evicted_shell_sources
         .extend(applied.evicted_shell_sources);
+    // FIX 7791: a carried cloud vector sync's receive path stashed for
+    // this claim is taken here, inside the put's own transaction, bound
+    // to the landed (post-mask) body by its digest and to this put by
+    // the pending token it just minted. Staged clears that token, so the
+    // embed pump never re-embeds the body; a deferred or refused take
+    // leaves the pending path exactly as minted. A put that minted no
+    // token already has its vector for these bytes; the stash drops.
+    #[cfg(feature = "sync")]
+    let mut carried_staged = false;
+    #[cfg(feature = "sync")]
+    if replicated
+        && entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && !applied.is_lexical_query_hint_claim
+        && let Some(carried) = state.carried_vectors.remove(&id)
+        && let Some(token) = applied.pending_embedding_token.as_deref()
+        && crate::sync::claim_vectors::claim_body_digest(&data) == carried.body_digest
+        && let crate::batch::vector_apply::CarriedTake::Staged(vector) =
+            crate::batch::vector_apply::take_carried_vector_row(
+                store, config, wtxn, &id, &carried, token,
+            )?
+    {
+        crate::hnsw::hnsw_insert_planned(
+            store,
+            config,
+            wtxn,
+            (&id, &vector),
+            &mut state.pending_hnsw_rebuild,
+            None,
+        )?;
+        state.had_vector_mutation = true;
+        store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?;
+        carried_staged = true;
+    }
     #[cfg(feature = "sync")]
     let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
         crate::embed::EMBED_PRIORITY_SERVER
@@ -239,15 +272,21 @@ pub(super) fn apply_put_arm(
         crate::embed::EMBED_PRIORITY_DEVICE
     };
     if let Some(token) = applied.pending_embedding_token {
-        state.pending_embedding_tokens_written.insert(id, token);
         #[cfg(feature = "sync")]
-        state
-            .pending_embedding_enqueue_priorities
-            .entry(id)
-            .and_modify(|priority| {
-                *priority = (*priority).min(pending_embedding_priority);
-            })
-            .or_insert(pending_embedding_priority);
+        let skip_enqueue = carried_staged;
+        #[cfg(not(feature = "sync"))]
+        let skip_enqueue = false;
+        if !skip_enqueue {
+            state.pending_embedding_tokens_written.insert(id, token);
+            #[cfg(feature = "sync")]
+            state
+                .pending_embedding_enqueue_priorities
+                .entry(id)
+                .and_modify(|priority| {
+                    *priority = (*priority).min(pending_embedding_priority);
+                })
+                .or_insert(pending_embedding_priority);
+        }
     }
     if applied.cleared_pending_embedding {
         state.pending_embedding_tokens_written.remove(&id);
