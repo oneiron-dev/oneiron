@@ -445,6 +445,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationConnectDisconnect
         | Row::VaultFederationConnectExport
         | Row::VaultFederationConnectRejoin
+        | Row::VaultFederationConnectWorldPrivacyExport
+        | Row::VaultFederationConnectWorldPrivacyReceive
         | Row::VaultGuestsShare
         | Row::VaultGuestsReshare
         | Row::VaultGuestsRevoke
@@ -743,7 +745,9 @@ pub(in crate::api::facade) fn door_admits(
         }
         Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
         Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
-        Row::SelfMemoryDiaryQuery => diary_reader(server, auth).map(drop),
+        Row::SelfMemoryDiaryQuery | Row::SelfMemoryPadsRead | Row::SelfMemoryPadsAdminReads => {
+            diary_reader(server, auth).map(drop)
+        }
         Row::VaultDecisionsAsksAnswer
         | Row::VaultDecisionsAsksClimb
         | Row::SelfDecisionsAsks
@@ -785,7 +789,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultArtifactsRepoint
         | Row::VaultUsageEventsUndecodable
         | Row::VaultUsageEventsRemoveUndecodable
-        | Row::VaultUsageRepairReceipts => {
+        | Row::VaultUsageRepairReceipts
+        | Row::VaultConsentCreateAutoWeaveGrant => {
             crate::api::facade::owner_binding::caller_bound_admits(server, auth, verb)
                 .unwrap_or(Ok(()))
         }
