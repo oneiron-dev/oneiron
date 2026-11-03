@@ -266,10 +266,6 @@ impl LiveSession {
         key_ref: &EntityId,
         tool: &str,
     ) {
-        if self.auth.is_none() {
-            self.refuse(request);
-            return;
-        }
         match vault.connector_issuer_hold(key_ref, tool) {
             Ok(None) => self.refuse(request),
             Ok(Some(_)) => zeroize_json(request),
@@ -296,11 +292,9 @@ impl LiveSession {
     /// The hold the call `receipts` names meets, its durable issuer binding
     /// read again before the kept `Authorization` header would go out again
     /// (FIX 9303): an issuer change the owner has not accepted, or a binding
-    /// that cannot be read. A session that keeps no header meets none.
+    /// that cannot be read. The hold binds whether the session keeps a
+    /// header or not: a credential-free exchange meets it the same way.
     pub(super) fn issuer_hold(&self, receipts: &AnswerReceipts) -> Option<&'static str> {
-        if self.auth.is_none() {
-            return None;
-        }
         let Some(vault) = receipts.vault.upgrade() else {
             return Some(ISSUER_BINDING_UNREAD);
         };

@@ -112,9 +112,6 @@ impl Presenting {
         row: Option<(&EntityId, &str)>,
         presented: &mut Option<SentPresentation>,
     ) -> Sent {
-        let Some(door) = self.door else {
-            return exchange.run(None, None);
-        };
         if let Some((key_ref, tool)) = row {
             match vault.connector_issuer_hold(key_ref, tool) {
                 Ok(Some(reason)) => return Sent::held(reason),
@@ -127,6 +124,9 @@ impl Presenting {
                 }
             }
         }
+        let Some(door) = self.door else {
+            return exchange.run(None, None);
+        };
         let mut sent = None;
         let mut held = None;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {
@@ -229,6 +229,16 @@ impl Presenting {
         vault: &Vault,
         row: Option<(&EntityId, &str)>,
     ) -> Option<Presented> {
+        if let Some((key_ref, tool)) = row {
+            match vault.connector_issuer_hold(key_ref, tool) {
+                Ok(None) => {}
+                Ok(Some(_)) => return None,
+                Err(error) => {
+                    tracing::warn!(%error, "connector issuer binding not read");
+                    return None;
+                }
+            }
+        }
         let Some(door) = self.door else {
             return Some(Presented {
                 auth: None,
