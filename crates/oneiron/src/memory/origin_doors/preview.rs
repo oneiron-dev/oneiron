@@ -24,8 +24,9 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::federation::repo_access::RepoMembership;
 use crate::federation::{
-    AgentGrantStanding, RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget,
+    AgentGrantStanding,
 };
+use oneiron_authority::federation::{RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};
 use crate::memory::repo_doors::refusal_error;
 use crate::origin::export_preview::{
