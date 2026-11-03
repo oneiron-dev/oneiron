@@ -221,6 +221,7 @@ impl Vault {
             .targets
             .iter()
             .chain(&probe.source_refs)
+            .chain(&probe.query_media)
             .chain(std::iter::once(&document))
         {
             if !dependencies::source_row_is_live_in(self, &wtxn, row)? {
@@ -470,6 +471,10 @@ impl Vault {
                 written_at,
                 cohort: Some(cohort_of(document.learned_at)),
             };
+            if !dependencies::all_stored_in(self, &wtxn, &probe.targets)? {
+                report.vanished += 1;
+                continue;
+            }
             probe.validate()?;
             EMBEDDING_PROBE.put(&self.store, &mut wtxn, &probe.id(), &probe)?;
             repo_projection::record_authored_probe_copy_in_txn(
