@@ -47,6 +47,12 @@ pub(crate) struct ApplyOpsGateMode {
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
+    /// The carried cloud vector each claim put of this batch may take
+    /// (`BatchBuilder::put_replicated_with_vector`, FIX 7791), consumed by
+    /// that put; sync judged it where the vault is, the put re-verifies
+    /// the vault-local keys against the landed body before taking it.
+    #[cfg(feature = "sync")]
+    pub(super) carried_vectors: HashMap<EntityId, crate::sync::claim_vectors::CarriedVector>,
 }
 
 impl ApplyOpsGateMode {
@@ -70,6 +76,8 @@ impl ApplyOpsGateMode {
             asset_files: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: HashMap::new(),
+            #[cfg(feature = "sync")]
+            carried_vectors: HashMap::new(),
         }
     }
 
@@ -119,6 +127,17 @@ impl ApplyOpsGateMode {
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
         self.caller_envelopes = envelopes;
+        self
+    }
+
+    /// Binds each claim put to the carried cloud vector it may take
+    /// (FIX 7791).
+    #[cfg(feature = "sync")]
+    pub(super) fn with_carried_vectors(
+        mut self,
+        vectors: HashMap<EntityId, crate::sync::claim_vectors::CarriedVector>,
+    ) -> Self {
+        self.carried_vectors = vectors;
         self
     }
 

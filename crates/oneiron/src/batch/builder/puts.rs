@@ -456,6 +456,26 @@ impl BatchBuilder<'_> {
         ));
         self
     }
+
+    /// [`Self::put_replicated`] that also carries the claim's cloud-filled
+    /// vector (FIX 7791): sync's receive path judged it against this
+    /// vault's space and the claim's world routes; the put re-verifies the
+    /// vault-local keys against the landed body in its own transaction and
+    /// takes the stored row verbatim, or leaves the ordinary
+    /// pending-embedding path untouched. Only that door stashes one.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_replicated_with_vector(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        carried: crate::sync::claim_vectors::CarriedVector,
+    ) -> Self {
+        self.carried_vectors.insert(*id, carried);
+        self.put_replicated(id, entity_type, occurred, learned_at, data)
+    }
 }
 
 impl BatchBuilder<'_> {

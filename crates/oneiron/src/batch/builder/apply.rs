@@ -135,6 +135,8 @@ impl BatchBuilder<'_> {
             .with_births(std::mem::take(&mut self.births))
             .with_asset_files(std::mem::take(&mut self.asset_files))
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts));
+        #[cfg(feature = "sync")]
+        let gate_mode = gate_mode.with_carried_vectors(std::mem::take(&mut self.carried_vectors));
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);

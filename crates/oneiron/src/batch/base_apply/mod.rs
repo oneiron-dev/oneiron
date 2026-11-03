@@ -173,6 +173,8 @@ struct BatchApplyState {
     pending_embedding_tokens_written: HashMap<EntityId, Vec<u8>>,
     #[cfg(feature = "sync")]
     pending_embedding_enqueue_priorities: HashMap<EntityId, u8>,
+    #[cfg(feature = "sync")]
+    carried_vectors: HashMap<EntityId, crate::sync::claim_vectors::CarriedVector>,
 }
 
 /// Applies a batch under an explicit [`BaseWriteOrigin`].
@@ -244,6 +246,8 @@ pub(super) fn apply_ops_with_authority_beside(
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
     let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
+    #[cfg(feature = "sync")]
+    let carried_vectors = std::mem::take(&mut gate_mode.carried_vectors);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -376,6 +380,8 @@ pub(super) fn apply_ops_with_authority_beside(
         pending_embedding_tokens_written,
         #[cfg(feature = "sync")]
         pending_embedding_enqueue_priorities,
+        #[cfg(feature = "sync")]
+        carried_vectors,
     };
     let mut op_index = 0;
     while let Some(mut op) = iter.next() {

@@ -61,6 +61,10 @@ pub struct BatchBuilder<'a> {
     /// bodies pass federation admission inside the transaction.
     #[cfg(feature = "sync")]
     federated_puts: Vec<usize>,
+    /// The carried cloud vector each claim put queued through
+    /// `put_replicated_with_vector` may take (FIX 7791).
+    #[cfg(feature = "sync")]
+    carried_vectors: std::collections::HashMap<EntityId, crate::sync::claim_vectors::CarriedVector>,
 }
 
 // Promotion owns a private journal clone until the applying transaction takes
@@ -121,6 +125,8 @@ impl<'a> BatchBuilder<'a> {
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
+            #[cfg(feature = "sync")]
+            carried_vectors: std::collections::HashMap::new(),
         }
     }
 

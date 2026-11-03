@@ -202,6 +202,8 @@ impl BatchBuilder<'_> {
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
+        let carried_vectors = std::mem::take(&mut self.carried_vectors);
+        #[cfg(feature = "sync")]
         let mut rows = super::super::vad_postcommit::ops_written_rows(&ops);
         #[cfg(feature = "sync")]
         let removed_edges = super::super::vad_postcommit::ops_removed_edges(&ops);
@@ -284,18 +286,21 @@ impl BatchBuilder<'_> {
                 #[cfg(not(feature = "sync"))]
                 drop(written);
             }
+            let gate_mode = ApplyOpsGateMode::new(false, true)
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                .with_birth_mask(birth_mask)
+                .with_text_births(text_births)
+                .with_births(births)
+                .with_asset_files(asset_files)
+                .with_replicated_puts(replicated_puts)
+                .with_caller_envelopes(caller_envelopes)
+                .with_prepared(prepared);
+            #[cfg(feature = "sync")]
+            let gate_mode = gate_mode.with_carried_vectors(carried_vectors);
             let batch = AdmittedBatch {
                 ops,
                 text_index_trusted,
-                gate_mode: ApplyOpsGateMode::new(false, true)
-                    .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
-                    .with_birth_mask(birth_mask)
-                    .with_text_births(text_births)
-                    .with_births(births)
-                    .with_asset_files(asset_files)
-                    .with_replicated_puts(replicated_puts)
-                    .with_caller_envelopes(caller_envelopes)
-                    .with_prepared(prepared),
+                gate_mode,
                 origin,
             };
             let applied = match reader.filter(|_| !gated.is_empty()) {
