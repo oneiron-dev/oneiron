@@ -72,7 +72,13 @@ impl ScopedRead<'_> {
         }
         let excluded = read.request_exclusions(&policy, None)?;
         let plan = read.plan_admits(&filter, &policy, &excluded);
-        // Recall's own kinds rule, before the plan's authority.
+        let conversations = scope.conversation_ids.as_ref().map(|ids| {
+            ids.iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        let vault = read.vault;
+        // Recall's own kinds rule, then authority, then conversation provenance.
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 let Some(kind) = store
@@ -81,10 +87,10 @@ impl ScopedRead<'_> {
                 else {
                     return Ok(false);
                 };
-                if !kinds.admits(kind) {
+                if !kinds.admits(kind) || !plan(store, txn, id)? {
                     return Ok(false);
                 }
-                plan(store, txn, id)
+                crate::memory::conversation_candidate_admits(vault, store, txn, id, &conversations)
             };
         let mut pipeline = read
             .vault
