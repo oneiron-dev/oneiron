@@ -313,6 +313,16 @@ pub(super) fn system_agent_manifest() -> Result<&'static SystemAgentDefinitionMa
         )))
 }
 
+/// The seeded system agents' row ids, for the empty-vault join guard: the
+/// AGENT_DEF rows a fresh open writes before any person or agent writes.
+pub(crate) fn seeded_system_agent_ids() -> Result<Vec<EntityId>> {
+    Ok(system_agent_manifest()?
+        .definitions
+        .iter()
+        .map(|seed| seed.entity_id.0)
+        .collect())
+}
+
 /// Canonical export-safe identity from the compiled seeded roster, never from
 /// user-editable AGENT_DEF display names or version text.
 pub(crate) fn system_export_identity(
