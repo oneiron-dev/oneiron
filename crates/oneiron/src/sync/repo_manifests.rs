@@ -153,7 +153,8 @@ pub(crate) fn mirror_repo_manifests(
                 continue;
             }
         }
-        let (parts, pieces) = split_parts(&manifest.encode()?)?;
+        let encoded = manifest.encode()?;
+        let (parts, pieces) = split_parts(&encoded)?;
         let carried = CarriedHead {
             code: manifest.code,
             body: parts,
