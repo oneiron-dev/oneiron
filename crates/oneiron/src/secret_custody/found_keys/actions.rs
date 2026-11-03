@@ -438,9 +438,18 @@ pub(super) fn card_in_txn(
             actions.extend([FoundKeyAction::NotASecret, FoundKeyAction::KeptAsText]);
         }
     }
+    let label = crate::secret_custody::secret_handle_label_in_txn(&vault.store, txn, &key.custody)?
+        .map(|label| label.label);
+    let suggested_label = crate::secret_custody::suggested_secret_handle_label_in_txn(
+        &vault.store,
+        txn,
+        &key.custody,
+    )?;
     Ok(FoundKeyCard {
         handle: key.handle.clone(),
         name: rec.map(|rec| rec.name).unwrap_or_default(),
+        label,
+        suggested_label,
         kind: key.kind().to_owned(),
         place: key.place.clone(),
         found_at: key.found_at,

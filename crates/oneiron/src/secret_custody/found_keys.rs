@@ -135,6 +135,10 @@ pub struct FoundKeyCard {
     pub handle: String,
     /// The custody record's name; the rotate door takes it.
     pub name: String,
+    /// The owner's display-label override, when one is set.
+    pub label: Option<String>,
+    /// The value-free suggestion derived from the scan kind.
+    pub suggested_label: Option<String>,
     /// The scan rule's word for the key, such as `openai_key`.
     pub kind: String,
     /// Where it sat: `body`, `claim`, `text:<field>`, `file`, or a row
