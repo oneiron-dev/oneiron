@@ -11,6 +11,7 @@ mod connector_reply;
 mod connector_task;
 mod dispatch_attempt_id;
 mod dispatch_pipeline;
+pub mod linkedin_policy;
 mod dispatch_types;
 mod executor;
 mod intent;

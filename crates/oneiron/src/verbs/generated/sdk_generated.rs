@@ -4791,13 +4791,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.settings.web_connector.replace",
                 crate::code_run::vault_read::request_schema::<
-                    crate::web_connector::WebConnectorSetting,
+                    crate::settings::web_connector::WebConnectorSetting,
                 >(),
             ),
             (
                 "vault.connectors.web.usage",
                 crate::code_run::vault_read::request_schema::<
-                    crate::web_connector::WebConnectorUsageRead,
+                    crate::settings::web_connector::WebConnectorUsageRead,
                 >(),
             ),
             (
@@ -9671,13 +9671,13 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
         "vault.settings.web_connector" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorSetting,
+            crate::settings::web_connector::WebConnectorSetting,
         >(),
         "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorSetting,
+            crate::settings::web_connector::WebConnectorSetting,
         >(),
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorUsagePage,
+            crate::settings::web_connector::WebConnectorUsagePage,
         >(),
         "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
@@ -21936,10 +21936,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
         "vault.settings.web_connector.replace" => {
-            let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
+            let _input: crate::settings::web_connector::WebConnectorSetting = decode(value.clone())?;
         }
         "vault.connectors.web.usage" => {
-            let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
+            let _input: crate::settings::web_connector::WebConnectorUsageRead = decode(value.clone())?;
         }
         "vault.models.oneironer.bind" => {
             let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
@@ -33014,19 +33014,19 @@ pub fn vault_models_manifest_replace(
 pub fn vault_settings_web_connector(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
-) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::read_web_connector_setting(memory)
 }
 pub fn vault_settings_web_connector_replace(
     memory: &Memory<'_>,
-    input: crate::web_connector::WebConnectorSetting,
-) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    input: crate::settings::web_connector::WebConnectorSetting,
+) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::replace_web_connector_setting(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,
-    input: crate::web_connector::WebConnectorUsageRead,
-) -> MemoryResult<crate::web_connector::WebConnectorUsagePage> {
+    input: crate::settings::web_connector::WebConnectorUsageRead,
+) -> MemoryResult<crate::settings::web_connector::WebConnectorUsagePage> {
     crate::task_verb::sdk::read_web_connector_usage(memory, input)
 }
 pub fn vault_models_oneironer_bind(

@@ -571,7 +571,7 @@ pub use crate::task_authority::{
     TaskAuthorityFactKind, TaskAuthorityState,
 };
 pub use crate::temporal::TimeRange;
-pub use crate::thread_passport::{
+pub use crate::write_envelope::thread_claim::{
     CanonicalMessageId, StickyMaskDecision, ThreadMask, ThreadPassport, ThreadPassportInput,
     ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
 };
