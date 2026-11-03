@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1214 facade rows, 4403 declarations.
+Census: 1214 facade rows, 4406 declarations.
 Inputs: 1142 of 1214 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1048 of 1214 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -10944,6 +10944,16 @@ class SecretCustodyCandidateReply(TypedDict):
     suite: int
     encryption_key_base64: str
     this_install: bool
+CustodyTier = Literal["T0Doored", "T1Leased", "T2LocalRegistered"]
+class TierBand(TypedDict):
+    min: CustodyTier
+    max: CustodyTier
+class SecretCustodyFloor(TypedDict):
+    portable: TierBand
+    device_bound: TierBand
+    cross_vault: TierBand
+    rotation_max_age_secs: NotRequired[int | None]
+    env_bindings: dict[str, str]
 class SecretCustodyViewReply(TypedDict):
     vault_id: str
     secret_id: str
@@ -10957,6 +10967,7 @@ class SecretCustodyViewReply(TypedDict):
     live: list[SecretCustodyLiveRequest]
     candidates: list[SecretCustodyCandidateReply]
     delivery: str
+    floor: SecretCustodyFloor
 class SecretCustodyPermit(TypedDict):
     machine: str
     profile: str

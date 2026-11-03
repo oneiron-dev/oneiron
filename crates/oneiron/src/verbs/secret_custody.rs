@@ -31,7 +31,7 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::secret_custody::{
     CustodyClass, CustodyManifestCheck, CustodyPlan, CustodyTier, ManifestSource,
     OwnerSecretRegistration, RequestedBinding, SECRET_NAME_MAX_BYTES, SealedCustodyChange,
-    SealedInput, SecretCustodyView, SecretCustodyWork, SecretRegistered,
+    SealedInput, SecretCustodyFloor, SecretCustodyView, SecretCustodyWork, SecretRegistered,
 };
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::OwnerWorkReceipt;
@@ -358,6 +358,8 @@ pub struct SecretCustodyViewReply {
     pub live: Vec<SecretCustodyLiveRequest>,
     pub candidates: Vec<SecretCustodyCandidateReply>,
     pub delivery: String,
+    /// The live floor a sealed custody change must satisfy.
+    pub floor: SecretCustodyFloor,
 }
 
 /// One live custody request as the view shows it: its receipt, ids only,
@@ -753,6 +755,7 @@ impl From<SecretCustodyView> for SecretCustodyViewReply {
                 })
                 .collect(),
             delivery: view.delivery.as_str().to_owned(),
+            floor: view.floor,
         }
     }
 }

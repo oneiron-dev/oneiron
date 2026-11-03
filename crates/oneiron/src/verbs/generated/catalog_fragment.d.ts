@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4458 declarations.
+// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4461 declarations.
 // Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -2203,7 +2203,10 @@ declare namespace Sdk {
   type SecretCustodyGetRequest = { name: string };
   type SecretCustodyLiveRequest = OwnerWorkReceipt & { manifest_text?: string | null };
   type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
-  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
+  type CustodyTier = "T0Doored" | "T1Leased" | "T2LocalRegistered";
+  type TierBand = { min: CustodyTier; max: CustodyTier };
+  type SecretCustodyFloor = { portable: TierBand; device_bound: TierBand; cross_vault: TierBand; rotation_max_age_secs?: number | null; env_bindings: Record<string, string> };
+  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string; floor: SecretCustodyFloor };
   type SecretCustodyPermit = { machine: string; profile: string; encryption_key_digest: string };
   type SecretCustodySubmitRequest = { change: string; secret_id: string; generation: number; seen: string; holder: string; recipients: SecretCustodyPermit[]; manifest_ref?: string | null; input_base64: string };
   type WidenProposalState = "pending" | "approved" | "declined";
