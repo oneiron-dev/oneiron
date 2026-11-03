@@ -335,7 +335,8 @@ pub(crate) fn claim_project_detection(
 /// person asked keeps the source pending; a newer person turn that landed
 /// while the question ran is asked again. An answer on a source whose person
 /// was erased while it ran is not kept (FIX 3520): its card would be for no
-/// one. Returns whether an answer was kept.
+/// one. Neither is one whose house drafter was erased (FIX 4977): no one is
+/// left to draft it. Returns whether an answer was kept.
 pub(crate) fn settle_project_detection(
     vault: &Vault,
     claimed: &ClaimedProjectDetection,
@@ -343,7 +344,7 @@ pub(crate) fn settle_project_detection(
     verdict: Option<&ProjectDetectionVerdict>,
 ) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
-        let verdict = match verdict {
+        let mut verdict = match verdict {
             Some(verdict)
                 if vault.local_hard_delete_marker_exists_in_txn(txn, &verdict.source.author)? =>
             {
@@ -351,6 +352,12 @@ pub(crate) fn settle_project_detection(
             }
             verdict => verdict,
         };
+        if let Some(kept) = verdict
+            && let Some(house) = kept.house
+            && vault.local_hard_delete_marker_exists_in_txn(txn, &house)?
+        {
+            verdict = None;
+        }
         let keep =
             verdict.is_some_and(|verdict| verdict.answer == ProjectDetectionAnswer::AskedPerson);
         if let Some(verdict) = verdict {
