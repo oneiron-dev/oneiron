@@ -93,13 +93,23 @@ pub(super) fn read_files(
             dirs
         })
         .unwrap_or_default();
-    read.vault_covers_folder = vault_dirs
+    // The walk opens the folder as the host holds it now, following a root
+    // symlink: a source folder swapped for a link into the vault would
+    // otherwise read the vault under the link's spelling, which neither the
+    // given nor the canonical vault spelling matches. Bind the root before
+    // the vault-directory exclusion runs (REVIEW-4381 P1).
+    let folder_root = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    let covers = vault_dirs
         .iter()
-        .any(|dir| folder == dir || folder.starts_with(dir));
+        .any(|dir| folder_root == *dir || folder_root.starts_with(dir));
+    read.vault_covers_folder = covers;
     let excluded = |shown: &Path| {
-        vault_dirs
-            .iter()
-            .any(|dir| shown == dir || shown.starts_with(dir))
+        covers
+            || vault_dirs
+                .iter()
+                .any(|dir| shown == dir || shown.starts_with(dir))
             || relative(folder, shown).is_some_and(|path| excludes(exclude, &path))
     };
     let mut unopened = Vec::new();
