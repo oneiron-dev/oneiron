@@ -25,6 +25,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_SUMMARY_RESULT, CONTENT),
     // An erased credential's fence stands with the custody it closes (KS-6 part 2).
     (&t::SECRET_CUSTODY_ERASE, LIVE),
+    // An export secret supplement's sealed copy stands as a custody input does (FIX 11843).
+    (&t::SECRET_CUSTODY_EXPORT_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
