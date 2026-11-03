@@ -27,7 +27,7 @@ mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
-pub mod code_consent_host;
+pub(crate) mod code_consent_host;
 mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
