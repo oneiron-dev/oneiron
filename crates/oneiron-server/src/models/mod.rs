@@ -96,7 +96,7 @@ pub use declared::DeclaredRun;
 pub(crate) use discovered::MeshRoutes;
 pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
-pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
+pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
