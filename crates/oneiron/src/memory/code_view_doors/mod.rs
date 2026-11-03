@@ -9,7 +9,7 @@ use crate::build_cache::{
     BuildAction, BuildCache, BuildCacheError, BuildInputRoot, BuildPlatform, CachedActionResult,
     DeclaredOutputPath, ExtraInputDigest, FrozenBuildCommand,
 };
-use crate::code_revision::{CodeRevision, read_code_revision_blobs};
+use crate::{store::code_revision_record::CodeRevision, code_revision::read_code_revision_blobs};
 use crate::code_view::{CodeViewSet, ViewReceipt};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::consent::AuthenticatedOwner;

@@ -136,5 +136,6 @@ pub(crate) use write_target::validate_claim_write_target_in_txn;
 #[cfg(test)]
 mod tests;
 
+pub mod reaction_record;
 #[cfg(feature = "sync")]
 pub mod selector_world;

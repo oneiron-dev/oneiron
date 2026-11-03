@@ -9,8 +9,11 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::store::verb_invocation::InvocationId;
-use crate::runtime_hooks::{
-    BudgetHit, HOST_BUDGET_HIT, VerbCall, VerbDomain, VerbHookPre};
+use crate::{
+    runtime_hooks::{BudgetHit, HOST_BUDGET_HIT, VerbCall},
+    store::verb_domain::VerbDomain,
+    runtime_hooks::VerbHookPre,
+};
 use crate::skill_hub::pack_catalog::HookActorClass;
 
 /// The host verb a wake pass runs under.

@@ -420,3 +420,41 @@ pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
+
+pub mod dispatch_attempt_kind;
+
+pub mod checkout_lease;
+
+pub mod repo_mutation_record;
+
+pub mod code_commit_metadata;
+
+pub mod code_import_manifest;
+
+pub mod own_rate_record;
+
+pub mod repo_provenance_trailer;
+
+pub mod code_revision_identity;
+
+pub mod recovery_kit;
+
+pub mod code_promotion_gap;
+
+pub mod code_revision_record;
+
+pub mod sandbox_path;
+
+pub mod sandbox_credential;
+
+pub mod sandbox_contract;
+
+pub mod critic_lens;
+
+pub mod verb_domain;
+
+pub mod reaction_predicate;
+
+pub mod repo_proposal_record;
+
+pub mod repo_import_predicate;
