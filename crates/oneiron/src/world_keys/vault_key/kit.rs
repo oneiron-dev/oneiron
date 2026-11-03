@@ -146,6 +146,10 @@ pub(super) fn open_world_kit(
         ),
         None => (Vec::new(), false),
     };
+    let kept = kept
+        .into_iter()
+        .filter(|piece| piece.kit_id() == *kit)
+        .collect::<Vec<_>>();
     let secret = restore_joined(
         *vault_id,
         KitSecretKind::RecoveryRoot,
@@ -262,9 +266,10 @@ fn kept_pieces(
 /// [`restore_kit`] over `given` joined by each piece of `kept` of their kit in
 /// turn, one piece per kit, then over `given` alone, until one finishes: a kit
 /// whose given pieces reach its threshold opens as it does with none kept. A
-/// refusal is the first attempt's; when none joined, a piece did not read
-/// (`unreadable`) and the pieces given fall short, it says so
-/// ([`KitError::KeptPieceUnreadable`]), as [`Vault::restore_kit_here`] does.
+/// refusal is the first attempt's, except that when the unjoined attempt falls
+/// short and a piece did not read (`unreadable`), it says so
+/// ([`KitError::KeptPieceUnreadable`]) before any older refusal, as
+/// [`Vault::restore_kit_here`] does.
 fn restore_joined(
     vault_id: [u8; 32],
     kind: KitSecretKind,
@@ -291,8 +296,8 @@ fn restore_joined(
     let alone = restore_kit(vault_id, kind, given, passphrase);
     match (alone, refusal) {
         (Ok(secret), _) => Ok(secret),
+        (Err(KitError::NeedTwoPieces), _) if unreadable => Err(KitError::KeptPieceUnreadable),
         (Err(_), Some(first)) => Err(first),
-        (Err(KitError::NeedTwoPieces), None) if unreadable => Err(KitError::KeptPieceUnreadable),
         (Err(error), None) => Err(error),
     }
 }
