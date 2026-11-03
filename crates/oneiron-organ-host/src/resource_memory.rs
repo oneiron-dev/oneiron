@@ -44,11 +44,7 @@ pub trait FloorLease: Send {
     ///
     /// # Errors
     /// As [`Self::grow`].
-    fn grow_untimed(
-        &mut self,
-        more: u64,
-        stopped: &dyn Fn() -> bool,
-    ) -> Result<(), FloorRefusal>;
+    fn grow_untimed(&mut self, more: u64, stopped: &dyn Fn() -> bool) -> Result<(), FloorRefusal>;
 }
 
 /// The machine's memory, as the host leases it to organs' own buffers. The

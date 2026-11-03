@@ -257,7 +257,10 @@ impl Room {
             let stopped = || stopped() || shutdown::interrupted();
             // `&mut Lease` already excludes every other accessor: do not hold
             // a floor-slot guard across either this wait or the budget wait.
-            let slot = lease.floors.get_mut().unwrap_or_else(PoisonError::into_inner);
+            let slot = lease
+                .floors
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner);
             if let Some(held) = &mut slot.0 {
                 held.grow_untimed(bytes, &stopped).map_err(unroomed)?;
             } else {

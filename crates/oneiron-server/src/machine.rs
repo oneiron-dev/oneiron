@@ -654,9 +654,7 @@ impl MemoryLease {
         }
         let started = Instant::now();
         let mut line = lock(&shared.line);
-        if line.waiting.is_empty()
-            && shared.fits_excluding(&line, more, self.pending, self.bytes)
-        {
+        if line.waiting.is_empty() && shared.fits_excluding(&line, more, self.pending, self.bytes) {
             self.admit_growth(&mut line, more);
             return Ok(());
         }
