@@ -18,8 +18,18 @@ pub const DEFAULT_MAX_NEIGHBORS: usize = 50;
 /// the pack it assembled before the lift. The value reaches consumers through
 /// [`super::ContextPackBuilder::effective_token_budget`] on a default builder
 /// rather than a second read of this constant, so the budget has ONE
-/// authority.
+/// authority. It is also the fallback when no model window is known at call
+/// time (below), so a pack whose call site names no model assembles exactly
+/// as it did before the window-relative default existed.
 pub(super) const DEFAULT_WINDOW_TOKEN_BUDGET: usize = 4000;
+/// The engine-default share of the active model's context window a pack
+/// with no explicit or profile budget may fill (ARCH-0004 #budget-unit:
+/// the default unit is `{ contextFraction }`, resolved to tokens at call
+/// time). Canon tunes the value on BEAM and pins no number; this is the
+/// one place that tuning lands. The fraction applies to the model's full
+/// catalog window; the rest of the window stays the prompt's and the
+/// answer's.
+pub(super) const DEFAULT_CONTEXT_FRACTION: f32 = 0.1;
 pub const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 pub const MAX_EDGE_HOP: u32 = 5;
 pub const MAX_CONTEXT_NEIGHBORS: usize = 1000;
