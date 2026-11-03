@@ -36,7 +36,7 @@ use super::super::serve::unpinned_repo_ref;
 use super::{INTENTS, ReceivePackIntentKey, push_admission, receive_pack_repo_identity_hex};
 use crate::Vault;
 use crate::write_envelope::claim_body::ClaimBody;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;

@@ -15,7 +15,7 @@ use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::write_envelope::claim_body::{
     ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

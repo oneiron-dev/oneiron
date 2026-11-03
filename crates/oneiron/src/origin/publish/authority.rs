@@ -22,7 +22,7 @@ use std::path::Path;
 use super::PublishScope;
 use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequestView};
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

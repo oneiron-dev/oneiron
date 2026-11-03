@@ -5,7 +5,7 @@ use heed::{RoTxn, RwTxn};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::write_envelope::claim_body::ClaimSubject;
-use crate::codebase::entity_id_from_hash_material;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
