@@ -3,7 +3,6 @@
 use rmpv::Value;
 
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::habit::TaskRole;
 use crate::memory::support::{
     encode_rmpv, hard_deleted_refusal, hex_string, id_from_optional_hex, json_to_rmpv,
     verify_owner_actor_binding_in_txn,
@@ -16,6 +15,7 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 use super::{
     BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralPutInput,

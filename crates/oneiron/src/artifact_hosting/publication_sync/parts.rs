@@ -41,7 +41,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::sync::transport::{document_sub_tags, encode_document};
+use crate::store::document_frame_tags::document_sub_tags;
+use crate::sync::transport::encode_document;
 
 /// The most bytes of a serialized publication one part carries. A part's
 /// frame is this, its 68-byte header and the 18-byte document frame, well

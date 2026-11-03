@@ -101,6 +101,11 @@ struct WorkflowSite {
 /// takes a new one).
 const RETIRED: SideTable<EntityId, RetiredWorkflow, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW_RETIRED);
+/// Whether a masked copy of a `BROWSER_WORKFLOW_RETIRED` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn browser_workflow_retired_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<RetiredWorkflow, Named>(bytes)
+}
 
 /// Whether only the caller whose run filed a program may retire it. A filed
 /// program is the vault's: any caller the library serves may run or refile
@@ -362,16 +367,4 @@ pub enum Retired {
     NotFiler,
 }
 
-/// Where a program's ref leads now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkflowResolution {
-    /// The live program `id`: the one named, or its successor.
-    Active { id: EntityId },
-    /// The lineage ends at `id`, retired for `reason` with no successor.
-    Retired {
-        id: EntityId,
-        reason: Option<String>,
-    },
-    /// No program was ever filed under the ref.
-    Missing,
-}
+pub use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;

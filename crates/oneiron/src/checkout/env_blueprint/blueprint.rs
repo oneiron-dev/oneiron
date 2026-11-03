@@ -23,17 +23,7 @@ pub const ENV_BLUEPRINT_KEY_PREFIX: &[u8] = b"checkout:env_blueprint:v1:";
 
 pub const ENV_BLUEPRINT_REPO_KEY_DOMAIN: &[u8] = b"oneiron:checkout-env-blueprint:repo:v1";
 
-/// Closed materialization ladder. There is deliberately no copy-on-write, lazy
-/// mount, overlay, filesystem-clone, or `Other(String)` rung: a rung that the
-/// executor cannot honour must not be representable.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaterializationSpec {
-    FullClone = 1,
-    #[default]
-    Blobless = 2,
-}
+pub use crate::store::checkout_lease::MaterializationSpec;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]

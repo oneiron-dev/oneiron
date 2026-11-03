@@ -149,7 +149,8 @@ fn resolves(
     outcome: PinExchangeOutcome,
 ) -> bool {
     !matches!(outcome, PinExchangeOutcome::Pending(_))
-        && crate::claim::history_projection::machine_history_rows(&vault.store, txn, target).is_ok()
+        && crate::claim::history_advance::machine_history_rows_carried(&vault.store, txn, target)
+            .is_ok()
 }
 
 /// The vault a signed control of `target` in `blob` names: a handoff

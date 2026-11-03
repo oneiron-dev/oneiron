@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4458 declarations.
-// Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1270 code-mode rows (1230 host rows, 40 run rows), 4477 declarations.
+// Replies: 1083 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -86,9 +86,10 @@ declare namespace Sdk {
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
   type DiaryReadsRequest = { limit?: number | null; include_used?: boolean };
-  type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string };
+  type SealedPadReader = "owner" | "admin" | "coach";
+  type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string; ruled_reader?: SealedPadReader | null };
   type DiaryReviewState = "pending" | "approved" | "declined" | "used";
-  type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
+  type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null; ruled_reader?: SealedPadReader | null };
   type DiaryReadsView = { review: boolean; reads: DiaryReadRecord[]; requests: DiaryReadRequest[] };
   type DiaryReviewAnswer = { request: string; approve: boolean };
   type OwnStandingBlockRequest = { world_ref: EntityId };
@@ -281,6 +282,8 @@ declare namespace Sdk {
   type DiaryQueryRequest = { agent: string; reason: string };
   type DiaryQueryEntry = { id: EntityId; learned_at: number; markdown: string };
   type DiaryQueryOutcome = { state: "granted"; read?: EntityId | null; entries: DiaryQueryEntry[] } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" };
+  type AdminPadReadsRequest = { agent: string };
+  type AdminPadReadsView = { reads: DiaryReadRecord[] };
   type TaskRequest = { task_ref: string };
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
@@ -837,7 +840,7 @@ declare namespace Sdk {
   type CampaignStageEvidenceReceipt = { person_ref: string; campaign_ref: string; outcome: CampaignStageEvidenceOutcome; stage_claim_ref?: string | null; stage?: StageKey | null; evidence?: CampaignStageEvidence | null; provenance?: CampaignActionProvenance | null; receipt_ref?: string | null };
   type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string };
   type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string };
-  type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean };
+  type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean; subject?: string | null };
   type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null };
   type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: string };
   type CreateCampaignProgramRequest = { schema_version?: number; campaign_ref: string; name: string; steps?: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
@@ -852,8 +855,8 @@ declare namespace Sdk {
   type ProgramRecipePin = { skill: EntityId; version: string; content_hash: string; entry: string; contract_digest: string; executor: string; args: string };
   type TurnProgramRegistration = { registration: EntityId; actor: EntityId; conversation?: EntityId | null; definition: ProgramRecipePin; revision: string; armed_at: number; newly_armed: boolean };
   type DisarmTurnProgram = { registration: EntityId };
-  type TurnProgramRebindRequest = { attempt: string };
-  type TurnProgramRebindReceipt = { attempt: string; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean };
+  type TurnProgramRebindRequest = { attempt?: string | null; turn_ref?: string | null; registration?: string | null };
+  type TurnProgramRebindReceipt = { attempt?: string | null; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean };
   type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
   type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
   type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
@@ -1457,6 +1460,18 @@ declare namespace Sdk {
   type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
   type ConnectRejoinStatus = "imported" | "deferred";
   type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
+  type ForeignWorldPrivacyExportRequest = { request: string };
+  type ForeignWorldPrivacyLeg = "ask" | "answer";
+  type ReadLocation = { OneMachine: EntityId } | "MyMachines" | "Everywhere";
+  type SealedCopies = "off" | "my_machines" | "cloud_and_my_machines";
+  type ModelOrder = "Inherit" | { Ordered: string[] };
+  type WorldPrivacy = { read: ReadLocation; sealed: SealedCopies; models: ModelOrder };
+  type WorldPrivacyRequestStatus = { state: "pending" } | { state: "applied"; receipt_id: string; holder: string } | { state: "declined"; holder: string };
+  type ForeignWorldPrivacyCarry = { leg: ForeignWorldPrivacyLeg; pact: string; epoch: number; source_vault: string; recipient_vault: string; world: string; ask: string; agent?: string | null; settings: WorldPrivacy; answer?: WorldPrivacyRequestStatus | null };
+  type ForeignWorldPrivacyDelivery = { body: ForeignWorldPrivacyCarry; signature: string };
+  type WorldPrivacyRequestKind = "proposal" | "widen_ask";
+  type ForeignWorldPrivacyLink = { pact: string; vault: string; world: string; request?: string | null; agent?: string | null; answer?: WorldPrivacyRequestStatus | null };
+  type WorldPrivacyRequest = { request_id: string; kind: WorldPrivacyRequestKind; agent?: string | null; opener_lineage?: string[]; author: string; world: string; settings: WorldPrivacy; seen: string; holders: string[]; needs?: string[]; yes?: string[]; ask?: number | null; status: WorldPrivacyRequestStatus; at: number; grant_omitted?: string | null; owned_by?: ForeignWorldPrivacyLink | null; asked_from?: ForeignWorldPrivacyLink | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
   type TrustedContactDial = "ask_first" | "just_call";
   type TrustedContactNameRequest = { contact_ref: string; reach: TrustedContactReach; dial: TrustedContactDial };
@@ -2049,6 +2064,8 @@ declare namespace Sdk {
   type DisclosureBoundRequest = { audience: string[]; class: string; envelope: DisclosureEnvelopeRequest };
   type StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest;
   type CreateStandingGrantRequest = { bound: StandingGrantBound };
+  type AutoWeaveWriterClass = "agent" | "system";
+  type AutoWeaveGrantRequest = { writer: string; writer_class: AutoWeaveWriterClass; scope: string; scope_id: string };
   type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
   type ConsentDomain = "disclosure" | "action";
   type ConsentGrantStatus = "active" | "revoked";
@@ -2056,7 +2073,8 @@ declare namespace Sdk {
   type BypassScope = { project: EntityId } | { thread: EntityId };
   type BypassExtent = { scope: BypassScope; floor_version: number };
   type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach };
-  type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; confers: boolean };
+  type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] };
+  type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean };
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type HeldFailureSignalBatchView = { batch_id: string; endpoint: string; send_ref: string; content_ref: string; content: string; content_digest: string; approval_digest: string; count_rows: number; signal_count: number; code_fix_records: number; training_permitted: boolean; created_at: number; custody_stage: string };
@@ -2700,7 +2718,6 @@ declare namespace Sdk {
   type DreamingModeInput = "own" | "inherit" | "off";
   type AgentDreamingView = { agent_def_ref: EntityId; version: string; mode?: DreamingModeInput | null; effective_mode: DreamingModeInput; dreaming_model?: string | null };
   type AgentDreamingSetRequest = { agent_def_ref: EntityId; expected_version: string; new_version: string; mode: DreamingModeInput; dreaming_model?: string | null };
-  type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] };
   type AgentGrantMintRequest = { agent: EntityId; authority_scope: Scope; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null };
   type AgentGrantView = { grant_ref: EntityId; agent: EntityId; authority_scope: Scope; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean; revoke_command: string };
   type AgentGrantMinted = { grant: AgentGrantView; act_ref: string };
@@ -3416,7 +3433,7 @@ declare namespace Sdk {
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
   type QuestionAskerClass = "human" | "agent" | "system";
-  type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null };
+  type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
@@ -3506,7 +3523,7 @@ declare namespace Sdk {
   type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null; secret_is_text?: boolean };
   type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
   type ReceiptOutcome = "unknown";
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; audience?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3893,16 +3910,16 @@ declare namespace Sdk {
   type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
   type AnsweringAuthority = { kind: "word"; person: BodyActor } | { kind: "grant"; grant_ref: string; decision: string };
   type MemberAnswer = { by: AnsweringAuthority; caller: BodyActor; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
-  type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; origin?: AttemptId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type ProposalMember = { artifact: EntityId; fork: EntityId; opener: BodyActor; run_root?: EntityId | null; origin?: AttemptId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
   type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
   type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
-  type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number };
-  type ProposalAskRefusal = { forks: EntityId[]; reason: string; at: number };
-  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[]; ask_refused?: ProposalAskRefusal | null };
+  type ProposalAsk = { artifact: EntityId; ask: EntityId; forks: EntityId[]; at: number };
+  type ProposalAskRefusal = { artifact: EntityId; forks: EntityId[]; reason: string; at: number };
+  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[]; ask_refused?: ProposalAskRefusal[] };
   type SettleVerdict = "accept" | "reject";
   type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
-  type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
-  type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
+  type OfficeBodyReviewedFork = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
+  type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
@@ -3969,7 +3986,9 @@ declare namespace Sdk {
   type TurnProgramAdmissionRequest = { turn_ref: string; registration?: string | null; cursor?: string | null; limit?: number | null };
   type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_run: string } | { kind: "refused"; reason: string };
   type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] };
-  type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null; undecodable_admission_rows_examined: number };
+  type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null };
+  type TurnProgramOwedWakeItem = { registration: EntityId; actor: EntityId; actor_class: string; revision: string; sealed_scope?: string | null; held?: OwedWakeHoldView | null; withheld: string[] };
+  type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; owed: TurnProgramOwedWakeItem[]; next_cursor?: string | null; undecodable_admission_rows_examined: number };
   type ProgramRunRequest = { root: string; cursor?: string | null; limit?: number | null };
   type ProgramTryView = { attempt: string; status: string; result_ref?: string | null; created_at: number; updated_at: number };
   type ProgramQueueView = { attempt: string; state: string; lease_generation: number; result_ref?: string | null; updated_at: number };
@@ -4902,6 +4921,12 @@ declare namespace self {
       /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
       review(input: Sdk.DiaryReviewAnswer): Promise<Sdk.DiaryReadRequest | StoredResult>;
     };
+    pads: {
+      /** The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication. */
+      admin_reads(input: Sdk.AdminPadReadsRequest): Promise<Sdk.AdminPadReadsView | StoredResult>;
+      /** Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log. */
+      read(input: Sdk.DiaryQueryRequest): Promise<Sdk.DiaryQueryOutcome | StoredResult>;
+    };
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
@@ -5781,6 +5806,8 @@ declare const vault: Sdk.VaultHost & {
     bypass_grant_warning(input: Sdk.BypassGrantWarningRequest): Promise<Sdk.BypassGrantWarningView | StoredResult>;
     /** The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation. */
     bypassed_effect_receipts(input: Sdk.BypassedEffectReceiptsRequest): Promise<Sdk.BypassedEffectReceipt[] | StoredResult>;
+    /** The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed. */
+    create_auto_weave_grant(input: Sdk.AutoWeaveGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
     create_bypass_grant(input: Sdk.CreateBypassGrantRequest): Promise<Sdk.ConsentActReceipt[] | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
@@ -6146,6 +6173,12 @@ declare const vault: Sdk.VaultHost & {
         accept(input: Sdk.AcceptRescopeConnect): Promise<Sdk.ConnectRescoped | StoredResult>;
         /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
         offer(input: Sdk.RescopeConnect): Promise<Sdk.RescopeOffer | StoredResult>;
+      };
+      world_privacy: {
+        /** The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask. */
+        export(input: Sdk.ForeignWorldPrivacyExportRequest): Promise<Sdk.ForeignWorldPrivacyDelivery | StoredResult>;
+        /** The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers. */
+        receive(input: Sdk.ForeignWorldPrivacyDelivery): Promise<Sdk.WorldPrivacyRequest | StoredResult>;
       };
     };
     coreference: {
@@ -7530,13 +7563,13 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   turn_programs: {
-    /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+    /** Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read. */
     admission(input: Sdk.TurnProgramAdmissionRequest): Promise<Sdk.TurnProgramAdmissionView | null | StoredResult>;
     /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
     arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
     /** Disarms one of the caller's own armed turn programs; true when it was armed. */
     disarm(input: Sdk.DisarmTurnProgram): Promise<boolean | StoredResult>;
-    /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+    /** Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes. */
     rebind(input: Sdk.TurnProgramRebindRequest): Promise<Sdk.TurnProgramRebindReceipt | StoredResult>;
   };
   usage: {

@@ -63,8 +63,21 @@ const REMEDY: &str = r#"Is everything okay? This connection pool has a waiter. T
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum ConnectionPoolPressure {
-    /// Nobody waits for the pool.
-    Clear,
+    /// Nobody waits for the pool. The counts are the pool's open
+    /// connections as they stand (FIX 9134): with a socket on the reserve
+    /// and the floor full they still show. `parking_bound` 0 names no
+    /// active episode here, never a floor that holds nothing; an active
+    /// episode carries its own bound in its check.
+    Clear {
+        /// The pool's open connections now, by how each holds it.
+        connections: PoolConnections,
+        /// Connections the owner's reserve keeps beside the floor: one on
+        /// a vault server's listeners, none on a relay locker's or the
+        /// mesh's pool.
+        reserve_bound: u64,
+        /// No active episode: always 0 here.
+        parking_bound: u64,
+    },
     /// A socket waits for the pool: this episode's check.
     Active { check: ConnectionPoolPressureCheck },
 }
@@ -307,8 +320,16 @@ impl PoolPressure {
 
     /// The check as it stands now.
     pub(crate) fn snapshot(&self) -> ConnectionPoolPressure {
+        let reserve_bound = match self.pool {
+            PoolKind::Listener => OWNER_RESERVE_CONNECTIONS,
+            PoolKind::RelayLocker | PoolKind::Mesh => 0,
+        };
         let Some(episode) = lock(&self.episodes).active else {
-            return ConnectionPoolPressure::Clear;
+            return ConnectionPoolPressure::Clear {
+                connections: lock(&self.connections).clone(),
+                reserve_bound,
+                parking_bound: 0,
+            };
         };
         let now = Instant::now();
         let mut held: BTreeMap<Option<PressureCredentialKey>, Held> = BTreeMap::new();
@@ -336,10 +357,10 @@ impl PoolPressure {
             .sum();
         credentials.truncate(MAX_PRESSURE_CREDENTIALS);
         let connections = lock(&self.connections).clone();
-        let (reserve_bound, parking_bound, remedy) = match self.pool {
-            PoolKind::Listener => (OWNER_RESERVE_CONNECTIONS, episode.bound, REMEDY),
-            PoolKind::RelayLocker => (0, 0, RELAY_LOCKER_REMEDY),
-            PoolKind::Mesh => (0, 0, MESH_REMEDY),
+        let (parking_bound, remedy) = match self.pool {
+            PoolKind::Listener => (episode.bound, REMEDY),
+            PoolKind::RelayLocker => (0, RELAY_LOCKER_REMEDY),
+            PoolKind::Mesh => (0, MESH_REMEDY),
         };
         ConnectionPoolPressure::Active {
             check: ConnectionPoolPressureCheck {

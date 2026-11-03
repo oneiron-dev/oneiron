@@ -45,7 +45,7 @@ pub struct BatchBuilder<'a> {
     /// Every source each ASSET_TEXT this batch births was written from.
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
-    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
     /// The rows `put_replicated` queued: replay's materialization provenance
@@ -56,7 +56,7 @@ pub struct BatchBuilder<'a> {
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
     #[cfg(feature = "sync")]
-    import_tier: crate::sync::client::ImportTier,
+    import_tier: crate::store::window_protocol::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
     /// bodies pass federation admission inside the transaction.
     #[cfg(feature = "sync")]
@@ -118,7 +118,7 @@ impl<'a> BatchBuilder<'a> {
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
             #[cfg(feature = "sync")]
-            import_tier: crate::sync::client::ImportTier::OwnDevice,
+            import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
@@ -138,7 +138,7 @@ impl<'a> BatchBuilder<'a> {
     pub(crate) fn made_by(
         mut self,
         id: &EntityId,
-        birth: Option<crate::provenance::birth::RowBirth>,
+        birth: Option<crate::store::row_birth::RowBirth>,
     ) -> Self {
         if let Some(birth) = birth {
             self.births.push((*id, birth));
@@ -157,7 +157,10 @@ impl<'a> BatchBuilder<'a> {
     /// A federated tier sends each one through federation admission inside
     /// the transaction.
     #[cfg(feature = "sync")]
-    pub(crate) fn with_import_tier(mut self, tier: crate::sync::client::ImportTier) -> Self {
+    pub(crate) fn with_import_tier(
+        mut self,
+        tier: crate::store::window_protocol::ImportTier,
+    ) -> Self {
         self.import_tier = tier;
         self
     }

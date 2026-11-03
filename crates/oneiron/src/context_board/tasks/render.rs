@@ -6,8 +6,8 @@ use super::projection::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection,
     intent_cancel_pathology, ladder_board_projection,
 };
+use crate::context_board::consult_result::ConsultResultPresence;
 use crate::outbound::ConnectorSendTaskOutcome;
-use crate::task_verb::ConsultResultPresence;
 
 /// Renders provided task presence into stable, collapsed rows — intent rows
 /// first with realizing jobs folded under them, then bare system jobs as-is.

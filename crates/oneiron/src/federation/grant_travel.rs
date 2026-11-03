@@ -19,10 +19,11 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncProtocolValidation, SyncSelectorValidation};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::share_travel::{GrantTravel, TravelChoice, travelled_value};
+use crate::share_travel::{GrantTravel, travelled_value};
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
 };
+use oneiron_authority::share_travel::TravelChoice;
 
 /// The Gate decision reason of an owner act that sets a choice.
 pub(crate) const GRANT_TRAVEL_SET_REASON: &str = "gate.federation.grant_travel.set";
