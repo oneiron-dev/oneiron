@@ -138,7 +138,7 @@ fn stage_status_transition(
             )
         }
         PreauthorizedClaimStatusGrant::FoldClear => {
-            let author = crate::memory::claim_author(current)
+            let author = crate::claim::claim_author(current)
                 .ok_or(Error::InvalidClaimBody("machine claim names no author"))?;
             stage_system_machine_transition(
                 vault,

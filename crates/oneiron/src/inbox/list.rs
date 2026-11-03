@@ -17,12 +17,13 @@ use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::context_board::{
+use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,
     notification_scoped_to_caller,
 };
 use crate::entity_id::EntityId;
-use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding_in_txn};
+use crate::memory::{Memory, verify_actor_binding_in_txn};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};

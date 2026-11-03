@@ -18,17 +18,7 @@ use super::{
     decode_commitment_claim, decode_commitment_value,
 };
 
-/// Whether a status change mints a successor claim carrying the new status and
-/// supersedes its predecessor through the claim lifecycle (FIX 9726), rather
-/// than rewriting the value under the predecessor's id.
-///
-/// The commitment, schedule, wake, close, memory, receipt and deep-link
-/// readers follow a commitment to the head of that chain
-/// ([`Vault::commitment_head_in_txn`]), and the batched lapse stages its
-/// successors in the batch's own transaction. A predecessor superseded before
-/// its occurred start (a scheduled instance closed before its due window)
-/// closes at that start.
-pub(super) const STATUS_CHANGE_MINTS_SUCCESSOR: bool = true;
+pub(super) use crate::write_envelope::commitment_transition::STATUS_CHANGE_MINTS_SUCCESSOR;
 
 impl Vault {
     /// The head of a commitment's status chain: `id` itself, or the

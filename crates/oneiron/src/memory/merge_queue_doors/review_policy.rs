@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
-use crate::critic::LensCatalog;
+use crate::store::critic_lens::LensCatalog;
 use crate::merge_queue::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
     StoredQueueReviewPolicy, review_policy_unreadable_hold,

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::llm::model_step::SettledStepView;
+use crate::model_step_record::SettledStepView;
 
 use super::super::types::ProgramRecipePin;
 

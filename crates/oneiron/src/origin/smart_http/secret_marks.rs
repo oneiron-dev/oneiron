@@ -31,7 +31,7 @@ use super::held::{HeldBytes, SpillFloor};
 use super::paths::{ORIGIN_COMMAND_SECTION_MEMORY_BYTES, origin_door_root};
 use crate::Vault;
 use crate::batch::secret_scan::{RetainedRepoBlobPlan, plan_retained_repo_blob};
-use crate::credential_door::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
+use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;

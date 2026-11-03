@@ -4,9 +4,11 @@ use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::agent_dispatch::decode_agent_dispatch_input;
 use crate::attempt_queue::{AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::work_line::TaskWorkTurn;
