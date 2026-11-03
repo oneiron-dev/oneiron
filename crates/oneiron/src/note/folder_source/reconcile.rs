@@ -351,7 +351,17 @@ impl Vault {
             self.restore_archived(&id)?;
             report.restored += 1;
         }
-        let current = self.note_text(id)?;
+        // The text the untouched decision reads and the version the
+        // replacement edit bases on come from one snapshot (FIX 9987): an
+        // owner edit between two reads would otherwise join the replacement
+        // base, and the importer could then delete it.
+        let (current, current_version) = {
+            let txn = self.store.env.read_txn()?;
+            let text = self.note_text_in_txn(&txn, id)?;
+            let version =
+                super::super::documents::load_doc(self, &txn, id)?.map(|doc| doc.version());
+            (text, version)
+        };
         let current_hash = text_hash(&current);
         let mut row = row.unwrap_or_else(|| FolderSourceFile {
             path: file.path.clone(),
@@ -414,7 +424,7 @@ impl Vault {
             NoteProgramEdit::WholeText {
                 text: file.markdown.clone(),
                 timeout_ms: WHOLE_TEXT_TIMEOUT_MS,
-                base: self.note_program_document(id)?.map(|doc| doc.version()),
+                base: current_version,
             }
         } else {
             NoteProgramEdit::Rewrite {
