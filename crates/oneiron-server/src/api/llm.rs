@@ -13,8 +13,13 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::StreamExt;
+use oneiron::code_run::ReadWorldUnknown;
+use oneiron::code_run::model_call::{
+    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
+    record_model_call_in_txn,
+};
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
-use oneiron::{LlmError, LlmRequest, LlmStreamEvent};
+use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
 use std::sync::Arc;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -251,6 +256,86 @@ fn admit_owner(
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }
+/// Best-effort record of one completed raw call, off the reply path. Missing
+/// provider fields stay unknown; no receipt, route or read-world is invented.
+pub(crate) fn record_raw_response(
+    vault: &oneiron::Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+) {
+    let digests = match model_call_digests(request) {
+        Ok(digests) => digests,
+        Err(error) => {
+            tracing::warn!(%error, "model-call request digests failed");
+            return;
+        }
+    };
+    let (rung, route) = ladder.model_call_binding();
+    let mut source_rows = run.source_rows().unwrap_or_default();
+    source_rows.extend(
+        response
+            .reply_assertions
+            .cited
+            .iter()
+            .map(|record| record.id),
+    );
+    source_rows.sort_unstable();
+    source_rows.dedup();
+    let input_parts = if source_rows.is_empty() {
+        vec![ModelCallInputPart::Unknown {
+            reason: "raw API request sources were not captured".to_owned(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let record = ModelCallRecord {
+        schema: 1,
+        attempt: run.instance(),
+        lease_generation: u64::from(run.revision()),
+        call_index: 1,
+        digests,
+        route,
+        rung,
+        issuing_login: None,
+        organization: None,
+        project: None,
+        credential_id: None,
+        response_id: None,
+        thread_id: None,
+        previous_response_id: None,
+        store: None,
+        captured_at: vault.now_recorded_at(),
+        usage: response.usage.clone(),
+        finish_reason: response.finish_reason,
+        receipt_ref: None,
+        source_rows,
+        produced_rows: response
+            .reply_assertions
+            .created
+            .iter()
+            .map(|record| record.id)
+            .collect(),
+        input_parts,
+        reasoning: response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| ModelCallReasoningPart::from_terminal(part, None, None))
+            .collect(),
+        read_world_epoch: None,
+        read_worlds: None,
+        read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        tools_present: !request.tools.is_empty(),
+        summary_requested: false,
+        erased: false,
+    };
+    if let Err(error) = vault.with_write_txn_grouped(|txn| record_model_call_in_txn(txn, &record)) {
+        tracing::warn!(%error, "model-call record failed");
+    }
+}
+
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -265,7 +350,10 @@ async fn generate(
         .generate_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
     {
-        Ok(response) => Json(response).into_response(),
+        Ok(response) => {
+            record_raw_response(server.vault(), &ladder, &run, &request, &response);
+            Json(response).into_response()
+        }
         Err(e) => failure(e),
     }
 }
@@ -325,6 +413,21 @@ async fn stream(
                 }
             }
             if done {
+                if let LlmStreamEvent::Done {
+                    message,
+                    usage,
+                    finish_reason,
+                } = &event
+                {
+                    let response = LlmResponse {
+                        message: message.clone(),
+                        usage: usage.clone(),
+                        finish_reason: finish_reason.clone(),
+                        reply_assertions: Default::default(),
+                        token_scores: None,
+                    };
+                    record_raw_response(server.vault(), &ladder, &run, &request, &response);
+                }
                 return;
             }
         }
@@ -364,9 +467,13 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
-            ladder
+            let answered = ladder
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
-                .await
+                .await;
+            if let Ok(response) = &answered {
+                record_raw_response(server.vault(), &ladder, &run, &request, response);
+            }
+            answered
         })
     }
 

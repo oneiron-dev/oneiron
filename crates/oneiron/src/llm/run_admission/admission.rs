@@ -287,6 +287,20 @@ impl RunAdmission {
         })
     }
 
+    /// The unique instance id of this run, used as the model-call record's
+    /// attempt key (FIX 12516).
+    #[must_use]
+    pub fn instance(&self) -> crate::EntityId {
+        self.inner.instance
+    }
+
+    /// The rows the host named as this run's input sources, if it named any
+    /// ([`Self::sourced`]); `None` means unknown, never an empty attestation.
+    #[must_use]
+    pub fn source_rows(&self) -> Option<Vec<crate::EntityId>> {
+        self.sources.clone()
+    }
+
     /// Who this handle's calls answer to (FIX 562): the actor that acted to
     /// start them ([`Self::initiated_by`]), else the actor the run's budget
     /// line is bound to. `None` when neither is known.
