@@ -25,13 +25,13 @@ use heed::types::Bytes;
 
 use crate::error::{Error, Result};
 use crate::side_table;
+use crate::store::pad_object_membership::PadObjectMembership;
 use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
 use crate::sync::residence::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMembership,
-    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    generations_an_install_retires_in_txn, install_captured_pad_objects_in_txn,
-    read_back_captured_in_txn, read_back_put_back_in_txn,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, capture_current_pad_objects_in_rows,
+    capture_current_pad_objects_in_txn, generations_an_install_retires_in_txn,
+    install_captured_pad_objects_in_txn, read_back_captured_in_txn, read_back_put_back_in_txn,
 };
 
 /// A bundle part key's generation, in hex, after its table prefix.
@@ -150,7 +150,7 @@ impl CopyGenerations {
     #[cfg(feature = "sync")]
     pub(crate) fn carries_bundle(
         &self,
-        generation: &crate::world_keys::SealedBundleGeneration,
+        generation: &crate::bundle_generations::SealedBundleGeneration,
     ) -> bool {
         self.carries_bundle_of(crate::sync::residence::sealed_generation_hex(generation).as_bytes())
     }

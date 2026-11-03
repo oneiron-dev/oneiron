@@ -1,9 +1,6 @@
 //! Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators.
 
-use super::snapshot::{
-    CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_PROJECT_ID_MAX_BYTES,
-    CodebaseSnapshot, validate_bounded_text,
-};
+use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
 use super::store::codebase_asset_entity_id;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
@@ -431,38 +428,5 @@ pub(super) fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Re
     Ok(())
 }
 
-pub(crate) fn validate_project_id(project_id: &str) -> Result<()> {
-    validate_bounded_text(
-        project_id,
-        CODEBASE_PROJECT_ID_MAX_BYTES,
-        "project_id must be non-empty and at most 256 bytes",
-    )?;
-    if project_id.trim() != project_id {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "project_id must not have leading or trailing whitespace",
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_manifest_path(path: &str) -> Result<()> {
-    validate_bounded_text(
-        path,
-        CODEBASE_FILE_PATH_MAX_BYTES,
-        "file path must be non-empty and at most 4096 bytes",
-    )?;
-    if path.starts_with('/') || path.contains('\\') {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "file path must be repository-relative",
-        )));
-    }
-    if path
-        .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "file path must be normalized and cannot contain . or .. segments",
-        )));
-    }
-    Ok(())
-}
+pub(super) use crate::store::code_snapshot::validation::validate_manifest_path;
+pub(crate) use crate::store::code_snapshot::validation::validate_project_id;

@@ -185,6 +185,20 @@ class Model:
             raise MissingPin("packages.lock.toml is missing: run `build.py fetch --learn` once, commit the lock")
         return self.lock.get("package", [])
 
+    def lock_files(self, scopes: list[str]) -> set[str]:
+        """The exact union of .deb filenames these learned scopes need."""
+        if self.lock is None:
+            raise MissingPin("packages.lock.toml is missing: run `build.py fetch --learn` once, commit the lock")
+        files = set()
+        for name in scopes:
+            scope = self.lock.get("scopes", {}).get(name)
+            if scope is None:
+                raise MissingPin(f"packages.lock.toml has no [scopes.{name}]: run `build.py fetch --learn`")
+            if "files" not in scope:
+                raise MissingPin(f"packages.lock.toml has no file list for {name}: rerun `build.py fetch --learn`")
+            files.update(scope["files"])
+        return files
+
     def check_lock_covers(self, plan: Plan) -> None:
         if self.lock is None:
             raise MissingPin("packages.lock.toml is missing: run `build.py fetch --learn` once, commit the lock")
@@ -323,6 +337,11 @@ def _check_lock(model: Model, problems: list[str], notes: list[str]) -> None:
             problems.append(f"packages.lock.toml: unknown scope {scope!r}")
         elif entry.get("requests_sha256") != model.plan(scope).requests_sha256():
             problems.append(f"packages.lock.toml: scope {scope} is stale against packages.toml (rerun fetch --learn)")
+        files = entry.get("files")
+        if files is not None and (not isinstance(files, list) or any(not isinstance(f, str) for f in files)):
+            problems.append(f"packages.lock.toml: scope {scope} files must be a list of filenames")
+        elif files is not None and len(set(files)) != len(files):
+            problems.append(f"packages.lock.toml: scope {scope} files contains a duplicate")
     names = set()
     for entry in lock.get("package", []):
         for key in ("name", "version", "arch", "filename", "size", "sha256"):
@@ -331,6 +350,12 @@ def _check_lock(model: Model, problems: list[str], notes: list[str]) -> None:
         if entry.get("filename") in names:
             problems.append(f"packages.lock.toml: {entry.get('filename')} appears twice")
         names.add(entry.get("filename"))
+    for scope, entry in lock.get("scopes", {}).items():
+        files = entry.get("files")
+        if isinstance(files, list):
+            unknown = sorted(set(files) - names)
+            if unknown:
+                problems.append(f"packages.lock.toml: scope {scope} names files with no package entry: {unknown}")
     scopes = sorted(lock.get("scopes", {}))
     notes.append(f"packages.lock.toml: {len(names)} packages, scopes {scopes}")
 
