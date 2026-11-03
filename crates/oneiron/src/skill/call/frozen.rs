@@ -20,7 +20,7 @@ use super::{
     CallableSkillAnswer, bind_isolated_lane, callable_script, callable_tier, invalid, matches_shape,
 };
 use crate::code_run::{CodeRunDeterminism, SelfCall, SelfDispatchOutcome, SelfFailedResult};
-use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
+use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
     StepCancellation,

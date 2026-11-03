@@ -315,5 +315,5 @@ pub trait RetrievalIndexRead: Transactions {
         &self,
         txn: &Self::Read<'_>,
         codes: &[String],
-    ) -> Result<Vec<crate::pipeline::ScoredEntity>>;
+    ) -> Result<Vec<oneiron_retrieval::pipeline::ScoredEntity>>;
 }

@@ -11,7 +11,8 @@ use crate::error::Result;
 use crate::store::VaultWriterLease;
 #[cfg(test)]
 use crate::store::test_hooks;
-use crate::world_keys::{admit_new_vault, page_seal_open_error};
+use crate::world_keys::{admit_new_vault};
+use crate::key_material::{page_seal_open_error};
 
 #[cfg(unix)]
 use super::super::root_directory::{file_identity, named_directory_identity};

@@ -214,7 +214,7 @@ pub(super) async fn upload_geometry(
         move |file, bytes| {
             let _slot = slot.permit;
             let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
-            let lease = match memory.lease(bytes, deadline) {
+            let mut lease = match memory.lease(bytes, deadline) {
                 Ok(lease) => lease,
                 Err(refusal) => return super::ingress::memory_refused(refusal),
             };
@@ -222,6 +222,9 @@ pub(super) async fn upload_geometry(
                 Ok(pdf) => pdf,
                 Err(unread) => return super::ingress::whole_body_refused(unread),
             };
+            // The read bytes are held now, so the live reading is not
+            // charged them twice while the lease lives (FIX 9345).
+            lease.materialized(bytes, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
             match parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
                 Err(response) => response,

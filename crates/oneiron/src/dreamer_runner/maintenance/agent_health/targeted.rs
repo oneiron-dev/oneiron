@@ -32,7 +32,7 @@ use super::{
     misalignment_findings, run_loop, silent_findings, unsupported_done_findings,
     widen_denial_findings,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{

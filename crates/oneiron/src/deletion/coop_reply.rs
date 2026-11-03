@@ -8,7 +8,7 @@ use super::coop_request::{
     binary, decode, encode, envelope_signature, fields, invalid, signature_value, uint,
 };
 use crate::Vault;
-use crate::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
+use oneiron_authority::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
 use crate::error::Result;
 
 /// Domain for a recipient's answer to an ask.

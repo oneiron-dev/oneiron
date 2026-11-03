@@ -407,6 +407,7 @@ fn read_turn_wake_in_txn(
     test: TurnWakeTest,
 ) -> Result<Option<TurnWakeReads>> {
     let scope = DreamerConsolidationScope::Micro;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     let watermark = read_watermark_in_txn(vault, txn, scope)?;
     let Some(ids) =
         collect_dirty_turn_ids_until(vault, txn, scope, watermark.last_learned_at, u64::MAX, stop)?
@@ -416,7 +417,12 @@ fn read_turn_wake_in_txn(
     let mut window = Vec::with_capacity(ids.len());
     let mut stepped = Vec::new();
     for turn in read_partition_turns_in_txn(vault, txn, scope, &ids)? {
-        if turn.conversation.is_none() || turn_imported_in_txn(vault, txn, &turn.turn_id)? {
+        if turn.conversation.is_none()
+            || turn
+                .conversation
+                .is_some_and(|conversation| excluded.contains(&conversation))
+            || turn_imported_in_txn(vault, txn, &turn.turn_id)?
+        {
             stepped.push(turn.learned_at);
         } else {
             window.push(turn);
