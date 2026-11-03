@@ -57,7 +57,7 @@ pub(super) fn fields_for_profile(
         // `instructions` prompt must never surface in Minimal/Standard packs.
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_def::AGENT_DEF_BODY_KEYS,
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::store::agent_record::AGENT_DEF_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
@@ -118,13 +118,13 @@ pub(super) fn fields_for_profile(
             crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Standard) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_STANDARD
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_FULL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_FULL
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
             crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
@@ -145,13 +145,13 @@ pub(super) fn fields_for_profile(
             crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_FULL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Standard) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Full) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
         }
         (ENTITY_TYPE_FACET, FieldProfile::Minimal) => {
             &["kind", "label", "scope", "subject", "sensitivity"]

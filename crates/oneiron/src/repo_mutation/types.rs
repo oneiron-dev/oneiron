@@ -8,7 +8,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 
-pub type RepoForkHash = [u8; 32];
+pub use crate::store::repo_fork::RepoForkHash;
 
 pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 8] = [
     "commit_file",

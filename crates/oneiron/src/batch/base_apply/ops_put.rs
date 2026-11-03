@@ -234,9 +234,9 @@ pub(super) fn apply_put_arm(
         .extend(applied.evicted_shell_sources);
     #[cfg(feature = "sync")]
     let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
-        crate::embed::EMBED_PRIORITY_SERVER
+        crate::store::embedding::EMBED_PRIORITY_SERVER
     } else {
-        crate::embed::EMBED_PRIORITY_DEVICE
+        crate::store::embedding::EMBED_PRIORITY_DEVICE
     };
     if let Some(token) = applied.pending_embedding_token {
         state.pending_embedding_tokens_written.insert(id, token);

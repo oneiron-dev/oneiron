@@ -219,9 +219,9 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::validate_comm_record_body_bytes(data)?;
+        crate::write_envelope::communication_record::validate_comm_record_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_DIAGNOSTIC {
-        crate::self_heal::validate_diagnostic_event_admission(&fixed.id, fixed.occurred, data)?;
+        crate::store::diagnostic_record::validate_diagnostic_event_admission(&fixed.id, fixed.occurred, data)?;
         crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
@@ -234,13 +234,13 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
-        crate::comm::decode_claim_class_descriptor(data)?;
+        crate::store::claim_descriptors::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {
         // SCAN C046: a MODEL body is the engine's pinned shape on every door.
         // A replica's that fails it is the peer's bytes, refused as a claim
         // body is (quarantined, the batch goes on), never stored to wedge
         // the model substrate.
-        crate::provenance::decode_model_entity_body(data)
+        crate::write_envelope::provenance::actor_substrate::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;

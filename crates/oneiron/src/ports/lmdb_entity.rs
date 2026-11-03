@@ -25,7 +25,7 @@ impl Vault {
             return Ok(None);
         };
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Withdrawn words, a stale body of any kind, or a recorded source
         // that no longer stands read as absent.

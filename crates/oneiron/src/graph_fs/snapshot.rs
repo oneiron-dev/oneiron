@@ -274,9 +274,9 @@ impl GraphFsResolver<'_, '_> {
                             txn,
                             &file.content_hash,
                             if owner {
-                                crate::secret_custody::SecretSight::Owner
+                                crate::file_secret_marks::SecretSight::Owner
                             } else {
-                                crate::secret_custody::SecretSight::Masked
+                                crate::file_secret_marks::SecretSight::Masked
                             },
                         )?,
                     },

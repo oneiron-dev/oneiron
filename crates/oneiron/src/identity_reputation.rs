@@ -5,7 +5,8 @@
 //! callers consume the per-identity clamp result before scheduling sends.
 
 use crate::Vault;
-use crate::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression_in_txn};
+use crate::campaign::send_hygiene::apply_suppression_in_txn;
+use crate::write_envelope::cohort_claims::suppression::{SuppressionCause, SuppressionInput};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -91,7 +92,7 @@ pub struct SenderHealthProjection {
     /// The resulting per-identity send-rate clamp.
     pub clamp: IdentitySendRateClamp,
     /// The suppression a hard bounce wrote, if any.
-    pub suppression: Option<crate::campaign::send_hygiene::SuppressionReceipt>,
+    pub suppression: Option<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>,
 }
 
 /// Projects one campaign email webhook, opening its own transaction.

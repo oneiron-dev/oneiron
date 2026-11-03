@@ -484,7 +484,7 @@ fn insert_ready_row<R: Read + Seek>(
             }
             if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
+            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -703,7 +703,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
     usize,
     usize,
     usize,
-    Vec<crate::secret_custody::SecretCustodyMetadata>,
+    Vec<crate::secret_record::SecretCustodyMetadata>,
 )> {
     use base64::Engine as _;
     let (mut restored, mut unchanged, mut skipped, mut missing) = (0, 0, 0, Vec::new());
@@ -729,7 +729,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         let body = base64::engine::general_purpose::STANDARD
             .decode(body)
             .map_err(|_| invalid("invalid archive custody record body"))?;
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        let mut record = crate::secret_record::decode_secret_custody_body(&body)?;
         if record.metadata() != secret.metadata {
             return Err(invalid("archive custody record disagrees with its body"));
         }
@@ -742,9 +742,9 @@ fn restore_secrets_in_txn<R: Read + Seek>(
                 &existing,
                 &record,
             ) {
-                crate::secret_custody::ArchiveSameId::Same => unchanged += 1,
-                crate::secret_custody::ArchiveSameId::Pending => skipped += 1,
-                crate::secret_custody::ArchiveSameId::Different => {
+                crate::secret_record::ArchiveSameId::Same => unchanged += 1,
+                crate::secret_record::ArchiveSameId::Pending => skipped += 1,
+                crate::secret_record::ArchiveSameId::Different => {
                     return Err(invalid(
                         "import ID collides with a different custody record",
                     ));
@@ -1151,7 +1151,7 @@ fn imported_body(
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
-            body.ceiling = crate::agent_def::AgentCeiling::Proposed;
+            body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::agent_def::encode_agent_definition(&body)
         }
         _ => Ok(bytes),
@@ -1166,7 +1166,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 ClaimSubject::Entity(id) => vec![id],
                 ClaimSubject::Edge { source, target, .. } => vec![source, target],
             };
-            if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+            if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
             if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
@@ -1299,7 +1299,7 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
     let body = decode_claim_body(bytes, true)?;
     if crate::subject_model::is_subject_model_predicate(&body.predicate) {
         crate::subject_model::imported_subject_body(&body)
-    } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+    } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)

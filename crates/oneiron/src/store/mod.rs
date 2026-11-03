@@ -119,6 +119,21 @@ pub mod ports {
     };
 }
 
+pub mod canonical_document;
+pub mod checkout_task;
+pub mod checkpoint_host_recipient;
+pub mod custody_retirement_status;
+pub mod proposal_spool;
+pub mod recovery_write_budget;
+pub mod restore_admission;
+pub mod result_body_pins;
+pub mod result_memory;
+pub mod verb_invocation;
+pub mod code_tree_blob;
+pub mod repo_fork;
+pub mod sandbox_import;
+pub(crate) mod repo_environment;
+pub mod agent_record;
 pub mod attempt_cleanup;
 pub mod attempt_inputs;
 pub mod attempt_lease;
@@ -146,8 +161,12 @@ mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
 mod backup_change;
+pub mod blob_fingerprint;
 #[cfg(unix)]
 mod body_envelope;
+pub mod claim_descriptors;
+pub(crate) mod query_memo_codec;
+pub mod query_memos;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
@@ -161,10 +180,16 @@ pub(crate) use claim_vad_owed::{
     owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
 };
 mod commitment_due;
+pub mod receipt_identity;
+pub mod body_descriptor;
+pub mod row_birth;
 mod credential_custody;
 mod deadline_jobs;
+pub mod diagnostic_record;
 pub mod derivation;
 mod diagnostics;
+pub mod document_segments;
+pub mod embedding;
 pub(crate) mod graph_version;
 pub(crate) mod l2_evidence;
 pub mod retrieval_deadline;
@@ -187,6 +212,7 @@ pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
+pub mod identity_hints;
 mod idempotency_intent;
 mod inference_snapshot_custody;
 pub(crate) mod install_identity;

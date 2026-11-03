@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::applied::{self, AppliedMaintenance, MaintenanceInverse, MaintenanceRevert};
 use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals, validate_owner_in_txn};
 use crate::memory::state_index::StateWindow;
-use crate::agent_def::AgentCeiling;
+use crate::store::agent_record::AgentCeiling;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::edge::EdgeActorClass;

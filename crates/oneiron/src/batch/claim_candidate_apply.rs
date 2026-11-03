@@ -46,7 +46,7 @@ pub(super) fn apply_claim_candidate(
             .ok_or(Error::EntityNotFound)?;
     let actor_header =
         EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
 
     let subject = candidate.subject();
     if candidate.predicate() == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET

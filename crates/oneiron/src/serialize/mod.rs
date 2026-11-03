@@ -10,6 +10,7 @@ mod credential_nulling;
 mod value_json;
 pub(crate) use value_json::msgpack_value_projection;
 pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
+pub(crate) mod persona_export_fields;
 mod field_profile_table;
 pub mod context_entity;
 pub mod empty_context;

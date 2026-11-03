@@ -518,11 +518,11 @@ impl ScopedReadActorKey {
     /// How a reader holding this key sees a stored key: as stored for the
     /// vault owner's own key, as its handle for every other. A door derives
     /// it from the key it reads under each time, never from a stored sight.
-    pub(crate) fn secret_sight(&self) -> crate::secret_custody::SecretSight {
+    pub(crate) fn secret_sight(&self) -> crate::file_secret_marks::SecretSight {
         if self.reads_as_vault_owner() {
-            crate::secret_custody::SecretSight::Owner
+            crate::file_secret_marks::SecretSight::Owner
         } else {
-            crate::secret_custody::SecretSight::Masked
+            crate::file_secret_marks::SecretSight::Masked
         }
     }
 

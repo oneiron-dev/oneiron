@@ -42,7 +42,7 @@ pub(crate) fn attaches_as_file_read(entity_type: u8, read: &mut dyn Read) -> Res
         && !body.utf8.text()
         && matches!(crate::store::skill_source_carrier::decode_source_carrier(head), Ok(None))
         && !marker
-        && !crate::receipt::is_receipt_archive_source(head))
+        && !crate::store::receipt_identity::is_receipt_archive_source(head))
 }
 
 /// A body read through once: each chunk passes the UTF-8 test and fills the

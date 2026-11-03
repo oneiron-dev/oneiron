@@ -27,7 +27,7 @@ use crate::batch::secret_scan::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
 };
 use crate::error::Result;
-use crate::secret_custody::KeyPlaces;
+use crate::file_secret_marks::KeyPlaces;
 
 /// What mapping an agent's edit of one masked file onto its ORIGINAL came
 /// to.

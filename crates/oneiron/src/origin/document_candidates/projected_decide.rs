@@ -36,7 +36,8 @@ use super::projected_tree::{
 };
 use super::{CandidateQueue, MODE_GITLINK, PreparedPushCandidate};
 use crate::store::code_document_values::CodeFileMetadataEdit;
-use crate::code_revision::{CodeRevisionFork, CodeTreeBlob, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::code_revision::{CodeRevisionFork, CodeTreeInventory};
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid, GitWire, GitWireRepo};
@@ -51,7 +52,7 @@ use crate::repo_mutation::proposal::RepoProposedFile;
 use crate::repo_mutation::{
     ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
-use crate::secret_custody::KeyPlaces;
+use crate::file_secret_marks::KeyPlaces;
 use crate::{EntityId, Vault};
 
 /// A projected decision: the prepared attachment, or a hold with the pins

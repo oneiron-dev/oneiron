@@ -1,9 +1,9 @@
 //! Persisted queue records and sealed landing/check boundaries.
+use crate::store::repo_fork::RepoForkHash;
 use crate::{
     contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     error::Result,
-    repo_mutation::{RepoForkHash, RepoMutationOutcome},
-};
+    repo_mutation::{ RepoMutationOutcome}};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;

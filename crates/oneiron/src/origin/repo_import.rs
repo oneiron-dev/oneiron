@@ -17,8 +17,10 @@
 //! safe; never a manifest that was not proved, and never an approval.
 use std::collections::BTreeMap;
 
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::code_revision::{
-    CodeImportAnchor, CodeImportManifest, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK,
+    CodeImportAnchor, CodeImportManifest, CodeTreeInventory,
     import_snapshot_custody_in_txn, manifest_digest, manifest_id,
 };
 use crate::store::code_snapshot::RepoRef;

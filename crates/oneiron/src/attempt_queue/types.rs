@@ -279,10 +279,10 @@ pub struct AttemptRecord {
     pub result_ref: Option<AttemptResultRef>,
     /// Branch-addressed control inbox and settled replay receipts.
     #[serde(default)]
-    pub signals: Vec<crate::run_tree::RunBranchSignal>,
+    pub signals: Vec<crate::attempt_queue::run_signal::RunBranchSignal>,
     /// Durable ask handles, including partial replies, for this branch only.
     #[serde(default)]
-    pub asks: Vec<crate::run_tree::RunAsk>,
+    pub asks: Vec<crate::attempt_queue::run_signal::RunAsk>,
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,
@@ -300,7 +300,7 @@ pub struct AttemptRecord {
     /// FIX 10066: the keyed fingerprint of each signal the side-row wall
     /// masked, by its key, so an identical retry still matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) signal_intents: Vec<crate::run_tree::SignalIntent>,
+    pub(crate) signal_intents: Vec<crate::attempt_queue::run_signal::SignalIntent>,
 }
 
 impl AttemptRecord {

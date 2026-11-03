@@ -1,5 +1,6 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
+pub mod tagging;
 pub(crate) mod bm25;
 pub mod community_graph;
 pub mod context_spec;
@@ -120,7 +121,7 @@ pub struct VaultConfig {
     /// by the turn and this tagger checkpoint, and the answer each marker
     /// settles on is saved as the turn's tags in its mode. `None` commits
     /// none.
-    pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
+    pub tagging: Option<crate::config::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,
     /// Maximum LMDB reader slots. Both presets ask for [`READER_SLOTS`],
@@ -203,7 +204,7 @@ pub struct VaultConfig {
     /// sealed to its host's recipient (FIX 6598): only a host sets one,
     /// from the recipient its supervisor delivered, never from the owner's
     /// settings. Both presets seal none, a self-hosted vault's way.
-    pub checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing,
+    pub checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -381,7 +382,7 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -417,7 +418,7 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -428,13 +429,13 @@ impl VaultConfig {
     #[must_use]
     pub fn with_checkpoint_host_holds_recipient(
         mut self,
-        recipient: Option<crate::recovery::checkpoint::HostHoldsRecipient>,
+        recipient: Option<crate::store::checkpoint_host_recipient::HostHoldsRecipient>,
     ) -> Self {
         self.checkpoint_host_holds = match recipient {
             Some(recipient) => {
-                crate::recovery::checkpoint::HostHoldsSealing::To(Box::new(recipient))
+                crate::store::checkpoint_host_recipient::HostHoldsSealing::To(Box::new(recipient))
             }
-            None => crate::recovery::checkpoint::HostHoldsSealing::RecipientMissing,
+            None => crate::store::checkpoint_host_recipient::HostHoldsSealing::RecipientMissing,
         };
         self
     }

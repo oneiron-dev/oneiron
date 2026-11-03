@@ -5,7 +5,7 @@ use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
-use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+use crate::write_envelope::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
 

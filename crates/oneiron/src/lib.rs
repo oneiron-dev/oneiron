@@ -276,6 +276,12 @@ pub mod repo_mutation;
 pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
+pub mod bundle_generations;
+pub mod connector_key_status;
+pub mod file_secret_marks;
+pub(crate) mod key_material;
+pub(crate) mod receive_scan;
+pub mod secret_record;
 pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
@@ -372,10 +378,8 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
-};
+pub use crate::write_envelope::communication::{PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope};
+pub use crate::comm::{mint_send_override, send_override_for_send};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
