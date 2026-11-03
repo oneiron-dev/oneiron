@@ -508,7 +508,7 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         envelope: &WriteEnvelope,
     ) -> Result<()> {
-        crate::gate::validate_write_envelope(envelope)?;
+        crate::write_envelope::validate_write_envelope(envelope)?;
         let actor = envelope.actor();
         let actor_raw = self
             .store
@@ -549,7 +549,7 @@ impl Vault {
             &id,
             crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
             policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,

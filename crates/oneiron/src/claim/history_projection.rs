@@ -7,7 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::authority::{AuthorityFold, AuthorityKey, ROLE_OWNER};
+use crate::authority::{AuthorityFold};
+use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::{
     ClaimTransitionProjection, SignedClaimTransitionEvent, TransitionFoldError,

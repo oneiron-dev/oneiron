@@ -409,7 +409,7 @@ impl Vault {
     pub fn alias_short_id_to_vault(
         &self,
         legacy_id: &str,
-        vault_id: crate::authority::AuthorityVaultId,
+        vault_id: oneiron_authority::authority::AuthorityVaultId,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.store.insert_short_id_alias(

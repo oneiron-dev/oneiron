@@ -20,6 +20,7 @@ pub use oneiron_base::error;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
+pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;

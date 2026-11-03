@@ -37,7 +37,7 @@ pub(super) fn apply_claim_candidate(
         write_policy,
         owner_authored,
     } = request;
-    crate::gate::validate_write_envelope(envelope)?;
+    crate::write_envelope::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();

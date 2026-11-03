@@ -214,7 +214,7 @@ impl ClaimMaterialization {
                 owner_authored: None,
             },
             &policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,
@@ -420,7 +420,7 @@ impl ClaimMaterialization {
                 return Err(binding_error());
             }
         }
-        crate::gate::validate_write_envelope(&self.envelope)?;
+        crate::write_envelope::validate_write_envelope(&self.envelope)?;
         // A verified close answers for its closer: the checks above prove the
         // row and its birth binding, and the door that closed it checked the
         // closer (FIX 8655). The old author's standing today is not asked.

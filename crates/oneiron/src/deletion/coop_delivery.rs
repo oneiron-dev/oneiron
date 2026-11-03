@@ -23,7 +23,7 @@ use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt, RetryAttempt,
 };
-use crate::authority::FederationPactStatus;
+use oneiron_authority::authority::FederationPactStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};

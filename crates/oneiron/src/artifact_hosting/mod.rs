@@ -377,7 +377,7 @@ impl Vault {
     pub fn artifact_publish_approval_digest(
         &self,
         request: &ArtifactPublishVerbRequest,
-    ) -> Result<crate::consent::EffectDigest> {
+    ) -> Result<crate::write_envelope::EffectDigest> {
         publish::artifact_publish_approval_digest(self, request)
     }
 }
