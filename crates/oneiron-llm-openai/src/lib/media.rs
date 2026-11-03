@@ -12,8 +12,8 @@ use oneiron::llm::BrokerIsolation;
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
-    MediaUsage, ReferenceCompatibility,
+    AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaProgressFuture,
+    MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
 };
 use oneiron::llm::{INFERENCE_CALLS_KEY, InferenceCallReceipt};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
@@ -103,7 +103,7 @@ pub trait OpenAiMediaTransport: Send + Sync {
         &'a self,
         request: OpenAiMediaHttpRequest,
         lease: &'a BudgetLease,
-        _release: Option<oneiron::llm::DispatchRelease>,
+        _release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> OpenAiMediaTransportFuture<'a> {
         self.execute(request, lease)
     }
@@ -168,8 +168,18 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         body: OpenAiMediaBody,
         lease: &BudgetLease,
     ) -> LlmResult<OpenAiMediaHttpResponse> {
-        let release = lease.dispatch_release();
-        if let Some(release) = &release {
+        self.send_released(method, path, body, lease, None).await
+    }
+
+    async fn send_released(
+        &self,
+        method: OpenAiMediaMethod,
+        path: String,
+        body: OpenAiMediaBody,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<OpenAiMediaHttpResponse> {
+        if let Some(release) = release {
             release()?;
         }
         let reply = self
@@ -363,6 +373,15 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
     }
 
     async fn embed(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
+        self.embed_released(request, lease, None).await
+    }
+
+    async fn embed_released(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         // The whole call is checked before its first document is sent.
         let plan = prepare_embed(&request, &wire)?;
@@ -376,7 +395,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         for EmbedDocument { count, path, body } in documents {
             let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
             let reply = self
-                .send(OpenAiMediaMethod::Post, path.into(), body, lease)
+                .send_released(OpenAiMediaMethod::Post, path.into(), body, lease, release)
                 .await?;
             let mut reply = reply.json();
             vectors.extend(
@@ -637,6 +656,27 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
                 // Text rides the chat wire; a video is a job.
                 AiOperation::Text | AiOperation::Video => Err(FatalLlmError::InvalidRequest.into()),
             }
+        })
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        if request.operation != AiOperation::Embed {
+            return self.run_progress(request, lease);
+        }
+        Box::pin(async move {
+            if request.voice.is_some() {
+                return Err(oneiron::llm::InterruptedMediaCall::nothing(
+                    FatalLlmError::InvalidRequest.into(),
+                ));
+            }
+            self.embed_released(request, lease, release)
+                .await
+                .map_err(oneiron::llm::InterruptedMediaCall::nothing)
         })
     }
 

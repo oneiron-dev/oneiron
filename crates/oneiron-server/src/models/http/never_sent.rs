@@ -41,11 +41,11 @@ pub(super) fn send(fresh: &reqwest::Client, request: reqwest::RequestBuilder) ->
 
 /// [`send`] with `release` invoked before the first attempt and again after
 /// an awaited failure, before a fresh connection may resend the bytes.
-pub(super) fn send_released(
+pub(super) fn send_released<'a>(
     fresh: &reqwest::Client,
     request: reqwest::RequestBuilder,
-    release: DispatchRelease,
-) -> ReleaseSending {
+    release: DispatchRelease<'a>,
+) -> ReleaseSending<'a> {
     let fresh = fresh.clone();
     let again = request.try_clone();
     Box::pin(async move {

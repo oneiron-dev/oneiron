@@ -80,7 +80,7 @@ impl OpenAiMediaTransport for MediaHttp {
         &'a self,
         request: OpenAiMediaHttpRequest,
         lease: &'a BudgetLease,
-        release: Option<oneiron::llm::DispatchRelease>,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> OpenAiMediaTransportFuture<'a> {
         Box::pin(async move {
             let OpenAiMediaHttpRequest { method, path, body } = request;

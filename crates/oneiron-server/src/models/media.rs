@@ -80,7 +80,7 @@ pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUpl
 const MEDIA_RUN: &str = "ai-media";
 
 /// A caller's final admission check, run immediately before each backend dispatch.
-pub(crate) type MediaDispatchRelease = Option<oneiron::llm::DispatchRelease>;
+pub(crate) type MediaDispatchRelease<'a> = Option<oneiron::llm::DispatchRelease<'a>>;
 
 /// A media rung's own side: the media wire it sends through, and the row
 /// that says what it serves.
@@ -399,7 +399,7 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
-        release: MediaDispatchRelease,
+        release: MediaDispatchRelease<'_>,
     ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
         self.run_admitted_released(&run, request, voices, None, release)

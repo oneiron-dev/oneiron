@@ -1520,7 +1520,7 @@ impl OfferLadder {
         request: MediaRequest,
         selector: Option<&str>,
         voices: Option<&RungVoices>,
-        release: MediaDispatchRelease,
+        release: MediaDispatchRelease<'_>,
     ) -> LlmResult<MediaAnswer> {
         self.media_by_released(run, request, selector, voices, self.host_wait(), release)
             .await
@@ -1538,7 +1538,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
-        release: MediaDispatchRelease,
+        release: MediaDispatchRelease<'a>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1609,7 +1609,7 @@ impl OfferLadder {
         index: usize,
         request: &MediaRequest,
         walk: &mut Walk,
-        release: MediaDispatchRelease,
+        release: MediaDispatchRelease<'_>,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1662,7 +1662,6 @@ impl OfferLadder {
             .run
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
         if let Some(release) = release {
-            permit.lease().attach_dispatch_release(release.clone());
             if let Err(error) = release() {
                 settle_failed(permit);
                 return Err(error);
@@ -1700,11 +1699,16 @@ impl OfferLadder {
                 }
             };
         }
-        let Some(answered) = call
-            .deadline
-            .bound(gate.run_progress(bound, permit.lease()))
-            .await
-        else {
+        let answered = if let Some(release) = release {
+            call.deadline
+                .bound(gate.run_progress_released(bound, permit.lease(), Some(release)))
+                .await
+        } else {
+            call.deadline
+                .bound(gate.run_progress(bound, permit.lease()))
+                .await
+        };
+        let Some(answered) = answered else {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
         };

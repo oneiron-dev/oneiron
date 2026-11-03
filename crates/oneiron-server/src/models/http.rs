@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::Stream;
-use oneiron::{DispatchRelease, LlmError};
+use oneiron::LlmError;
+use oneiron::llm::DispatchRelease;
 use serde_json::Value as JsonValue;
 
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
@@ -228,8 +229,8 @@ pub(super) enum HttpReleaseError {
     Release(LlmError),
 }
 
-type ReleaseSending =
-    Pin<Box<dyn Future<Output = Result<reqwest::Response, HttpReleaseError>> + Send>>;
+type ReleaseSending<'a> =
+    Pin<Box<dyn Future<Output = Result<reqwest::Response, HttpReleaseError>> + Send + 'a>>;
 
 impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
@@ -402,8 +403,8 @@ impl ProviderHttp {
         path: &str,
         request: impl Fn() -> reqwest::RequestBuilder,
         plain: Vec<u8>,
-        release: DispatchRelease,
-    ) -> ReleaseSending {
+        release: DispatchRelease<'_>,
+    ) -> ReleaseSending<'_> {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
@@ -495,7 +496,7 @@ impl ProviderHttp {
         &self,
         path: &str,
         json: JsonValue,
-        release: DispatchRelease,
+        release: DispatchRelease<'_>,
     ) -> Result<BytesReply, HttpReleaseError> {
         let plain = serde_json::to_vec(&json).unwrap_or_default();
         let url = self.url(path);
