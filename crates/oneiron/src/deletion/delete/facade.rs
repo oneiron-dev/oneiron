@@ -118,8 +118,25 @@ impl Vault {
         else {
             return Ok(None);
         };
-        if confirming_owner_authority_in_txn(self, &txn, owner).is_err() {
-            return Ok(None);
+        // Only an explicit denial means the confirming owner's authority no
+        // longer holds, and only then does the erase run ungated as before.
+        // A storage or decode failure is not a denial: it propagates and
+        // the erase does not run, rather than silently dropping the gate
+        // (the same split archive_delete_wire makes of this predicate).
+        match crate::memory::verify_deletion_authority_in_txn(
+            self,
+            &txn,
+            owner,
+            EdgeActorClass::Human,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
+                    || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(Error::Refused(error.message)),
         }
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         let context = DeletionGateContext::new(
