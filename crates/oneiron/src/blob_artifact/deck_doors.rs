@@ -22,7 +22,8 @@ use crate::edit_roundtrip::pptx::inspect_pptx_with_limits;
 use crate::edit_roundtrip::{DeckEditRejection, DeckRejectionInspection, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, resolve_entity_ref};
+use crate::memory::{Memory, resolve_entity_ref};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::office_body::{document_refused, document_resources};
 
 /// One PPTX version to inspect: `version`, or the head when absent.

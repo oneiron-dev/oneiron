@@ -25,11 +25,15 @@ use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, Engine
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::shadow_runner::{
-    ShadowRequestDigest, ShadowSourceAdmission, ShadowStepIdentity,
+     ShadowSourceAdmission,
 };
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
 use crate::code_run::{
-    CapsuleHost, StepReplayCapsule, captured_step_read_scopes_in_txn, step_replay_capsules_in_txn,
+      captured_step_read_scopes_in_txn, step_replay_capsules_in_txn,
 };
+use crate::dreamer_runner::step_replay::CapsuleHost;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
     CodeFixSource, CodeFixVerdict, CodeFixWithheld, ReplayFidelity, code_fix_subject_in,
 };

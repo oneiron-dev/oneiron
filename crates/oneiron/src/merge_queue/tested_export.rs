@@ -15,10 +15,13 @@ use super::{
     QueueRevisionIntent, QueueSealTarget,
 };
 use crate::EntityId;
-use crate::code_revision::{CodeCommitMetadata, MODE_GITLINK, QueuePromotionGap};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::repo_mutation::proposal::RepoProposal;
+use crate::store::code_tree_blob::MODE_GITLINK;
+use crate::store::{
+    code_commit_metadata::CodeCommitMetadata, code_promotion_gap::QueuePromotionGap,
+};
 
 type Held<T> = std::result::Result<T, QueueExportHold>;
 

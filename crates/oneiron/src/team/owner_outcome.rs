@@ -24,7 +24,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::ClaimBody;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::learning::Anchor;
+use crate::claim::learning_evidence::Anchor;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionRecord;
 use crate::task_verb::settlement_anchor::anchor_accepted_review_in_txn;

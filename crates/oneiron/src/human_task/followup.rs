@@ -8,9 +8,8 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::ChannelIdentityState;
-use crate::comm::{
-    CommClaim, CommClaimValue, PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_REACHABLE_VIA,
-};
+use crate::comm::{CommClaim, CommClaimValue};
+use crate::write_envelope::communication::{PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_REACHABLE_VIA};
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
