@@ -1,0 +1,230 @@
+//! A reviewed proposal whose file carries lifted secret handles lands as
+//! a NEW resolved proposal (FIX 2938, Engine ruling 10-20): the handles
+//! are detected in the reviewed bytes, resolved through custody under the
+//! repo-landing binding, and a successor carrying the resolved bytes —
+//! its own id, snapshot and operation hash, linked back by `resolves` —
+//! is what lands, while the original goes terminal `Superseded` and never
+//! lands at all. Resolving in place at land time would change every
+//! byte-derived binding the review made.
+
+use super::*;
+use crate::codebase::entity_id_from_hash_material;
+
+/// The effector a landing reads secret values under: the owner binds a
+/// record's `read` scope to it at the bind door, and an unbound record
+/// refuses the landing with its typed binding error.
+pub(crate) const REPO_LANDING_EFFECTOR: &str = "repo:landing";
+
+/// The domain of a resolved successor's derived id: one original has at
+/// most one successor, found again by deriving it.
+const RESOLVED_SUCCESSOR_DOMAIN: &[u8] = b"oneiron:repo-proposal-resolved-successor:v1";
+
+/// The mask's text form of a handle, as it stands in reviewed content.
+const HANDLE_OPEN: &[u8] = b"[secret ";
+
+/// The successor minted for `original`, if one stands: its derived id's
+/// row, verified to resolve this original.
+pub(super) fn successor_of(vault: &Vault, original: EntityId) -> Result<Option<EntityId>> {
+    let id = successor_id(original);
+    Ok(vault
+        .repo_proposal(id)?
+        .filter(|row| row.resolves == Some(original))
+        .map(|_| id))
+}
+
+fn successor_id(original: EntityId) -> EntityId {
+    entity_id_from_hash_material(RESOLVED_SUCCESSOR_DOMAIN, &[original.as_bytes()])
+}
+
+/// The `[secret scN]` spans `content` carries: each span's byte range and
+/// its text, validated as a handle. A bracketed span that names no handle
+/// is the file's own prose and carries nothing.
+fn handle_spans(content: &[u8]) -> Vec<(usize, usize, String)> {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while let Some(open) = find(&content[at..], HANDLE_OPEN) {
+        let start = at + open;
+        let Some(close) = find(&content[start..], b"]") else {
+            break;
+        };
+        let end = start + close + 1;
+        if let Ok(text) = std::str::from_utf8(&content[start..end])
+            && crate::secret_custody::parse_secret_handle(text).is_ok()
+        {
+            spans.push((start, end, text.to_owned()));
+        }
+        at = end;
+    }
+    spans
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Whether any file the row carries holds a handle span: what a merge
+/// stack refuses outright, as its tested tree already binds the reviewed
+/// bytes and no successor can join it after the fact.
+pub(super) fn refuse_handle_bearing_row(row: &RepoProposal) -> Result<()> {
+    if row
+        .files
+        .iter()
+        .filter_map(|file| file.content.as_deref())
+        .any(|content| !handle_spans(content).is_empty())
+    {
+        return Err(invalid(
+            "a handle-bearing proposal resolves and lands alone, never in its merge stack",
+        ));
+    }
+    Ok(())
+}
+
+/// The successor an Approved standalone `row` lands as, when its file
+/// carries handles: resolved through custody, custody-admitted like any
+/// write, minted Approved with the original's critiques exactly when it
+/// is the original with each handle replaced by its bound value, and the
+/// original superseded in the same writer. `None` when the file carries
+/// no handle and the row lands as itself.
+///
+/// # Errors
+///
+/// The typed custody refusal of an unbound, unknown or revoked handle, a
+/// snapshot withhold on the resolved bytes, or storage errors: the
+/// original stays Approved and unconsumed on every one.
+pub(super) fn resolved_successor(
+    vault: &Vault,
+    row: &RepoProposal,
+) -> Result<Option<RepoProposal>> {
+    let (path, content) = row.ordinary_file()?;
+    let spans = handle_spans(content);
+    if spans.is_empty() {
+        return Ok(None);
+    }
+    if row.resolves.is_some() {
+        return Err(invalid(
+            "a resolved successor's values carry a further handle",
+        ));
+    }
+    let path = path.to_owned();
+    let values = spans_values(vault, &spans)?;
+    let resolved = substitute(content, &spans, &values);
+    // The original's review carries only onto the proposal it actually
+    // judged: the successor must re-redact to the original byte for byte
+    // (Engine ruling on FIX 2938 F4).
+    if reredact(&resolved, &values) != content {
+        return Err(invalid(
+            "the resolved bytes are not the reviewed operation with its handles replaced",
+        ));
+    }
+    let repo = RepoRef::parse(&row.repo)?;
+    let repo_root = resolve_mutable_repo_root(&repo)?;
+    let snapshot = stored_snapshot(vault, row.pre_action_fork_hash)?;
+    admit_custody(
+        &SnapshotCustody::of(vault, &repo_root)?,
+        &snapshot,
+        &path,
+        &resolved,
+        &row.message,
+    )?;
+    let mut successor = row.clone();
+    successor.id = successor_id(row.id);
+    successor.files = vec![RepoProposedFile::ordinary(path, resolved)];
+    successor.status = RepoProposalStatus::Approved;
+    successor.resolves = Some(row.id);
+    successor.settlement = None;
+    successor.queue_review = None;
+    successor.operation_seq = None;
+    successor.created_at = now_millis() / 1000;
+    validate_conflict(vault, &successor, &repo_root)?;
+    let encoded = SNAPSHOT.encode_value(&snapshot)?;
+    let mut txn = vault.store.env.write_txn()?;
+    let mut original = PROPOSAL
+        .get(&vault.store, &txn, &row.id)?
+        .ok_or(Error::EntityNotFound)?;
+    if original.status != RepoProposalStatus::Approved || original.operation_seq.is_some() {
+        return Err(invalid("proposal already consumed"));
+    }
+    if PROPOSAL.get(&vault.store, &txn, &successor.id)?.is_none() {
+        super::persist::PreparedRepoProposal::new(successor.clone(), encoded)?
+            .persist_in_txn(vault, &mut txn)?;
+    }
+    original.status = RepoProposalStatus::Superseded;
+    store(vault, &mut txn, &original)?;
+    txn.commit()?;
+    Ok(Some(successor))
+}
+
+/// Each distinct span's bound value, read once per handle.
+fn spans_values(vault: &Vault, spans: &[(usize, usize, String)]) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut values: Vec<(String, Vec<u8>)> = Vec::new();
+    let txn = vault.store.env.read_txn()?;
+    for (_, _, text) in spans {
+        if values.iter().any(|(known, _)| known == text) {
+            continue;
+        }
+        let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
+        let value = vault
+            .get_secret_value_in_txn(&txn, &id, REPO_LANDING_EFFECTOR)?
+            .ok_or(Error::EntityNotFound)?;
+        values.push((text.clone(), value));
+    }
+    Ok(values)
+}
+
+/// `content` with each span replaced by its handle's bound value.
+fn substitute(
+    content: &[u8],
+    spans: &[(usize, usize, String)],
+    values: &[(String, Vec<u8>)],
+) -> Vec<u8> {
+    let mut resolved = Vec::with_capacity(content.len());
+    let mut at = 0;
+    for (start, end, text) in spans {
+        resolved.extend_from_slice(&content[at..*start]);
+        let value = &values
+            .iter()
+            .find(|known| &known.0 == text)
+            .expect("every span resolved above")
+            .1;
+        resolved.extend_from_slice(value);
+        at = *end;
+    }
+    resolved.extend_from_slice(&content[at..]);
+    resolved
+}
+
+/// The inverse substitution, for the review-carry proof: each bound value
+/// back to its span. An empty value proves nothing and is left, which the
+/// caller's byte equality then refuses.
+fn reredact(resolved: &[u8], values: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut out = resolved.to_vec();
+    for (text, value) in values {
+        if value.is_empty() {
+            continue;
+        }
+        let mut replaced = Vec::with_capacity(out.len());
+        let mut at = 0;
+        while let Some(hit) = find(&out[at..], value) {
+            replaced.extend_from_slice(&out[at..at + hit]);
+            replaced.extend_from_slice(text.as_bytes());
+            at += hit + value.len();
+        }
+        replaced.extend_from_slice(&out[at..]);
+        out = replaced;
+    }
+    out
+}
+
+/// The stored pre-action snapshot `fork` names, its hash proven.
+fn stored_snapshot(vault: &Vault, fork: RepoForkHash) -> Result<StoredRepoSnapshot> {
+    let txn = vault.store.env.read_txn()?;
+    let snapshot = SNAPSHOT
+        .get(&vault.store, &txn, &repo_mutation_snapshot_key(fork))?
+        .ok_or(Error::EntityNotFound)?;
+    if *blake3::hash(&SNAPSHOT.encode_value(&snapshot)?).as_bytes() != fork {
+        return Err(Error::CorruptedIndex("reviewed fork hash mismatch"));
+    }
+    Ok(snapshot)
+}

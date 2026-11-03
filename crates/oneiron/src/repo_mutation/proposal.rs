@@ -35,6 +35,7 @@ mod files;
 mod guards;
 pub(super) mod persist;
 mod queue_review;
+pub(super) mod resolve_handles;
 mod review;
 mod run;
 pub mod settlement;
@@ -97,6 +98,10 @@ pub enum RepoProposalStatus {
     Applied,
     Failed,
     Rejected,
+    /// Its handles were resolved into a successor proposal (FIX 2938),
+    /// which `resolves` is named from here backwards: the successor lands,
+    /// this row never does.
+    Superseded,
 }
 
 /// A bounded, immutable file change plus all the critic evidence that judged it.
@@ -133,6 +138,10 @@ pub struct RepoProposal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_review: Option<QueueReviewAdmission>,
     pub status: RepoProposalStatus,
+    /// The approved proposal this one resolves the lifted secret handles
+    /// of (FIX 2938), when it was minted for exactly that at landing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolves: Option<EntityId>,
     pub settlement: Option<settlement::RepoProposalSettlement>,
     pub operation_seq: Option<u64>,
     pub created_at: u64,
@@ -294,7 +303,8 @@ impl RepoProposal {
             }
             RepoProposalStatus::Proposed
             | RepoProposalStatus::Failed
-            | RepoProposalStatus::Rejected => ClaimApprovalStatus::Proposed,
+            | RepoProposalStatus::Rejected
+            | RepoProposalStatus::Superseded => ClaimApprovalStatus::Proposed,
         }
     }
     /// Its own catalog's unanimous critics. Only an explicit catalog makes a
@@ -397,6 +407,13 @@ impl Vault {
     /// A split verdict leaves the proposal and its recovery snapshot intact.
     pub fn apply_repo_proposal(&self, id: EntityId) -> Result<RepoMutationOutcome> {
         let row = self.repo_proposal(id)?.ok_or(Error::EntityNotFound)?;
+        // A superseded original lands as the successor that resolved it
+        // (FIX 2938): the same ask, on the row that carries the bytes.
+        if row.status == RepoProposalStatus::Superseded
+            && let Some(successor) = resolve_handles::successor_of(self, id)?
+        {
+            return self.apply_repo_proposal(successor);
+        }
         let repo = RepoRef::parse(&row.repo)?;
         let repo_root = resolve_mutable_repo_root(&repo)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
@@ -442,6 +459,11 @@ impl Vault {
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;
+        // A handle-bearing reviewed operation lands as its resolved
+        // successor (FIX 2938), never as the handle text itself.
+        if let Some(successor) = resolve_handles::resolved_successor(self, &row)? {
+            return self.apply_repo_mutation_approved(successor.request()?, successor.id);
+        }
         self.apply_repo_mutation_approved(row.request()?, id)
     }
 }

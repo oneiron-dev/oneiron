@@ -175,6 +175,11 @@ impl Vault {
         proposal: EntityId,
         step: &super::reviewed_stack::StackStep,
     ) -> Result<RepoMutationOutcome> {
+        // The tested tree binds the reviewed bytes: a handle-bearing
+        // member resolves and lands alone (FIX 2938), never here.
+        if let Some(row) = self.repo_proposal(proposal)? {
+            super::proposal::resolve_handles::refuse_handle_bearing_row(&row)?;
+        }
         self.apply_repo_mutation_inner(request, Some(proposal), Some(step))
     }
 
