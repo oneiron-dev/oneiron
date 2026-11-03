@@ -19,12 +19,16 @@
 //!
 //! An entry whose rows record an actor ends with `=> scrub`, the [`ActorScrub`] an actor's erase
 //! runs over its rows (FIX 3520); the erase walks every entry that names one.
+//!
+//! An `Authored` entry may name `[accepts: path]`, its owner's [`MaskedAccepts`]
+//! (FIX 2680): the typed check the historical lift sweep runs over a masked copy
+//! of a row, in place of its shape check.
 
 use super::RefStep::{Field, Json};
-use super::{ActorScrub, CodecName, RefPath, SideDb, SidePayload, SideTableDecl};
+use super::{ActorScrub, CodecName, MaskedAccepts, RefPath, SideDb, SidePayload, SideTableDecl};
 
 macro_rules! side_tables {
-    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $(=> $scrub:path)?;)+) => {
+    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])? $(=> $scrub:path)?;)+) => {
         $(
             $(#[$doc])*
             pub(crate) static $name: SideTableDecl = SideTableDecl {
@@ -35,6 +39,7 @@ macro_rules! side_tables {
                 payload: side_payload!($($payload)?),
                 references: side_references!($($refs)?),
                 actor: side_actor!($($scrub)?),
+                accepts: side_accepts!($($accepts)?),
             };
         )+
 
@@ -60,6 +65,16 @@ macro_rules! side_actor {
     };
     ($scrub:path) => {
         Some($scrub)
+    };
+}
+
+/// An entry's masked-copy acceptance: `None` when it names none.
+macro_rules! side_accepts {
+    () => {
+        None::<MaskedAccepts>
+    };
+    ($accepts:path) => {
+        Some($accepts as MaskedAccepts)
     };
 }
 
