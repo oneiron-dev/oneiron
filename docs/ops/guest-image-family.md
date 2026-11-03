@@ -497,11 +497,14 @@ operator's part.
    variant's artifacts. Its paths are relative to its own directory.
 4. **Verify.** Each launch door runs `observe_release` before it starts a
    guest and records the result as `image_release` in the session manifest.
-   A Hypnos import is meant to run it as well (LC builds that call). Today
-   no host-owned binding from an image to its manifest exists, so every
-   launch records `image_release_manifest_absent` and
-   `image_signature_unavailable`. A signed manifest with no verifier
-   configured records `image_signature_unverifiable`.
+   The shared bound-release observer also emits one `tracing::info!` with
+   the selected image digest, manifest state, fact codes and admitted bit;
+   this is observation only, not a launch-policy change. A Hypnos import is
+   meant to run it as well (LC builds that call). Today no host-owned binding
+   from an image to its manifest exists, so every launch records
+   `image_release_manifest_absent` and `image_signature_unavailable`. A
+   signed manifest with no verifier configured records
+   `image_signature_unverifiable`.
 5. **Policy.** `IMAGE_SIGNATURE_POLICY` is `ObserveOnly`, so these facts
    never refuse a launch or an install. Every existing pin, fence and
    image-match check still decides as before. Requiring a verified signature
