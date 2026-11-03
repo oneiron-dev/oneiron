@@ -20,6 +20,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
@@ -62,6 +63,11 @@ struct VerbAsk {
     domain: VerbDomain,
     /// The args the asking hook saw, re-validated, as JSON.
     args: String,
+    /// The input versions the parked call reads, captured when it parked
+    /// (OF-568), for the drain's refusal receipt; `None` when they were not
+    /// captured (a world call, over the entity bound, or no credential
+    /// target).
+    inputs: Option<ActionInputs>,
     /// The asking hook's place in the pre chain.
     position: u32,
     #[serde(with = "crate::serialize::entity_ref")]
@@ -413,7 +419,21 @@ pub(super) fn open(
         call.invocation.to_hex(),
         binding_id.to_hex()
     );
+    // OF-568: what the parked call reads, captured before it runs, for the
+    // drain's refusal receipt. Only a credential call keeps it; a world call
+    // or one over the entity bound keeps none, as on the wire. A capture
+    // that failed keeps none, so the ask still opens.
+    let inputs = match resume {
+        Some(VerbResume::Credential { .. }) if !call_reads_world(&call.verb) => {
+            vault.action_inputs(&json_entity_refs(args)).ok().flatten()
+        }
+        _ => None,
+    };
     let row = |ask: EntityId, resume: Option<VerbResume>| -> Result<VerbAsk> {
+        let inputs = match &resume {
+            Some(VerbResume::Credential { .. }) => inputs.clone(),
+            _ => None,
+        };
         Ok(VerbAsk {
             verb: call.verb.clone(),
             actor: call.actor,
@@ -422,6 +442,7 @@ pub(super) fn open(
             domain: call.domain,
             args: serde_json::to_string(args)
                 .map_err(|_| Error::InvariantViolation("verb hook ask args encode"))?,
+            inputs,
             position: u32::try_from(position).unwrap_or(u32::MAX),
             binding: binding_id,
             hook: format!("{}/{}", binding.pack, binding.hook),
@@ -515,6 +536,9 @@ pub(super) struct Ready {
     pub(super) class: HookActorClass,
     /// The saved args, as JSON.
     pub(super) args: String,
+    /// The input versions captured when the call parked, for the drain's
+    /// refusal receipt; `None` when they were not captured.
+    pub(super) inputs: Option<ActionInputs>,
     pub(super) resume: VerbResume,
     pub(super) ask: EntityId,
 }
@@ -544,6 +568,7 @@ pub(super) fn ready(vault: &Vault) -> Result<Vec<Ready>> {
             actor: row.actor,
             class: row.class,
             args: row.args,
+            inputs: row.inputs,
             resume,
             ask: row.ask,
         });
