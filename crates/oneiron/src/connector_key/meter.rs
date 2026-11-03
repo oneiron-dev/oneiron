@@ -8,7 +8,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
+use oneiron_model::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 

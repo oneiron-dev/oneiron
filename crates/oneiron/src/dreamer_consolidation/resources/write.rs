@@ -11,7 +11,7 @@ use crate::dreamer_consolidation::evidence::{
 use crate::dreamer_consolidation::stage_log::LandingTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
-use crate::llm::Scope;
+use oneiron_model::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
 use std::collections::BTreeMap;
 
@@ -86,7 +86,7 @@ pub(crate) struct ConsolidationFence {
 pub(crate) struct RowRevision {
     entity_type: u8,
     learned_at: u64,
-    resource: crate::llm::ScopeResource,
+    resource: oneiron_model::llm::ScopeResource,
 }
 
 impl RowRevision {

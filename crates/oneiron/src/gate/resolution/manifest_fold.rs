@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;

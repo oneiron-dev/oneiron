@@ -3,7 +3,7 @@
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::GateReasonCode;
-use crate::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 use crate::store::Store;
 
 /// Reads, never debits. Earlier receipts in the caller's transaction contribute

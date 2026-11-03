@@ -24,7 +24,7 @@ use crate::learning_setting::{
     SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
     read_scopes_in_txn, scoped_row_key,
 };
-use crate::llm::ModelId;
+use oneiron_model::llm::ModelId;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;

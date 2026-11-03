@@ -24,11 +24,14 @@ use crate::dreamer_wake::{
     DreamerAttemptExecution, SieveAuditDiscovery, SieveAuditWindow, SieveUnlocatedCause,
     SieveUnlocatedDiscovery, SpanKind, WakeAttemptContext,
 };
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step_checked,
+use crate::llm::{ call_as_step_checked,
 };
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelTierRef, ResponseFormat, TierPrecedence,
+};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Result};
 
 /// A finding as the model writes it: each span it found, by the window's

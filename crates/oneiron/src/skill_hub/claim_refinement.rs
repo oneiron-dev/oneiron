@@ -22,14 +22,14 @@ use crate::{
     edge::EdgeActorClass,
     entity_id::EntityId,
     error::{Error, Result},
-    llm::decision::{
-        AnswerContract, DecisionClass, DecisionQuestion, Reversibility, TypedDecision,
+    llm::decision::{ TypedDecision,
     },
     skill_optimize::held_out_receipt_set_digest,
     store::Store,
     temporal::TimeRange,
     write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance},
 };
+use crate::model_decision::{AnswerContract, DecisionClass, DecisionQuestion, Reversibility};
 use serde::{Deserialize, Serialize};
 
 /// Owner-adjudicated held-out claim labels (sorted, unique hex ids) reserved

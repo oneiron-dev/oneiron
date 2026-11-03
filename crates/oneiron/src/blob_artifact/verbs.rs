@@ -31,8 +31,10 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::lens::RecordRef;
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
     TypedDecision,
+};
+use crate::model_decision::{
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,

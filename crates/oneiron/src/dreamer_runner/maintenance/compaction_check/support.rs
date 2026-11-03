@@ -17,12 +17,16 @@ use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRun
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
-use crate::llm::decision::catalogue::COMPACTION_SUPPORT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    GeneratedDecisions, GeneratedRung, GeneratedStep, ProviderPin, Reversibility,
+use crate::model_decision::catalogue::COMPACTION_SUPPORT;
+use crate::llm::decision::{ DecisionLadder,
+    GeneratedDecisions, GeneratedRung, GeneratedStep,
 };
-use crate::llm::{DurableStepContext, DurableStepError, LlmRequest, LlmUsage, ModelLocality};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, ProviderPin, Reversibility,
+};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
+use oneiron_model::llm::{LlmRequest, LlmUsage, ModelLocality};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault};
 

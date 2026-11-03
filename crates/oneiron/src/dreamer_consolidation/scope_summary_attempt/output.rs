@@ -5,7 +5,7 @@
 
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use crate::EntityId;
-use crate::llm::{ContentPart, LlmResponse};
+use oneiron_model::llm::{ContentPart, LlmResponse};
 use crate::scope_summary::{SummaryLineSources, SummaryLineSpan};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
