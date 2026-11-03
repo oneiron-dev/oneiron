@@ -33,7 +33,8 @@ impl Vault {
     /// [`Self::hooks_replay_binding`] reads with; the outcome judged against
     /// the binding and put to the gate's own checks, including the catalog
     /// verb's input check. The surface's rewrite admission still only its
-    /// dispatcher holds. `None` for a call the
+    /// dispatcher holds. A `host.budget.hit` run judges the body, never the
+    /// serving ledger's `admit_trigger` accounting. `None` for a call the
     /// selector does not take, as the gate runs no body on it. Beside the
     /// runs, the body's source and every row a read served.
     ///
@@ -147,10 +148,9 @@ impl Vault {
             };
             let overrun = context.finish();
             let verdict = judge(row, ran, overrun, &context);
-            let refusal = verdict
-                .outcome
-                .as_ref()
-                .and_then(|outcome| gate_check(&call.verb, &call.args, outcome).err());
+            let refusal = verdict.outcome.as_ref().and_then(|outcome| {
+                gate_check(&call.verb, &call.args, selector.phase, outcome).err()
+            });
             let (outcome, token, reason) = match refusal {
                 Some(reason) => (None, "refused".to_owned(), Some(bounded(&reason))),
                 None => (verdict.outcome, verdict.token, verdict.reason),
@@ -193,9 +193,17 @@ fn golden_invocation(binding_id: EntityId, index: usize) -> InvocationId {
 /// The gate's own checks on an outcome its binding accepted, as a call's
 /// chain puts them, including the catalog verb's input check; the reason
 /// refuses it.
-fn gate_check(verb: &str, args: &Value, outcome: &HookOutcome) -> std::result::Result<(), String> {
+fn gate_check(
+    verb: &str,
+    args: &Value,
+    phase: HookPhase,
+    outcome: &HookOutcome,
+) -> std::result::Result<(), String> {
     match outcome {
         HookOutcome::Rewrite { args: next } => {
+            if phase == HookPhase::Post {
+                return Err("a rewrite has nothing to check its args".to_owned());
+            }
             host_doors::check_rewrite(verb, args, next)
                 .map_err(|reason| format!("the rewritten args are refused: {reason}"))?;
             if AgentVerb::from_name(verb).is_some() {
