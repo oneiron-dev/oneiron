@@ -32,8 +32,8 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     MessagePersonReceipt, MessagePersonRequest,
 };
-use crate::run_tree::RunSignalState;
-use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_linked};
+use crate::attempt_queue::run_signal::RunSignalState;
+use super::steer::{SteerReceipt, SteerRequest, steer_linked};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 const BASIS_DOMAIN: &[u8] = b"oneiron.coach.agent_health.move_basis.v1";

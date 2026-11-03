@@ -97,7 +97,7 @@ pub(crate) fn receipt_carried_reference_refusal(
     crate::receipt::receipt_refusal(
         &memory,
         &facts,
-        crate::memory::RefusalReason::InventedReference,
+        crate::receipt::RefusalReason::InventedReference,
     )
     .unwrap_or_else(|error| {
         tracing::warn!(%error, row, "a refusal went unreceipted");

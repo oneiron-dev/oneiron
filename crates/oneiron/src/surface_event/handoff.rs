@@ -21,8 +21,7 @@ use super::{
 };
 use crate::error::{ArtifactError, RegistryError};
 
-/// Attempt-queue kind owning inbound surface-event dispatch.
-pub const SURFACE_EVENT_ATTEMPT_KIND: &str = "surface_event.dispatch.v1";
+pub use crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND;
 
 /// Route prefix the ack's status path is built on.
 const SURFACE_EVENT_STATUS_PATH_PREFIX: &str = "/v1/core/surface-events/";
