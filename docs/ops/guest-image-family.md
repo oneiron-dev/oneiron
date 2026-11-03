@@ -207,8 +207,8 @@ digest. Signing them is the release signature's seam (`manifest.md`).
     `, or` are DEP-5's comma-lowered operators; a bare comma is invalid and
     stays `NOASSERTION`. Parentheses group, and nested expressions are
     parenthesized explicitly in the SPDX output. `with … exception` uses an
-    exact id in `attest.DEBIAN_EXCEPTION_TO_SPDX` (including Bison, LLVM,
-    Linux-syscall-note, libtool and Autoconf generic); Autoconf and
+    exact id in `attest.DEBIAN_EXCEPTION_TO_SPDX` (including Automake,
+    Bison, LLVM, Linux-syscall-note, libtool, Texinfo and Autoconf generic); Autoconf and
     Autoconf-data select 2.0 or 3.0 from the GPL base. An unknown or
     version-ambiguous exception stays `NOASSERTION` rather than guessing.
   - A short name maps to an SPDX id only through `attest.DEBIAN_TO_SPDX`.
