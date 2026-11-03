@@ -11,6 +11,7 @@ pub(crate) use value_json::msgpack_value_projection;
 pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
 pub(crate) mod persona_export_fields;
 mod field_profile_table;
+pub(crate) mod grant_fields;
 mod group_labels;
 mod handles;
 mod item_budget;

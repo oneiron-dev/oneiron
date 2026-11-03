@@ -8,7 +8,7 @@ use crate::claim::ClaimRecordScope;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 
 use super::types::{GateDecisionId, GateDecisionRecord};
 

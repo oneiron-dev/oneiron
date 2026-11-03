@@ -100,13 +100,13 @@ pub(super) fn fields_for_profile(
         }
 
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {
-            crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Standard) => {
-            crate::federation::FEDERATION_GRANT_FIELDS_STANDARD
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Full) => {
-            crate::federation::FEDERATION_GRANT_FIELDS_FULL
+            crate::serialize::grant_fields::FEDERATION_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal) => {
             crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
