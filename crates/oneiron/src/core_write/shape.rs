@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{BatchBuilder, EntityId, TimeRange, Vault};
 

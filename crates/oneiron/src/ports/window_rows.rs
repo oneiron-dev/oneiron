@@ -94,7 +94,7 @@ pub(crate) trait WindowDeletionRows: Transactions {
     ) -> Result<PortRows<'a, R>>
     where
         R: 'a,
-        F: FnMut(crate::sync::window_rows::WindowUpdateKey, &[u8]) -> R + 'a;
+        F: FnMut(crate::store::window_rows::WindowUpdateKey, &[u8]) -> R + 'a;
     /// Every pending tombstone of every window in key order. `inspect` sees each full key and
     /// value in place; no key is decoded, so a malformed key is still a row.
     fn port_pending_tombstone_rows_raw<'a, R, F>(

@@ -514,10 +514,19 @@ impl Memory<'_> {
             {
                 continue;
             }
+            // An erased launcher's width check has no one left to answer it
+            // (FIX 4698): history keeps the row; the board drops the stuck
+            // item.
+            if matches!(launch.actor, TaskActor::Erased)
+                && launch.dispatched_at.is_some()
+                && launch.check_row.is_some()
+                && launch.choice_receipt_ref.is_none()
+            {
+                continue;
+            }
             // An erased recipient's retired width check has no re-read path
             // (FIX 4699): history keeps the row; the board drops the retired
-            // item. Standalone adjacency for l09w/scrub1's 4698 launcher
-            // skip; the lead resolves when both land.
+            // item. Kept beside the 4698 launcher skip; both landed.
             if launch
                 .recipient_scrub
                 .as_ref()

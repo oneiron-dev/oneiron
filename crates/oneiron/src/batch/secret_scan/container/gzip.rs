@@ -10,7 +10,7 @@ use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 
 use super::{Budget, Walked, encode_failed, over_budget, unreadable};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 fn payload(bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
     let limit = budget.limit();

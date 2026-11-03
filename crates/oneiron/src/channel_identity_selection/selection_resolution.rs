@@ -37,7 +37,7 @@ impl ChannelIdentityThreadPin {
     /// # Errors
     /// As [`crate::Vault::sticky_thread_mask`].
     pub fn for_thread(vault: &crate::Vault, thread_ref: &str) -> crate::Result<Option<Self>> {
-        use crate::thread_passport::StickyMaskDecision;
+        use crate::write_envelope::thread_claim::StickyMaskDecision;
         let mask = match vault.sticky_thread_mask(thread_ref, None)? {
             StickyMaskDecision::Keep(mask) | StickyMaskDecision::Conflict { pinned: mask, .. } => {
                 mask

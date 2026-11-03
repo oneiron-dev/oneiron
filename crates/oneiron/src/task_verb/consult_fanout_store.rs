@@ -1,6 +1,7 @@
 //! Node-local frozen fan-out plans and transaction-owned surface sink.
 
 use super::fanout_launch::{FanoutRecipientScrub, scrub_statement_for};
+use super::task_actor::names_no_actor;
 use super::{
     ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutReceipt,
     ConsultFanOutScope, ConsultFanOutSpec, ConsultPayloadRef,
@@ -9,11 +10,13 @@ use crate::Vault;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::decision::DecisionReceipt;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
     FanoutWidthCheck, FanoutWidthClass, fanout_estimate, fanout_plan_digest,
 };
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::receipt::{ERASED_CALL_IDENTITY, ReceiptRecord};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -141,6 +144,11 @@ pub(super) struct StoredFanout {
     /// as none.
     #[serde(default)]
     pub(super) recipient_scrub: Option<FanoutRecipientScrub>,
+    /// The AUTO ladder's receipt on the ask that admitted this run, when the
+    /// ladder decided it (FIX 333). Runs stored before this field read as
+    /// none.
+    #[serde(default)]
+    pub(super) decision_receipt: Option<DecisionReceipt>,
 }
 
 impl StoredFanout {
@@ -341,6 +349,18 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 
 pub(super) fn save_run(vault: &Vault, txn: &mut heed::RwTxn<'_>, run: &StoredFanout) -> Result<()> {
     let correlation = EntityId::from_hex(&run.correlation)?;
+    // REVIEW-4366 round 4: the ladder's receipt was decided outside the
+    // writer, and its principal can differ from the launcher, so a
+    // principal erased in flight would otherwise be restored here.
+    if let Some(receipt) = &run.decision_receipt
+        && vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::HardDelete, &receipt.principal)?
+    {
+        let mut scrubbed = run.clone();
+        scrubbed.decision_receipt = None;
+        return FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), &scrubbed);
+    }
     FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), run)
 }
 
@@ -360,6 +380,40 @@ pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Stored
         .into_iter()
         .map(|(_, run)| run)
         .collect())
+}
+
+/// Erasing `actor` from the consult fan-out runs (REVIEW-4366 round 4):
+/// each run whose ladder decision was for it keeps its plan, tasks and
+/// rows, and its receipt goes, since a receipt's principal has no erased
+/// form. One-way, in the erase's own transaction. An id whose entity is
+/// no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a run row that cannot be read.
+pub(crate) fn erase_fanout_run_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut runs = Vec::new();
+    for (key, mut run) in FANOUT_RUNS.scan(&vault.store, wtxn)? {
+        if run
+            .decision_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.principal == *actor)
+        {
+            run.decision_receipt = None;
+            runs.push((key, run));
+        }
+    }
+    for (key, run) in runs {
+        FANOUT_RUNS.put(&vault.store, wtxn, &key, &run)?;
+    }
+    Ok(())
 }
 
 pub(super) fn policy_in(
