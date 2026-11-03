@@ -19,7 +19,7 @@ use super::super::coop_request::{
 };
 use super::*;
 use crate::authority::{AuthorityFold, HostSlipIssuer};
-use oneiron_authority::authority::{AuthorityKey};
+use oneiron_authority::authority::AuthorityKey;
 
 /// What starting one claimed try found, in its writer.
 pub(super) enum TryStart {

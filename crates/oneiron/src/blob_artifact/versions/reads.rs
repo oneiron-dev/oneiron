@@ -8,9 +8,9 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::SecretSight;
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::file_secret_marks::SecretSight;
 use crate::secret_custody::sighted_bytes_in_txn;
 use crate::write_envelope::claim_body::ClaimSubject;
 

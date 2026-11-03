@@ -1,8 +1,8 @@
 //! Revision values and their unchanged pure constructors.
 
-use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::store::code_document_values::CodeDocumentFrontier;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

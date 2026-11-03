@@ -281,4 +281,3 @@ impl crate::Vault {
         }
     }
 }
-

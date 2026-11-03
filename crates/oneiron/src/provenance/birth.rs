@@ -28,7 +28,7 @@ pub(crate) mod prompted;
 pub(crate) mod room;
 
 pub use crate::store::row_birth::{
-    RowBirth, RoomEvidence, RoomEvidenceRef, WithheldRef, WithheldRole, WithheldKey,
+    RoomEvidence, RoomEvidenceRef, RowBirth, WithheldKey, WithheldRef, WithheldRole,
 };
 
 /// One row's birth envelope. Key: id16 (the born row).

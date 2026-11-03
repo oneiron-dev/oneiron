@@ -2,12 +2,12 @@
 
 use super::public_types::*;
 use crate::claim::{ClaimReadStatus, PointRead};
-use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
 use crate::memory::Memory;
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::ports::ScopedReadResult;
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::{EntityId, WriteActor};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 fn side_id(value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value).map_err(|_| MemoryError::bad_request("expected a full hex id"))

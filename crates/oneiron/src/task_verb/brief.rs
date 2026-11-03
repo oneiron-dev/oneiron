@@ -16,7 +16,7 @@ use oneiron_browser::SecretArg;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::browser_library::{resolve_workflow_in_txn};
+use crate::browser_library::resolve_workflow_in_txn;
 use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;
 use crate::entity_id::EntityId;
 use crate::error::Error;

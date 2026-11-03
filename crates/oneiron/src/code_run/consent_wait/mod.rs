@@ -59,10 +59,13 @@ pub(crate) use self::types::{
     CodeConsentRememberOffer, CodeConsentWaitRow,
 };
 
+use crate::EntityId;
+use crate::outbound_consent::{
+    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorQuestion, ConnectorResultAbsence,
+    UntrustedToolResult,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::EntityId;
-use crate::outbound_consent::{ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorQuestion, ConnectorResultAbsence, UntrustedToolResult};
 
 /// The reason a delivered reply carries when the tool's own reply is not in
 /// it. The ledger never keeps a reply's bytes, and a call is never resent to

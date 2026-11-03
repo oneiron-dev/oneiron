@@ -8,7 +8,6 @@ use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
 use crate::comm::CommParties;
-use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
 use crate::comm::count_active_party_claims_in_txn;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::{
@@ -17,6 +16,7 @@ use crate::outbound_grant::{
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT};
+use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
 use std::collections::BTreeMap;
 
 /// Channel classes an iMIP invite counts as prior contact on.

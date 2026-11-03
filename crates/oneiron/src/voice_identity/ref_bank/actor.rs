@@ -8,11 +8,11 @@
 //! person is its subject. A creator without a person's proof never acts on a
 //! real person's voice, and nobody acts on another's.
 use super::{VoiceRefSubjectKind, invalid, read_identity, render_history::read_render_consent};
-use crate::error::{Error, Result};
 use crate::EntityId;
+use crate::error::{Error, Result};
 
-pub use crate::memory::voice_actor::{VoiceBankActor, VoiceCreator};
 pub(super) use crate::memory::voice_actor::VoiceParty;
+pub use crate::memory::voice_actor::{VoiceBankActor, VoiceCreator};
 
 /// The refusal of an act on a voice that is another's.
 pub(super) fn others_voice() -> Error {

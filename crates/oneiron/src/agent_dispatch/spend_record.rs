@@ -8,7 +8,6 @@ use crate::error::Error;
 use crate::llm::run_admission::{JobStartRefused, LeaseUnit};
 use crate::side_table::{self, LegacyJson, SideTable};
 
-
 /// One launch tree's spend scopes. Key: the scope id.
 pub(super) const SCOPE: SideTable<String, SpendScope, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_SCOPE);

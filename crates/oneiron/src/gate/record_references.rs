@@ -45,9 +45,12 @@ use std::ops::Range;
 
 use serde_json::Value;
 
-use crate::memory::{Memory};
-use oneiron_contracts::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
+use oneiron_contracts::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, MemoryError,
+    MemoryResult,
+};
 
 /// One ref a write names, at the concrete pointer of its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::claim::{PointRead, ScopedRead};
 use crate::codebase::read_asset_blob_sighted_in_txn;
-use crate::store::code_snapshot::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,

@@ -1,9 +1,9 @@
 //! Immutable resident ownership encoded in a skill record.
 
-use rmpv::Value;
+use super::SkillRecord;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use super::SkillRecord;
+use rmpv::Value;
 
 pub(crate) const RESIDENT_PROVENANCE_KEY: &str = "residentActor";
 

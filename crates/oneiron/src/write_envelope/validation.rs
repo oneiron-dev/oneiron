@@ -11,4 +11,3 @@ pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
 
     Ok(())
 }
-

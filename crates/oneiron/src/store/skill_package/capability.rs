@@ -1,7 +1,5 @@
 //! Stored capability surface encoding.
 
-use std::collections::BTreeSet;
-use rmpv::Value;
 use super::SkillCapabilitySurface;
 use super::package::MAX_CAPABILITY_TEXT_BYTES;
 use crate::error::{ArtifactError, Error, Result};
@@ -9,6 +7,8 @@ use crate::side_table::{CodecError, RawValue};
 use crate::write_envelope::skill_source::support::{
     decode_value, encode_value, exact_map, required_value, validate_text,
 };
+use rmpv::Value;
+use std::collections::BTreeSet;
 
 impl RawValue for SkillCapabilitySurface {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {

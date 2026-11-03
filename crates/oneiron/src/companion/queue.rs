@@ -22,7 +22,12 @@ use std::io::Cursor;
 
 pub use crate::write_envelope::companion_task_kind::CompanionTaskKind;
 
-pub use crate::attempt_queue::companion_task::{CompanionTask, CompanionTaskStatus, EnqueueCompanionTask, EnqueueCompanionTaskOutcome, ClaimCompanionTask, ClaimCompanionTaskOutcome, CompleteCompanionTask, CompleteCompanionTaskOutcome, FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask, RetryCompanionTaskOutcome};
+pub use crate::attempt_queue::companion_task::{
+    ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionTask, CompanionTaskStatus,
+    CompleteCompanionTask, CompleteCompanionTaskOutcome, EnqueueCompanionTask,
+    EnqueueCompanionTaskOutcome, FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask,
+    RetryCompanionTaskOutcome,
+};
 
 /// Companion-specific facade over the generic durable AttemptQueue.
 pub struct CompanionQueue<'a> {

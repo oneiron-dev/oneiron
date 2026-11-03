@@ -185,7 +185,10 @@ impl Vault {
                 };
                 if record.skill_id == WEAVE_DIGEST_SETTINGS_SKILL_NAME
                     && crate::write_envelope::skill_record::skill_loadable(&record)
-                    && matches!(crate::write_envelope::skill_record::resident_of(&record), Ok(None))
+                    && matches!(
+                        crate::write_envelope::skill_record::resident_of(&record),
+                        Ok(None)
+                    )
                 {
                     named.push(id);
                 }
