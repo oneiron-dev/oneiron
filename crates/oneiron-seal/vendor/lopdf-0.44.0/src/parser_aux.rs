@@ -594,13 +594,15 @@ pub fn decode_xref_stream_with_limit(mut stream: Stream, max_decompressed_size: 
                         } else {
                             0
                         } as u16;
-                        xref.insert((start + j) as u32, XrefEntry::Normal { offset, generation });
+                        let id = crate::admitted::xref::object_id(start, j)?;
+                        xref.insert(id, XrefEntry::Normal { offset, generation });
                     }
                     2 => {
                         // compressed object
                         let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
                         let index = read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
-                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                        let id = crate::admitted::xref::object_id(start, j)?;
+                        xref.insert(id, XrefEntry::Compressed { container, index });
                     }
                     _ => {}
                 }
@@ -702,14 +704,16 @@ pub(crate) fn decode_xref_stream_admitted(
                             0
                         } as u16;
                         admission.admit(entry_bytes)?;
-                        xref.insert((start + j) as u32, XrefEntry::Normal { offset, generation });
+                        let id = crate::admitted::xref::object_id(start, j)?;
+                        xref.insert(id, XrefEntry::Normal { offset, generation });
                     }
                     2 => {
                         // compressed object
                         let container = read_field(&mut reader, widths[1])?;
                         let index = read_field(&mut reader, widths[2])? as u16;
                         admission.admit(entry_bytes)?;
-                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                        let id = crate::admitted::xref::object_id(start, j)?;
+                        xref.insert(id, XrefEntry::Compressed { container, index });
                     }
                     _ => {}
                 }

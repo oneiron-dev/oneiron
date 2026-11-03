@@ -376,6 +376,14 @@ impl Dictionary {
         self.0.insert(key.into(), value.into());
     }
 
+    pub(crate) fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> bool {
+        self.0.try_reserve(additional).is_ok()
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
