@@ -111,6 +111,9 @@ pub struct OwedWakeHoldView {
     /// When the hold expires, a fixed time after the turn landed; withheld
     /// (`held.expires_at`) unless the turn reads on the caller's lane.
     pub expires_at: Option<u64>,
+    /// Whether the hold expired (`now >= expires_at`, FIX 12287); withheld
+    /// (`held.expired`) unless the turn reads on the caller's lane.
+    pub expired: Option<bool>,
 }
 
 /// Whether an admission queued the program or refused it.
