@@ -143,12 +143,23 @@ pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod conversation_body;
 pub mod conversation_record;
+pub mod housekeeping_schedule;
+pub mod housekeeping_report;
+#[cfg(feature = "sync")]
+pub mod document_frame_tags;
+#[cfg(feature = "sync")]
+pub mod window_protocol;
+#[cfg(feature = "sync")]
+pub(crate) mod pad_object_membership;
+#[cfg(feature = "sync")]
+pub mod materialization_event;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 pub mod retained_memory;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod consolidation_scope;
 pub mod setting_seed;
@@ -409,3 +420,41 @@ pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
+
+pub mod dispatch_attempt_kind;
+
+pub mod checkout_lease;
+
+pub mod repo_mutation_record;
+
+pub mod code_commit_metadata;
+
+pub mod code_import_manifest;
+
+pub mod own_rate_record;
+
+pub mod repo_provenance_trailer;
+
+pub mod code_revision_identity;
+
+pub mod recovery_kit;
+
+pub mod code_promotion_gap;
+
+pub mod code_revision_record;
+
+pub mod sandbox_path;
+
+pub mod sandbox_credential;
+
+pub mod sandbox_contract;
+
+pub mod critic_lens;
+
+pub mod verb_domain;
+
+pub mod reaction_predicate;
+
+pub mod repo_proposal_record;
+
+pub mod repo_import_predicate;

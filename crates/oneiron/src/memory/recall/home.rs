@@ -380,7 +380,7 @@ async fn ask_home(
         .ok()?
         .ok()?;
     // A scoped search takes no local fallback; only the home's answer counts.
-    if found.source != crate::sync::SearchSource::Home {
+    if found.source != crate::memory::residence_item::SearchSource::Home {
         return None;
     }
     let hits = found.hits.into_iter().map(|hit| RecallResidenceHit {

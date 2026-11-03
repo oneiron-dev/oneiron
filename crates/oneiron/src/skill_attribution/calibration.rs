@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::error::Result;
 use crate::receipt::task_type_ref::TypeRef;
-use crate::learning::{Anchor};
+use crate::claim::learning_evidence::Anchor;
 use crate::store::setting_seed::ATTRIBUTION_UNCLEAR_FLOOR;
 use crate::learning_setting::{
     SettingCheck, global_setting_subject, record_setting_check_in_txn,

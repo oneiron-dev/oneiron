@@ -582,7 +582,7 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
-        if notice.source.producer != crate::workspace_roster::THREAD_NOTICE_PRODUCER {
+        if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
         let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());

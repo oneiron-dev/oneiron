@@ -195,16 +195,18 @@ impl Vault {
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use crate::sync::bridge::{
-            DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
+             with_deletion_tombstone_observer_a_suppressed,
         };
+        use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
         use crate::store::loro_document::doc_version_vector;
         use crate::sync::schema::create_window_doc;
         use crate::window_key::WindowKey;
         use crate::sync::window::{
-            CarrierRemoval, apply_tombstone_to_window_doc, entity_carriers,
+             apply_tombstone_to_window_doc, entity_carriers,
             export_tombstone_commit_delta, load_window_from_state, mark_removed_carriers_first,
             merge_persisted_state_into_doc,
         };
+        use crate::store::window_rows::CarrierRemoval;
         use loro::CommitOptions;
 
         let window_key = WindowKey::new(window_label);
@@ -424,12 +426,12 @@ impl Vault {
                 let path = "local_delete_committed";
                 manager.materializer().notify_live_queries(
                     path,
-                    &crate::sync::bridge::MaterializedDiffSummary {
+                    &crate::store::materialization_event::MaterializedDiffSummary {
                         containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
                         bytes: 0,
                         revision_events: Vec::new(),
                     },
-                    &crate::sync::bridge::OriginMark {
+                    &crate::store::materialization_event::OriginMark {
                         conn_id: None,
                         origin: Some("local_delete_committed".to_owned()),
                     },
@@ -458,7 +460,7 @@ impl Vault {
         if let Some(manager) = manager {
             manager.materializer().notify_live_queries(
                 &format!("w:{window}/tombstones"),
-                &crate::sync::bridge::MaterializedDiffSummary {
+                &crate::store::materialization_event::MaterializedDiffSummary {
                     containers: if value.reason.is_hard() {
                         vec![format!("w:{window}/entities/{}", id.to_hex())]
                     } else {
@@ -468,9 +470,9 @@ impl Vault {
 
                     revision_events: Vec::new(),
                 },
-                &crate::sync::bridge::OriginMark {
+                &crate::store::materialization_event::OriginMark {
                     conn_id: None,
-                    origin: Some(crate::sync::bridge::DELETION_TOMBSTONE_ORIGIN.to_owned()),
+                    origin: Some(crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN.to_owned()),
                 },
             );
         }

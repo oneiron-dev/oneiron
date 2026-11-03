@@ -10,11 +10,13 @@ use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    APPEND_ROW, AppendFailure, actor_in_txn,
+    actor_in_txn,
     admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
     require_append_references_in_txn, require_type, resolve_in_txn,
 };
+use crate::store::conversation_record::APPEND_ROW;
+use crate::store::conversation_record::AppendFailure;
 use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};

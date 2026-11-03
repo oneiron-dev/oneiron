@@ -42,17 +42,7 @@ pub struct MembershipRow {
     pub actor: EntityId,
     pub visible_from: Option<u64>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MembershipWindow {
-    pub joined_at: u64,
-    pub from: u64,
-    pub to: Option<u64>,
-}
-impl MembershipWindow {
-    pub fn contains(&self, at: u64) -> bool {
-        self.from <= at && self.to.is_none_or(|end| at < end)
-    }
-}
+pub use crate::memory::conversation_membership::MembershipWindow;
 
 pub(super) fn revision_in(
     store: &crate::store::Store,

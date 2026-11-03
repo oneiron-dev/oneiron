@@ -18,12 +18,13 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
 use crate::code_run::blocked::read_blocked_receipt;
+use crate::attempt_queue::maintenance_predicate::COACH_DIAGNOSTIC_PROPOSAL_PREDICATE;
+use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_RESOLUTION_PREDICATE;
 use crate::dreamer_runner::maintenance::coach_diagnostic::{
-    COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, COACH_ISSUE_RESOLUTION_PREDICATE, ProducerTarget,
+    ProducerTarget,
 };
-use crate::dreamer_runner::maintenance::coach_heal::{
-    COACH_HEAL_PROPOSAL_PREDICATE, COACH_ISSUE_PROPOSAL_PREDICATE,
-};
+use crate::attempt_queue::maintenance_predicate::COACH_HEAL_PROPOSAL_PREDICATE;
+use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_PROPOSAL_PREDICATE;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::edge::EdgeKind;
 use crate::entity_id::bytes_to_hex_lower;

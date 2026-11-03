@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::run_tree::{RunTree, RunTreeNode};
+use crate::attempt_queue::run_tree_view::{RunTree, RunTreeNode};
 
 /// An external measurement of one experiment node. Quality is on a
 /// campaign-pinned scale (the DGM sigmoid acts on this supplied score).

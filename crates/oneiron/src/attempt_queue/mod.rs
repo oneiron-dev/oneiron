@@ -12,7 +12,9 @@
 //! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
 //! counters and span emission.
 
+pub mod maintenance_predicate;
 mod annotation_hold;
+pub mod turn_action_kind;
 mod borrowed_lease;
 mod budget_hold;
 mod cancel;
@@ -166,3 +168,5 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
 }
 
 pub mod companion_task;
+
+pub mod run_tree_view;

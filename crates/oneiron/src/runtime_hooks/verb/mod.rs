@@ -54,15 +54,7 @@ pub(crate) use storage::{
 
 pub use crate::store::verb_invocation::InvocationId;
 
-/// What a blocking hook's failure does to the verb (DEC-0006 invariant 8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerbDomain {
-    /// A failed blocking pre-hook hides the result.
-    Read,
-    /// A failed blocking pre-hook sends the verb to an ask.
-    Write,
-}
+pub use crate::store::verb_domain::VerbDomain;
 
 /// The call a verb hook fires on: what the hook reads besides the args, the
 /// board and the receipt tail.

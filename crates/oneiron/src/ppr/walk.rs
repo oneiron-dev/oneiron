@@ -491,7 +491,7 @@ pub(super) fn gate_edge(
         && (crate::workspace_roster::is_project_entity(store, txn, *current)?
             || crate::workspace_roster::is_project_entity(store, txn, neighbor)?)
     {
-        lambda = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA;
+        lambda = crate::ppr::project_weight::HUB_BELONGS_TO_LAMBDA;
     }
 
     // Gate 2 — kind-level block: λ_τ = 0.0 (`opposes`) propagates nothing

@@ -482,7 +482,7 @@ fn insert_ready_row<R: Read + Seek>(
                 archive.index.remove(Tag::Inserted, id.as_bytes())?;
                 return Ok(());
             }
-            if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
+            if crate::write_envelope::subject_record::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -860,7 +860,7 @@ fn withhold_unborn_projects<R: Read + Seek>(
             .entity(&id)?
             .ok_or(Error::InvariantViolation("archive index lost a room"))?;
         if let Ok(room) =
-            rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
+            rmp_serde::from_slice::<crate::store::conversation_body::ProjectRoom>(&row.body.to_bytes()?)
             && withheld.contains(&room.project_id)
         {
             archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
@@ -1169,8 +1169,8 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
-            if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
-                refs.push(crate::subject_model::validate_actor_subject_claim_structure(&body)?.1);
+            if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
+                refs.push(crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?.1);
             }
             refs
         }
@@ -1297,8 +1297,8 @@ pub(super) fn import_edge(
 
 fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body::ClaimBody> {
     let body = decode_claim_body(bytes, true)?;
-    if crate::subject_model::is_subject_model_predicate(&body.predicate) {
-        crate::subject_model::imported_subject_body(&body)
+    if crate::write_envelope::subject_record::is_subject_model_predicate(&body.predicate) {
+        crate::write_envelope::subject_record::imported_subject_body(&body)
     } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {

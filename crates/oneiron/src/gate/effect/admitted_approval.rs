@@ -16,7 +16,8 @@
 //! target-typed branch.
 
 use super::{ApprovalContext, ExternalEffectGovernance};
-use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
+use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_CHANNEL;
+use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_SEND_VERB;
 use crate::gate::{ExternalEffectGateInput, GateOutcome};
 use crate::consent::approval_proof::AdmittedApproval;
 use crate::receipt::intent_id::IntentId;

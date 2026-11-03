@@ -26,7 +26,16 @@
 pub mod retrieval_defaults;
 pub mod result_facet;
 pub(crate) mod checkout_access;
+pub mod speculative_limits;
+pub mod wake_observation;
 pub mod affect;
+#[cfg(feature = "sync")]
+pub mod message_presence;
+pub(crate) mod conversation_preview;
+pub mod conversation_membership;
+#[cfg(feature = "sync")]
+pub mod residence_item;
+pub(crate) mod vault_standing;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
@@ -408,3 +417,5 @@ pub mod state_index;
 
 #[cfg(feature = "sync")]
 pub(crate) mod resolved_recall_scope;
+
+pub mod claim_cluster;

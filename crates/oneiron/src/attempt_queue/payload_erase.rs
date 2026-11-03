@@ -52,10 +52,19 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 use crate::browser_library::{admission_payload_actor};
 use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
-use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
-use crate::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
-    RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+use crate::conversation::TurnActionAttempt;
+use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
+use crate::{
+    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+    dispatch_byoa::{
+        ByoaAttemptPayload,
+        ByoaConnectorSpec,
+        ERASED_TASK_FAILURE_REASON,
+        RunnerTaskSource,
+        StagedInputPin,
+        decode_byoa_attempt_payload,
+        encode_byoa_attempt_payload,
+    },
 };
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::{

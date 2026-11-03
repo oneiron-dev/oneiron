@@ -446,7 +446,7 @@ pub(super) fn agent_person_in_txn(
 ) -> Result<Option<EntityId>> {
     Ok(
         crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-            .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Person)
+            .filter(|anchor| anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person)
             .map(|anchor| anchor.subject_ref),
     )
 }
@@ -586,7 +586,7 @@ fn house_org_in_txn(
         return Ok(None);
     }
     let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-        .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Org)
+        .filter(|anchor| anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Org)
     else {
         return Ok(None);
     };
