@@ -97,6 +97,22 @@ impl RunPermit {
         self.settle_with(outcome, Vec::new())
     }
 
+    /// Settles a refusal proved not to have sent any physical attempt:
+    /// releases the reservation and records no dispatched receipt.
+    pub fn settle_unsent(mut self) -> Result<BudgetSettlement, RunDenied> {
+        self.settled = true;
+        let run = Arc::clone(&self.run);
+        run.guard
+            .mark_unsent(&self.lease)
+            .map_err(|denied| RunDenied::Budget { denied })?;
+        if let Some(hold) = &self.allocation {
+            hold.meter
+                .mark_unsent(&hold.lease)
+                .map_err(|denied| RunDenied::Budget { denied })?;
+        }
+        run.settle(&self, CallOutcome::Failed, None, Vec::new())
+    }
+
     /// Settles the call as [`Self::settle`] does, with `provided`, the
     /// inference receipts the call reported outside an answer's usage, on
     /// its receipt (FIX 8314).
