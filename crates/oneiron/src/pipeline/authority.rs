@@ -6,7 +6,7 @@ use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
 use crate::store::StoreRead;
 
-use super::filters::claim_status_gate_allows;
+use super::filters::claim_status_gate_allows_with_row;
 use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
 
 /// Retrieval admission for one claim: the surfaceable status half and the
@@ -115,7 +115,8 @@ pub(super) fn candidate_allowed(
     metadata: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> crate::Result<bool> {
-    let Some(meta) = metadata.get(store, txn, id)? else {
+    let (meta, gate_row) = metadata.get_row(store, txn, id)?;
+    let Some(meta) = meta else {
         return Ok(false);
     };
     if !type_allowed(filter, named, store, meta.entity_type) {
@@ -125,7 +126,7 @@ pub(super) fn candidate_allowed(
     if meta.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    if !claim_status_gate_allows(store, txn, id, metadata, gate)? {
+    if !claim_status_gate_allows_with_row(store, txn, id, metadata, gate, gate_row.as_ref())? {
         return Ok(false);
     }
     let allowed = gate
