@@ -40,7 +40,7 @@ pub(super) fn write_mirror_if_changed(
 /// (FIX 12272: a managed start's settle and ready check share one
 /// under-lease mirror read).
 #[derive(Clone)]
-pub(super) struct CapturedMirror {
+pub(crate) struct CapturedMirror {
     raw: Vec<u8>,
     #[cfg(unix)]
     dev: u64,

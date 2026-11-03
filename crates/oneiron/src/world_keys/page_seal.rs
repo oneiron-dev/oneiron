@@ -62,7 +62,7 @@ pub(crate) use self::creation::discard_creation_record;
 use self::creation::{begin_creation, finish_creation};
 pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation};
 pub(crate) use self::mirror_rewrite::CapturedMirror;
-use self::mirror_rewrite::{CapturedMirror, captured_identity_current, write_mirror_if_changed};
+use self::mirror_rewrite::{captured_identity_current, write_mirror_if_changed};
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
 pub use self::sealed_swap::SealedSwap;
 
