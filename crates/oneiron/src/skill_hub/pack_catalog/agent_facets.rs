@@ -88,15 +88,9 @@ impl AgentPackFacets {
         }
         let projection = AgentPackTravelProjection::from_files(files)?;
         for skill in &projection.skills {
-            let package = super::super::folder::package_from_files(skill.files.clone())?;
-            if package.record.skill_id != skill.skill_id
-                || package.record.version != skill.version
-                || package.content_hash()?.to_hex() != skill.content_hash
-            {
-                return Err(invalid(
-                    "a travelling skill's SKILL.md disagrees with its skills.json row",
-                ));
-            }
+            // Format, native metadata, source and content hash all revalidate
+            // through the producer's record-bound rebuild (FIX 3276).
+            skill.package()?;
         }
         Ok(Some(projection))
     }

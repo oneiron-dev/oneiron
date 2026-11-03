@@ -213,7 +213,10 @@ pub(crate) fn agent_pack_files_travelling(
         {
             return Err(refused());
         }
-        skills.push(AgentPackSkill::from_package(dependency, package)?);
+        let skill = AgentPackSkill::from_package(dependency, package)?;
+        // A binary file's InvalidConfig already names the skill and path;
+        // preserve it instead of collapsing it into `refused` (FIX 3276).
+        skills.push(skill);
     }
     let mut selected = select_agent_knowledge(id, claims);
     selected.sort_by(|a, b| a.id.cmp(&b.id));

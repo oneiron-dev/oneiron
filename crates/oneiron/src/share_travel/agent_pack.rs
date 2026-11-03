@@ -15,7 +15,8 @@
 //! - `identity.md`: the instructions;
 //! - `policy.md`: JSON with the schema tag, the policy, the display name and
 //!   the born-with text that travelled;
-//! - `skills.json`: each skill dependency, pinned by content hash;
+//! - `skills.json`: each skill dependency, its format and native metadata,
+//!   pinned by content hash;
 //! - `skills/<content_hash>/<path>`: each skill's files;
 //! - `knowledge/selected.json`: the selected knowledge, as text.
 
