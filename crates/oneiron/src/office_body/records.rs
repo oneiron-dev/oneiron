@@ -493,6 +493,12 @@ impl Vault {
         for member in &merged.members {
             consent::MEMBERSHIP.put(&self.store, wtxn, &(artifact, member.fork), &key.1)?;
         }
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(
+            self,
+            wtxn,
+            std::collections::BTreeSet::from([artifact]),
+        );
         Ok(DocumentMerge::Written)
     }
 

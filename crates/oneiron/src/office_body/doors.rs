@@ -89,6 +89,8 @@ impl Vault {
                 })?;
             }
         }
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
         self.office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)
     }
@@ -258,7 +260,7 @@ impl Vault {
         if actor.actor_class() != EdgeActorClass::Human {
             return Err(invalid("machine work edits a fork, not the live body"));
         }
-        self.with_write_txn_grouped(|wtxn| {
+        let edited = self.with_write_txn_grouped(|wtxn| {
             if let Some(base) = base {
                 let (_, live) = self.loro_body(wtxn, artifact, kind, None)?;
                 let (_, target) = self.loro_body(wtxn, artifact, kind, Some(base))?;
@@ -274,7 +276,10 @@ impl Vault {
                 receipt: commit.receipt,
                 effects: Vec::new(),
             })
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(edited)
     }
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
@@ -451,7 +456,7 @@ impl Vault {
         (expected_head, expected_fork): (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<std::result::Result<OfficeBodyDiff, EntityId>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let merged = self.with_write_txn_grouped(|wtxn| {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
@@ -472,7 +477,12 @@ impl Vault {
                 .next()
                 .map(|(_, diff)| diff)
                 .ok_or(proposal))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        if merged.is_ok() {
+            self.notify_typed_body_document(*artifact);
+        }
+        Ok(merged)
     }
 
     /// Abandon an open fork's unlanded work.
