@@ -8,9 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::PeerMachine;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
 use crate::side_table::{self, SideTableDbs};
 use crate::store::{
     IdempotencyEntry, ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, ResponseStamps,

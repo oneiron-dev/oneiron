@@ -43,7 +43,7 @@ impl OutboundDispatchPipeline {
         vault: &Vault,
         request: OutboundDispatchRequest,
         sink: &mut S,
-        binding: crate::llm::StepEffectBinding,
+        binding: crate::model_step_effect::StepEffectBinding,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, None, Some(binding))
     }
@@ -87,7 +87,7 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
-        step_binding: Option<crate::llm::StepEffectBinding>,
+        step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         let prepared =
             PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;

@@ -163,9 +163,11 @@ pub(super) fn persist_model_id_if_missing(store: &Store, requested: &str) -> Res
             store
                 .hnsw_meta
                 .put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-            store
-                .hnsw_meta
-                .put(&mut wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+            store.hnsw_meta.put(
+                &mut wtxn,
+                crate::store::embedding::COLD_ATTACH_PENDING_KEY,
+                b"1",
+            )?;
             wtxn.commit()?;
         }
     }
@@ -338,7 +340,7 @@ pub(super) fn has_persisted_vector_or_hnsw_data(
 ) -> Result<bool> {
     Ok(store.port_index_has_rows(txn, IndexRows::Vectors)?
         || store.port_index_has_rows(txn, IndexRows::HnswNeighbors)?
-        || crate::hnsw::has_population(store.hnsw_meta(), txn)?)
+        || crate::store::vector_index::has_population(store.hnsw_meta(), txn)?)
 }
 
 pub(super) fn migrate_temporal_long_intervals_if_needed(store: &Store) -> Result<()> {

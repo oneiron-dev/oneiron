@@ -9,7 +9,7 @@ The runbook is [docs/ops/guest-image-family.md](../../../docs/ops/guest-image-fa
 |---|---|
 | `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (state `unbuilt` until a build measures them). |
 | `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, directories, empty files, owners, OCI run config). |
-| `packages.lock.toml` | The resolved Debian closure, written by the first `fetch --learn`. |
+| `packages.lock.toml` | The resolved Debian closure and each scope's exact `.deb` file list, written by `fetch --learn` in isolated per-scope package caches. |
 | `build.py`, `imagebuild/` | `validate`, `fetch`, `build --variant`, `receipt`, `manifest`; `imagebuild/attest.py` writes each build's SBOM and provenance statement. |
 | `release-manifest.schema.json`, `manifest.md` | The release manifest's closed wire (`image-release.json` and its detached signature envelope), the verification results and the observe-only policy. |
 | `mkosi.conf`, `mkosi.tools.conf` | Fixed mkosi defaults the generated per-build configs include. |
@@ -24,8 +24,12 @@ python3 build.py manifest --work /srv/oneiron-images/work --variant base
 ```
 
 `<checkout>` is a git checkout that holds `inputs.engine.commit`. One fetch
-can take several `--variant` flags; a `--learn` fetch writes a replacement
-lock, so it must name every variant the lock should cover. A payload kind
+can take several `--variant` flags. `--only-requested` verifies just tools
+and those variants' learned file lists; without it, fetch still verifies the
+whole lock. A `--learn` fetch writes a replacement lock, so it must name
+every variant the lock should cover. Each scope learns in an empty package
+cache of its own, then merges its packages into the mirror, so shared
+dependencies appear in every scope that needs them. A payload kind
 with no installer (`file`, `archive`, `npm`, `rust-toolchain` have one) or an
 incompletely pinned source build is refused before any namespace, fetch or
 download. Every tool's output goes to stderr; `build` prints its record JSON

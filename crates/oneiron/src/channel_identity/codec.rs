@@ -163,11 +163,7 @@ pub(crate) fn validate_channel_identity_put_carrier(bytes: &[u8], replicated: bo
     Ok(())
 }
 
-/// Returns whether `predicate` belongs to the ChannelIdentity claim family.
-#[must_use]
-pub fn is_channel_identity_claim_predicate(predicate: &str) -> bool {
-    CHANNEL_IDENTITY_CLAIM_PREDICATES.contains(&predicate)
-}
+pub use crate::write_envelope::channel_identity::is_channel_identity_claim_predicate;
 
 /// Validates one `channel_identity.*` claim body.
 pub(crate) fn validate_channel_identity_claim_structure(body: &ClaimBody) -> Result<()> {

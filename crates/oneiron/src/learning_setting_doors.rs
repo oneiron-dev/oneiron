@@ -77,12 +77,12 @@ impl LearningChoiceValue {
     fn engine(self) -> Result<ChoiceValue> {
         Ok(match self {
             Self::Model(model) => ChoiceValue::Model(
-                crate::llm::ModelId::new(model)
+                oneiron_model::llm::ModelId::new(model)
                     .map_err(|_| bad("model is a model id, provider/name@revision"))?,
             ),
             Self::Width(width) => ChoiceValue::Width(width),
             Self::Pattern(token) => ChoiceValue::Pattern(
-                crate::agent_dispatch::CoordinationPattern::from_token(&token)
+                crate::team::team_shape::CoordinationPattern::from_token(&token)
                     .map_err(|_| bad("pattern is a coordination pattern token"))?,
             ),
             Self::Budget(units) => ChoiceValue::Budget(units),

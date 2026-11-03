@@ -37,7 +37,7 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -307,6 +307,8 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    let bound = host.bound;
+                    let receipts = host.receipts;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -317,6 +319,8 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            bound,
+                            receipts,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
@@ -348,6 +352,8 @@ impl EngineNativeExecutor<'_> {
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
+                let bound = host.bound;
+                let receipts = host.receipts;
                 if let Some(status) = self.persist_failed_step_after_bridge_calls(
                     &mut record,
                     expected_generation,
@@ -357,6 +363,8 @@ impl EngineNativeExecutor<'_> {
                     bridge_start,
                     bridge_calls,
                     captured,
+                    bound,
+                    receipts,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -386,6 +394,8 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    let bound = host.bound;
+                    let receipts = host.receipts;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -396,6 +406,8 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            bound,
+                            receipts,
                             callable_rows,
                             durable_wait,
                             format!(

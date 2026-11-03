@@ -15,15 +15,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::coach::COACH_BROWSER_PROGRAMS_FACET;
 use super::proposals;
 use crate::browser_library::{
-    DirtySolvedGroup, ProgramAdmissionJob, ProgramFailureRef, ProgramSeen, ScopedSolvedGroupKey,
-    SolvedGroupKey, SolvedRunEvidence, SolvedSource, WorkflowRecord, dirty_solved_groups,
-    enqueue_program_admission_in_txn, mark_group_clean, mark_program_seen_in_txn,
-    program_admission_queued, program_seen_in, programs_with_failures, retired_workflow,
-    site_workflows, solved_group_coverage_in, solved_group_coverage_read, solved_runs_in_group,
-    workflow_filing_id,
+    DirtySolvedGroup, ProgramAdmissionJob, ScopedSolvedGroupKey, SolvedGroupKey, SolvedRunEvidence,
+    SolvedSource, WorkflowRecord, dirty_solved_groups, enqueue_program_admission_in_txn,
+    mark_group_clean, mark_program_seen_in_txn, program_admission_queued, program_seen_in,
+    programs_with_failures, retired_workflow, site_workflows, solved_group_coverage_in,
+    solved_group_coverage_read, solved_runs_in_group, workflow_filing_id,
 };
 use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::maintenance::browser_candidate::ProgramFailureRef;
+use crate::dreamer_runner::maintenance::browser_candidate::ProgramSeen;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};

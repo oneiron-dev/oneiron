@@ -22,11 +22,6 @@
 //! approval.
 use std::collections::BTreeMap;
 
-use crate::code_revision::{
-    CodeImportAnchor, CodeImportManifest, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
-};
-use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -37,8 +32,19 @@ use crate::origin::publication::{
 };
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::store::code_snapshot::RepoRef;
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
+use crate::{
+    code_revision::import_snapshot_custody_in_txn,
+    store::code_import_manifest::{manifest_digest, manifest_id},
+    store::{
+        code_import_manifest::{CodeImportAnchor, CodeImportManifest},
+        code_revision_record::CodeTreeInventory,
+    },
+};
 
 /// What an owner names to import: the served repository, the PROJECT its
 /// anchor belongs to, the admitted ref, the exact chosen commit and the
@@ -440,3 +446,5 @@ impl Vault {
         })
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;
