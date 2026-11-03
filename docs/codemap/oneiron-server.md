@@ -765,7 +765,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/surface_events.rs` | test | L | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
 | `src/api/tests/surface_routes.rs` | test | XL | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
-| `src/api/transfer.rs` | src | m | 32 crate-vis | — | Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges |
+| `src/api/transfer.rs` | src | m | 34 crate-vis | — | Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges |
 | `src/api/type_feedback_release.rs` | src | s | 7 crate-vis | — | One program step's type feedback, released for one destination apart from the answer it rides with (FIX… |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/api/write_facet.rs` | src | s | 4 crate-vis | — | Where a write by a credential narrowed to some facets lands (owner ruling FACET-READ = A; placement stays… |
