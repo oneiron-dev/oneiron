@@ -1,7 +1,8 @@
 //! Claim adapter preserves the history door; current-state queries exclude stale claims.
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
+use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::context_pack::source_ranking::{SourceRankingPolicy, question_key, source_outranks};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -162,7 +163,7 @@ impl ClaimStore for Vault {
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+        crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
     }
     fn port_claim_put(
         &self,

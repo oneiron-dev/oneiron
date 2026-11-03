@@ -8,7 +8,7 @@ use heed::RoTxn;
 
 use super::authority_digest;
 use crate::Vault;
-use crate::claim::ClaimSubject;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_projection::claims::{

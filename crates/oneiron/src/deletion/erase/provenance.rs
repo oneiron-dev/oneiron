@@ -168,7 +168,7 @@ impl Vault {
 /// subject and sweep refs, `None` for any other predicate. Bytes alone, no
 /// read: every error is the body's own corruption.
 pub(super) fn decode_provenance_capture(body: &[u8]) -> Result<Option<CapturedProvenanceDelete>> {
-    let wrapper = crate::claim::decode_claim_body(body, true)?;
+    let wrapper = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
     if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
         return Ok(None);
     }

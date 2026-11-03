@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::claim::ClaimLifecycleStatus;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{

@@ -4,7 +4,8 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};

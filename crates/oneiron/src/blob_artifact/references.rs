@@ -15,7 +15,7 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::claim::{ClaimBody, ClaimSubject};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -180,7 +180,7 @@ pub(super) fn retained_claim_names(
         let Some(named) = hash else {
             return Ok(true);
         };
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
         else {
             continue;
         };

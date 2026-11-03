@@ -39,9 +39,8 @@ use crate::batch::secret_scan::{
     RetainedRepoBlobMarks, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn,
 };
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::credential_door::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};

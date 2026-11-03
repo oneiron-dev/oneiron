@@ -6,9 +6,9 @@ use super::codec::{
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
+use crate::write_envelope::claim_body::ClaimSubject;
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
@@ -253,7 +253,7 @@ pub(crate) fn validate_summary_put(
     Ok(())
 }
 
-pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
+pub(crate) fn merge_summary_ref(body: &crate::write_envelope::claim_body::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
     if body.predicate != "merge.summary" {
         return Ok(None);
     }
@@ -546,7 +546,7 @@ pub(super) fn header_landed_in_txn(
         let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
             continue;
         };
-        if body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+        if body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
             && merge_summary_ref(&body)? == Some((*turn, *summary))
         {
             return Ok(true);
@@ -756,7 +756,7 @@ pub(crate) fn body_covers_in_txn(
 fn merge_summary_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<ScopeSummaryBody>> {
     let Some((turn, summary)) = merge_summary_ref(body)? else {
         return Ok(None);
@@ -773,7 +773,7 @@ fn merge_summary_in_txn(
 pub(crate) fn merge_covers_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?.map(|summary| summary.covers))
 }
@@ -783,7 +783,7 @@ pub(crate) fn merge_covers_in_txn(
 pub(crate) fn merge_word_sources_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?
         .map(|summary| word_sources(&summary).copied().collect()))
