@@ -144,10 +144,20 @@ pub(crate) fn request_writer(
     };
     let owner = auth.managed_owner().is_some()
         || match auth.verified_slip() {
-            Some(proof) => server
-                .vault()
-                .credential_facets_owner_exempt(proof)
-                .map_err(|error| core_engine_error("proposal owner check failed", error))?,
+            // An owner's narrowed credential that grants no read verb builds
+            // no read key, so the facet check above gives it no standing; the
+            // owner's own held credential is asked too, without any read verb
+            // (FIX 9155). Either restores the owner's unchanged lookup; any
+            // other credential keeps the bounded one below.
+            Some(proof) => {
+                let vault = server.vault();
+                vault
+                    .credential_facets_owner_exempt(proof)
+                    .map_err(|error| core_engine_error("proposal owner check failed", error))?
+                    || vault
+                        .credential_owner_held(proof)
+                        .map_err(|error| core_engine_error("proposal owner check failed", error))?
+            }
             None => false,
         };
     Ok(RequestWriter {
