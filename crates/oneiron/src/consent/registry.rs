@@ -5,7 +5,7 @@ use super::contact_clearance::{
 use super::grant::{ConsentGrantRow, ConsentGrantStatus};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use crate::federation::{RepoAccessBounds, Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 // ---------------------------------------------------------------------------
 // The registry surface (invariant 9 surface (b))
@@ -74,8 +74,8 @@ pub struct ConsentRegistryRow {
 
 /// An owner's agent grant as the registry shows it (FIX 5628): the agent it
 /// names, the owner who granted it, its expiry (absent: it stands until
-/// revoked) and whether its scope confers now. Its exact scope is the row's
-/// `scope`.
+/// revoked), the repo bounds he gave it (FIX 6894) and whether its scope
+/// confers now. Its exact scope is the row's `scope`.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -87,6 +87,10 @@ pub struct ConsentRegistryAgentGrant {
     /// When it stops conferring (Unix seconds); absent: durable until revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    /// The one repo, its refs and its read and edit globs the owner gave
+    /// the agent, as the mint answer shows them; absent on a general grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_bounds: Option<RepoAccessBounds>,
     /// Whether it confers now: unexpired, with `read` among its verbs and no
     /// empty world, band, audience or sensitivity axis.
     pub confers: bool,
@@ -232,7 +236,8 @@ impl ConsentRegistryRow {
     /// One owner's agent grant (FIX 5628), from its live grant row. Its
     /// one-tap revoke is the agent grant revoke door's, never the consent
     /// grant revoke; it is Active until its expiry, and always when it has
-    /// none.
+    /// none. A grant with repo bounds shows them whole, and its repo among
+    /// the selectors as a GitPush row shows its repos (FIX 6894).
     pub(crate) fn from_agent_grant(
         standing: &crate::federation::AgentGrantStanding,
         now: u64,
@@ -240,6 +245,13 @@ impl ConsentRegistryRow {
         let grant = &standing.grant;
         let grant_ref = standing.id.to_hex();
         let mut selectors = render_scope(&grant.authority_scope);
+        if let Some(bounds) = &grant.repo_bounds {
+            selectors.push(format!(
+                "repo:{}@project:{}",
+                bounds.repo.to_hex(),
+                bounds.project.to_hex()
+            ));
+        }
         selectors.push(format!("delegated_by:{}", standing.delegated_by.to_hex()));
         selectors.push(grant.expires_at.map_or_else(
             || "expiry:durable".to_owned(),
@@ -268,6 +280,7 @@ impl ConsentRegistryRow {
                 agent: grant.member_ref,
                 delegated_by: standing.delegated_by,
                 expires_at: grant.expires_at,
+                repo_bounds: grant.repo_bounds.clone(),
                 confers: grant.confers_at(now),
             }),
         }
