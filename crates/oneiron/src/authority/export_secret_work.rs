@@ -295,6 +295,12 @@ impl Vault {
         let needs = self.authority_view_readonly_in_txn(rtxn).and_then(|fold| {
             let mut needs = Vec::new();
             for (secret, generation) in fold.custody_held_generations() {
+                // A secret erased here has no row either, and the fold still
+                // proves it was held: naming it would ask its holder for a
+                // copy of what this vault erased. The fence names it instead.
+                if self.store.credential_fenced_in_txn(rtxn, &secret) {
+                    continue;
+                }
                 if !crate::ports::EntityStoreRead::port_entity_present(&self.store, rtxn, &secret)?
                 {
                     needs.push(HolderExportNeed { secret, generation });

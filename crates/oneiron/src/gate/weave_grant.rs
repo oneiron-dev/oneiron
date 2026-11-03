@@ -160,8 +160,13 @@ pub(crate) fn landing_weave_grant_in_txn(
 
 /// Whether `decision`, the gate's record of `writer`'s landing, names an
 /// auto-weave Grant for one of `scopes`: the receipt reason
-/// [`GATE_REASON_ALLOW_WEAVE_GRANT`] and a `grant_ref` whose Grant is still
-/// active and, as the owner minted it, names `writer` and one of them.
+/// [`GATE_REASON_ALLOW_WEAVE_GRANT`] and a standing Grant, still active
+/// and minted by a live owner, that names `writer` and one of them. The
+/// decision's own `grant_ref` is judged first; the door that recorded it
+/// could not see the campaign or skill this weave names, so where that
+/// Grant names another weave the standing Grants are judged against this
+/// weave's scopes instead - an owner's Grant for campaign B covers a
+/// B weave even where the landing recorded his campaign A Grant.
 pub(crate) fn decision_names_weave_grant_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -179,10 +184,33 @@ pub(crate) fn decision_names_weave_grant_in_txn(
     let Some(grant_ref) = decision.grant_ref.as_deref() else {
         return Ok(false);
     };
-    let Some(row) = standing_grant_row_in_txn(store, txn, grant_ref)? else {
-        return Ok(false);
-    };
-    Ok(row.is_active() && covers_any(row.grant.bound(), writer, scopes)?)
+    if let Some(row) = standing_grant_row_in_txn(store, txn, grant_ref)?
+        && row.is_active()
+        && covers_any(row.grant.bound(), writer, scopes)?
+    {
+        return Ok(true);
+    }
+    for grant in load_active_standing_grants(store, txn)? {
+        let bound = grant.bound();
+        if !names_auto_weave(bound) || !covers_any(bound, writer, scopes)? {
+            continue;
+        }
+        let grant_ref = bound.digest().to_hex();
+        let Some(row) = standing_grant_row_in_txn(store, txn, &grant_ref)? else {
+            continue;
+        };
+        if row.is_active()
+            && crate::policy_model::is_live_vault_owner_for_store_in_txn(
+                store,
+                store.privacy_posture,
+                txn,
+                &row.owner_stamp.actor,
+            )?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// A writer class an auto-weave Grant names: an agent or the system. The
