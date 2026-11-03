@@ -21,7 +21,9 @@ from .fetch import (
     fetch_blob,
     fetch_npm,
     install_rust,
+    isolated_learn_mirror,
     lock_text,
+    merge_debs,
     mkosi_source,
     source_fetch,
     source_rust,
@@ -65,7 +67,8 @@ def _sources(engine: Path, rust: Path, mirror: Mirror, plan_dir: Path,
     return sources
 
 
-def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: list[str], learn: bool) -> None:
+def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: list[str], learn: bool,
+          only_requested: bool = False) -> None:
     mirror.prepare()
     before = set(deb_files(mirror))
     if learn and before:
@@ -86,25 +89,40 @@ def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: lis
         for pin, (tree, toolchain) in builds[plan.name].items():
             source_fetch(model, mirror, pin, tree, toolchain, bootstrap=bootstrap, work=work)
     mkosi_run.sandbox_tree(model, work)
+    scope_files = {}
+
+    def retain_scope(name: str, cache: Mirror | None) -> None:
+        if cache is None:
+            return
+        scope_files[name] = sorted(deb_files(cache))
+        merge_debs(mirror, cache)
+
     tools = model.plan("tools")
-    cfg, out = mkosi_run.write_config(model, tools, work=work, mirror=mirror, tools_tree=bootstrap, phase="fetch")
+    tools_cache = isolated_learn_mirror(work, "tools") if learn else None
+    cfg, out = mkosi_run.write_config(model, tools, work=work, mirror=mirror, tools_tree=bootstrap, phase="fetch",
+                                      pkgcache=tools_cache.pkgcache if tools_cache else None)
     mkosi_run.build(mkosi_src, cfg, work)
+    retain_scope("tools", tools_cache)
     fetched_tools = mkosi_run.finish_tools_tree(out, work)
     for plan in plans:
         plan_dir = mkosi_run.write_plan(model, plan, engine=engine, mirror=mirror, work=work)
+        cache = isolated_learn_mirror(work, plan.name) if learn else None
         cfg, _ = mkosi_run.write_config(model, plan, work=work, mirror=mirror, tools_tree=fetched_tools, phase="fetch",
-                                        sources=_sources(engine, rust, mirror, plan_dir, builds[plan.name]))
+                                        sources=_sources(engine, rust, mirror, plan_dir, builds[plan.name]),
+                                        pkgcache=cache.pkgcache if cache else None)
         mkosi_run.build(mkosi_src, cfg, work)
+        retain_scope(plan.name, cache)
     new = set(deb_files(mirror)) - before
     if learn:
-        text = lock_text(model, closure(mirror), ["tools", *variants])
+        text = lock_text(model, closure(mirror), ["tools", *variants], scope_files)
         LOCK.write_text(text)
         (work / "packages.lock.toml").write_text(text)
         log(f"LEARNED packages.lock.toml: {len(new)} packages, written to {LOCK}")
     else:
         for plan in [tools, *plans]:
             model.check_lock_covers(plan)
-        for warning in verify_closure(model, mirror, new=new):
+        scopes = ["tools", *variants] if only_requested else None
+        for warning in verify_closure(model, mirror, new=new, scopes=scopes):
             log(f"warning: {warning}")
     log(f"fetch done: mirror {mirror.root}")
 
@@ -241,7 +259,7 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     plan = model.plan(variant)
     if plan.phase > 1 and variant != "tools":
         log(f"note: {variant} is a phase-{plan.phase} variant")
-    for warning in verify_closure(model, mirror):
+    for warning in verify_closure(model, mirror, scopes=["tools", variant]):
         log(f"warning: {warning}")
     bootstrap = bootstrap_tree(model, mirror, work)
     mkosi_src = mkosi_source(model, mirror, work, learn=False)
