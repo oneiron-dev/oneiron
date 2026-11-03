@@ -168,6 +168,7 @@ impl AttemptQueue<'_> {
                 record.last_error = Some(input.reason);
                 record.result_ref = Some(input.result_ref);
                 record.updated_at = input.now;
+                record.settled_at = Some(input.now);
                 // A settled row owns no advisory dedupe claim: the next
                 // dispatch under the same key must mint a fresh try rather
                 // than be handed this stopped one.

@@ -116,6 +116,7 @@ impl AttemptQueue<'_> {
             dedupe_actor_ref: source.dedupe_actor_ref.clone(),
             created_at: input.now,
             updated_at: input.now,
+            settled_at: None,
             events: Vec::new(),
             // A retry is a NEW attempt: its attribution manifest starts empty,
             // the finalized source keeps the prior try's.
@@ -170,6 +171,7 @@ impl AttemptQueue<'_> {
                 .unwrap_or_else(|| RETRY_REASON_UNSPECIFIED.to_owned()),
         );
         source.updated_at = input.now;
+        source.settled_at = Some(input.now);
 
         crate::attempt_queue::check_owner_retained_range(&next.kind, &next.id)?;
         if self
@@ -431,6 +433,7 @@ impl AttemptQueue<'_> {
                     record.backoff_until = None;
                     record.last_error = None;
                     record.updated_at = input.now;
+                    record.settled_at = Some(input.now);
                     crate::attempt_queue::index::delete_annotation_hold_in_txn(
                         self.store, wtxn, record.id,
                     )?;

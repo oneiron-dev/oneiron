@@ -93,6 +93,7 @@ impl AttemptQueue<'_> {
         record.backoff_until = None;
         record.last_error = None;
         record.updated_at = input.now;
+        record.settled_at = Some(input.now);
         record.cancel_state.cancellation = Some(AttemptCancellation {
             mode: CancelMode::Landed,
             grounds: None,
@@ -527,6 +528,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     record.backoff_until = None;
     record.last_error = None;
     record.updated_at = now;
+    record.settled_at = Some(now);
     record.cancel_state.pressure.pending = 0;
     record.cancel_state.cancellation = Some(AttemptCancellation {
         mode: CancelMode::Forced,
@@ -592,6 +594,7 @@ fn landing_successor(
         dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,
