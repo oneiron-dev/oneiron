@@ -1,8 +1,10 @@
 //! Canonical entity references for typed-decision wire records.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-pub(in crate::llm::decision) use crate::model_decision::codec::{entities, entity, optional_entity};
 use crate::model_decision::codec::parse;
+pub(in crate::llm::decision) use crate::model_decision::codec::{
+    entities, entity, optional_entity,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// An [`AnswerActor`](crate::llm::decision::AnswerActor): the actor's canonical hex, or
 /// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) once that

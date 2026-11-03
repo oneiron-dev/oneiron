@@ -44,18 +44,16 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::inbox::{
     NOTIFICATION_PRODUCER_FINDING, NotificationEvent, NotificationKind, NotificationSource,
 };
-use crate::model_binding::ModelRole;
-use crate::llm::{ call_as_step,
-};
 use crate::inference_context::HostInferenceContext;
-use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
-    TierPrecedence,
-};
+use crate::llm::call_as_step;
+use crate::model_binding::ModelRole;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepResult;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 mod conversation;
 mod support;

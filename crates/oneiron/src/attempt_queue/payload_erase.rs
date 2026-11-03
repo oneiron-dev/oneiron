@@ -60,10 +60,10 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use oneiron_authority::federation::RepoAccessRefusal;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};

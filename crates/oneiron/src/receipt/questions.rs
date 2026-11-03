@@ -16,13 +16,14 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+use crate::llm::decision::TypedDecision;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria, QuestionDefinitionInput,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
+    QuestionDefinitionInput,
 };
-use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
-use crate::llm::decision::{ TypedDecision};
-use crate::model_decision::{DecisionQuestion, DecisionRung};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
+use crate::model_decision::{DecisionQuestion, DecisionRung};
 
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an

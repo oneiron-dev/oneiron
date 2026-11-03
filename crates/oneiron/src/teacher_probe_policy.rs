@@ -1,7 +1,7 @@
 //! Resolved extraction-teacher probe policy values.
 
-use crate::model_binding::invalid;
 use crate::error::Result;
+use crate::model_binding::invalid;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

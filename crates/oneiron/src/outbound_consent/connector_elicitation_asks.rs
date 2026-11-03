@@ -28,9 +28,7 @@ use std::fmt::Write as _;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::llm::decision::{ AskTo,
-    HumanDecisionRequest,
-};
+use crate::llm::decision::{AskTo, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };

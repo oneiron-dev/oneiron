@@ -1,11 +1,11 @@
 //! Claim auto-check candidates and normalized verdict values.
 
-use oneiron_model::llm::NormalizedBurstInputs;
-use crate::claim::ClaimSource;
-use crate::model_binding::{CalibratedVerdict, VerdictBinding, VerdictMode};
-use crate::claim::VerdictBasis;
-use crate::write_envelope::SourceLineage;
 use crate::Result;
+use crate::claim::ClaimSource;
+use crate::claim::VerdictBasis;
+use crate::model_binding::{CalibratedVerdict, VerdictBinding, VerdictMode};
+use crate::write_envelope::SourceLineage;
+use oneiron_model::llm::NormalizedBurstInputs;
 use std::time::Instant;
 
 // ---------------------------------------------------------------------------

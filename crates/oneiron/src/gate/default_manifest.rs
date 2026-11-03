@@ -1266,8 +1266,8 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
 }
 
 fn federation_grant_default_rows() -> Value {
-    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
     use crate::federation::FederationGrantRole as Role;
+    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
     use oneiron_authority::federation::{Scope, ScopeAxis};
     let scope = |verbs: &[&str]| {
         let mut scope = Scope::top();

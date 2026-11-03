@@ -42,8 +42,7 @@ use crate::claim::{
     PREDICATE_CONFLICT_RESOLVED, claim_surfaceable,
 };
 use crate::error::{Error, Result};
-use crate::llm::decision::{ DecisionLadder,
-};
+use crate::llm::decision::DecisionLadder;
 use crate::model_decision::{DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;

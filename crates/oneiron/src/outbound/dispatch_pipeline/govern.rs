@@ -155,7 +155,8 @@ pub fn outbound_step_approve_once_digest(
     step_request: &oneiron_model::llm::LlmRequest,
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
-    let binding = crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
+    let binding =
+        crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
     Ok(pinned_approval_digest(&prepared_gate_effect(
         vault,
         request,

@@ -16,8 +16,8 @@ use crate::learning::{
     team_events_from_attempts,
 };
 use crate::model_step_record::DreamerTrapKind;
-use crate::run_budget::LeaseUnit;
 use crate::ports::EdgeDirection;
+use crate::run_budget::LeaseUnit;
 use crate::self_heal::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 

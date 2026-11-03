@@ -34,8 +34,7 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::llm::decision::{ AskAnswer, AskRole, AskTo, HumanDecisionRequest,
-};
+use crate::llm::decision::{AskAnswer, AskRole, AskTo, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, AskAct, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
     HumanAskReason, ProviderPin, RoleRank,
