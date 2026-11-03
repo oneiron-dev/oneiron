@@ -108,3 +108,10 @@ impl<'a> MergeQueue<'a> {
         Ok(Self { vault, repo })
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::check_store::merge_queue_check_config_accepts_masked;
+pub(crate) use self::check_store::merge_queue_check_work_accepts_masked;
+pub(crate) use self::review_policy::merge_queue_review_policy_accepts_masked;
+pub(crate) use self::storage::merge_queue_batch_accepts_masked;

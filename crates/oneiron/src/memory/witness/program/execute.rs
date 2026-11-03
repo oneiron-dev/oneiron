@@ -119,7 +119,8 @@ impl Memory<'_> {
                 session,
                 route,
                 summary,
-            } => WitnessSink::Overlay(self.overlay_sink(session, route, summary)?),
+                turn_vector,
+            } => WitnessSink::Overlay(self.overlay_sink(session, route, summary, turn_vector)?),
         };
         // FIX 2027: a quote's selection is read under the speaker's own key,
         // taken here, before the writer opens: no read snapshot nests in it.
