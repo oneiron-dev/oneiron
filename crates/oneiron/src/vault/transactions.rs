@@ -369,9 +369,11 @@ impl Vault {
                 .hnsw_meta
                 .delete(wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY)?;
         } else {
-            self.store
-                .hnsw_meta
-                .put(wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY, b"1")?;
+            self.store.hnsw_meta.put(
+                wtxn,
+                crate::store::embedding::COLD_ATTACH_PENDING_KEY,
+                b"1",
+            )?;
         }
         crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
         crate::embed::remark_all_embeddable_pending_in_txn(

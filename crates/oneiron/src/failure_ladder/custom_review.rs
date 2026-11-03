@@ -9,14 +9,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use crate::dreamer_runner::{decode_dreamer_attempt_payload};
+use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
 const FAILURE: SideTable<[u8; 16], FailureSignalClass, Raw> =
     SideTable::new(&side_table::CUSTOM_AGENT_FAILURE);

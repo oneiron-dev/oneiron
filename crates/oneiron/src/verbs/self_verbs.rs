@@ -6,10 +6,7 @@
 //! owner route, on their own authenticated session ([`steer_child_as_owner`]).
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{
-    EntityRefReceipt, Memory, MemoryError,
-    MemoryResult,
-};
+use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 
 /// `self.memory.diary`'s input: one private entry, and the kind of entry it
@@ -79,5 +76,8 @@ pub fn self_memory_diary_write(
     Ok(receipt.into())
 }
 
-pub use crate::dreamer_runner::maintenance::agent_health::steer::{SteerRequest, SteerReceipt, steer_child, steer_child_as_owner, steer_child_at, steer_child_at_as_owner};
 pub(crate) use crate::dreamer_runner::maintenance::agent_health::steer::steer_linked;
+pub use crate::dreamer_runner::maintenance::agent_health::steer::{
+    SteerReceipt, SteerRequest, steer_child, steer_child_as_owner, steer_child_at,
+    steer_child_at_as_owner,
+};

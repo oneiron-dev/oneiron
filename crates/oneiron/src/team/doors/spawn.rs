@@ -11,14 +11,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_dispatch::{AgentDispatcher, };
-use crate::team::spawn_need::CareLevel;
-use crate::team::team_shape::CoordinationPattern;
-use crate::team::spawn_override::SpawnOverride;
+use crate::agent_dispatch::AgentDispatcher;
 use crate::code_run::SelfSpawnAsk;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::task_type::TaskTypeRef;
+use crate::team::spawn_need::CareLevel;
+use crate::team::spawn_override::SpawnOverride;
+use crate::team::team_shape::CoordinationPattern;
 use crate::team::{
     PatternLaunchRunner, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure,
     SpawnPhase,

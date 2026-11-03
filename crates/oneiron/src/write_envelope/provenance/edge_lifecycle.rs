@@ -1,11 +1,11 @@
 //! Edge provenance precedence and pure record lifecycle values.
 
-use super::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use super::codec::derive_confirmation_status;
-use crate::write_envelope::claim_body::ClaimBody;
+use super::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::edge::{EdgeActorClass, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// D14 precedence key of one live provenance Claim, used to pick the
 /// deterministic flag-stamp WINNER.
@@ -124,4 +124,3 @@ impl StoredProvenanceClaim {
         }
     }
 }
-

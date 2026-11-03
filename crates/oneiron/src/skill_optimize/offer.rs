@@ -22,13 +22,13 @@
 //!   its check date, which feeds the offer skill's own record.
 use super::{EvalSeat, TrainingChoice};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::LearningEvidence;
-use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::learning_evidence::Observation;
-use crate::learning::{LearningCell};
+use crate::claim::learning_predicate::LearningPredicate;
+use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
+use crate::learning::LearningCell;
 use crate::limit_ask::EngineLimit;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};

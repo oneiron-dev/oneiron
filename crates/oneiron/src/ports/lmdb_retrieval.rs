@@ -2,9 +2,9 @@
 use super::{RetrievalIndexExecution, TextQuery, Transactions};
 use crate::analyzer::MultilingualAnalyzer;
 use crate::error::Result;
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
+use oneiron_retrieval::pipeline::ScoredEntity;
 pub(crate) struct TextIndexView<'a, T> {
     target: &'a T,
     analyzer: &'a MultilingualAnalyzer,

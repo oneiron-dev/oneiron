@@ -11,8 +11,6 @@ use super::landing_lfs::{admit_landing_lfs_pointers, ref_required_lfs_oids};
 use super::paths::{now_secs, serve_failed};
 use super::serve_cmd::path_arg;
 use crate::Vault;
-use crate::store::code_snapshot::RepoRef;
-use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
@@ -25,7 +23,9 @@ use crate::origin::actor_erase::{
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::code_snapshot::RepoRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{
     ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,

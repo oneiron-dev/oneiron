@@ -174,7 +174,9 @@ pub struct ConnectDisconnected {
     pub recipient_copy_state: crate::receipt::GuestCopyState,
 }
 
-pub use crate::connect_delivery::{ConnectExportRequest, ConnectDelivery, ConnectRejoinStatus, ConnectRejoined};
+pub use crate::connect_delivery::{
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
+};
 
 pub use crate::authority::ConnectWindow;
 

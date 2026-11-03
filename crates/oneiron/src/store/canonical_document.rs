@@ -1,8 +1,8 @@
 //! CRDT-independent EntityDoc snapshot values and causal history.
 
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
 use crate::error::{ArtifactError, Error, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Current generic EntityDoc value, independent of the document's Loro op log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

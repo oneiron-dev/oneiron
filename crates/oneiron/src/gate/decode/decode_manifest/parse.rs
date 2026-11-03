@@ -514,7 +514,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let goal_limits = match single_map_value(&entries, "goal_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(crate::policy_model::goal_limits::GoalLimits::decode(value)?),
+        MapValue::Present(value) => {
+            Some(crate::policy_model::goal_limits::GoalLimits::decode(value)?)
+        }
     };
     let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
         MapValue::Missing => None,

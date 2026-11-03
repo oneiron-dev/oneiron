@@ -1,9 +1,9 @@
 //! Repository mutation operations, journal outcomes and conflict records.
 
-use std::path::PathBuf;
-use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
+use crate::store::code_snapshot::RepoRef;
+use std::path::PathBuf;
 
 pub use crate::store::repo_fork::RepoForkHash;
 

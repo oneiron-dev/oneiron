@@ -16,7 +16,8 @@
 use super::{HostWriteOrigin, Memory, MemoryResult};
 use crate::authority::InvocationSlipBinding;
 use crate::browser_library::{
-    SavedBrowserCaller, SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, index_capture_in_txn, refresh_witness_in_txn,
+    SavedBrowserCaller, SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, index_capture_in_txn,
+    refresh_witness_in_txn,
 };
 use crate::memory::browser_capture::SOLVED_RUN_PREDICATE;
 use crate::memory::browser_capture::SolvedCaptureGap;

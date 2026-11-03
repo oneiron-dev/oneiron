@@ -56,4 +56,3 @@ fn bind_address(
     }
     Ok(())
 }
-

@@ -7,10 +7,10 @@ use heed::{RoTxn, RwTxn};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{ManifestDbs, Rows, Store};
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
@@ -727,8 +727,8 @@ pub(super) fn encode_cache_value_with_state(
     }
     Ok(value)
 }
-pub(crate) use crate::store::graph_version::read_graph_version;
 use crate::store::graph_version::decode_u64;
+pub(crate) use crate::store::graph_version::read_graph_version;
 fn decode_u32(raw: &[u8], context: &'static str) -> Result<u32> {
     let bytes: [u8; 4] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
     Ok(u32::from_le_bytes(bytes))
