@@ -694,7 +694,12 @@ impl Memory<'_> {
         // Only the carried worlds of texts the host actually reads decide its rungs:
         // rows sent empty are no model input, base reality inherits, and an
         // unknown carried world fails closed under an ordered route.
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
         let mut carried = crate::settings::CarriedWorlds::default();
         for (candidate, text) in block.iter().zip(&texts) {
             if text.is_empty() {
@@ -707,7 +712,11 @@ impl Memory<'_> {
         let mut model_routes = self
             .vault
             .world_model_routes_in_txn(&rtxn, carried.worlds.iter().copied())?;
-        if carried.unknown && matches!(&model_routes, crate::authority::WorldModelRoutes::Ordered(_))
+        if carried.unknown
+            && matches!(
+                &model_routes,
+                crate::authority::WorldModelRoutes::Ordered(_)
+            )
         {
             model_routes = crate::authority::WorldModelRoutes::Ordered(Vec::new());
         }
