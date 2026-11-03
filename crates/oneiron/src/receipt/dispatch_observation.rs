@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 
 const OBSERVATIONS: SideTable<DispatchObservationKey, DispatchObservation, Raw> =
     SideTable::new(&side_table::DISPATCH_OBSERVATION);
+/// Whether a masked copy of a `DISPATCH_OBSERVATION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dispatch_observation_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DispatchObservation, Raw>(bytes)
+}
+
 /// Where the side-row wall says it found a secret in an observation (OF-067).
 const OBSERVATION_PLACE: &str = "side:DISPATCH_OBSERVATION";
 
