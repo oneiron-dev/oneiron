@@ -15,14 +15,14 @@
 use serde::{Deserialize, Serialize};
 
 use super::CampaignLifecycle;
-use crate::error::Error;
-use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 use super::program_definition::{
     AuthoredCampaignProgram, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CampaignProgramAudience,
     CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::Error;
 use crate::error::Result;
+use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 
 /// The step slots a program write cites records in. Each must resolve under
 /// the writer's own scoped read (OF-063's admission). The facade checks them,

@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{store::agent_record::CompactionOwnership, agent_def::MemoryProfile};
 use crate::context_pack::SerializedContextPack;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use crate::{agent_def::MemoryProfile, store::agent_record::CompactionOwnership};
 
 mod integration;
 mod live_fork;

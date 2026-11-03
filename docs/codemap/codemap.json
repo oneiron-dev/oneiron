@@ -33428,7 +33428,7 @@
      "path": "src/embed/space_probe/dependencies.rs",
      "purpose": "What a probe's query is written from, and what erasing it takes (FIX 9829)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -36883,7 +36883,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_manifest/parse.rs",
@@ -44716,7 +44716,7 @@
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 2,
-      "fn": 19,
+      "fn": 20,
       "struct": 2
      }
     },
@@ -44752,7 +44752,7 @@
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
       "crate-vis": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -59135,7 +59135,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmissionReceipt",
@@ -60375,7 +60375,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ArtifactHostOrderHolds",
@@ -71093,7 +71093,7 @@
       "const": 10,
       "crate-vis": 9,
       "enum": 5,
-      "fn": 9,
+      "fn": 10,
       "struct": 9,
       "trait": 3,
       "type": 1
@@ -91284,7 +91284,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6281,
    "test_files": 900
@@ -103394,10 +103394,10 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 10,
       "struct": 2,
       "trait": 3,
-      "type": 3
+      "type": 4
      }
     },
     {
@@ -103425,7 +103425,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -103708,7 +103708,7 @@
      "purpose": "Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail",
      "surface": {
       "enum": 7,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -120661,7 +120661,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -120907,13 +120907,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -120923,7 +120923,7 @@
      "path": "src/models/http/never_sent.rs",
      "purpose": "A request that never reached its upstream goes once more, on a fresh connection (FIX 7113)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -120953,7 +120953,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -120978,7 +120978,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7
      }
@@ -121084,7 +121084,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 3
      }
@@ -121127,7 +121127,7 @@
      "path": "src/models/media/calls.rs",
      "purpose": "Media calls, public job operations and runtime cleanup",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -123362,7 +123362,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/media_embedding.rs",
@@ -125404,7 +125404,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 34,
+   "over_bar": 36,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1492,
    "test_files": 182

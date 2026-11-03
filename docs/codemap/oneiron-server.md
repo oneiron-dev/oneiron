@@ -1288,7 +1288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_artifacts/manifest.rs` | src | s | 10 crate-vis | — | The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence… |
 | `src/model_artifacts/mod.rs` | src | s | 5 crate-vis | — | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
 | `src/models/anthropic.rs` | src | s | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
-| `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 9 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
+| `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 10 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/broker_context.rs` | src | s | 11 crate-vis | — | One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys… |
 | `src/models/broker_media.rs` | src | m | 1 crate-vis | — | A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker… |
 | `src/models/cache_usage.rs` | src | s | 4 crate-vis | — | The inference receipt a house backend's reply carries (FIX 6567, INF 2 step 1; FIX 8314, INFERENCE R1)… |
@@ -1311,13 +1311,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/host_budgets.rs` | src | s | 7 crate-vis | — | The bytes one served vault's model host holds at once (FIX 9321, FIX 9323): one set per vault's runtime… |
 | `src/models/hosted_speech.rs` | src | m | 2 struct · 5 fn · 3 crate-vis | HostedCloner, VendorVoice | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |
-| `src/models/http.rs` | src | m | 28 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
-| `src/models/http/never_sent.rs` | src | s | 1 crate-vis | — | A request that never reached its upstream goes once more, on a fresh connection (FIX 7113) |
+| `src/models/http.rs` | src | L | 30 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http/never_sent.rs` | src | s | 2 crate-vis | — | A request that never reached its upstream goes once more, on a fresh connection (FIX 7113) |
 | `src/models/http/reply_line.rs` | src | s | 6 crate-vis | — | The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
-| `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 1 re-export · 27 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
+| `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 1 re-export · 28 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
-| `src/models/ladder/call_deadline.rs` | src | s | 1 enum · 7 fn · 7 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
+| `src/models/ladder/call_deadline.rs` | src | s | 1 enum · 7 fn · 8 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
 | `src/models/ladder/decision_posture.rs` | src | s | 1 crate-vis | — | A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the… |
 | `src/models/ladder/live_fork.rs` | src | s | 3 crate-vis | — | The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint… |
 | `src/models/ladder/shadow_capture.rs` | src | s | 3 crate-vis | — | The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a… |
@@ -1327,11 +1327,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/worker_lease.rs` | src | s | 3 crate-vis | — | A rung's managed worker (FIX 8315, DESIGN-V2 R2): the call waits for it and holds its lease from before… |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/llama_identity.rs` | src | m | 9 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
-| `src/models/media.rs` | src | m | 3 struct · 1 fn · 7 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
+| `src/models/media.rs` | src | m | 3 struct · 1 fn · 8 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/asked_jobs.rs` | src | s | 2 crate-vis | — | The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208) |
 | `src/models/media/bindings.rs` | src | s | 7 fn · 10 crate-vis | — | Media voice bindings, clone queries and retry hints |
 | `src/models/media/booked.rs` | src | s | 1 crate-vis | — | A media rung's backend with its replies' bytes held (FIX 8615): each of its calls (an answer, a job's… |
-| `src/models/media/calls.rs` | src | m | 6 fn · 4 crate-vis | — | Media calls, public job operations and runtime cleanup |
+| `src/models/media/calls.rs` | src | m | 6 fn · 6 crate-vis | — | Media calls, public job operations and runtime cleanup |
 | `src/models/media/construction.rs` | src | s | 4 crate-vis | — | Media runtime construction and transport adapters |
 | `src/models/media/fit.rs` | src | s | 1 crate-vis | — | Whether a media rung takes a call (FIX 8612, FIX 8614, FIX 8627): its row serves the call's operation and… |
 | `src/models/media/job_lifecycle.rs` | src | s | 3 crate-vis | — | A kept job's end and its delete, in one order (FIX 9511, FIX 9513) |
@@ -1539,7 +1539,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/live_runs.rs` | src | m | 37 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
 | `src/server/live_runs/pattern_action.rs` | src | s | 1 crate-vis | — | A live run's own pattern runner for an action between its entries (OF-181, DOOR-111 S4c-4) |
 | `src/server/media_door.rs` | src | s | 1 struct · 7 crate-vis | MediaDoor | The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through |
-| `src/server/media_embedding.rs` | src | m | 10 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
+| `src/server/media_embedding.rs` | src | L | 10 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/merge_queue_checker.rs` | src | s | 2 crate-vis | — | The standalone merge queue checker drain (FIX 6868) |
 | `src/server/merge_queue_checker/executor.rs` | src | m | 2 crate-vis | — | The queue checker's executors (FIX 6868): the isolated session by default, the host child only on… |
 | `src/server/merge_queue_checker/received.rs` | src | s | 1 crate-vis | — | Accepted-push candidate intake in the checker's one drain (FIX 6869, G4 PR2) |

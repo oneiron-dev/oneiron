@@ -363,4 +363,4 @@ pub struct SavedBrowserCaller {
     pub witness: Option<InvocationSlipBinding>,
 }
 
-pub use crate::memory::browser_capture::{SolvedCaptureReceipt, SolvedCaptureGap};
+pub use crate::memory::browser_capture::{SolvedCaptureGap, SolvedCaptureReceipt};
