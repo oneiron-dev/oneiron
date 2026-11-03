@@ -1,6 +1,6 @@
 //! Pure PERSON baseline validation and JSON-compatible MessagePack decoding.
 
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value as JsonValue;
 use rmpv::Value;
 use std::collections::BTreeSet;

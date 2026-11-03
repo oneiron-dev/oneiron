@@ -383,7 +383,7 @@ pub use crate::write_envelope::companion_subject::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind,
 };
 pub use crate::write_envelope::companion_task_kind::CompanionTaskKind;
-pub use crate::companion::EnqueueCompanionTaskOutcome;
+pub use crate::attempt_queue::companion_task::EnqueueCompanionTaskOutcome;
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,

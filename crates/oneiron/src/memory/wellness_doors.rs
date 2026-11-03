@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::coping_doors::{collect_refs, require_readable};
 use super::{Memory, MemoryError, MemoryResult};
-use crate::affect::state_index::StateIndex;
+use crate::memory::state_index::StateIndex;
 use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};

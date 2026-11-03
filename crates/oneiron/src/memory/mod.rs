@@ -390,3 +390,6 @@ pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+
+pub mod voice_actor;
+pub mod state_index;
