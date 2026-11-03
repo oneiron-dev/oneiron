@@ -20,7 +20,7 @@ use crate::code_revision::{
     CodeImportManifest, CodeTreeInventory, IMPORT_MANIFEST_PREDICATE,
     import_snapshot_custody_in_txn, manifest_digest, manifest_id,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};

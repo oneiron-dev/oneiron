@@ -410,7 +410,7 @@ impl Vault {
             "a read of a repo file with keys in it says why it needs them",
             "a repo file read's why is one line of at most 512 bytes",
         )?;
-        let artifact = crate::codebase::snapshot_asset_entity_id(raw_blake3)?;
+        let artifact = crate::store::code_snapshot::snapshot_asset_entity_id(raw_blake3)?;
         let delivered = self.with_write_txn_grouped(|txn| {
             let mut groups = Vec::new();
             if !keys.custody.is_empty() {
