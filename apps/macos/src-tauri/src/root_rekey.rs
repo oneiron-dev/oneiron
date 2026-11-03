@@ -209,7 +209,7 @@ pub fn root_rekey_confirm(
         .lock()
         .map_err(|_| "the re-key state is unavailable".to_owned())?;
     let shown = LocalHostRootContext {
-        vault_id: parse_hex32(&vault_id).ok_or("the vault id is not 64 hex characters")?,
+        vault_id: *parse_hex32(&vault_id).ok_or("the vault id is not 64 hex characters")?,
         install: EntityId::from_hex(&install)
             .map_err(|_| "the install id is not a machine id".to_owned())?,
     };
