@@ -13,6 +13,7 @@ use crate::runtime_hooks::{
     host_doors, read,
 };
 use crate::skill_hub::pack_catalog::{HookGoldenInput, HookPhase, PackHookBinding};
+use crate::task_verb::sdk::{AgentVerb, validate_input};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{InvocationId, served};
@@ -30,8 +31,9 @@ impl Vault {
     /// gate's shape, as the reader the replay reads as, in the hook's own
     /// scope, with an empty receipt tail; each read live under the grant
     /// [`Self::hooks_replay_binding`] reads with; the outcome judged against
-    /// the binding and put to the gate's own checks, all but the verb's args
-    /// check, which only its dispatcher holds. `None` for a call the
+    /// the binding and put to the gate's own checks, including the catalog
+    /// verb's input check. The surface's rewrite admission still only its
+    /// dispatcher holds. `None` for a call the
     /// selector does not take, as the gate runs no body on it. Beside the
     /// runs, the body's source and every row a read served.
     ///
@@ -82,6 +84,25 @@ impl Vault {
             if !takes {
                 runs.push(None);
                 continue;
+            }
+            if AgentVerb::from_name(&call.verb).is_some() {
+                if let Err(error) = validate_input(&call.verb, &call.args) {
+                    let reason = bounded(&format!("the call's args are refused: {error}"));
+                    runs.push(Some(VerbGoldenRun {
+                        result: HookReplayResult::Ran {
+                            outcome_json: None,
+                            outcome: "refused".to_owned(),
+                            reason: Some(reason),
+                            recorded: None,
+                            recorded_outcome_json: None,
+                            compare: HookReplayCompare::Incomplete,
+                            from_memo: false,
+                            reads_live: false,
+                        },
+                        outcome: None,
+                    }));
+                    continue;
+                }
             }
             let mut input = json!({
                 "hook": {
@@ -170,11 +191,19 @@ fn golden_invocation(binding_id: EntityId, index: usize) -> InvocationId {
 }
 
 /// The gate's own checks on an outcome its binding accepted, as a call's
-/// chain puts them, all but the verb's args check; the reason refuses it.
+/// chain puts them, including the catalog verb's input check; the reason
+/// refuses it.
 fn gate_check(verb: &str, args: &Value, outcome: &HookOutcome) -> std::result::Result<(), String> {
     match outcome {
-        HookOutcome::Rewrite { args: next } => host_doors::check_rewrite(verb, args, next)
-            .map_err(|reason| format!("the rewritten args are refused: {reason}")),
+        HookOutcome::Rewrite { args: next } => {
+            host_doors::check_rewrite(verb, args, next)
+                .map_err(|reason| format!("the rewritten args are refused: {reason}"))?;
+            if AgentVerb::from_name(verb).is_some() {
+                validate_input(verb, next)
+                    .map_err(|error| format!("the rewritten args are refused: {error}"))?;
+            }
+            Ok(())
+        }
         HookOutcome::Skip { .. } if verb == "host.compact" => {
             Err("a host.compact pre-hook may not skip".to_owned())
         }
