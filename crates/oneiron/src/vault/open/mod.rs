@@ -18,6 +18,7 @@ use std::path::Path;
 
 mod adopt;
 mod config_validation;
+mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
 
@@ -816,6 +817,15 @@ impl Vault {
         if let Some(manager) = manager {
             manager.notify_note(id);
         }
+    }
+
+    /// [`Vault::notify_note_document`] for a typed body's artifact after a
+    /// committed local head write: the invalidation frame names an entity,
+    /// not a NOTE, and the socket forwards an artifact's UPDATE where it
+    /// drops a NOTE's.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_typed_body_document(&self, id: crate::EntityId) {
+        self.notify_note_document(id);
     }
 
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
