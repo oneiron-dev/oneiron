@@ -34,11 +34,12 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::llm::decision::{
-    AnswerContract, AskAct, AskAnswer, AskRole, AskTo, DecisionAnswer, DecisionClass,
-    DecisionQuestion, DecisionRung, HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
+use crate::llm::decision::{AskAnswer, AskRole, AskTo, HumanDecisionRequest};
+use crate::model_decision::{
+    AnswerContract, AskAct, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
+    HumanAskReason, ProviderPin, RoleRank,
 };
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillRecord;
 use crate::skill_optimize::{HeldOutReplayNotes, SkillEditTrialBasis};

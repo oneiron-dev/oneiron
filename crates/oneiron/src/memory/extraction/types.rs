@@ -1,5 +1,6 @@
 //! Typed serving payloads and observable extraction receipts.
-use crate::{ModelId, affect::Vad, embed::EmbedderLocality};
+use crate::{affect::Vad, embed::EmbedderLocality};
+use oneiron_model::llm::ModelId;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 #[derive(Debug, Clone, Serialize)]

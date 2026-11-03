@@ -34,7 +34,7 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::llm::{
+use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID, BUDGET_PLAN_PROMPT_TEMPLATE,
     BUDGET_PLAN_PROMPT_TEMPLATE_ID, BudgetGuard, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
     BudgetThreshold,
