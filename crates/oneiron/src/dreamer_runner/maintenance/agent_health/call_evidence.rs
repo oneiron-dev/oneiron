@@ -18,8 +18,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{Attempts, Dispatches, task_of};
-use crate::attempt_queue::AttemptId;
+use super::{Attempts, Dispatches, entity, task_of};
+use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::limit_ask::EngineLimit;
 use crate::receipt::{CallAttemptRef, CallReceipt};
 use crate::side_table::{self, Named, SideTable};
@@ -258,4 +258,43 @@ pub(super) fn attempt_calls(
         witnessed,
         activity,
     })
+}
+
+/// Each leased attempt claimed before the nightly lookback, under its
+/// attempt bytes, with its calls back to its claim (FIX 8374): the
+/// lookback alone truncates the silence clock of a lease older than the
+/// window, so `silent` would judge calls it cannot see as never made. The
+/// read is the targeted review's own ([`attempt_calls`]) at the same
+/// `since`, so both reviews judge the same activity; the witnessed stream
+/// it also collects is dropped, since the nightly review's streams come
+/// from its one shared read. Each scan is measured, never refused.
+pub(super) fn claim_bound_activities(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    since: u64,
+) -> Result<BTreeMap<[u8; 16], CallActivity>> {
+    let mut extended = BTreeMap::new();
+    for (id, dispatch) in dispatched {
+        let Some(record) = attempts.get(id) else {
+            continue;
+        };
+        if record.state != AttemptState::Leased {
+            continue;
+        }
+        let claimed = record.claimed_at.unwrap_or(record.updated_at);
+        if claimed >= since {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let own = CallAttemptRef {
+            attempt,
+            generation: record.attempt_count,
+        };
+        let calls = attempt_calls(vault, dispatch.actor, Some(own), since, Some(claimed))?;
+        extended.insert(*record.id.as_bytes(), calls.activity);
+    }
+    Ok(extended)
 }
