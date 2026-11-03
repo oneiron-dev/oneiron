@@ -191,7 +191,13 @@ impl ConsolidationExecutor<'_> {
                     );
                 }
                 Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+                // A failed call's paid usage has no terminal step: it is
+                // handed to the driver's settlement with the park (FIX
+                // 11554).
                 Err(error) => {
+                    if let DurableStepError::SpentLlm { usage, .. } = &error {
+                        charges.record_usage(usage);
+                    }
                     return Ok(
                         charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
                     );
