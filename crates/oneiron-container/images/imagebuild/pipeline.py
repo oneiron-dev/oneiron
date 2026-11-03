@@ -6,6 +6,7 @@ import json
 import os
 import resource
 import socket
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -171,6 +172,68 @@ def peak_rss_bytes() -> int:
                       resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
 
 
+def _locked_sparse_cache(raw: bytes, crate: str, versions: set[str], path: Path) -> bytes:
+    """One Cargo sparse-index cache, reduced to this lock's versions.
+
+    The cache starts with five binary version bytes and an online-revalidation
+    header, then NUL-separated version and JSON pairs. Its ETag is deliberately
+    empty in the image: it is not resolution data, and retaining it would keep
+    the refetch drift this normalization removes.
+    """
+    if len(raw) < 6 or raw[0] != 3:
+        raise BuildError(f"{path}: unsupported Cargo sparse-cache header")
+    try:
+        entries_start = raw.index(b"\0", 5) + 1
+    except ValueError as error:
+        raise BuildError(f"{path}: unterminated Cargo sparse-cache header") from error
+    if not raw.endswith(b"\0"):
+        raise BuildError(f"{path}: unterminated Cargo sparse-cache entry")
+    fields = raw[entries_start:-1].split(b"\0")
+    if len(fields) % 2:
+        raise BuildError(f"{path}: odd Cargo sparse-cache entry count")
+    kept = []
+    seen = set()
+    for version_bytes, summary_bytes in zip(fields[0::2], fields[1::2]):
+        try:
+            version = version_bytes.decode("utf-8")
+            summary = json.loads(summary_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise BuildError(f"{path}: invalid Cargo sparse-cache entry") from error
+        if summary.get("name") != crate or summary.get("vers") != version:
+            raise BuildError(f"{path}: Cargo sparse-cache entry does not match its path")
+        if version in versions:
+            kept += [version_bytes, summary_bytes]
+            seen.add(version)
+    missing = sorted(versions - seen)
+    if missing:
+        raise BuildError(f"{path}: Cargo sparse cache lacks locked versions {missing}")
+    body = b"\0".join(kept) + b"\0" if kept else b""
+    return raw[:5] + b'etag: ""\0' + body
+
+
+def _normalize_cargo_stores(tree: Path, plan: Plan, engine: Path) -> None:
+    """Make each image's offline registry cache a function of Cargo.lock."""
+    stores = [tree / entry["dest"].lstrip("/") for entry in plan.trees if entry["kind"] == "cargo-store"]
+    if not stores:
+        return
+    with open(engine / "Cargo.lock", "rb") as stream:
+        lock = tomllib.load(stream)
+    allowed = {}
+    for package in lock.get("package", []):
+        if package.get("source") == attest.CRATES_IO:
+            allowed.setdefault(package["name"], set()).add(package["version"])
+    for store in stores:
+        caches = sorted(path for path in (store / "registry" / "index").glob("*/.cache/**/*") if path.is_file())
+        if not caches:
+            raise BuildError(f"{store}: no Cargo sparse-index cache")
+        for path in caches:
+            versions = allowed.get(path.name)
+            if versions is None:
+                path.unlink()
+                continue
+            path.write_bytes(_locked_sparse_cache(path.read_bytes(), path.name, versions, path))
+
+
 def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str) -> dict:
     started = _now()
     if os.environ.get("ONEIRON_IMAGES_OFFLINE") != "1":
@@ -197,6 +260,7 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     tree = out / variant
     if not tree.is_dir():
         raise BuildError(f"mkosi left no {variant} tree at {tree}")
+    _normalize_cargo_stores(tree, plan, engine)
     removed = export.clean_apivfs(tree)
     needles = [str(work.resolve()), str(mirror.root.resolve()), str(repo.resolve()), "/work/src/", "/work/build/"]
     home = os.path.expanduser("~")
