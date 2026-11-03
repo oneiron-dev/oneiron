@@ -201,11 +201,11 @@ fn sheets(
     Ok(Some((book, sheets)))
 }
 
-/// The sheet and the far corner of the cells every reference of the chart
+/// The sheet and the exact ranges every reference of the chart
 /// part `chart` names: `None` when they name more than one sheet, another
 /// workbook, or something other than a range.
-fn referenced(chart: &XmlTree) -> Option<(String, (u32, u32))> {
-    let mut found: Option<(String, (u32, u32))> = None;
+fn referenced(chart: &XmlTree) -> Option<(String, Vec<((u32, u32), (u32, u32))>)> {
+    let mut found: Option<(String, Vec<((u32, u32), (u32, u32))>)> = None;
     for node in chart.nodes.iter().filter(|node| node.is(C, "f")) {
         let text = node.text.trim();
         if text.contains('[') {
@@ -218,11 +218,15 @@ fn referenced(chart: &XmlTree) -> Option<(String, (u32, u32))> {
         };
         let (from, to) = area.split_once(':').unwrap_or((area, area));
         let (from, to) = (parse_a1(from)?, parse_a1(to)?);
-        let corner = (from.0.max(to.0), from.1.max(to.1));
+        let range = (
+            (from.0.min(to.0), from.1.min(to.1)),
+            (from.0.max(to.0), from.1.max(to.1)),
+        );
         found = match found {
-            None => Some((sheet, corner)),
-            Some((held, far)) if held.eq_ignore_ascii_case(&sheet) => {
-                Some((held, (far.0.max(corner.0), far.1.max(corner.1))))
+            None => Some((sheet, vec![range])),
+            Some((held, mut ranges)) if held.eq_ignore_ascii_case(&sheet) => {
+                ranges.push(range);
+                Some((held, ranges))
             }
             Some(_) => return None,
         };
@@ -233,7 +237,7 @@ fn referenced(chart: &XmlTree) -> Option<(String, (u32, u32))> {
 /// The sheet the rebuilt data takes in the chart's own workbook `bytes`:
 /// the one visible sheet every reference of the chart part `chart` names,
 /// where it holds nothing but the chart's data (no formula, table or locked
-/// range, and no cell past the cells those references reach), rewritten in
+/// range, and no cell outside the exact ranges those references name), rewritten in
 /// place (FIX 9169); else a new one, the first of `Sheet1`, `Sheet2`, … no
 /// sheet of it holds, in any case. `Ok(None)` when the workbook does not
 /// read: the rebuild starts afresh. A resource refusal is `Err` (FIX 10587).
@@ -250,7 +254,7 @@ pub(super) fn data_sheet(
     let Some((_, sheets)) = sheets(&package)? else {
         return Ok(None);
     };
-    if let Some((name, (cols, rows))) = referenced(chart) {
+    if let Some((name, ranges)) = referenced(chart) {
         let book = match read_xlsx_cells(bytes, limits, resources) {
             Ok(book) => Some(book),
             Err(error) => match error.resource() {
@@ -268,8 +272,14 @@ pub(super) fn data_sheet(
             && held.cells.iter().all(|cell| {
                 cell.formula.is_none()
                     && cell.locked.is_none()
-                    && cell.col <= cols
-                    && cell.row <= rows
+                    && ranges
+                        .iter()
+                        .any(|&((min_col, min_row), (max_col, max_row))| {
+                            cell.col >= min_col
+                                && cell.col <= max_col
+                                && cell.row >= min_row
+                                && cell.row <= max_row
+                        })
             })
         {
             return Ok(Some(held.name.clone()));

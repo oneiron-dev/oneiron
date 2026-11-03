@@ -27,6 +27,13 @@ use crate::resource_memory::MemoryGrow;
 use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
+/// How long a staged call envelope waits for this machine's memory floor
+/// before its own deadline is known (blind-review P1): that deadline rides
+/// inside the envelope, still encoded, so admission cannot wait on it. Once
+/// decoded, each staged input leases under the call's own deadline instead.
+/// A wait that finds no room refuses the call, as an input's does.
+const STAGED_CALL_PROVISIONAL_WAIT: Duration = Duration::from_secs(5);
+
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
 /// row and its grant for this ALPN), and that node read every input under
@@ -203,13 +210,22 @@ impl OrganService {
         staging: &Arc<Staging>,
         carried: &Carried,
     ) -> Result<PeerResult, String> {
+        // The call envelope itself is staged input: it leases this
+        // machine's floor before it is read back, under a provisional
+        // deadline — its own deadline rides inside it, still encoded —
+        // and the lease holds until the call ends, as each input's does
+        // (blind-review P1). Inline bytes lease nothing, as ever.
+        let provisional = Instant::now() + STAGED_CALL_PROVISIONAL_WAIT;
+        let mut held = Vec::new();
+        if let Some(lease) = self.hold_taken(carried, provisional)? {
+            held.push(lease);
+        }
         let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
         let deadline =
             Instant::now() + Duration::from_millis(peer.deadline_ms.min(u64::from(u32::MAX)));
         let mut inputs = Vec::with_capacity(peer.inputs.len());
         // Each staged input read back into memory leases this machine's
         // floor first, and holds it until the call ends (FIX 6193).
-        let mut held = Vec::new();
         for input in &peer.inputs {
             let read = match &input.read {
                 Some((artifact, version)) => Some(OrganInput {
@@ -249,6 +265,8 @@ impl OrganService {
             staging: Arc::clone(staging),
             runtime: Handle::current(),
             cancel: self.cancel.clone(),
+            service: self.clone(),
+            held: std::sync::Mutex::new(Vec::new()),
         };
         let cancel = self.cancel.clone();
         let answers = peer.answers;
@@ -373,6 +391,10 @@ struct Forward {
     runtime: Handle,
     /// The stop's cancel ends a wait for the asking node.
     cancel: MeshCancel,
+    /// The serving host admits staged answer bytes before they are read.
+    service: OrganService,
+    /// Answer leases live until the call that made the asks ends.
+    held: std::sync::Mutex<Vec<Box<dyn Send>>>,
 }
 
 impl Forward {
@@ -413,7 +435,19 @@ impl AskHandler for Forward {
         }
         let answered = answer.answered?;
         let data = match &answered.data {
-            Some(carried) => Some(self.staging.take(carried).map_err(failed)?),
+            Some(carried) => {
+                if let Some(lease) = self
+                    .service
+                    .hold_taken(carried, ask.deadline)
+                    .map_err(failed)?
+                {
+                    self.held
+                        .lock()
+                        .expect("forward answer leases poisoned")
+                        .push(lease);
+                }
+                Some(self.staging.take(carried).map_err(failed)?)
+            }
             None => None,
         };
         Ok(Answered {
