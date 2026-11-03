@@ -280,6 +280,19 @@ fn project(
                 observations.entry(subject).or_insert((true, share.weight));
             }
         }
+        let has_observations = !observations.is_empty();
+        let mut person_share: Option<f32> = None;
+        for subject in observations.keys() {
+            if let Some(share) = crate::skill_reliability::amended_share_in_txn(
+                vault,
+                txn,
+                subject,
+                Some(fields.executor.as_str()),
+                attempt_receipt,
+            )? {
+                person_share = Some(person_share.map_or(share, |held| held.max(share)));
+            }
+        }
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
             let (success, weight) = effective_observation_in_txn(
@@ -287,6 +300,32 @@ fn project(
             )?;
             let learning = credit_evidence(&credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
+        }
+        // The same attempt under the driver's own cell (FIX 8968): one person
+        // row per credited outcome, with the established per-attempt amendment
+        // share across its credited subjects, never a second run.
+        if has_observations
+            && let Some(person) = receipt
+                .on_behalf_of
+                .as_deref()
+                .or(receipt.actor.as_deref())
+                .and_then(|actor| EntityId::from_hex(actor).ok())
+        {
+            let (success, weight) = match person_share {
+                Some(share) => (false, f64::from(share)),
+                None => (outcome.succeeded, 1.0),
+            };
+            let person_cell = crate::learning::LearningCell::new(
+                crate::learning::LearningPredicate::Reliability,
+                person,
+            )
+            .executor(person.to_hex())
+            .type_ref(fields.type_ref.clone())
+            .axis(outcome.axis.clone())
+            .project(fields.project);
+            person_cell.validate()?;
+            let person_evidence = credit_evidence(&credit, &fields, success, weight);
+            record_credit_in_txn(vault, txn, &fields, &person_cell, &person_evidence, now)?;
         }
         // If facts were unavailable, leave this receipt retryable rather than
         // sealing an empty result before attribution has caught up.

@@ -427,6 +427,44 @@ pub(super) fn project_in_txn(
             };
             crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
             changed.remove(&cell.digest());
+            // The same flipped loss under the person's own cell (FIX 8968):
+            // no anchored row exists in this corner, so mirror the minted
+            // skill cell's coordinates and stable credit-receipt key.
+            if let Some(attempt_receipt) =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+                && let Some(person) = attempt_receipt
+                    .on_behalf_of
+                    .as_deref()
+                    .or(attempt_receipt.actor.as_deref())
+                    .and_then(|actor| EntityId::from_hex(actor).ok())
+                && let (Some(type_ref), Some(axis)) = (cell.type_ref.clone(), cell.axis.clone())
+            {
+                let person_cell = crate::learning::LearningCell::new(
+                    crate::learning::LearningPredicate::Reliability,
+                    person,
+                )
+                .executor(person.to_hex())
+                .type_ref(type_ref)
+                .axis(axis)
+                .project(cell.project);
+                person_cell.validate()?;
+                let parents = attempt_receipt
+                    .fields
+                    .get("typeParents")
+                    .map(|raw| serde_json::from_str(raw))
+                    .transpose()
+                    .map_err(|_| invalid("invalid skill receipt type parents"))?
+                    .unwrap_or_default();
+                crate::learning::prior::capture_borrowed_prior_in_txn(
+                    vault,
+                    txn,
+                    &person_cell,
+                    &parents,
+                    crate::learning::EstimateForm::Beta,
+                )?;
+                crate::learning::record_evidence_in_txn(vault, txn, &person_cell, &evidence, at)?;
+                changed.remove(&person_cell.digest());
+            }
         }
     }
     for (cell, (query, evidence)) in desired {
