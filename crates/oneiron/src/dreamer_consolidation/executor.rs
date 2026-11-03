@@ -604,8 +604,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
             // Gap-scan child attempt: deterministic detectors + queue upsert.
             let turn_ids = decode_partition_payload(&attempt.status.payload.input)?.turn_ids();
+            let excluded = ctx.vault.dreamer_excluded_conversations()?;
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
+                let conversation = conversation_of(ctx.vault, turn_id)?;
+                if conversation.is_some_and(|conversation| excluded.contains(&conversation)) {
+                    continue;
+                }
                 let facts = read_turn_facts(ctx.vault, turn_id)?;
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -616,7 +621,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     role,
                     learned_at: 0,
                     carrier: None,
-                    conversation: conversation_of(ctx.vault, turn_id)?,
+                    conversation,
                 });
             }
             return super::gap::run_gap_scan(ctx.vault, &working_set, ctx.now_ms);

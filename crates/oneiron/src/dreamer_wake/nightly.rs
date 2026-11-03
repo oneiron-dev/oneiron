@@ -175,7 +175,18 @@ fn plan_children_in_txn(
     now: u64,
 ) -> Result<()> {
     let policy = recipes::policy_in_txn(vault, txn)?;
-    let spans = sieve::recipe_spans_in_txn(vault, txn, policy.nightly_spans as usize)?;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    let mut spans = Vec::new();
+    for span in sieve::recipe_spans_in_txn(vault, txn, policy.nightly_spans as usize)? {
+        if !excluded.is_empty() {
+            let conversation =
+                crate::dreamer_consolidation::redirty::conversation_in_txn(vault, txn, &span.turn)?;
+            if conversation.is_some_and(|conversation| excluded.contains(&conversation)) {
+                continue;
+            }
+        }
+        spans.push(span);
+    }
     let store = DreamerRunnerStore::new(vault);
     let mut ids = BTreeSet::new();
     for span in &spans {

@@ -4,14 +4,16 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Operator-set Dreamer conversation exclusions. Key: ().
-const EXCLUDED_CONVERSATIONS: SideTable<(), DreamerExcludedConversations, LegacyJson> =
+const EXCLUDED_CONVERSATIONS: SideTable<(), DreamerExcludedConversations, Named> =
     SideTable::new(&side_table::DREAMER_EXCLUDED_CONVERSATIONS);
 
 /// Conversations whose turns must not enter a Dreamer consolidation pass.
+/// A queued branch that spans conversations is refused whole if any part is
+/// excluded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerExcludedConversations {
@@ -45,11 +47,20 @@ impl DreamerExcludedConversations {
     pub fn contains(&self, conversation: &EntityId) -> bool {
         self.conversations.contains(conversation)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.conversations.is_empty()
+    }
 }
 
 impl Vault {
     /// Operator configuration seam, like the selection row. It is not an agent
-    /// verb. Setting the same value again rewrites the same row.
+    /// verb; the live server exposes it only through its owner Dreamer route.
+    /// Replace semantics: writing an empty set clears the row, and setting the
+    /// same value again rewrites the same row. Readers load it per round/pass,
+    /// so it may be set any time before the first wake or resume. Turns a
+    /// scope's watermark already stepped past while excluded are not
+    /// retroactively queued if the conversation is later un-excluded.
     pub fn set_dreamer_excluded_conversations(
         &self,
         setting: &DreamerExcludedConversations,
