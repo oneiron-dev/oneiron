@@ -161,7 +161,8 @@ pub(crate) fn landing_weave_grant_in_txn(
 /// Whether `decision`, the gate's record of `writer`'s landing, names an
 /// auto-weave Grant for one of `scopes`: the receipt reason
 /// [`GATE_REASON_ALLOW_WEAVE_GRANT`] and a standing Grant, still active
-/// and minted by a live owner, that names `writer` and one of them. The
+/// and minted by an owner who is still a live owner (a demoted owner's
+/// Grant authorizes nothing), that names `writer` and one of them. The
 /// decision's own `grant_ref` is judged first; the door that recorded it
 /// could not see the campaign or skill this weave names, so where that
 /// Grant names another weave the standing Grants are judged against this
@@ -187,6 +188,12 @@ pub(crate) fn decision_names_weave_grant_in_txn(
     if let Some(row) = standing_grant_row_in_txn(store, txn, grant_ref)?
         && row.is_active()
         && covers_any(row.grant.bound(), writer, scopes)?
+        && crate::policy_model::is_live_vault_owner_for_store_in_txn(
+            store,
+            store.privacy_posture,
+            txn,
+            &row.owner_stamp.actor,
+        )?
     {
         return Ok(true);
     }
