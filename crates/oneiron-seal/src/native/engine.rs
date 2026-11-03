@@ -182,7 +182,12 @@ impl NativeSealEngine {
                 report: Box::new(report),
             });
         }
+        let output_lease = limits
+            .memory
+            .lease(outcome.bytes.len())
+            .map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))?;
         Ok(SealedPdf {
+            _memory: Some(crate::memory::OutputLease::new(output_lease)),
             evidence_sha256: cms::sha256(&outcome.bytes),
             bytes: outcome.bytes,
             requested_profile: seal_request.target_profile,

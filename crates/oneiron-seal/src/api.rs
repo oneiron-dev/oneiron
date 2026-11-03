@@ -199,6 +199,9 @@ pub use report::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
+    /// Holds the output bytes' reservation after the seal operation ends.
+    #[serde(skip)]
+    pub(crate) _memory: Option<crate::memory::OutputLease>,
     pub bytes: Vec<u8>,
     pub evidence_sha256: Sha256Digest,
     pub requested_profile: PadesProfile,
