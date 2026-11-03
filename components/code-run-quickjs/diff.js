@@ -238,8 +238,8 @@ function makeDiff(api) {
     }
     return {hex, cut: to > end};
   };
-  // The differing runs of two byte windows read from the same asked
-  // offset, compared positionally from each window's own start: a
+  // The differing runs of two byte windows over the same span, compared
+  // positionally from each window's own start: a
   // run past a side's end is empty on that side. At most
   // DIFF_BYTES_RUNS_MAX runs are listed; `truncated` says more followed.
   const byteRuns = (xb, yb) => {
@@ -282,17 +282,19 @@ function makeDiff(api) {
     // One window of one side, read across replies. Once this step's calls
     // are spent the read stops inside the window — bytes anywhere, lines
     // at a whole line (a trailing partial line is read again next step) —
-    // and the caller diffs and resumes from what was read. A lines read
+    // and the caller diffs the span both reads reached and resumes from
+    // there. A lines read
     // that holds no whole line yet reads on past the step's calls rather
     // than resume to the same line step after step. `units` is what the
     // window consumed (lines or bytes); `eof` is a fully read window that
     // came back short. Bytes windows also collect their raw bytes, piece
     // by piece, for the differing runs.
     const read = async (ref, start) => {
-      let text = "", base64 = "", reached = start, stopped = false;
+      let text = "", reached = start, stopped = false;
       // A bytes read of a text body starts at a character boundary, up to
       // three bytes before the offset asked for; the first piece names
-      // the window's true start.
+      // where it truly started, and those backed-up bytes are dropped
+      // below so the window stands at the offset asked for.
       let at = start, first = true;
       const raw = by === "bytes" ? [] : null;
       let sel = by === "lines" ? {lines: [start, start + window]} : {bytes: [start, start + window]};
@@ -301,7 +303,6 @@ function makeDiff(api) {
         if (piece.withheld) throw new TypeError("diff_withheld: " + ref);
         if (first) { first = false; if (by === "bytes" && typeof piece.start === "number") at = piece.start; }
         text += piece.text ?? "";
-        base64 += piece.base64 ?? "";
         if (raw) {
           if (piece.base64) pushBase64(raw, piece.base64);
           else if (piece.text) pushUtf8(raw, piece.text);
@@ -315,47 +316,66 @@ function makeDiff(api) {
         }
       }
       if (by === "bytes") {
-        const units = max(0, reached - at);
-        return {text, base64, raw, at, units, eof: !stopped && units < window};
+        const units = max(0, reached - start);
+        const trimmed = at < start ? copyOf(raw, start - at) : raw;
+        return {raw: trimmed, at: start, units, eof: !stopped && units < window};
       }
       const readLines = lines(text);
       // A stopped read's last line may be only part of one: it is read
       // again from its start next step.
       if (stopped && readLines.length && !endsWith(text, "\n")) readLines.length -= 1;
-      return {text, base64, lines: readLines, at: start, units: readLines.length, eof: !stopped && readLines.length < window};
+      return {lines: readLines, at: start, units: readLines.length, eof: !stopped && readLines.length < window};
     };
     const found = [];
     let bytes = 0, done = false;
     while (!done && calls < HOST_CALLS_PER_STEP) {
+      const aWas = aAt, bWas = bAt;
       const x = await read(left, aAt), y = await read(right, bAt);
       done = x.eof && y.eof;
+      // A window pair compares positionally, so both sides must cover the
+      // same span. The two reads share one budget and run in turn, so the
+      // later read stops sooner: when the shorter read stopped inside its
+      // window (not at its body's end), both windows trim to that shorter
+      // span and both sides resume from there — the longer read's tail is
+      // read again next step, still aligned. A side that reached its end
+      // never trims the other: positions past that end are real.
+      let xUnits = x.units, yUnits = y.units;
+      const common = xUnits < yUnits && !x.eof ? xUnits : yUnits < xUnits && !y.eof ? yUnits : -1;
+      if (common >= 0) {
+        if (by === "lines") { x.lines.length = common; y.lines.length = common; }
+        else { x.raw.length = common; y.raw.length = common; }
+        xUnits = common;
+        yUnits = common;
+      }
       if (by === "lines") {
         const made = hunks(x.lines, y.lines, x.at, y.at, !done);
         for (let i = 0; i < made.length; ++i) { push(found, made[i]); bytes += made[i].text.length; }
-      } else if (x.text !== y.text || x.base64 !== y.base64) {
+      } else {
         const runs = byteRuns(x.raw, y.raw);
-        let text = "@@ bytes -" + x.at + "," + x.units + " +" + y.at + "," + y.units + " @@\n";
-        const named = [];
-        let truncated = runs.truncated;
-        for (let i = 0; i < runs.list.length; ++i) {
-          const run = runs.list[i];
-          const aHex = hexOf(x.raw, run.a[0], run.a[1]), bHex = hexOf(y.raw, run.b[0], run.b[1]);
-          if (aHex.cut || bHex.cut) truncated = true;
-          push(named, {a: [x.at + run.a[0], x.at + run.a[1]], b: [y.at + run.b[0], y.at + run.b[1]], aHex: aHex.hex, bHex: bHex.hex});
-          text += "-" + (x.at + run.a[0]) + ": " + aHex.hex + (aHex.cut ? "..." : "") + "\n"
-            + "+" + (y.at + run.b[0]) + ": " + bHex.hex + (bHex.cut ? "..." : "") + "\n";
+        if (runs.list.length || runs.truncated) {
+          let text = "@@ bytes -" + x.at + "," + xUnits + " +" + y.at + "," + yUnits + " @@\n";
+          const named = [];
+          let truncated = runs.truncated;
+          for (let i = 0; i < runs.list.length; ++i) {
+            const run = runs.list[i];
+            const aHex = hexOf(x.raw, run.a[0], run.a[1]), bHex = hexOf(y.raw, run.b[0], run.b[1]);
+            if (aHex.cut || bHex.cut) truncated = true;
+            push(named, {a: [x.at + run.a[0], x.at + run.a[1]], b: [y.at + run.b[0], y.at + run.b[1]], aHex: aHex.hex, bHex: bHex.hex});
+            text += "-" + (x.at + run.a[0]) + ": " + aHex.hex + (aHex.cut ? "..." : "") + "\n"
+              + "+" + (y.at + run.b[0]) + ": " + bHex.hex + (bHex.cut ? "..." : "") + "\n";
+          }
+          const h = {a: [x.at, x.at + xUnits], b: [y.at, y.at + yUnits], text, runs: named};
+          if (truncated) h.truncated = true;
+          push(found, h);
+          bytes += h.text.length;
         }
-        const h = {a: [x.at, x.at + x.units], b: [y.at, y.at + y.units], text, runs: named};
-        if (truncated) h.truncated = true;
-        push(found, h);
-        bytes += h.text.length;
       }
-      aAt = x.at + x.units;
-      bAt = y.at + y.units;
+      aAt = x.at + xUnits;
+      bAt = y.at + yUnits;
       ++w;
       // No side moved and neither ended (a read answered empty with more
       // promised): answer `next` at these offsets instead of spinning.
-      if (!done && !x.units && !y.units) break;
+      if (!done && aAt <= aWas && bAt <= bWas) break;
     }
     const reply = {algorithm: by === "lines" ? DIFF_ALGORITHM_LINES : DIFF_ALGORITHM_BYTES, window, by, count: found.length, done};
     if (!done) reply.next = {window: w, a: aAt, b: bAt};

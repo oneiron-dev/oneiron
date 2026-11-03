@@ -34,9 +34,10 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 15 typed imports;
+- `quickjs-first-party.wasm`: all 16 typed imports;
 
-- `quickjs-foreign.wasm`: only the six non-write imports;
+- `quickjs-foreign.wasm`: only the seven non-write imports and the three
+  proposal imports;
 - `quickjs-hook.wasm`: the hook guest (below), world `oneiron:hook/hook@1.0.0`
   from `crates/oneiron/wit/hook/hook.wit`, with its own three imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
@@ -109,8 +110,10 @@ by the ranges they cite, staged `summarize` groups) and stores the fold as
 `rf_<key>` with its receipt. It runs in phases kept in `rf_<key>_state`: call
 it again with the same arguments until `done`. `diff(a, b, {by?, from?,
 name?})` (`diff.js`) states its algorithm: by lines, Myers' O(ND) inside
-lockstep 4096-line windows, by bytes 64 KiB blocks; hunk text past 1 MiB is
-stored as a result made from both sides. Every default, bound and end
+4096-line windows with 3 context lines a change (a window pair past one
+pass split and diffed in halves), by bytes 64 KiB blocks naming their first
+differing runs; a step cut short answers a per-side resume offset. Hunk
+text past 1 MiB is stored as a result made from both sides. Every default, bound and end
 condition either helper keeps is one named top-level const or policy
 function in its file.
 Foreign guests have no `self` object. Their `propose.file(...)` and
