@@ -88,6 +88,9 @@ pub(crate) fn with_credential<T>(
     work: impl FnOnce(Option<&HeaderValue>) -> T,
 ) -> oneiron::Result<T> {
     let Some(secret_ref) = secret_ref else {
+        if let Some(reason) = vault.connector_issuer_hold_for_connector(connector)? {
+            return Err(refused(reason));
+        }
         return Ok(work(None));
     };
     let effector = format!("connector:{connector}");
