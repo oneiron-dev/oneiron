@@ -9,7 +9,9 @@ variant used are named by their pins, and what each put in the image is
 measured there (installed: a file's sha256 or a tree's content digest); a
 source build adds its own toolchain's versions and its binary's hash. Fields keep the checker receipt's names
 where they overlap (source_commit, cargo_lock_sha256, rustc, cargo,
-fence_sha256, guest_sha256).
+fence_sha256, guest_sha256). The vault's receipt also says what its image
+can do, in deploy/firecracker/build.py's rootfs receipt fields
+(vault_capabilities); every other variant names null there.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ import json
 from pathlib import Path
 
 from .model import ARCH, Model
-from .util import sha256_bytes
+from .release_manifest import measure_vm_capabilities
+from .util import NotYetSupported, sha256_bytes
 
 
 def budget(model: Model, record: dict) -> dict:
@@ -41,6 +44,29 @@ def budget(model: Model, record: dict) -> dict:
         out["fits_firecracker_cap"] = False
         out["ext4_refused"] = record.get("ext4_refused")
     return out
+
+
+def vault_capabilities(model: Model, record: dict) -> dict | None:
+    """The vault image's capabilities in deploy/firecracker/build.py's rootfs
+    receipt fields, measured from rootfs.tar as the release manifest's
+    contracts.vault measures them (FIX 9344), so the two always agree.
+
+    The pinned init (inputs.files.vault-init, unmodified) passes the config
+    drive's trusted-organ-builds to the engine: the contract's revision. The
+    recipe stages no rootless guest runtime: revision 0 and a null descriptor,
+    as the contract has an image built without one name them.
+    """
+    if record["variant"] != "vault":
+        return None
+    measured = measure_vm_capabilities(Path(record["artifacts"]) / "rootfs.tar", {"inputs": model.release["inputs"]})
+    if measured["vm_guest_runtime_revision"] != 0:
+        raise NotYetSupported("the vault image holds a guest runtime descriptor; no packages.toml directive "
+                              "stages one, and its receipt would need that descriptor")
+    return {
+        "vm_guest_runtime_revision": measured["vm_guest_runtime_revision"],
+        "guest_runtime": None,
+        "vm_trusted_organ_builds_revision": measured["vm_trusted_organ_builds_revision"],
+    }
 
 
 def receipt(model: Model, record: dict) -> dict:
@@ -77,6 +103,7 @@ def receipt(model: Model, record: dict) -> dict:
             "payloads": record.get("payloads", {}),
         },
         "installed": record.get("installed", {}),
+        "vault_capabilities": vault_capabilities(model, record),
         "source_builds": {
             pin: {"repository": pin_["repository"], "rev": pin_["rev"], "archive_sha256": pin_["archive_sha256"],
                   "cargo_lock_sha256": pin_["cargo_lock_sha256"], "store": f"cargo-home-{pin}",

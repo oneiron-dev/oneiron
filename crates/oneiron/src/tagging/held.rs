@@ -94,7 +94,7 @@ pub(crate) fn settle_held_tags_in_txn(
     let Some(config) = vault.config.tagging.as_ref() else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
-    let queue = AttemptQueue::from_store(&vault.store);
+    let queue = AttemptQueue::new(vault);
     let key = dedupe_key(turn, config);
     let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
         return Ok(HeldTagsOutcome::NoMarker);
