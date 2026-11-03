@@ -518,7 +518,10 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 /// head and indexes, and the kept reply body its head version names, when
 /// the head still decodes to a result naming one (FIX 10902). The body goes
 /// through this same erasure, so its own hold keeps it, logged, like the
-/// result's. A version the body read cannot parse names no body.
+/// result's. A version the body read cannot parse names no body. A hold on
+/// the head bytes' ASSET keeps the whole artifact instead (FIX 12532), and
+/// the torn body stages its hard-delete marker and propagation tombstone in
+/// the same transaction (REVIEW-4385 P1), so replicas cannot restore it.
 fn erase_connector_reply_result_artifact_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -537,6 +540,16 @@ fn erase_connector_reply_result_artifact_in_txn(
     if let Some(head) = crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
     {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash)?;
+        // A hold on the head bytes' ASSET keeps the whole artifact (FIX
+        // 12532): the tear below would otherwise refuse on the held ASSET
+        // and fail the erase.
+        if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
+            tracing::warn!(
+                artifact = %artifact.to_hex(),
+                "connector reply erase: a legal hold keeps the job's result bytes"
+            );
+            return Ok(());
+        }
         if let Some(row) = EntityStoreRead::port_entity_record(store, txn, &asset)? {
             if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(&row.body).as_bytes() != &head.content_hash
@@ -577,7 +590,26 @@ fn erase_connector_reply_result_artifact_in_txn(
         crate::hnsw::increment_vector_version(store, txn)?;
     }
     if let Some(body) = body_artifact {
+        // The tear destroys the row its window rides: capture the body's
+        // learned_at first, so its hard erasure publishes in its own window.
+        // The body is the newly reached row (REVIEW-4385 P1): its permanent
+        // marker refuses a peer's copy sent again, and its tombstone takes
+        // the copies peers hold.
+        let body_learned_at = EntityStoreRead::port_entity_raw(store, txn, &body)?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .map(|header| header.learned_at);
         erase_connector_reply_result_artifact_in_txn(store, txn, &body)?;
+        if let Some(learned_at) = body_learned_at {
+            let value = crate::deletion::TombstoneValueV2 {
+                reason: crate::deletion::TombstoneReason::UserHardDelete,
+                deleted_at: crate::ports::recorded_at_in_txn(store, txn)?,
+                request_id: *body.as_bytes(),
+            };
+            crate::deletion::stage_engine_row_hard_erasure_in_txn(
+                store, txn, &body, learned_at, &value,
+            )?;
+        }
     }
     Ok(())
 }
