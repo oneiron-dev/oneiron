@@ -6,10 +6,10 @@
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
-use oneiron_contracts::identity_topology::IdentityTopologyRejection;
 use crate::ports::WindowDeletionRows;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::Store;
+use oneiron_contracts::identity_topology::IdentityTopologyRejection;
 
 use super::tombstone::{
     DecodedTombstoneValue, HARD_DELETE_MARKER, TombstoneReason, TombstoneValueV2,
