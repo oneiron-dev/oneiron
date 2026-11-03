@@ -437,7 +437,7 @@ impl BatchBuilder<'_> {
         #[cfg(feature = "sync")]
         if matches!(
             self.import_tier,
-            crate::sync::client::ImportTier::Federated(_)
+            crate::store::window_protocol::ImportTier::Federated(_)
         ) {
             self.federated_puts.push(self.ops.len());
         }

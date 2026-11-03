@@ -103,7 +103,7 @@ pub struct Vault {
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
+    pub(crate) housekeeping: std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,

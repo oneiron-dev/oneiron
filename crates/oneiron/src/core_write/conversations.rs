@@ -269,8 +269,8 @@ impl Vault {
         // A thread binding is its room door's to stamp (FIX 2951), and an
         // audience edit its thread's audience door's (FIX 5545).
         if [
-            crate::workspace_roster::ROOM_THREAD_KEY,
-            crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+            crate::store::conversation_body::ROOM_THREAD_KEY,
+            crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY,
         ]
         .iter()
         .any(|key| input.body.get(*key).is_some())

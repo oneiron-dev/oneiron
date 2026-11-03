@@ -1,6 +1,7 @@
 //! Door inputs and snapshot results.
 
 use crate::{EntityId, TimeRange, WriteActor};
+use crate::error::Error;
 
 /// Which chain or retained sub-session a scope addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,4 +200,22 @@ pub struct DagPage {
     pub main_line: Vec<EntityId>,
     /// Exclusive cursor, present only when another page exists.
     pub next: Option<EntityId>,
+}
+
+/// The row an append's receipts name.
+pub(crate) const APPEND_ROW: &str = "conversation.append_record";
+
+/// Why a caller-bound append did not land.
+pub(crate) enum AppendFailure {
+    /// The engine refused or failed the append.
+    Engine(Error),
+    /// The ref at this pointer does not read for the writer; the append's
+    /// transaction aborted with nothing staged.
+    Unresolved(String),
+}
+
+impl From<Error> for AppendFailure {
+    fn from(error: Error) -> Self {
+        Self::Engine(error)
+    }
 }

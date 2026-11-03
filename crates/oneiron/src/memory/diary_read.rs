@@ -972,7 +972,7 @@ fn work_vault_admin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, reader: EntityI
     Ok(
         vault.vault_kind_in_txn(txn)? == crate::agent_def::VaultKind::Work
             && crate::workspace_roster::vault_standing_in(vault, txn, reader)?
-                == Some(crate::workspace_roster::VaultStanding::Admin),
+                == Some(crate::memory::vault_standing::VaultStanding::Admin),
     )
 }
 
