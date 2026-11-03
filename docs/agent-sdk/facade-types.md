@@ -1644,7 +1644,7 @@ export type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: str
 /** `oneiron::campaign::surface::actions::CampaignUnsubscribeReceipt` */
 export type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string }
 /** `oneiron::campaign::surface::program::CampaignProgramOutboundSpec` */
-export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean }
+export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean; subject?: string | null }
 /** `oneiron::campaign::surface::program::CampaignProgramStepSpec` */
 export type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null }
 /** `oneiron::campaign::surface::program::CampaignProgramAudienceSpec` */
@@ -8556,7 +8556,7 @@ export type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reaso
 /** `oneiron_browser::verbs::ReceiptOutcome` */
 export type ReceiptOutcome = "unknown"
 /** `oneiron_browser::verbs::EffectReceipt` */
-export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
+export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; audience?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
 /** `oneiron_browser::library::secret_slots::SecretParam` */
 export type SecretParam = { name: string; kind: SecretKind }
 /** `oneiron_browser::library::admission::RecentCounts` */

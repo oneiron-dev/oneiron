@@ -502,6 +502,28 @@ impl Vault {
     }
 }
 
+/// The person-changed tables' actor scrub (FIX 5222): an actor's erase drops
+/// each override record bound to it or naming it as principal, in both the
+/// person and think tables, so the principal does not survive. Read marks
+/// stay, so a replay cannot resurrect a record.
+pub(crate) fn erase_person_changed_principal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    for (source, record) in PERSON_CHANGED.scan(&vault.store, txn)? {
+        if source == *id || record.principal == *id {
+            PERSON_CHANGED.delete(&vault.store, txn, &source)?;
+        }
+    }
+    for (source, record) in think_threshold::THINK_MISSED.scan(&vault.store, txn)? {
+        if source == *id || record.principal == *id {
+            think_threshold::THINK_MISSED.delete(&vault.store, txn, &source)?;
+        }
+    }
+    Ok(())
+}
+
 /// The nightly read-side pass. Detector ids are stable, so a night that sees
 /// the same runs writes the same events again, and a miss already answered
 /// files no second reindex.
