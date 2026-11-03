@@ -219,6 +219,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
         )?;
+        // FIX 7791: and every carried claim vector.
+        crate::sync::claim_vectors::admit_claim_vector_map(
+            key,
+            &candidate.get_map(crate::sync::claim_vectors::CLAIM_VECTORS_MAP),
+        )?;
         // FIX 2691: and every office proposal.
         crate::sync::office_proposals::admit_office_proposal_map(
             key,
@@ -289,6 +294,10 @@ fn validate_window_update(
             crate::sync::message_docs::admit_message_doc_map(
                 key,
                 &root.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
+            )?;
+            crate::sync::claim_vectors::admit_claim_vector_map(
+                key,
+                &root.get_map(crate::sync::claim_vectors::CLAIM_VECTORS_MAP),
             )?;
             crate::sync::office_proposals::admit_office_proposal_map(
                 key,
@@ -387,6 +396,10 @@ fn validate_window_update(
         crate::sync::message_docs::MESSAGE_DOCS_MAP,
         ContainerType::Map,
     );
+    let claim_vectors = ContainerID::new_root(
+        crate::sync::claim_vectors::CLAIM_VECTORS_MAP,
+        ContainerType::Map,
+    );
     let office_proposals = ContainerID::new_root(
         crate::sync::office_proposals::OFFICE_PROPOSALS_MAP,
         ContainerType::Map,
@@ -420,6 +433,8 @@ fn validate_window_update(
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
         } else if op.container == message_docs {
             crate::sync::message_docs::admit_message_doc_carrier(key, &map_key, &value)?;
+        } else if op.container == claim_vectors {
+            crate::sync::claim_vectors::admit_claim_vector_carrier(key, &map_key, &value)?;
         } else if op.container == office_proposals {
             crate::sync::office_proposals::admit_office_proposal_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {
