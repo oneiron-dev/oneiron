@@ -300,7 +300,7 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     if let Some(ledger) = &ledger {
         ledger.release_hold(&holder);
     }
-    parked
+    parked.map(|_| ())
 }
 
 /// Whether a host copy of `bytes` may be taken now: `Err` with the reason
