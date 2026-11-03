@@ -13,13 +13,16 @@ use super::invalid;
 use super::plan::ShapePlanItem;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, AttemptPlacement, AttemptQueue, AttemptResultRef,
-    AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
-    InterveneAttempt, SetAttemptResult,
+    AttemptId, AttemptPlacement, AttemptQueue, AttemptState, ClaimOutcome, CompleteAttempt,
+    EnqueueOutcome, InterveneAttempt, SetAttemptResult,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::ports::JobQueue;
+use crate::store::attempt_inputs::AttemptInterventionKind;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_result::AttemptResultRef;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

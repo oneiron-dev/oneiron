@@ -3,11 +3,12 @@
 //! text is published.
 use super::super::witness_message_envelope;
 use super::*;
+use crate::attempt_queue::turn_action_kind::TurnAction;
 use crate::batch::secret_scan::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::conversation::{TurnAction, TurnActionAttempt};
+use crate::conversation::TurnActionAttempt;
 use crate::edge::EdgeKind;
 use crate::error::Error;
 use crate::gate::{check_witness_message_ceiling, resolve_policy_manifest};

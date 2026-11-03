@@ -10,7 +10,7 @@ use super::{
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::channel_identity_provider::EmailThreadHeaders;
-use crate::thread_passport::{
+use crate::write_envelope::thread_claim::{
     ThreadPassportInput, ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
 };
 use crate::{EntityId, Error, Result, Vault};
@@ -122,7 +122,7 @@ impl Vault {
                     event.received_at,
                 )
                 .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
+                    crate::write_envelope::communication::CommError::Engine(error) => error,
                     _ => Error::InvalidClaimBody("CC thread membership refused"),
                 })?;
             }
@@ -288,7 +288,7 @@ impl Vault {
                     event.received_at,
                 )
                 .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
+                    crate::write_envelope::communication::CommError::Engine(error) => error,
                     _ => Error::InvalidClaimBody("CC thread membership refused"),
                 })?;
             }

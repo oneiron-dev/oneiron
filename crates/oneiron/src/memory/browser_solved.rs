@@ -16,10 +16,13 @@
 use super::{HostWriteOrigin, Memory, MemoryResult};
 use crate::authority::InvocationSlipBinding;
 use crate::browser_library::{
-    SOLVED_RUN_PREDICATE, SavedBrowserCaller, SolvedCaptureGap, SolvedCaptureReceipt,
-    SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, WORKFLOW_FILING_PREDICATE,
-    index_capture_in_txn, refresh_witness_in_txn,
+    SavedBrowserCaller, SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, index_capture_in_txn,
+    refresh_witness_in_txn,
 };
+use crate::memory::browser_capture::SOLVED_RUN_PREDICATE;
+use crate::memory::browser_capture::SolvedCaptureGap;
+use crate::memory::browser_capture::SolvedCaptureReceipt;
+use crate::memory::browser_capture::WORKFLOW_FILING_PREDICATE;
 use crate::{ClaimApprovalStatus, ClaimCandidate, ClaimSubject, Error, TimeRange};
 
 impl Memory<'_> {

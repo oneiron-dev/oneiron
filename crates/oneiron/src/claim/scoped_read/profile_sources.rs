@@ -10,7 +10,7 @@
 use super::ScopedRead;
 use crate::EntityId;
 use crate::error::Result;
-use crate::psych_profile::PsychProfileSource;
+use crate::write_envelope::profile_snapshot::PsychProfileSource;
 
 impl ScopedRead<'_> {
     /// Whether this read's credential keeps out `world`, the world a profile

@@ -455,7 +455,9 @@ impl SyncClient {
     pub(crate) fn setup_catch_up(&self, key: &str) -> bool {
         self.config.residence_mode == super::SyncResidenceMode::Opened
             && self.config.federation_peer.is_none()
-            && key == WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT).as_str()
+            && key
+                == WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT)
+                    .as_str()
             && self
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))

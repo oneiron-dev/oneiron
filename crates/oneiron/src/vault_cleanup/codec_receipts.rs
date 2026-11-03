@@ -354,7 +354,7 @@ pub(crate) fn cleanup_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Ve
     let mut count = crate::scan_check::ScanCount::start(
         &vault.store,
         &rtxn,
-        crate::scan_check::EngineScan::ReceiptSourceRows,
+        crate::store::EngineScan::ReceiptSourceRows,
         b"vault_cleanup",
     )?;
     let mut out = Vec::new();

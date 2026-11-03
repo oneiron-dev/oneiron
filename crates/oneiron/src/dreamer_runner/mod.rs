@@ -20,6 +20,8 @@ mod program;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
+pub mod shadow_values;
+pub mod step_replay;
 mod store;
 mod types;
 mod wake_park;

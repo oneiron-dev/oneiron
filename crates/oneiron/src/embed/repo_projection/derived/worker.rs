@@ -226,7 +226,7 @@ impl Vault {
                 return Ok(false);
             };
             if egress.decide_media(input) != EgressDecision::Allow
-                || !self.media_rows_may_leave(None, &[input.entity_id])?
+                || !self.media_rows_may_leave(None, input.source_rows())?
             {
                 return Ok(false);
             }

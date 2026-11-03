@@ -1,7 +1,7 @@
 //! Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery.
 use serde::{Deserialize, Serialize};
 
-use crate::federation::{FederationDirectionScope, FederationPactScope, Scope, SelectorRange};
+use crate::federation::{FederationDirectionScope, FederationPactScope, Scope};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -174,56 +174,11 @@ pub struct ConnectDisconnected {
     pub recipient_copy_state: crate::receipt::GuestCopyState,
 }
 
-/// One named sender world. Empty facet/band requests leave the pact ceiling alone.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectExportRequest {
-    pub pact: String,
-    pub window_key: String,
-    pub world_ref: crate::EntityId,
-    #[serde(default)]
-    pub facets: Vec<crate::EntityId>,
-    #[serde(default)]
-    pub bands: Vec<SelectorRange>,
-}
+pub use crate::connect_delivery::{
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
+};
 
-/// Filtered bytes bound by the host signature to a pact, epoch and destination.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectWindow {
-    pub pact: String,
-    pub epoch: u64,
-    pub source_vault: String,
-    pub recipient_vault: String,
-    pub world_ref: crate::EntityId,
-    pub facets: Vec<crate::EntityId>,
-    pub bands: Vec<SelectorRange>,
-    pub window_key: String,
-    pub update: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectDelivery {
-    pub body: ConnectWindow,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectRejoinStatus {
-    Imported,
-    Deferred,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConnectRejoined {
-    pub pact: String,
-    pub epoch: u64,
-    pub world_ref: crate::EntityId,
-    pub status: ConnectRejoinStatus,
-    pub request: Option<String>,
-}
+pub use crate::authority::ConnectWindow;
 
 /// Embedded vaults hold no host-root signer or served window manager.
 pub fn connect_host_only<T, I>(memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
@@ -233,12 +188,4 @@ pub fn connect_host_only<T, I>(memory: &Memory<'_>, verb: &str, _input: &I) -> M
         format!("{verb} requires the serving host's signer and federation transport"),
         &[super::host::SERVED_CLIENT_HINT],
     ))
-}
-
-impl ConnectWindow {
-    /// A signature binds the admitted bytes to the disclosed axes, peer and epoch.
-    pub(crate) fn transcript(&self) -> crate::Result<Vec<u8>> {
-        rmp_serde::to_vec_named(&("oneiron/connect/window/v1", self))
-            .map_err(|_| crate::Error::InvalidConfig("Connect window encoding failed".into()))
-    }
 }

@@ -3,11 +3,12 @@
 //! `memory::code_wait_doors::types` defines the wire records; `crate::code_run` the consent waits.
 
 use super::*;
-use crate::code_run::{
-    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState,
-    CodeConsentWaitView,
-};
+use crate::code_run::CodeConsentAnswerInput;
+use crate::code_run::CodeConsentWaitView;
 use crate::consent::CodeWaitReceiptLinks;
+use crate::consent::code_wait_state::CodeConsentChoice;
+use crate::consent::code_wait_state::CodeConsentSettleOutcome;
+use crate::consent::code_wait_state::CodeConsentWaitState;
 use crate::entity_id::bytes_to_hex_lower;
 
 /// The refusal an answer from a surface bound to generated code's origin

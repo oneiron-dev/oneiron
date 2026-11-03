@@ -11,12 +11,12 @@ use super::{DocAuthorization, EntityDoc, PurgeReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::PendingAuthorityAct;
-use crate::memory::{
+use crate::registry::ENTITY_TYPE_NOTE;
+use crate::{EdgeActorClass, EntityId, Vault};
+use oneiron_contracts::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
     MemoryResult,
 };
-use crate::registry::ENTITY_TYPE_NOTE;
-use crate::{EdgeActorClass, EntityId, Vault};
 
 /// The shared vault's act a history erase waits on.
 const ERASE_ACT: &str = "erase";
