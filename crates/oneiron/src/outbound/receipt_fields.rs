@@ -22,9 +22,7 @@ use crate::outbound::dispatch_pipeline::retry_after::{
 use crate::receipt::ReceiptRecord;
 use crate::receipt::outbound_intent_receipt;
 
-/// FIX 6424 (Engine 10-20 20:4x): the receipt field a held send's
-/// approve-once digest rides, beside its gate outcome.
-pub(crate) const APPROVAL_DIGEST_FIELD: &str = "approval_digest";
+pub(crate) use crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
 
 pub(super) fn append_optional_receipt_field(
     receipt: &mut ReceiptRecord,

@@ -127,13 +127,13 @@ pub(super) fn fields_for_profile(
             crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_FULL
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
-            crate::outbound_grant::OUTBOUND_GRANT_FIELDS_MINIMAL
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Standard) => {
-            crate::outbound_grant::OUTBOUND_GRANT_FIELDS_STANDARD
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Full) => {
-            crate::outbound_grant::OUTBOUND_GRANT_FIELDS_FULL
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
             crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
