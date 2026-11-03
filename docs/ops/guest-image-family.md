@@ -213,7 +213,8 @@ digest. Signing them is the release signature's seam (`manifest.md`).
     version-ambiguous exception stays `NOASSERTION` rather than guessing.
   - A short name maps to an SPDX id only through `attest.DEBIAN_TO_SPDX`.
     That one table holds the names Debian's own list defines unambiguously:
-    GPL/LGPL/AGPL by version and `+`, Expat as MIT, BSD-2/3/4-clause,
+    GPL/LGPL/AGPL by version and `+` (plus the unambiguous `GPL3+` alias),
+    Expat as MIT, BSD-2/3/4-clause,
     Apache-2.0, Artistic-2.0, CC0-1.0, ISC, MPL, OFL-1.1, Python-2.0, Zlib,
     and SPDX's own `-only`/`-or-later` forms.
   - Any other name with its text in the file becomes

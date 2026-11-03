@@ -93,6 +93,7 @@ DEBIAN_TO_SPDX = {
     "gpl-3+": "GPL-3.0-or-later",
     "gpl-3.0-only": "GPL-3.0-only",
     "gpl-3.0-or-later": "GPL-3.0-or-later",
+    "gpl3+": "GPL-3.0-or-later",
     "isc": "ISC",
     "lgpl-2": "LGPL-2.0-only",
     "lgpl-2+": "LGPL-2.0-or-later",
