@@ -274,7 +274,7 @@ impl Vault {
         // bytes it reads are masked. A body kept in its ASSET's file is masked
         // as it is read, never held whole beside its copy (FIX 6507).
         let sight = crate::secret_custody::SecretSight::Masked;
-        let (bytes, media_type, hash) = match target.pointer.export {
+        let (bytes, media_type, _stored_hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
                 let Some(snapshot) = target.snapshot else {
                     return Ok(None);
@@ -345,6 +345,9 @@ impl Vault {
         };
         // A DOCX copy shows its default author (FIX 4513).
         let bytes = self.resolve_docx_authors_in_txn(txn, bytes)?;
+        // The served file's hash names this copy (FIX 5491): masked here,
+        // or its DOCX author resolved, it is no longer the stored bytes.
+        let hash = *blake3::hash(&bytes).as_bytes();
         let size_bytes = u64::try_from(bytes.len())
             .map_err(|_| Error::ArithmeticOverflow("artifact served length"))?;
         Ok(Some(ArtifactServedFile {

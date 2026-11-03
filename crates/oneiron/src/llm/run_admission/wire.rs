@@ -18,6 +18,7 @@ use super::super::media::{
 use super::super::{BudgetLease, CallEnvelope, FatalLlmError, LlmError, ModelLocality};
 use super::admission::RunAdmission;
 use super::host::OfferBinding;
+use super::receipt::RunOverageSource;
 use super::settle::CallOutcome;
 
 /// One media rung a host sends on through its own wire.
@@ -118,6 +119,7 @@ impl WireSeat {
                 permit.settle_media(
                     usage.token_units(request.operation, &self.caps),
                     usage.inference_calls(),
+                    RunOverageSource::Counted,
                 )
             }
             Err(_) => permit.settle(CallOutcome::Failed),
