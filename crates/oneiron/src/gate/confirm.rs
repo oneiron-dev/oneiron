@@ -27,6 +27,11 @@ pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
 /// wrote in person: it carries its own confirmation and attaches none.
 pub(crate) const GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED: &str =
     "gate.allow.critical_owner_authored";
+/// The receipt reason of a claim whose only criticality is the fallback for
+/// a predicate no policy rule names: that default sets the legibility and
+/// truncation floors and does not stop the write (ARCH-0003 §Criticality),
+/// so it attaches no confirmation. Only a declared critical class does.
+pub(crate) const GATE_REASON_ALLOW_FALLBACK_CRITICALITY: &str = "gate.allow.fallback_criticality";
 // The decision receipt uses the allow namespace; the durable pending row must
 // remain in store.rs's existing pending namespace.
 pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
