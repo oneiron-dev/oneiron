@@ -5,8 +5,8 @@
 use super::proposals::{fork_hex, owner_submission};
 use super::*;
 use crate::critic::{CritiqueArtifact, CritiqueProvenance};
-use crate::repo_mutation::RepoMutationOperation;
-use crate::repo_mutation::proposal::{RepoProposal, RepoProposalOperation};
+use crate::store::repo_mutation_record::RepoMutationOperation;
+use crate::{repo_mutation::proposal::RepoProposal, store::repo_proposal_record::RepoProposalOperation};
 
 impl Memory<'_> {
     pub fn code_proposal_resolve_as(
@@ -162,7 +162,7 @@ impl Memory<'_> {
                     self.code_readable(*id, None)?;
                 }
                 let resolution =
-                    if row.status == crate::repo_mutation::proposal::RepoProposalStatus::Applied {
+                    if row.status == crate::store::repo_proposal_record::RepoProposalStatus::Applied {
                         self.vault
                             .repo_conflict_resolution_claims(branch_subject)?
                             .into_iter()

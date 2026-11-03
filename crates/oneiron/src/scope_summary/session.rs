@@ -10,9 +10,10 @@ use super::codec::{invalid, reply_summary};
 use super::doors::ScopeSources;
 use super::request::REQUEST_VERSION;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
+use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
+    DreamerAttemptPayload, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome,
 };
 use crate::error::Result;

@@ -10,7 +10,7 @@ use super::{
     PERSON_CHANGED_READ, PersonThresholdPolicy,
 };
 use crate::dreamer_runner::DreamerAdmittedAttempt;
-use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
+use crate::model_decision::{PersonChangedAnswer, PersonThreshold};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Override records one read snapshot takes: a page of the read, never a cap

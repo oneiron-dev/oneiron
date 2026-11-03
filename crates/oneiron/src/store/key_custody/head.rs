@@ -143,7 +143,7 @@ fn seal_compartment(
     let pos = position.to_bytes();
     let id = key_id(&pos, index, scope);
     let mut key = Zeroizing::new([0u8; 32]);
-    crate::world_keys::os_fill(&mut key[..])?;
+    crate::key_material::os_fill(&mut key[..])?;
     let plain = Zeroizing::new(rmp_serde::to_vec_named(body).map_err(|_| head_corrupt())?);
     let sealed = seal_sym(
         Purpose::CustodyCompartment,
@@ -433,7 +433,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     }
     let control_id = key_id(&pos, 0, None);
     let key = unwrap_key(&position, &control_id, None, &first.wraps, opener).ok_or_else(|| {
-        crate::world_keys::refused("the custody head does not open with this key or kit")
+        crate::key_material::refused("the custody head does not open with this key or kit")
     })?;
     let control = open_body(&position, &control_id, &key, &first.sealed)?;
     let secret = Zeroizing::new(control.control.ok_or_else(head_corrupt)?);

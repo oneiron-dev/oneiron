@@ -11,7 +11,7 @@ use crate::codebase::RepoRef;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ppr::{
     SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_vad_deferred_cache,
 };
