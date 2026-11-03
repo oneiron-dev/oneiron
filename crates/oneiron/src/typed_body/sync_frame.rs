@@ -279,6 +279,7 @@ fn birth_carried_in_txn(
         birth: frame.birth.clone(),
         frontier,
         commits: frame.commits,
+        landed_at: None,
     };
     HEADS.put(&vault.store, txn, entity, &head)?;
     Ok(true)

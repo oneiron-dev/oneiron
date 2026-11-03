@@ -137,7 +137,7 @@ pub(in crate::sync) fn quarantine_once_in_txn(
         .prefix_iter(&*wtxn, QUARANTINE_PREFIX)?
     {
         let (_, value) = entry?;
-        if decode_record(value).is_ok_and(|held| {
+        if decode_record(&value).is_ok_and(|held| {
             held.container == container
                 && held.crdt_key_hash == crdt_key_hash
                 && held.crdt_key_len == crdt_key_len
