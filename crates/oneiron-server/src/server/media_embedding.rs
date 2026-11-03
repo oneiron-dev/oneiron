@@ -580,10 +580,7 @@ impl RuntimeMediaEmbedder {
         let response = if let Some((release, row)) = release {
             let dispatch_release = || -> oneiron::LlmResult<()> {
                 release(&[row]).map_err(|error| {
-                    FatalLlmError::InvalidRequestDetail {
-                        message: error.to_string(),
-                    }
-                    .into()
+                    oneiron::RetryableLlmError::not_sent("media_release", error.to_string()).into()
                 })
             };
             // The rows the part was read from are not known here whole.
