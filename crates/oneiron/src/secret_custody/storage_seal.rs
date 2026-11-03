@@ -67,20 +67,7 @@ const VALUE_AAD_DOMAIN: &[u8] = b"oneiron/credential-value/v2\0";
 const ROLE_VALUE: u8 = 0;
 const NONCE_BYTES: usize = 12;
 
-/// A stored value: sealed under its custody key, the only form a value
-/// rests in (KS-6 part 2: the restored carrier form is gone, FIX 7456).
-pub(crate) enum StoredValue {
-    /// `nonce | ciphertext`, sealed at `generation`; empty for no value.
-    Sealed { generation: u32, bytes: Vec<u8> },
-}
-
-impl StoredValue {
-    /// Whether a value is held at all: a revoked record's is not.
-    pub(crate) fn holds_value(&self) -> bool {
-        let Self::Sealed { bytes, .. } = self;
-        !bytes.is_empty()
-    }
-}
+pub(crate) use crate::secret_record::StoredValue;
 
 /// One stored record: its fields, value-free, and its value as stored.
 pub(crate) struct StoredCustody {
@@ -552,17 +539,7 @@ enum CustodyArchiveSameId {
 const CUSTODY_ARCHIVE_SAME_ID: CustodyArchiveSameId =
     CustodyArchiveSameId::CompareOpenedDtoElsePending;
 
-/// What an owner archive's import finds of a record whose id is already
-/// here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArchiveSameId {
-    /// The same record: unchanged.
-    Same,
-    /// Another record: a collision, refused as before.
-    Different,
-    /// The comparison faulted: the record here stays as it is, pending.
-    Pending,
-}
+pub(crate) use crate::secret_record::ArchiveSameId;
 
 /// Compares entity row `existing`, record `id`, read in the import's writer
 /// `txn`, with `incoming`, the archive's plaintext DTO of it (CALLS `KS-6

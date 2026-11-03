@@ -142,7 +142,7 @@ impl BodyKeyRow {
             key.raw(),
             &mut SysRng,
         )
-        .map_err(|_| crate::world_keys::refused("wrapping a body file's key failed"))?
+        .map_err(|_| crate::key_material::refused("wrapping a body file's key failed"))?
         .to_bytes();
         Ok(Self {
             wrapped: Some(wrapped),
@@ -195,7 +195,9 @@ impl BodyKeyRow {
             .map_err(|_| corrupt())?
             .open(OpenKey::SymmetricKek(&seal_key.wrap), &policy)
             .map_err(|_| {
-                crate::world_keys::refused("a body file's key does not open with this vault's key")
+                crate::key_material::refused(
+                    "a body file's key does not open with this vault's key",
+                )
             })?;
         if opened.len() != 32 {
             return Err(corrupt());

@@ -11,10 +11,11 @@ use super::constants::{
 };
 use crate::EntityId;
 use crate::error::{Error, Result};
-use crate::outbound_chokepoint::FanoutApprovalMode;
-use crate::task_verb::{
-    ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, TaskCreateRateLimit,
-};
+use crate::gate::consult_fanout_values::ConsultFanOutPolicy;
+use crate::gate::consult_fanout_values::ConsultFanOutRate;
+use crate::gate::consult_fanout_values::ConsultFanOutScope;
+use crate::gate::consult_fanout_values::TaskCreateRateLimit;
+use crate::gate::fanout_mode::FanoutApprovalMode;
 
 /// The precedence row is itself vault policy. The stricter option ignores
 /// holder overrides; neither option permits a child to exceed the vault.

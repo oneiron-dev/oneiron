@@ -15,10 +15,10 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
-use crate::habit::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 /// TASK-body subkind for sends executed by a connector actor.
 pub const CONNECTOR_SEND_TASK_SUBKIND: &str = "connector_send";
@@ -192,14 +192,14 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
-    schedule_context: &crate::memory::OutboundScheduleContext,
+    schedule_context: &crate::delivery_window::OutboundScheduleContext,
     continuation: &super::OutboundScheduleContinuation,
     calendar_invite: Option<&CalendarInvitePayload>,
     counterparty_ref: Option<&str>,
     occurred_at: u64,
 ) -> Result<(), Error> {
     if let Some(party) = counterparty_ref {
-        crate::comm::validate_comm_party_key(party)?;
+        crate::write_envelope::communication_record::validate_key_string(party)?;
         if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "noncanonical counterparty-bound connector verb",
@@ -329,7 +329,9 @@ impl Vault {
         if !has_connector_send_subkind(body_bytes)? {
             return Ok(None);
         }
-        if crate::habit::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
+        if crate::write_envelope::task_body::task_role_from_body_bytes(body_bytes)?
+            != TaskRole::Task
+        {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send must use the Task role",
             )));
@@ -357,11 +359,9 @@ impl Vault {
                 )));
             }
         };
-        if body
-            .counterparty_ref
-            .as_deref()
-            .is_some_and(|party| crate::comm::validate_comm_party_key(party).is_err())
-        {
+        if body.counterparty_ref.as_deref().is_some_and(|party| {
+            crate::write_envelope::communication_record::validate_key_string(party).is_err()
+        }) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "invalid connector send counterparty",
             )));

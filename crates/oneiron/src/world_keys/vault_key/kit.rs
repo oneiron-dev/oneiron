@@ -37,14 +37,15 @@ use super::{CarriedVaultKey, STATE, VaultDataKey, VaultKeyUnlock, VaultKeyWrapKi
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::recovery::{
-    KitError, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, RestoredKitSecret, issue_vault_key_kit, join_kept_piece, restore_kit,
-    vault_key_piece_install,
-};
 use crate::world_keys::kit::{kit_refused, resolve_homes};
 use crate::world_keys::kit_piece::keep_this_machine_piece;
 use crate::world_keys::{keystore_error, refused};
+use crate::{
+    recovery::KitPieceStore,
+    recovery::{issue_vault_key_kit, join_kept_piece, restore_kit, vault_key_piece_install},
+    store::recovery_kit::{KitError, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    store::recovery_kit::{KitSecretKind, RestoredKitSecret},
+};
 
 /// A data-key kit just issued: its pieces for the owner to place, and its
 /// public facts. Nothing secret is stored or published.

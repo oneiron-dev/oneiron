@@ -42,11 +42,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::authority::{AuthorityFold, ROLE_OWNER};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::ROLE_OWNER;
 
 use super::history_advance::{CarriedHistory, carried_history};
 use super::history_projection::{ControlRows, Succession, machine_history_rows_at, pin_key};

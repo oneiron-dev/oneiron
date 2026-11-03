@@ -22,7 +22,7 @@
 use super::retained_iterative::{self, RetainedLeafTransform};
 use super::{Budget, ContainerReadMode, Stop, Walked};
 use crate::error::Result;
-use crate::secret_custody::{KeyPlaces, MemberStep};
+use crate::file_secret_marks::{KeyPlaces, MemberStep};
 
 /// The caller's leaf diff: one changed member's original bytes, the copy's,
 /// the agent's and the spans the original's member keeps its keys at, to
