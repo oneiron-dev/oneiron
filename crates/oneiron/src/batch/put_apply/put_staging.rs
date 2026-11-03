@@ -534,13 +534,16 @@ pub(super) fn stage_local_proposal_observation(
         body_changed,
     } = observation;
     if !replicated
-        && let Some(body) =
-            body.filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
+        && let Some(body) = body
+            .filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = envelope
     {
         // The stored claim's scope, never a caller-selected policy position.
         let scope = crate::gate::policy_values::PolicyEvaluationScope {
-            world: Some(body.world.unwrap_or_else(oneiron_contracts::claim::base_world_id)),
+            world: Some(
+                body.world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(body.scope_project),
             ..Default::default()
         };

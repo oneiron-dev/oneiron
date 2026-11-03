@@ -93,7 +93,7 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
             "authority_scope".into(),
-            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
+            oneiron_authority::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
         ),
         (
             Value::from(KEY_CAPABILITY),
@@ -162,7 +162,7 @@ pub(crate) fn validate_access_grant_body_bytes(bytes: &[u8]) -> Result<()> {
 
 /// An AccessGrant body's terms but its principal.
 pub(crate) struct GrantTerms {
-    pub(crate) authority_scope: crate::federation::Scope,
+    pub(crate) authority_scope: oneiron_authority::federation::Scope,
     pub(crate) scope: AccessGrantScope,
     pub(crate) capability: AccessGrantCapability,
     pub(crate) status: AccessGrantStatus,
@@ -234,7 +234,7 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     };
     let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: crate::federation::scope_codec::decode_scope_value(required_value(
+        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
             entries,
             "authority_scope",
         )?)
@@ -263,7 +263,7 @@ fn encode_companion_bounds(bounds: Option<&super::CompanionGrantBounds>) -> Resu
         ),
         (
             Value::from(BOUNDS_KEYS[1]),
-            crate::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
+            oneiron_authority::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
         ),
     ]))
 }
@@ -281,7 +281,7 @@ fn decode_companion_bounds(value: &Value) -> Result<Option<super::CompanionGrant
             .as_str()
             .ok_or_else(invalid_grant)?
             .to_owned(),
-        ceiling: crate::federation::scope_codec::decode_scope_value(required_value(
+        ceiling: oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
             entries,
             BOUNDS_KEYS[1],
         )?)

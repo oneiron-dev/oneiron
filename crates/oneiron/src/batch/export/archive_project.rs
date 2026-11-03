@@ -49,12 +49,12 @@ use super::{
     VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::agent_def::KnowledgeFormat;
-use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBodyFile;
 use crate::skill::SkillRecord;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 
 /// Where the export writer (`serialize::vault_document`) writes an attached
 /// file's digest, by member kind: field names from the row's root, `*` for

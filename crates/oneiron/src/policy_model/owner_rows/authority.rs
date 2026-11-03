@@ -39,10 +39,10 @@ pub(super) fn row_target(scope: &crate::gate::PolicyRowScope, row_ref: &str) -> 
 /// reaches all projects in that world; a project-only row reaches all worlds
 /// in that project. A combined row requires both matching axes.
 fn scope_covers(
-    authority: &crate::federation::Scope,
+    authority: &oneiron_authority::federation::Scope,
     row_scope: &crate::gate::PolicyRowScope,
 ) -> bool {
-    use crate::federation::{ScopeAxis, ScopeId};
+    use oneiron_authority::federation::{ScopeAxis, ScopeId};
     fn covers(axis: &ScopeAxis<ScopeId>, reference: &str) -> bool {
         matches!(axis, ScopeAxis::All)
             || EntityId::from_hex(reference).is_ok_and(|id| axis.contains(&ScopeId(id)))

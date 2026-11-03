@@ -10,8 +10,8 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{receive_pack_field, receive_pack_fields, receive_pack_provenance_refused};
-use crate::write_envelope::claim_body::ClaimBody;
 use crate::error::Result;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// The schema a clean or unscanned outcome is written at, as before marks.
 const OUTCOME_SCHEMA: u16 = 1;

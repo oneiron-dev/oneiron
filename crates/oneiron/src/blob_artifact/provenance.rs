@@ -3,8 +3,8 @@
 use rmpv::Value;
 
 use crate::batch::secret_scan;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};

@@ -2,7 +2,8 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{OrgAdminPolicy, Scope};
+use crate::federation::OrgAdminPolicy;
+use oneiron_authority::federation::Scope;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use serde::{Deserialize, Serialize};
 

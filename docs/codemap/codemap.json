@@ -14088,6 +14088,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 20,
+      "mod": 1,
       "re-export": 13
      }
     },
@@ -14157,6 +14158,16 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/relationship_predicates.rs",
+     "purpose": "Claim predicates and label bounds for member-to-person relationships",
+     "surface": {
+      "const": 3
      }
     },
     {
@@ -30813,46 +30824,14 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DecodedEdgeValue",
-      "EdgeConfirmationStatus",
-      "EdgeInfo",
-      "EdgeProvenanceFlags",
-      "EdgeValueLayout"
-     ],
-     "path": "src/edge.rs",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
-     "surface": {
-      "crate-vis": 20,
-      "enum": 2,
-      "fn": 2,
-      "re-export": 2,
-      "struct": 3
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "EdgeKind"
-     ],
-     "path": "src/edge/kind.rs",
-     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
-     "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
      "notable": [],
-     "path": "src/edge/tests.rs",
-     "purpose": "—",
-     "surface": {}
+     "path": "src/edge_regeneration.rs",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "L",
@@ -34632,22 +34611,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DerivationBindError",
-      "DerivationKey",
-      "DerivationKind",
-      "DerivationOwner",
-      "DerivationScope",
-      "HostedDerivationCache",
-      "SealedOutput"
-     ],
+     "notable": [],
      "path": "src/federation/derivation.rs",
-     "purpose": "Account-sealed hosted derivations",
+     "purpose": "Account-sealed hosted derivations, defined in the storage layer",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
-      "struct": 5
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -34765,7 +34734,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 20,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 20,
       "struct": 2
@@ -35117,10 +35086,10 @@
      "path": "src/federation/relationships.rs",
      "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
      "surface": {
-      "const": 3,
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -35353,10 +35322,11 @@
      "path": "src/federation/stale.rs",
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
-      "const": 3,
+      "const": 1,
       "crate-vis": 9,
       "enum": 1,
       "fn": 9,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -41854,9 +41824,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 19,
-      "mod": 192,
-      "re-export": 84
+      "crate-vis": 23,
+      "mod": 193,
+      "re-export": 86
      }
     },
     {
@@ -59518,18 +59488,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/registry/mod.rs",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
-     "surface": {
-      "crate-vis": 3,
-      "mod": 1,
-      "re-export": 8
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -63721,6 +63679,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/serialize/grant_fields.rs",
+     "purpose": "Field projections of federation grant records",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/serialize/group_labels.rs",
      "purpose": "Static entity-type to section-label lookup used by every writer",
      "surface": {
@@ -63797,7 +63765,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 5
      }
     },
@@ -68530,6 +68498,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DerivationBindError",
+      "DerivationKey",
+      "DerivationKind",
+      "DerivationOwner",
+      "DerivationScope",
+      "HostedDerivationCache",
+      "SealedOutput"
+     ],
+     "path": "src/store/derivation.rs",
+     "purpose": "Account-sealed hosted derivations",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -69550,7 +69539,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 44,
-      "mod": 1,
+      "mod": 3,
       "re-export": 20
      }
     },
@@ -70197,6 +70186,16 @@
      "purpose": "One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_registration_keys.rs",
+     "purpose": "Storage keys for foreign-world registration and stale markers",
+     "surface": {
+      "const": 2
      }
     },
     {
@@ -85436,7 +85435,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85757,12 +85756,12 @@
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
-    "edge": {
-     "files": 3,
+    "edge_regeneration": {
+     "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
      "files": 85,
@@ -86248,11 +86247,11 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+     "layout": "dir (no mod.rs)",
+     "purpose": "—"
     },
     "repo_mutation": {
      "files": 48,
@@ -86367,7 +86366,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86479,7 +86478,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 195,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86712,8 +86711,8 @@
    },
    "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5887,
-   "test_files": 902
+   "source_files": 5889,
+   "test_files": 901
   },
   "oneiron-android": {
    "files": [
@@ -87659,6 +87658,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecodedEdgeValue",
+      "EdgeConfirmationStatus",
+      "EdgeInfo",
+      "EdgeProvenanceFlags",
+      "EdgeValueLayout",
+      "Regeneration",
+      "StrictEdgeRecord"
+     ],
+     "path": "src/edge.rs",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
+     "surface": {
+      "const": 4,
+      "enum": 3,
+      "fn": 13,
+      "mod": 1,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EdgeKind"
+     ],
+     "path": "src/edge/kind.rs",
+     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edge/kind_tables.rs",
+     "purpose": "Exhaustive tables over [`EdgeKind`]",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edge/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -87706,7 +87760,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 13
+      "mod": 15
      }
     },
     {
@@ -87753,6 +87807,16 @@
      "purpose": "Shared Beta posterior bandit seam",
      "surface": {
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry.rs",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
+     "surface": {
+      "re-export": 10
      }
     },
     {
@@ -87817,6 +87881,13 @@
      "layout": "file",
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
+    "edge": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
+    },
     "entity_id": {
      "files": 1,
      "impl_vault": false,
@@ -87873,6 +87944,13 @@
      "layout": "file",
      "purpose": "Shared Beta posterior bandit seam"
     },
+    "registry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+    },
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
@@ -87897,8 +87975,8 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 14,
-   "test_files": 0
+   "source_files": 18,
+   "test_files": 1
   },
   "oneiron-bench": {
    "files": [
