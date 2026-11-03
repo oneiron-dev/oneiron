@@ -186,8 +186,8 @@ pub struct RecoveryKitIssueArgs {
 #[derive(Args, Clone, Debug)]
 pub struct KitPieceArgs {
     /// A piece file: a recovery code as text, or a piece export. Give two, or
-    /// one and the passphrase. A restore on an install that keeps a piece may
-    /// give none and use that piece.
+    /// one and the passphrase. A plain-vault restore on an install that keeps
+    /// a piece may give none and use that piece; pre-open restores need them.
     #[arg(long = "piece", value_name = "FILE")]
     pub pieces: Vec<PathBuf>,
 
