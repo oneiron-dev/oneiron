@@ -185,9 +185,8 @@ impl Vault {
                 kind = ?error.kind(),
                 "a world kit that can no longer be confirmed keeps its pending kit-piece slots"
             );
-            let named = self.with_write_txn(|txn| {
-                UNLISTED_KITS.put(&self.store, txn, &kit_key(kit), &kit)
-            });
+            let named =
+                self.with_write_txn(|txn| UNLISTED_KITS.put(&self.store, txn, &kit_key(kit), &kit));
             if let Err(error) = named {
                 tracing::warn!(
                     kind = ?error.kind(),
