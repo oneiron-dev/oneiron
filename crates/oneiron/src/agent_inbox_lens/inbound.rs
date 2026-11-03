@@ -159,9 +159,9 @@ impl Vault {
     }
 }
 
-fn comm_error(error: crate::comm::CommError) -> Error {
+fn comm_error(error: crate::write_envelope::communication::CommError) -> Error {
     match error {
-        crate::comm::CommError::Engine(error) => error,
+        crate::write_envelope::communication::CommError::Engine(error) => error,
         _ => Error::InvalidClaimBody("inbox thread membership is malformed"),
     }
 }

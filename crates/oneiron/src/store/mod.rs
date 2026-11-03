@@ -164,6 +164,9 @@ mod backup_change;
 pub mod blob_fingerprint;
 #[cfg(unix)]
 mod body_envelope;
+pub mod claim_descriptors;
+pub(crate) mod query_memo_codec;
+pub mod query_memos;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;

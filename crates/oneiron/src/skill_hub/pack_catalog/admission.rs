@@ -433,7 +433,7 @@ impl Vault {
             crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
                 self,
                 txn,
-                &crate::saved_query::PackMove {
+                &crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
                     pack: &source.manifest.name,
                     from_version: &from_version,
                     to_version: &source.manifest.version,

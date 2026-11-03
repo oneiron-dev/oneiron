@@ -127,12 +127,12 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
-    } else if crate::campaign::claims::is_campaign_pack_claim_predicate(&body.predicate) {
+    } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(&body.predicate) {
         // EXACT-predicate match, deliberately ahead of the `comm.` family: the
         // CRM pack owns `comm.do_not_contact` / `comm.bounce` /
         // `comm.jurisdiction` while `comm.rs` keeps `comm.opt_out` and friends.
-        crate::campaign::claims::validate_campaign_pack_claim_structure(&body)?;
-    } else if crate::comm::is_comm_claim_predicate(&body.predicate) {
+        crate::write_envelope::cohort_claims::validate_campaign_pack_claim_structure(&body)?;
+    } else if crate::write_envelope::communication::is_comm_claim_predicate(&body.predicate) {
         crate::comm::validate_comm_claim_structure(&body)?;
     } else if crate::disclosure::is_disclosure_claim_predicate(&body.predicate) {
         crate::disclosure::validate_disclosure_claim_structure(&body)?;

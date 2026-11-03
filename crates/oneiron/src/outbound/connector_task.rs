@@ -199,7 +199,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     occurred_at: u64,
 ) -> Result<(), Error> {
     if let Some(party) = counterparty_ref {
-        crate::comm::validate_comm_party_key(party)?;
+        crate::write_envelope::communication_record::validate_key_string(party)?;
         if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "noncanonical counterparty-bound connector verb",
@@ -360,7 +360,7 @@ impl Vault {
         if body
             .counterparty_ref
             .as_deref()
-            .is_some_and(|party| crate::comm::validate_comm_party_key(party).is_err())
+            .is_some_and(|party| crate::write_envelope::communication_record::validate_key_string(party).is_err())
         {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "invalid connector send counterparty",
