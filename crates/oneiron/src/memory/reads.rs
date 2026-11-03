@@ -23,6 +23,8 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod receipt_page;
 
+pub use receipt_page::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
+
 const SNIPPET_MAX_CHARS: usize = 160;
 
 /// Claim ids read per lane read while listing: a bounded list stops early.
