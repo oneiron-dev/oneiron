@@ -295,13 +295,19 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
+        // A normal AgentRun append omitting made_by keeps the submitting
+        // actor's own default, so Keep records the submitter, not the keeper
+        // (blind review of #4387). No input rows: the envelope names only its
+        // writer, so retention admits nothing new and no door refuses more.
         let output = NativeOutput {
             run_ref: run_ref.clone(),
             name: body.name,
             media_type: body.media_type,
             bytes: bytes.to_vec(),
             report: serde_json::json!({}),
-            made_by: made_by.cloned(),
+            made_by: made_by.cloned().or_else(|| {
+                Some(default_version_made_by(&actor, provenance, None, learned_at))
+            }),
         };
         self.propose_native_output_with_write_grant(
             artifact_id,

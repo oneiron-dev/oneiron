@@ -770,7 +770,16 @@ fn outline_content_equal(held: &Value, current: &Value) -> bool {
     fn without_drift(value: &Value) -> Value {
         let mut stripped = value.clone();
         pins_mut(&mut stripped, &mut |pin| {
-            if let Some(object) = pin.as_object_mut() {
+            // Only the engine's verdict is ignored: a cited CLAIM's pin
+            // always, and a claimless note span, exactly the set
+            // map_evidence_in_txn writes. A caller-owned drift flag on an
+            // external or opaque pin stays content, so changing it reads as
+            // an outline edit (blind review of #4387).
+            let engine_mapped = note_pin(pin).is_some()
+                || engine_span(pin).is_some_and(|span| span.claim.is_none());
+            if engine_mapped
+                && let Some(object) = pin.as_object_mut()
+            {
                 object.remove("drift");
             }
         });

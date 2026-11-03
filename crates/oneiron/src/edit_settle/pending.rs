@@ -59,6 +59,11 @@ pub(super) struct PendingRow {
     made_by: Option<MadeBy>,
     base_version: Option<u64>,
     base_content_hash: Option<[u8; 32]>,
+    /// An explicit version fork waits here: its Keep lands a fork version
+    /// even against the current head (blind review of #4387). Old rows read
+    /// back as false and keep today's behavior.
+    #[serde(default)]
+    explicit_fork: bool,
     new_bytes: Vec<u8>,
     body: PendingBody,
     /// A deck export's projection, which its Keep rebinds the deck to.
@@ -483,6 +488,7 @@ impl Vault {
             made_by: output.made_by.clone(),
             base_version: base.map(|(version, _)| version),
             base_content_hash: base.map(|(_, hash)| hash),
+            explicit_fork: base_override.is_some(),
             new_bytes: output.bytes.clone(),
             deck: deck.map(|(_, hold)| hold),
             body: PendingBody::Output {
@@ -665,10 +671,13 @@ impl Vault {
             // head keeps both, as a person may keep a machine version beside
             // their own. Made against nothing, it lands on whatever head is.
             // A deck export was made against the version its deck projected
-            // over, whatever head it found then (FIX 2700).
-            let fork_parent = row
-                .base_version
-                .filter(|base| head.as_ref().is_some_and(|head| head.version != *base));
+            // over, whatever head it found then (FIX 2700). An explicit fork
+            // lands a fork version even against the current head; anything
+            // else forks only from an older head (blind review of #4387).
+            let fork_parent = row.base_version.filter(|base| {
+                row.explicit_fork
+                    || head.as_ref().is_some_and(|head| head.version != *base)
+            });
             let version = match &row.made_by {
                 Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
                     wtxn,
@@ -832,6 +841,7 @@ fn edit_pending_row(
         made_by: made_by.cloned(),
         base_version: proposal.base_version,
         base_content_hash: Some(proposal.base_content_hash),
+        explicit_fork: false,
         new_bytes: proposal.new_bytes.clone(),
         deck: None,
         body: PendingBody::Edit {
