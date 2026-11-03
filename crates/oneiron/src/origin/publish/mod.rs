@@ -254,7 +254,7 @@ impl Vault {
             state: OriginPublishState::Pending,
             requested: OriginPublishAct {
                 actor: Some(caller.actor),
-                class: caller.class.into(),
+                class: caller.class,
                 authority,
                 at: now,
             },
