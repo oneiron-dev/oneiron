@@ -46,7 +46,11 @@ pub(in crate::recovery::checkpoint) fn scrub_in_txn(
         crate::llm::erase_submissions_in_txn(store, wtxn, id)?;
         crate::saved_query::erase_memos_for_source_in_txn(store, wtxn, id)?;
         crate::memory::erase_birth_reply_assertions_in_txn(store, wtxn, id)?;
-        crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
+        // The whole blob-artifact teardown, not only its pointers, so the
+        // restored copy releases the erased artifact's ASSETs as the erase
+        // here did (FIX 11671). On an id no blob chain names it reads none
+        // and removes only the pointers, as before.
+        crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }
