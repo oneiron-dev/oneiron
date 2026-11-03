@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::sync::Mutex;
 
 use rmpv::Value;
 
@@ -681,6 +682,87 @@ fn escape_code_run_frame_marks(payload: &str) -> String {
         .replace(CODE_RUN_CONSOLE_CLOSE, r"<\/console>")
 }
 
+/// Transient decoded-row memos for one replay record. They are never
+/// persisted: a clone starts cold and equality ignores them because the rows
+/// are pure functions of `bridge_calls` (FIX 837).
+#[derive(Debug, Default)]
+pub(crate) struct VerbRowsCache {
+    agent: Mutex<IncrementalRows>,
+    resident: Mutex<IncrementalRows>,
+}
+
+impl Clone for VerbRowsCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for VerbRowsCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl VerbRowsCache {
+    fn invalidate(&self) {
+        *lock_incremental(&self.agent) = IncrementalRows::default();
+        *lock_incremental(&self.resident) = IncrementalRows::default();
+    }
+}
+
+#[derive(Debug)]
+struct IncrementalRows {
+    decoded: usize,
+    rows: Option<Vec<EntityId>>,
+}
+
+impl Default for IncrementalRows {
+    fn default() -> Self {
+        Self {
+            decoded: 0,
+            rows: Some(Vec::new()),
+        }
+    }
+}
+
+fn lock_incremental(cache: &Mutex<IncrementalRows>) -> std::sync::MutexGuard<'_, IncrementalRows> {
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn cached_rows(
+    cache: &Mutex<IncrementalRows>,
+    calls: &[CodeRunBridgeCall],
+    decode: impl Fn(&[CodeRunBridgeCall], usize) -> Option<Vec<EntityId>>,
+) -> Option<Vec<EntityId>> {
+    let mut cached = lock_incremental(cache);
+    if calls.len() < cached.decoded {
+        *cached = IncrementalRows::default();
+    }
+    if cached.decoded == calls.len() {
+        return cached.rows.clone();
+    }
+    // Unknown stays unknown: a later append cannot make an incomplete row
+    // witness look complete again.
+    if cached.rows.is_none() {
+        return None;
+    }
+    match decode(calls, cached.decoded) {
+        Some(rows) => {
+            if let Some(kept) = cached.rows.as_mut() {
+                kept.extend(rows);
+                cached.decoded = calls.len();
+            }
+        }
+        None => {
+            cached.rows = None;
+            cached.decoded = calls.len();
+        }
+    }
+    cached.rows.clone()
+}
+
 /// Persisted deterministic replay record for a first-party code run.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -700,6 +782,9 @@ pub struct CodeRunReplayRecord {
     /// Skills loaded and other runs' result rows read so far (FIX 6999).
     /// `None` once any such constituent read is unknown.
     pub callable_rows: Option<Vec<EntityId>>,
+    /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
+    /// Any future in-place prefix outcome rewrite must invalidate them.
+    pub(crate) verb_rows_cache: VerbRowsCache,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -778,6 +863,7 @@ impl CodeRunReplayRecord {
             bindings: Vec::new(),
             live_run: None,
             callable_rows: Some(Vec::new()),
+            verb_rows_cache: VerbRowsCache::default(),
         }
     }
 
@@ -831,7 +917,27 @@ impl CodeRunReplayRecord {
     /// such a run's answers.
     #[must_use]
     pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
-        agent_verb_rows_of(&self.bridge_calls)
+        cached_rows(
+            &self.verb_rows_cache.agent,
+            &self.bridge_calls,
+            |calls, from| agent_verb_rows_of_from(calls, from),
+        )
+    }
+
+    /// The second resident read-set fold, sharing the same append-only memo
+    /// so each output does not re-decode the whole record (FIX 837).
+    pub(crate) fn cached_resident_tool_answer_rows(&self) -> Option<Vec<EntityId>> {
+        cached_rows(
+            &self.verb_rows_cache.resident,
+            &self.bridge_calls,
+            |calls, from| super::read_set::resident_tool_answer_rows_of_from(calls, from, None),
+        )
+    }
+
+    /// A delivered reply can add rows to a parked prefix call. That is the
+    /// only in-loop prefix mutation; every replacement starts cold instead.
+    pub(crate) fn invalidate_verb_rows(&self) {
+        self.verb_rows_cache.invalidate();
     }
 }
 
@@ -842,8 +948,12 @@ impl CodeRunReplayRecord {
 /// definitions and attempts it served (FIX 5316). A board frame observed
 /// beside an answer adds the rows it was derived from (FIX 2135).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
+    agent_verb_rows_of_from(calls, 0)
+}
+
+fn agent_verb_rows_of_from(calls: &[CodeRunBridgeCall], from: usize) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
-    let verb_calls = calls.iter().filter(|call| {
+    let verb_calls = calls.get(from..)?.iter().filter(|call| {
         matches!(
             call.effect,
             SelfEffect::AgentVerb | SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch
