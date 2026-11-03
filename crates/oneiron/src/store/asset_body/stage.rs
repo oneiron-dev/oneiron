@@ -242,7 +242,7 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
         )?;
         return Ok(
             match super::asset_file_kind(&bytes)
-                .filter(|_| crate::batch::secret_scan::write_tree_hit(&bytes).is_none())
+                .filter(|_| crate::batch::secret_scan::write_tree_hit(&bytes, None).is_none())
             {
                 Some(kind) => Judged::File(kind),
                 None => Judged::Row(Some(bytes)),
