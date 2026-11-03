@@ -115,16 +115,30 @@ impl ExpressionPreferenceArchive {
                 .body
                 .valid_to
                 .ok_or_else(|| invalid("superseded row has no close"))?;
-            let closer = links
+            // REVIEW-4378 P1: several closers for one row at one time is
+            // the branching-ambiguous shape this history refuses: require
+            // exactly one eligible closer, never silently keep the max.
+            let mut matching: Vec<EntityId> = links
                 .iter()
                 .filter(|&(_, closed, link_at)| *closed == row.id && *link_at == at)
                 .map(|&(closer, _, _)| closer)
-                .max()
-                .ok_or_else(|| invalid("superseded row has no archived closer"))?;
+                .collect();
+            matching.sort();
+            matching.dedup();
+            let &[closer] = matching.as_slice() else {
+                return Err(invalid("superseded row has no unique archived closer"));
+            };
             if by_id[&closer].body.lifecycle == ClaimLifecycleStatus::Retracted {
                 return Err(invalid("a retracted row closes no standing row"));
             }
             closes.push((closer, row.id, at));
+        }
+        // REVIEW-4378 P1: every archived link must take effect as a
+        // selected close. A link whose closed row stands Active (a
+        // reciprocal pair, a never-applied edge) restores branching/cyclic
+        // history the edge import would then whitelist, so refuse it here.
+        if !links.iter().all(|link| closes.contains(link)) {
+            return Err(invalid("supersession link takes no archived effect"));
         }
         // A closer must still be active when its close lands, so a row
         // closes before the close that closes it. No such order, no history.

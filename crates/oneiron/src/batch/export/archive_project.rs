@@ -115,9 +115,11 @@ const FILE_DESCRIPTOR_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
 /// The fields naming the record a member's row is of, as the export writer
 /// writes them: an entity's `id`, a skill bundle's `entity.id`, an edge's two
 /// ends, a pack source's and an agent bundle's `entity_id`, a derivation
-/// envelope's claim `id`, a run's `run_id`, a custody record's `id` and an
-/// epoch floor's `session`. A side row is not listed: it goes with the record
-/// its table reads from it, judged with its group ([`project_side_rows`]).
+/// envelope's claim `id`, a run's `run_id`, a custody record's `id`, a row
+/// birth's born row `id` (REVIEW-4378 P1: the birth follows its row, never
+/// the facet text it also names), and an epoch floor's `session`. A side row
+/// is not listed: it goes with the record its table reads from it, judged
+/// with its group ([`project_side_rows`]).
 const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::Entity, &["id"]),
     (ArchiveRecordKind::Claim, &["id"]),
@@ -129,6 +131,7 @@ const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::DerivationEnvelope, &["id"]),
     (ArchiveRecordKind::Run, &["run_id"]),
     (ArchiveRecordKind::SecretCustody, &["id"]),
+    (ArchiveRecordKind::RowBirth, &["id"]),
     (ArchiveRecordKind::EpochFloor, &["session"]),
 ];
 

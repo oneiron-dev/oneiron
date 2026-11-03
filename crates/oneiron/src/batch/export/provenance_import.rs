@@ -290,8 +290,23 @@ fn restore_cohort(
     // The last row this restore inserted: on a learned-at tie the implicit
     // strictly-older closure cannot close it, so a successor names it as its
     // explicit prior when the archive holds it Superseded (FIX 9594).
+    // REVIEW-4378 P1: IDs order nothing, so a tie may list the closer
+    // before the Superseded row it closes. Restore every tied Superseded
+    // row before its tie-mates (stable) so the closer still names it.
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by_key(|&i| {
+        (
+            rows[i].0.learned_at,
+            if rows[i].2.lifecycle == ClaimLifecycleStatus::Superseded {
+                0
+            } else {
+                1
+            },
+        )
+    });
     let mut previous: Option<(EntityId, u64, ClaimLifecycleStatus)> = None;
-    for (row, id, body) in rows {
+    for &i in &order {
+        let (row, id, body) = &rows[i];
         let expected =
             ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
         if let Some(existing) =
