@@ -19,7 +19,7 @@ use crate::skill_hub::HubFile;
 use crate::{EntityId, Error, Result};
 
 /// The domain a site-skill candidate's fingerprint is hashed in. It must
-/// differ from E8's [`CANDIDATE_DOMAIN`](crate::browser_library::CANDIDATE_DOMAIN):
+/// differ from E8's [`CANDIDATE_DOMAIN`](crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN):
 /// the two facets never share a seen marker.
 const SITE_SKILL_DISTILL_DOMAIN: &[u8] = b"oneiron:coach-site-skill-distill:v1";
 

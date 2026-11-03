@@ -29,7 +29,8 @@ use crate::agent_dispatch::{
     AgentSpawnContext, PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, SpawnSpend,
 };
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{SelfSpawnAsk, TaskExposure};
+use crate::code_run::{SelfSpawnAsk};
+use crate::team::task_exposure::TaskExposure;
 use crate::entity_id::EntityId;
 use crate::skill::LoadedSkillPack;
 use crate::task_type::{PlacementDecisions, TaskTypeRef};

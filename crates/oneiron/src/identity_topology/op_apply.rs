@@ -313,7 +313,7 @@ impl Vault {
                             tgt: merge.survivor,
                             weight,
                             created_at: now,
-                            vad: crate::affect::Vad::NEUTRAL,
+                            vad: oneiron_contracts::affect::Vad::NEUTRAL,
                             provenance: None,
                         });
                     }
@@ -342,7 +342,7 @@ impl Vault {
                             tgt: *head,
                             weight,
                             created_at: now,
-                            vad: crate::affect::Vad::NEUTRAL,
+                            vad: oneiron_contracts::affect::Vad::NEUTRAL,
                             provenance: None,
                         });
                     }
@@ -514,7 +514,7 @@ impl Vault {
                 tgt: id,
                 weight,
                 created_at: now,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 provenance: None,
             });
         }

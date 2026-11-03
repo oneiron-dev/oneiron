@@ -22,7 +22,12 @@ use heed::RoTxn;
 use super::claims::{RepoProjectionClaim, RepoProjectionRecord};
 use super::git::{projection_graph_dir, projection_ingress_dir};
 use crate::Vault;
-use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState, load_act_in_txn};
+use crate::{
+    store::checkout_lease::CheckoutId,
+    checkout::lease::CheckoutLeaseAct,
+    store::checkout_lease::CheckoutLeaseState,
+    checkout::lease::load_act_in_txn,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
