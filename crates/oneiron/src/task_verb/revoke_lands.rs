@@ -798,8 +798,8 @@ fn clip(text: &str, max: usize) -> String {
     format!("{}…", &text[..end])
 }
 
-use serde::{Deserialize, Serialize};
 use crate::connector_key::SlatePackSource;
+use serde::{Deserialize, Serialize};
 
 /// What the owner reviewed, not a mutable pack name or source alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

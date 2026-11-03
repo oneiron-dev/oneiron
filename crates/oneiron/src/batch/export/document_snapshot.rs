@@ -29,13 +29,19 @@ use crate::write_envelope::WriteActor;
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<(crate::store::result_manifest::CodeRunRawOutput, Option<&'static str>)>,
+    pub(crate) outputs: Vec<(
+        crate::store::result_manifest::CodeRunRawOutput,
+        Option<&'static str>,
+    )>,
     /// Live result names that resolve to one of `outputs`, judged with it.
     pub(crate) bindings: Vec<(crate::code_run::CodeRunResultBinding, Option<&'static str>)>,
     pub(crate) determinism: Option<crate::code_run::CodeRunDeterminism>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
-    pub(crate) receipts: Vec<(crate::store::reader_fold_receipt::ReaderFoldReceipt, Option<&'static str>)>,
+    pub(crate) receipts: Vec<(
+        crate::store::reader_fold_receipt::ReaderFoldReceipt,
+        Option<&'static str>,
+    )>,
 }
 
 /// One result body a clean occurrence names: its bytes as they stream, read

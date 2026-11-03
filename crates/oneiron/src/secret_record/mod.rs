@@ -4,11 +4,11 @@ pub(crate) mod codec;
 pub(crate) mod floor;
 mod types;
 
-pub use self::types::*;
-pub(crate) use self::types::SECRET_CUSTODY_STORED_SCHEMA_VERSION;
-pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
+pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub(crate) use self::types::SECRET_CUSTODY_STORED_SCHEMA_VERSION;
+pub use self::types::*;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 pub(crate) mod floor_keys {
@@ -28,8 +28,8 @@ mod write_records;
 
 pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
-pub use self::write_records::{CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled};
 pub(crate) use self::write_records::{ArchiveSameId, CustodyWrite, FoundNote, StoredValue};
+pub use self::write_records::{CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled};
 
 pub(crate) use self::write_records::{SLOT_PREFIX, custody_portable, is_cloud_registration_slot};
 

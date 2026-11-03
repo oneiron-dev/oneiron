@@ -168,7 +168,8 @@ pub struct DescribeRequest {
 }
 
 /// The refusal of an `after` that names no handle to poll.
-pub(crate) const AFTER_NEEDS_HANDLE: &str = "describe(after) polls a handle: name the handle it observed";
+pub(crate) const AFTER_NEEDS_HANDLE: &str =
+    "describe(after) polls a handle: name the handle it observed";
 
 impl DescribeRequest {
     /// The one describe selector check (FIX 3256), which every door runs

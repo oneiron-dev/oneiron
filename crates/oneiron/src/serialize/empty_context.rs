@@ -26,4 +26,3 @@ pub struct EmptyContext {
     pub total_in_scope: usize,
     pub hint: String,
 }
-

@@ -9,13 +9,16 @@ use crate::vault::Vault;
 /// This device's stable client id. Key: `()` (singleton).
 const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDENTITY_CLIENT_ID);
 /// Cached Ed25519 verifying key of the device key. Key: `()`.
-pub(crate) const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+pub(crate) const DEVICE_PK: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::IDENTITY_DEVICE_PK);
 /// The MACHINE row this install is (16 B entity id). Not the client id: that
 /// is a CRDT peer id. A checkpoint image restored directly drops it, so a copy
 /// on another install never is this machine. Key: `()`.
-pub(crate) const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
+pub(crate) const MACHINE_ID: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::IDENTITY_MACHINE_ID);
 /// Cached Ed25519 verifying key of the machine key (FIX 5472). Key: `()`.
-pub(crate) const MACHINE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_PK);
+pub(crate) const MACHINE_PK: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::IDENTITY_MACHINE_PK);
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct
@@ -47,7 +50,6 @@ pub(crate) struct InstallSigner {
     pub(crate) machine_key: SigningKey,
     pub(crate) device_key: SigningKey,
 }
-
 
 /// Loads `m:client_id` inside the caller's txn, minting it once (u64 LE,
 /// nonzero) when absent.

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::channel_identity::ChannelIdentityState;
+use crate::channel_identity_selection::ThreadMaskSelectionExt;
 use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
     ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery,
@@ -14,7 +15,6 @@ use crate::channel_identity_selection::{
     resolve_channel_identity_selection,
 };
 use crate::write_envelope::thread_claim::ThreadMask;
-use crate::channel_identity_selection::ThreadMaskSelectionExt;
 
 /// Authorship fields are deliberately absent. The authenticated writer and
 /// engine clock stamp the persisted row.
