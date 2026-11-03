@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1219 facade rows, 4422 declarations.
+Census: 1219 facade rows, 4421 declarations.
 Inputs: 1147 of 1219 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1053 of 1219 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -12876,14 +12876,14 @@ class OriginPublishRemoteAt(TypedDict):
     commit: str
 OriginPublishRemote = OriginPublishRemoteAbsent | OriginPublishRemoteAt
 OriginPublishState = Literal["pending", "approved", "dispatching", "published", "observed_published", "refused", "cancelled", "expired"]
-OriginPublishActorClass = Literal["human", "agent", "system"]
+EdgeActorClass = Literal["human", "agent", "system"]
 class OriginPublishAuthorityOwner(TypedDict):
     kind: Literal["owner"]
 class OriginPublishAuthorityGrant(TypedDict):
     kind: Literal["grant"]
     grant: EntityId
 OriginPublishAuthority = OriginPublishAuthorityOwner | OriginPublishAuthorityGrant
-OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": OriginPublishActorClass, "authority": OriginPublishAuthority, "at": int})
+OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": EdgeActorClass, "authority": OriginPublishAuthority, "at": int})
 OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing", "marked_live_secret", "secret_history_unknown"]
 class OriginPublishRefusal(TypedDict):
     reason: OriginPublishRefusalReason
@@ -17439,7 +17439,6 @@ DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class"
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
-QuestionAskerClass = Literal["human", "agent", "system"]
 class FrozenReadLane(TypedDict):
     credential: NotRequired[list[int] | None]
     authority: NotRequired[Scope | None]
@@ -17452,7 +17451,7 @@ class QuestionRecord(TypedDict):
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
-    asker_class: NotRequired[QuestionAskerClass | None]
+    asker_class: NotRequired[EdgeActorClass | None]
     read_lane: FrozenReadLane
 class QuestionEditRequest(TypedDict):
     id: EntityId
