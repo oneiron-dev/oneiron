@@ -748,6 +748,63 @@ pub(crate) fn take_reading_in_txn(
     GIVEN.put(&vault.store, txn, turn, &given)
 }
 
+/// The latest-round bookkeeping of `hold_in_txn` for an assignment a
+/// Micro selection retry records outside a window (a completed widened
+/// branch's stamp, an owed chunk's enqueue): the newest stamped turn
+/// moves `LATEST` forward under `round` - the carrier attempt's own
+/// round, which its completion applies through the usual door - the
+/// previous latest round retires, stamped turns ride nothing, and
+/// riders their assignment may have changed the value of are released.
+/// Without it a stamped turn left an earlier one holding, and a later
+/// return to its words was consumed as that turn's repeat. `stamped`
+/// carries the readings the caller already recorded as taken; they are
+/// never recomputed here. No round: only the forward move is skipped.
+pub(crate) fn note_assignment_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    round: Option<[u8; 32]>,
+    stamped: &[(EntityId, [u8; 32])],
+) -> Result<()> {
+    let store = &vault.store;
+    let mut queued = BTreeSet::new();
+    let mut latest: Option<(TurnKey, [u8; 32], EntityId)> = None;
+    for (turn, reading) in stamped {
+        let Some(at) = turn_key_in_txn(store, txn, turn)? else {
+            continue;
+        };
+        queued.insert(at);
+        if latest.as_ref().is_none_or(|(before, ..)| at > *before) {
+            latest = Some((at, *reading, *turn));
+        }
+    }
+    if let (Some(round), Some((key, reading, turn))) = (round, latest) {
+        let previous = LATEST.get(store, txn, &())?;
+        if previous.as_ref().is_none_or(|previous| key >= previous.key) {
+            let partition =
+                crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, &turn)?;
+            if let Some(partition) = partition {
+                let row = LatestTurn {
+                    key,
+                    round,
+                    partition,
+                    reading: Some(reading),
+                };
+                LATEST.put(store, txn, &(), &row)?;
+                if let Some(previous) = previous
+                    && previous.round != round
+                {
+                    retire_in_txn(store, txn, &previous.round)?;
+                }
+            }
+        }
+    }
+    // A turn assigned again rides nothing.
+    for (_, turn) in &queued {
+        unride_in_txn(store, txn, turn)?;
+    }
+    release_in_txn(store, txn, &queued)
+}
+
 /// Records a fresh owed chunk as a projection round and its turns' current
 /// words as taken, in its enqueue transaction (FIX 12246): the same
 /// assignment-time record `hold_in_txn` makes, so erasing or demoting one
@@ -772,17 +829,20 @@ pub(crate) fn take_chunk_words_in_txn(
     round.applied = false;
     round.turns = turns.to_vec();
     ROUND.put(&vault.store, txn, &id, &round)?;
+    let mut stamped = Vec::new();
     for turn in turns {
         let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
         if !given.rounds.contains(&id) {
             given.rounds.push(id);
         }
         if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
-            given.taken = Some(reading(&statements));
+            let reading = reading(&statements);
+            given.taken = Some(reading);
+            stamped.push((*turn, reading));
         }
         GIVEN.put(&vault.store, txn, turn, &given)?;
     }
-    Ok(())
+    note_assignment_in_txn(vault, txn, Some(id), &stamped)
 }
 
 /// The version of one turn's statements.
@@ -796,7 +856,7 @@ fn reading(statements: &BTreeSet<[u8; 32]>) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
-fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
+pub(crate) fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:dreamer-projector:round:v1");
     hash.update(&(kind.len() as u64).to_be_bytes());

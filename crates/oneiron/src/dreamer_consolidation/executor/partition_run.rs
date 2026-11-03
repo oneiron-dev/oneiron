@@ -68,6 +68,18 @@ impl ConsolidationExecutor<'_> {
                     .map(|reading| (turn, reading))
             })
             .collect();
+        // The projection round this attempt itself carries, for the
+        // latest-round bookkeeping its widened stamp owes: a deferral
+        // requeues this same row, and a successor copies kind + dedupe
+        // key, so the id names the live round its window or chunk made.
+        let widened_round = attempt
+            .status
+            .attempt
+            .dedupe_key
+            .as_deref()
+            .map(|dedupe_key| {
+                crate::dreamer_wake::projection_round_id(&attempt.status.attempt.kind, dedupe_key)
+            });
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
         let run_started = Instant::now();
@@ -104,7 +116,7 @@ impl ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
+                    .commit_candidates(&resources, candidates, &widened, widened_round, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -119,7 +131,7 @@ impl ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &[], ctx, stages)
+                    .commit_candidates(&resources, candidates, &[], widened_round, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -151,13 +163,16 @@ impl ConsolidationExecutor<'_> {
 
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an
     /// accepted commit it also records the frozen readings this branch's
-    /// widening assigned (`widened`) as taken, in the stamp's own commit
-    /// after the candidates' (FIX 12246).
+    /// widening assigned (`widened`) as taken, with the latest-round
+    /// bookkeeping that assignment owes under this attempt's own round
+    /// (`widened_round`), in the stamp's own commit after the candidates'
+    /// (FIX 12246).
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
         widened: &[(EntityId, [u8; 32])],
+        widened_round: Option<[u8; 32]>,
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
     ) -> Result<()> {
@@ -179,7 +194,7 @@ impl ConsolidationExecutor<'_> {
                 for (turn, reading) in widened {
                     crate::dreamer_wake::take_reading_in_txn(ctx.vault, txn, turn, *reading)?;
                 }
-                Ok(())
+                crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, widened)
             });
             if let Err(error) = stamped {
                 tracing::warn!(
