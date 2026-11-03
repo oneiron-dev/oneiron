@@ -46,6 +46,8 @@ pub(super) use self::input::adopt;
 // The carrier watch's first look runs the begin-check's plan check again.
 #[cfg(target_os = "linux")]
 pub(super) use self::input::fresh_authorizes;
+// The start seals the argv recipient bytes the begin-check verified (FIX 11988).
+pub(super) use self::input::CheckedRecipients;
 use self::receipt::ReceiptContext;
 pub(super) use self::receipt::RestoreOutcome;
 use self::result::ResultSink;
@@ -78,6 +80,9 @@ pub(super) struct ManagedRestore {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
+    /// The argv escrow recipient bytes the begin-check read and verified,
+    /// for the start to seal rather than the files again (FIX 11988).
+    checked: CheckedRecipients,
     /// The host-order family the input pipe carried, admitted by where it
     /// came from; none without one. Its job takes it.
     host_holds: AdmittedHostOrderHolds,
@@ -152,7 +157,7 @@ impl ManagedRestore {
                 why.to_owned(),
             )
         };
-        input::check(&plan, managed, config.maximum_tier).map_err(invalid)?;
+        let checked = input::check(&plan, managed, config.maximum_tier).map_err(invalid)?;
         let host_holds = host_holds::admit(input.host_holds, &plan).map_err(invalid)?;
         let destination = RestoreDestination::probe(&managed.data_dir, &managed.vault_name)
             .map_err(|refusal| {
@@ -169,6 +174,7 @@ impl ManagedRestore {
             sink,
             identity,
             plan,
+            checked,
             host_holds,
             destination: Arc::new(destination),
             stage: Stage::Credentials,
@@ -239,6 +245,12 @@ impl ManagedRestore {
     #[cfg(target_os = "linux")]
     pub(super) fn fresh_recipients(&self) -> &[FreshRecipient] {
         &self.plan.request.fresh
+    }
+
+    /// The argv escrow recipient bytes the begin-check read and verified,
+    /// for the start to seal (FIX 11988).
+    pub(super) fn checked_recipients(&self) -> &CheckedRecipients {
+        &self.checked
     }
 
     /// Seals the kept restore's receipt once the start spooled its escrow
