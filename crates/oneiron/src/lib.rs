@@ -46,7 +46,17 @@ pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
-pub mod registry;
+pub mod registry {
+    //! Entity-type registry: defined in `oneiron-contracts` and named through
+    //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
+    pub use oneiron_base::registry::*;
+
+    pub mod pack_byte_map;
+
+    // Only the `#[cfg(test)]` type-registry suite names this door.
+    #[cfg(test)]
+    pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
+}
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
