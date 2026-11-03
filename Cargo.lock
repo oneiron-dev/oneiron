@@ -7923,6 +7923,7 @@ dependencies = [
  "heed",
  "icalendar",
  "icu_normalizer",
+ "im",
  "image",
  "jiff-tzdb",
  "jsonschema",
@@ -7934,6 +7935,7 @@ dependencies = [
  "ocrs",
  "oneiron",
  "oneiron-authority",
+ "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
  "oneiron-container",
@@ -7978,7 +7980,6 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.20",
- "tiktoken-rs",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
@@ -8030,6 +8031,21 @@ dependencies = [
  "serde",
  "serde_json",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-base"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "oneiron-model",
+ "oneiron-retrieval",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
+ "tiktoken-rs",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -8407,6 +8423,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

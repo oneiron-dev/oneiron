@@ -1,5 +1,5 @@
 use super::*;
-use crate::affect::coping::{
+use crate::write_envelope::coping_outcome::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
     validate_coping_outcome_claim_structure,
 };

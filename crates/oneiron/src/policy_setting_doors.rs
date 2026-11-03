@@ -27,7 +27,8 @@ use crate::code_run::actions::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 

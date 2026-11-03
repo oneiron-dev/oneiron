@@ -19,7 +19,7 @@ use crate::counterparty_contact::{
 use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
+use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment};
 
 /// Display label for a supplied voice roster that could not be resolved. The
 /// entry exists so an unresolvable roster narrows disclosure instead of

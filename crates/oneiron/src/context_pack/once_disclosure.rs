@@ -6,9 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
 use crate::{Result, Vault};
+use oneiron_authority::federation::Scope;
 
 impl Vault {
     /// Spends the `once` answers this assembly delivers and returns each

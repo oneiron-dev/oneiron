@@ -455,12 +455,12 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     store
         .vault_meta
         .put(txn, &stale_key(id), &revision.to_be_bytes())?;
-    crate::bm25::deindex_text(store, txn, id)?;
+    crate::store::text_index::deindex_text(store, txn, id)?;
     let had_vector = store.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
     crate::hnsw::hnsw_deindex(store, txn, id)?;
     if had_vector {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
     // Withdrawn words are never embedded: a queued or leased fill finds no
@@ -530,7 +530,7 @@ pub(super) fn withdraw_dependent_in_txn(
     let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
     crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
         txn,
-        crate::attempt_queue::EnqueueAttempt {
+        crate::store::attempt_inputs::EnqueueAttempt {
             kind: "derived.regenerate".into(),
             payload,
             dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
