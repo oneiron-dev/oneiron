@@ -103,6 +103,13 @@ side_tables! {
     /// (32 bytes), then the content hash (32 bytes) of the handoff packet the move signed for it.
     /// Written by that move only; retired with the history on delete. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_CARRY: VaultMeta b"claim:machine-history-carry:v1:" Raw;
+    /// The memoized gate verdict over one MACHINE claim's history (FIX 12374): the seal
+    /// (40 bytes), the pin's content hash (32 bytes), the gate sequence (u64 BE) and the
+    /// settled verdict (1 byte) the carrier loop proved. Key: id16 (target claim).
+    CLAIM_MACHINE_HISTORY_GATE_FINGERPRINT: VaultMeta b"claim:machine-history-gate-fingerprint:v1:" Raw;
+    /// The vault-wide gate sequence (FIX 12374): how many gate writes landed since the
+    /// last clear. Key: ().
+    CLAIM_MACHINE_HISTORY_GATE_SEQUENCE: VaultMeta b"claim:machine-history-gate-sequence:v1" Raw;
     /// The pinned signed handoff (encoded `ClaimHistoryHandoff`) that roots one MACHINE claim's
     /// signed birth and transition history. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_PIN: VaultMeta b"claim:machine-history-pin:v1:" Raw;
