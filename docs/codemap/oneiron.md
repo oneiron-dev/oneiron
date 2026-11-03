@@ -3375,7 +3375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/ladder/providers.rs` | src | m | 7 struct · 2 trait · 8 fn · 3 const · 3 crate-vis | DecisionCall, DecisionModel, DecisionPack, DecisionProvider, ModelDecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision +1 | Decision ladder providers and the calls they answer |
 | `src/llm/decision/ladder/roles.rs` | src | s | 4 struct · 4 enum · 2 trait · 5 fn | AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest, ResolvedRole +2 | Decision ladder person asks and the roles they go to |
 | `src/llm/decision/ladder/runner.rs` | src | m | 6 fn · 2 crate-vis | — | Decision ladder runner |
-| `src/llm/decision/ladder/slots.rs` | src | s | 4 fn · 2 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
+| `src/llm/decision/ladder/slots.rs` | src | s | 4 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
 | `src/llm/decision/ladder/tournament.rs` | src | s | 3 crate-vis | — | A choice wider than a provider's option bound, read as a tournament (FIX 11235) |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/locate.rs` | src | s | 1 struct · 4 fn · 1 const | LocatedDecision | Presence before coordinates (owner point 4) |
