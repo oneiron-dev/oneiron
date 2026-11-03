@@ -8,7 +8,6 @@ use super::revision_facts::RevisionAnalysisError;
 use super::{decode, walk};
 use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
-use crate::memory::SealMemoryProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum XrefStyle {
@@ -19,7 +18,7 @@ pub(crate) enum XrefStyle {
 /// Trailer/xref state needed to append one incremental revision.
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionState {
-    pub memory: SealMemoryProvider,
+    pub limits: SealResourceLimits,
     pub max_obj: u32,
     pub root: ObjectId,
     pub info: Option<ObjectId>,
@@ -349,7 +348,7 @@ pub(super) fn revision_state(
     let max_obj = max_existing.max(size_max);
     admitted::dictionary(limits, root_dict).map_err(memory_error)?;
     Ok(RevisionState {
-        memory: limits.memory.clone(),
+        limits: limits.clone(),
         max_obj,
         root,
         info,
