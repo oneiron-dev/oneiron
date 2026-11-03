@@ -30813,46 +30813,14 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DecodedEdgeValue",
-      "EdgeConfirmationStatus",
-      "EdgeInfo",
-      "EdgeProvenanceFlags",
-      "EdgeValueLayout"
-     ],
-     "path": "src/edge.rs",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
-     "surface": {
-      "crate-vis": 20,
-      "enum": 2,
-      "fn": 2,
-      "re-export": 2,
-      "struct": 3
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "EdgeKind"
-     ],
-     "path": "src/edge/kind.rs",
-     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
-     "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
      "notable": [],
-     "path": "src/edge/tests.rs",
-     "purpose": "—",
-     "surface": {}
+     "path": "src/edge_regeneration.rs",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "L",
@@ -41854,9 +41822,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 19,
-      "mod": 192,
-      "re-export": 84
+      "crate-vis": 23,
+      "mod": 193,
+      "re-export": 86
      }
     },
     {
@@ -59515,18 +59483,6 @@
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
       "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/registry/mod.rs",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
-     "surface": {
-      "crate-vis": 3,
-      "mod": 1,
-      "re-export": 8
      }
     },
     {
@@ -85757,12 +85713,12 @@
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
-    "edge": {
-     "files": 3,
+    "edge_regeneration": {
+     "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
      "files": 85,
@@ -86248,11 +86204,11 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+     "layout": "dir (no mod.rs)",
+     "purpose": "—"
     },
     "repo_mutation": {
      "files": 48,
@@ -86712,8 +86668,8 @@
    },
    "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5887,
-   "test_files": 902
+   "source_files": 5885,
+   "test_files": 901
   },
   "oneiron-android": {
    "files": [
@@ -87659,6 +87615,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecodedEdgeValue",
+      "EdgeConfirmationStatus",
+      "EdgeInfo",
+      "EdgeProvenanceFlags",
+      "EdgeValueLayout",
+      "Regeneration",
+      "StrictEdgeRecord"
+     ],
+     "path": "src/edge.rs",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
+     "surface": {
+      "const": 4,
+      "enum": 3,
+      "fn": 13,
+      "mod": 1,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EdgeKind"
+     ],
+     "path": "src/edge/kind.rs",
+     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edge/kind_tables.rs",
+     "purpose": "Exhaustive tables over [`EdgeKind`]",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edge/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -87706,7 +87717,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 13
+      "mod": 15
      }
     },
     {
@@ -87753,6 +87764,16 @@
      "purpose": "Shared Beta posterior bandit seam",
      "surface": {
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry.rs",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
+     "surface": {
+      "re-export": 10
      }
     },
     {
@@ -87817,6 +87838,13 @@
      "layout": "file",
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
+    "edge": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
+    },
     "entity_id": {
      "files": 1,
      "impl_vault": false,
@@ -87873,6 +87901,13 @@
      "layout": "file",
      "purpose": "Shared Beta posterior bandit seam"
     },
+    "registry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+    },
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
@@ -87897,8 +87932,8 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 14,
-   "test_files": 0
+   "source_files": 18,
+   "test_files": 1
   },
   "oneiron-bench": {
    "files": [
