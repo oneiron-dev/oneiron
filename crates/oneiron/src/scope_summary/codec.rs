@@ -1,7 +1,7 @@
 //! Strict, versioned scope-summary MessagePack codec (distinct from epochs).
 
 use crate::EntityId;
-use crate::conversation_dag::{ScopePath, ScopeSelector};
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::error::{Error, RecordError, Result};
 use rmpv::Value;
 use std::collections::HashSet;

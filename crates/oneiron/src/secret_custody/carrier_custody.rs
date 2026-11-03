@@ -3,7 +3,8 @@
 //! input, on the shared typed custody (`crate::store`
 //! `mint_carrier_leaf_in_txn`).
 //!
-//! SHIPPED OFF ([`CUSTODY_CARRIER_LEAF_WIRE`] is false): a carrier sealed
+//! ON ([`CUSTODY_CARRIER_LEAF_WIRE`] is true since L03's live leaf frame,
+//! FIX 11785 / FIX 11995): a carrier sealed
 //! under its own key opens only where that key is released live, to the
 //! exact current request's executor or one of its recipient permits, and a
 //! key, or a wrap of it under a permanent key, never rides a retained
@@ -13,8 +14,9 @@
 //! * input v2 ([`CUSTODY_INPUT_WIRE_VERSION`]): the recorder mints the key
 //!   before any byte is sealed and seals the whole input under it once,
 //!   then seals that to the holder and splits it as before; a surface's own
-//!   seal that fits one row is sealed under the key on top
-//!   (`control::input::carrier_seal`);
+//!   seal is sealed under the key on top, whole when it fits one row, in
+//!   numbered parts ([`CarrierPart`]) past it (FIX 12148,
+//!   `control::input::carrier_seal`);
 //! * transition v3 ([`CUSTODY_TRANSITION_WIRE_VERSION`]): the executor
 //!   seals the value under the key once, then to each permit
 //!   (`transition::carrier_leaf`);
@@ -43,10 +45,11 @@ use crate::error::Result;
 use crate::store::{CredentialLeaf, CustodyKind};
 
 /// Whether transitions and inputs are sealed under their own custody keys
-/// on the wire (CALLS `KS-6 carrier wire`): false until live leaf delivery
-/// lands, so no carrier needs a key its recipient cannot get. Every path
-/// FIX 7402 built branches on it.
-pub(crate) const CUSTODY_CARRIER_LEAF_WIRE: bool = false;
+/// on the wire (CALLS `KS-6 carrier wire`): true now that live leaf
+/// delivery (L03's frame and relay, FIX 11785) carries each key to the
+/// executor or recipient that must open it (FIX 11995). Every path FIX 7402
+/// built branches on it.
+pub(crate) const CUSTODY_CARRIER_LEAF_WIRE: bool = true;
 
 /// The transition wire a leaf-sealed carrier takes (CALLS `KS-6 carrier
 /// wire`): the payload domains are v2 today.
@@ -120,6 +123,40 @@ pub(crate) const CARRIER_REF_BYTES: usize = 1 + 16 + 16 + 4 + 1;
 /// a request's whole input (CALLS `KS-6 leaf ids`, one key per carrier).
 pub(crate) const CARRIER_ROLE_WHOLE: u8 = 0;
 
+/// One part of a carrier sealed in numbered parts under its one key: its
+/// index and the part count, both bound by the part's seal, so no part
+/// opens in another's place, past its count or as another carrier's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CarrierPart {
+    pub(crate) index: u32,
+    pub(crate) count: u32,
+}
+
+/// The nonces of one carrier's numbered parts: a base drawn once at random,
+/// each part's own the base with its index folded into its last four
+/// bytes, so no two parts under the one key share a nonce. The door reads
+/// its input once and keeps what it digested (FIX 12177).
+#[derive(Clone, Copy)]
+pub(crate) struct CarrierPartNonces([u8; NONCE_BYTES]);
+
+impl CarrierPartNonces {
+    /// A fresh base, for one carrier's parts.
+    pub(crate) fn draw() -> Self {
+        let mut base = [0; NONCE_BYTES];
+        rand::rngs::OsRng.fill_bytes(&mut base);
+        Self(base)
+    }
+
+    /// Part `index`'s own nonce.
+    fn of(&self, index: u32) -> [u8; NONCE_BYTES] {
+        let mut nonce = self.0;
+        for (byte, folded) in nonce[NONCE_BYTES - 4..].iter_mut().zip(index.to_be_bytes()) {
+            *byte ^= folded;
+        }
+        nonce
+    }
+}
+
 /// One carrier's key reference: the credential, the instance, the
 /// generation it carries and its role, never an absolute custody path
 /// (CALLS `KS-6 leaf ids`, CUSTODY_REF_BINDING).
@@ -192,34 +229,66 @@ impl CarrierRef {
     }
 
     /// The bytes a carrier's seal binds: the reference, then the part's
-    /// position (`u32::MAX` for a whole carrier).
-    fn aad(&self, part: Option<u32>) -> Vec<u8> {
+    /// position: `u32::MAX` for a whole carrier, or a numbered part's index
+    /// and the part count, each a big-endian `u32`.
+    fn aad(&self, part: Option<CarrierPart>) -> Vec<u8> {
         match (CUSTODY_CARRIER_ID_FORM, CUSTODY_INPUT_LEAF_UNIT) {
             (
                 CustodyCarrierIdForm::CredentialId16ThenRandomInstance16Slot0,
                 CustodyInputLeafUnit::WholeMultipartInput,
             ) => {}
         }
-        let mut aad = Vec::with_capacity(CARRIER_AAD_DOMAIN.len() + 1 + 32 + 4 + 1 + 4);
+        let mut aad = Vec::with_capacity(CARRIER_AAD_DOMAIN.len() + 1 + 32 + 4 + 1 + 8);
         aad.extend_from_slice(CARRIER_AAD_DOMAIN);
         aad.push(self.kind.tag());
         aad.extend_from_slice(self.credential.as_bytes());
         aad.extend_from_slice(&self.instance);
         aad.extend_from_slice(&self.generation.to_be_bytes());
         aad.push(self.role);
-        aad.extend_from_slice(&part.unwrap_or(u32::MAX).to_be_bytes());
+        match part {
+            None => aad.extend_from_slice(&u32::MAX.to_be_bytes()),
+            Some(part) => {
+                aad.extend_from_slice(&part.index.to_be_bytes());
+                aad.extend_from_slice(&part.count.to_be_bytes());
+            }
+        }
         aad
     }
 
-    /// Seals `plain` under `leaf` for this reference at `part`.
+    /// Seals `plain` under `leaf` for this reference at `part`, at a fresh
+    /// random nonce.
     pub(crate) fn seal(
         &self,
         leaf: &CredentialLeaf,
-        part: Option<u32>,
+        part: Option<CarrierPart>,
         plain: &[u8],
     ) -> Result<Vec<u8>> {
         let mut nonce = [0; NONCE_BYTES];
         rand::rngs::OsRng.fill_bytes(&mut nonce);
+        self.seal_at(leaf, nonce, part, plain)
+    }
+
+    /// Seals `plain`, numbered part `part` of this reference's carrier,
+    /// under `leaf` at the part's own nonce of `nonces`.
+    pub(crate) fn seal_part(
+        &self,
+        leaf: &CredentialLeaf,
+        nonces: &CarrierPartNonces,
+        part: CarrierPart,
+        plain: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.seal_at(leaf, nonces.of(part.index), Some(part), plain)
+    }
+
+    /// Seals `plain` under `leaf` for this reference at `part` and `nonce`:
+    /// the nonce, then the ciphertext and its tag.
+    fn seal_at(
+        &self,
+        leaf: &CredentialLeaf,
+        nonce: [u8; NONCE_BYTES],
+        part: Option<CarrierPart>,
+        plain: &[u8],
+    ) -> Result<Vec<u8>> {
         let cipher = Aes256Gcm::new_from_slice(&leaf[..]).map_err(|_| self.kind.corrupt())?;
         let sealed = cipher
             .encrypt(
@@ -239,7 +308,7 @@ impl CarrierRef {
     pub(crate) fn open(
         &self,
         leaf: &CredentialLeaf,
-        part: Option<u32>,
+        part: Option<CarrierPart>,
         sealed: &[u8],
     ) -> Result<Zeroizing<Vec<u8>>> {
         let (nonce, ciphertext) = sealed

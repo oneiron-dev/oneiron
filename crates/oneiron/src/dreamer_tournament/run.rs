@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::critic::{CritiqueVerdict, LensCatalog, triage_critiques};
+use crate::{critic::CritiqueVerdict, store::critic_lens::LensCatalog, critic::triage_critiques};
 use crate::error::{Error, Result};
 
 use super::evidence::{

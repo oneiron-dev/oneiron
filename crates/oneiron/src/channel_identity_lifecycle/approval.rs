@@ -54,7 +54,7 @@ use crate::channel_identity::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::{ApprovalTarget, ChannelIdentityLifecycleFacts, ExternalEffectGateInput};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 

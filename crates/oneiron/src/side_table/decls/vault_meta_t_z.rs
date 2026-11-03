@@ -111,7 +111,8 @@ side_tables! {
     TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named
         => crate::task_verb::erase_launch_actor_in_txn;
     /// Consult fan-out plan. Key: hex32.
-    TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
+    TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named
+        => crate::task_verb::erase_fanout_run_actor_in_txn;
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;

@@ -20,7 +20,8 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
@@ -125,7 +126,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         if record
             .manifest()
             .iter()
-            .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+            .any(|entry| entry.kind == crate::store::attempt_manifest::ManifestKind::Skill)
             && record.executor_model.is_none()
         {
             return Err(Error::InvalidClaimBody(

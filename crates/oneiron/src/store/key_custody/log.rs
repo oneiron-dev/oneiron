@@ -148,7 +148,7 @@ pub(super) struct Control {
 impl Control {
     fn fresh() -> Result<Self> {
         let mut secret = Zeroizing::new([0u8; 32]);
-        crate::world_keys::os_fill(&mut secret[..])?;
+        crate::key_material::os_fill(&mut secret[..])?;
         Ok(Self {
             secret,
             epoch: CustodyEpoch(0),
@@ -201,7 +201,7 @@ impl Control {
     }
 
     fn derive(&self, context: &str) -> Zeroizing<[u8; 32]> {
-        crate::world_keys::derive_guarded(context, &[&self.secret[..]])
+        crate::key_material::derive_guarded(context, &[&self.secret[..]])
     }
 
     pub(super) fn log_kek(&self) -> Kek {
@@ -465,7 +465,7 @@ pub(super) fn seal_sym(
 /// reason, never the error's values or a key's bytes.
 pub(super) fn seal_refused(error: &oneiron_crypto::Error) -> Error {
     use oneiron_crypto::Error as Crypto;
-    crate::world_keys::refused(match error {
+    crate::key_material::refused(match error {
         Crypto::FieldLength {
             field: "key_id" | "recipient" | "vault_id",
             ..
@@ -523,7 +523,7 @@ pub(super) fn open_sym(
 /// the envelope's.
 fn open_refused(error: &oneiron_crypto::Error) -> Error {
     use oneiron_crypto::Error as Crypto;
-    crate::world_keys::refused(match error {
+    crate::key_material::refused(match error {
         Crypto::OpenFailed => "key custody does not open with this key",
         Crypto::FieldLength { .. }
         | Crypto::Truncated { .. }

@@ -9,8 +9,6 @@
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
 //! `descriptor` the synced ARCH-0057 claim-class descriptors;
-//! `descriptor_schema` their JSON Schema checks and the classes the build
-//! compiles as `generic`;
 //! `generic_put_routing` the generic claim door's and batch builder's
 //! routing of the projector-only classes through the projector;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
@@ -20,7 +18,6 @@
 mod claims;
 mod consent;
 mod descriptor;
-mod descriptor_schema;
 mod generic_put_routing;
 mod inbound_events;
 mod opt_out_slots;
