@@ -2692,7 +2692,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2703,6 +2703,26 @@
      "purpose": "Which agent dispatch rows carry an erased asker's ask (FIX 9181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/model_step.rs",
+     "purpose": "A public model step's failure text, out of its queue row (FIX 10460)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/project_brief.rs",
+     "purpose": "The source principal named in a project drafter's briefing (FIX 4979)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34595,7 +34615,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 5,
       "fn": 6,
       "struct": 6
@@ -44709,7 +44729,7 @@
      "path": "src/llm/step/submission_custody.rs",
      "purpose": "A public model-step submission's kept copies under body custody (FIX 9929)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -75389,7 +75409,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -75976,7 +75996,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "fn": 1,
       "mod": 5,
       "re-export": 30
@@ -82171,7 +82191,7 @@
      "purpose": "A settled join of an erased party, as stored (FIX 4228): history only",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1
      }
     },
@@ -83212,7 +83232,7 @@
      "purpose": "A settled offer card of an erased agent or payer, as stored (FIX 4228): history only",
      "surface": {
       "const": 1,
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -85298,7 +85318,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 62,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86784,7 +86804,7 @@
    },
    "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5887,
+   "source_files": 5889,
    "test_files": 902
   },
   "oneiron-android": {
