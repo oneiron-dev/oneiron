@@ -664,7 +664,7 @@ pub(super) fn settle_in_txn(
                     && let Some(frontier) = land_moved_xlsx(
                         vault,
                         wtxn,
-                        artifact,
+                        &member.artifact,
                         (&fork_record.base, &head.frontier),
                         &fork_doc,
                         actor,

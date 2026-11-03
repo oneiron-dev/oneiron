@@ -773,6 +773,7 @@ impl GmailDelegatedAdapter {
             custody_record_ref: grant.custody_record_ref.clone(),
             scopes: grant.scopes.clone(),
             placement_policy: PlacementPolicy::default(),
+            send_as: Vec::new(),
         });
         adapter.require_active_row_matches_adapter(vault, &sender_ref)?;
         Ok(adapter)
