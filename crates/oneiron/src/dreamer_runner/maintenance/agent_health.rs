@@ -78,7 +78,9 @@ pub use doors::{
 pub(crate) use doors::{agent_health_card_in_txn, agent_health_cards_in_txn};
 use doors::{forbidden, may_read, settle};
 pub use environment::HealthCauseSource;
-pub(crate) use erase::{erase_actor_sources_in_txn, erase_sources_in_txn};
+pub(crate) use erase::{
+    erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
+};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
@@ -201,3 +203,7 @@ fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
         _ => true,
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::call_evidence::call_receipt_accepts_masked;
