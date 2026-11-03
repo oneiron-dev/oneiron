@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::decision::DecisionReceipt;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
@@ -135,6 +136,11 @@ pub(super) struct StoredFanout {
     /// as empty.
     #[serde(default)]
     pub(super) shipped_policy_rows: Vec<String>,
+    /// The AUTO ladder's receipt on the ask that admitted this run, when the
+    /// ladder decided it (FIX 333). Runs stored before this field read as
+    /// none.
+    #[serde(default)]
+    pub(super) decision_receipt: Option<DecisionReceipt>,
 }
 
 impl StoredFanout {
