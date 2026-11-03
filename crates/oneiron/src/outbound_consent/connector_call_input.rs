@@ -287,6 +287,24 @@ impl Vault {
         Ok(marked)
     }
 
+    /// The calls whose questions stand unanswered: a row carrying questions
+    /// and no settled call. The settler prunes its per-run resume tries
+    /// against these (FIX 10551), never against the pending listing, which
+    /// leaves exactly these rows out and would reset every try count.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn undecided_connector_input_refs(&self) -> Result<Vec<EntityId>, IntentLedgerError> {
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        Ok(PENDING_CALLS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .filter(|(_, row)| row.input.is_some() && row.settled.is_none())
+            .map(|(call_ref, _)| call_ref)
+            .collect())
+    }
+
     /// Applies `change` to the unanswered questions `handle` names on the
     /// call `call_ref`'s row, read again in the writer, and writes the row
     /// when it changed something. Anything else (no row, no questions,

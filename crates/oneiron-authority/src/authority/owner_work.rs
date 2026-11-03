@@ -42,11 +42,15 @@
 //!
 //! The owner may cancel a pending root request from any surface he is
 //! authenticated on ([`OwnerWorkCancel`], FIX 4739): ids only, carried by an
-//! install like the request, never a result.
+//! install like the request, never a result. Once his import of an export
+//! secret supplement commits, the install it committed on marks the request
+//! imported ([`ExportSupplementImported`], FIX 12062), ids only, so no
+//! install relays its sealed copy any more.
 
 mod cancel;
 mod custody;
 mod export;
+mod import_mark;
 mod permit_piece;
 mod result;
 mod root_basis;
@@ -60,10 +64,17 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyPermitPieces, CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
-    custody_recipients_encoded_len,
+    CustodyPermitPieces, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
+    custody_recipient_set, custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
+pub use self::import_mark::{
+    EXPORT_SUPPLEMENT_IMPORTED_CONTEXT, ExportSupplementImported,
+    OP_KIND_EXPORT_SUPPLEMENT_IMPORTED,
+};
+pub(super) use self::import_mark::{
+    decode_export_supplement_imported, export_supplement_imported_value,
+};
 pub use self::permit_piece::{CustodyPermitPiece, OP_KIND_CUSTODY_PERMIT_PIECE};
 pub(super) use self::permit_piece::{custody_permit_piece_value, decode_custody_permit_piece};
 pub use self::result::{
@@ -276,7 +287,8 @@ impl RootChange {
 
 /// The work one request asks for. Closed: each kind is one variant, with the
 /// fields its own wire map states. `Clone`, not `Copy`: a custody change
-/// carries its recipients inline (CALLS CUSTODY_SHARED_BODY).
+/// carries its recipients inline (CALLS CUSTODY_SHARED_BODY), one shared
+/// set a clone copies no permit of (FIX 12281).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -314,12 +326,14 @@ pub enum OwnerWorkBody {
     /// one row ride in pieces (FIX 11866): `pieces` is then their commitment,
     /// `recipients` is empty as the entry carries it, and the fold fills it
     /// from the [`CustodyPermitPiece`] rows in the request's causal past.
+    /// Every request the fold keeps on one joined set shares its permits
+    /// ([`CustodyRecipientPermits`], FIX 12281).
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
-        recipients: Vec<CustodyRecipientPermit>,
+        recipients: CustodyRecipientPermits,
         pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },

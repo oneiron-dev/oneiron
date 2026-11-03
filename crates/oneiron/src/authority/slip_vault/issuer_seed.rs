@@ -26,7 +26,8 @@ impl HostSlipIssuer {
         if seed == &[0u8; HOST_ISSUER_SEED_BYTES] {
             return Err(invalid_authority());
         }
-        let subkey = Zeroizing::new(blake3::derive_key(HOST_ISSUER_SIGNING_CONTEXT, seed));
+        // FIX 6669: derive straight into the guard.
+        let subkey = crate::world_keys::derive_guarded(HOST_ISSUER_SIGNING_CONTEXT, &[&seed[..]]);
         Ok(Self {
             secret: Zeroizing::new(seed.to_vec()),
             signing: SigningKey::from_bytes(&subkey),
@@ -39,10 +40,9 @@ impl HostSlipIssuer {
         if secret.is_empty() {
             return Err(invalid_authority());
         }
-        let seed = Zeroizing::new(blake3::derive_key(
-            "oneiron/host-authority-signing/v2",
-            secret,
-        ));
+        // FIX 6669: derive straight into the guard.
+        let seed =
+            crate::world_keys::derive_guarded("oneiron/host-authority-signing/v2", &[secret]);
         Ok(Self {
             secret: Zeroizing::new(secret.to_vec()),
             signing: SigningKey::from_bytes(&seed),

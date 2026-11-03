@@ -170,6 +170,7 @@ impl Vault {
                     .read_serving_blob_in_txn(&rtxn, &artifact_id, &record, SecretSight::Owner)?
                     .ok_or(Error::EntityNotFound)?;
                 let bytes = self.resolve_docx_authors_in_txn(&rtxn, bytes)?; // FIX 4513
+                let content_hash = *blake3::hash(&bytes).as_bytes(); // the copy's (FIX 5491)
                 let size_bytes = u64::try_from(bytes.len())
                     .map_err(|_| Error::ArithmeticOverflow("blob export length"))?;
                 Ok(Some(ArtifactServedFile {
@@ -179,7 +180,7 @@ impl Vault {
                     export,
                     path: path.to_owned(),
                     media_type: Some(record.export_media_type),
-                    content_hash: record.content_hash,
+                    content_hash,
                     size_bytes,
                     bytes,
                 }))
