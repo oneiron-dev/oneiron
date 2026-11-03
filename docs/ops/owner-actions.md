@@ -1919,9 +1919,9 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
 with any other unlock, it refuses `--piece` and `--vault-id`. On an already-open plain vault,
-add-device counts this install's kept piece for either kit kind and asks for a passphrase only when
-the available pieces need one. Fresh restores and sealed opens keep their existing pre-open piece
-and passphrase rules.
+add-device counts this install's kept piece of the same kit id for either kit kind and asks for a
+passphrase only when the available pieces need one. Fresh restores and sealed opens keep their
+existing pre-open piece and passphrase rules.
 
 ### Publish the sealed bundle to a home
 

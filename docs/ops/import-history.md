@@ -258,5 +258,6 @@ come back at the rescan after it is mounted again. With `serve` stopped, the CLI
 itself. When `serve` holds the writer lease, `attach`, `rescan`, `detach` and `list` instead call
 that same vault's `/v1/owner/imports/folders` routes through its live local runtime entry.
 `ONEIRON_SECRET` carries the owner credential; for a `v2.slip.` bearer, `ONEIRON_BINDING_KEY` signs
-the holder proof. An authentication, HTTP or transport failure is reported, never hidden by a
+the holder proof. Live calls ignore environment HTTP proxies and have a 10-minute whole-call
+deadline. An authentication, HTTP or transport failure is reported, never hidden by a
 direct-open retry.

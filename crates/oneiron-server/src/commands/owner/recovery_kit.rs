@@ -688,7 +688,7 @@ pub(super) fn kit_unlock_with_vault(
     );
     let pieces = read_kit_pieces(files)?;
     let kind = pieces[0].kind();
-    let kept = vault.keeps_kit_piece(kind);
+    let kept = vault.keeps_kit_piece_for(kind, pieces[0].kit_id());
     let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
     if kind == KitSecretKind::VaultKey {
         return Ok(HostUnlock::VaultKeyKit {

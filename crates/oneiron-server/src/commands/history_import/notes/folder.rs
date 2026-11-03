@@ -21,6 +21,7 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use oneiron::note::{FolderFileState, FolderSource};
 use reqwest::Method;
@@ -33,6 +34,10 @@ use crate::commands::api::{normalized_base, signed_binding};
 use crate::commands::local_servers;
 use crate::config::{ServeConfig, resolve_serve_config};
 use crate::files_intake::{canonical_folder, rescanned};
+
+/// One live folder call's whole request/response deadline. Large scans get
+/// room; a stalled running serve still ends the CLI instead of holding it forever.
+const LIVE_FOLDER_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Serialize)]
 struct Listed {
@@ -94,8 +99,10 @@ impl HeldServer {
             scope
                 .spawn(move || -> anyhow::Result<Value> {
                     let client = reqwest::blocking::Client::builder()
+                        // The bearer and holder proof stay off every environment proxy.
+                        .no_proxy()
                         .redirect(reqwest::redirect::Policy::none())
-                        .timeout(None::<std::time::Duration>)
+                        .timeout(LIVE_FOLDER_REQUEST_TIMEOUT)
                         .build()?;
                     let mut request = client.request(method, &url);
                     if let Some(secret) = &secret {
