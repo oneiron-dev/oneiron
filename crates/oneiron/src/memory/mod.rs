@@ -285,6 +285,7 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
+pub(crate) use recall::conversation_candidate_admits;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
@@ -345,7 +346,8 @@ pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
-    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
+    StreamSyncVisibility,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

@@ -291,6 +291,10 @@ export type RecallScope = {
   kinds?: string[]
   /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
   projectRefs?: string[]
+  /** Conversation entity refs. Empty adds no narrowing; with `personRef`, only conversations selected by both axes remain. */
+  conversationRefs?: string[]
+  /** PERSON entity ref; selects conversations where they authored at least one live MESSAGE, never conversations that merely mention them. */
+  personRef?: string
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
@@ -1109,6 +1113,8 @@ class Oneiron:
         def message_stream_partial(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamPartial:
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
         @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs": ...
+        @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
@@ -1547,6 +1553,9 @@ class Oneiron:
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
         def resume(self, spec: Facade.RunnerWorkResumeRequest) -> Facade.RunnerWorkResumeView:
             """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
+    class _VaultMessageStreamsVerbs:
+        def refused(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StreamRecoveryRefusal]:
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -3192,7 +3201,7 @@ class Oneiron:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
             """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
-        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.ScopedReadResult[Facade.CheckoutLeaseView | None]:
             """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
         def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
             """Renew the caller's still-live checkout under its exact holder and epoch fence."""
@@ -3231,7 +3240,7 @@ class Oneiron:
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
     class _VaultCodeMergeQueueVerbs:
         def enqueue(self, spec: Facade.MergeQueueEnqueueRequest) -> Facade.MergeQueueBatchView:
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
         def stage(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
         def observe(self, spec: Facade.MergeQueueObserveRequest) -> Facade.MergeQueueObservation:

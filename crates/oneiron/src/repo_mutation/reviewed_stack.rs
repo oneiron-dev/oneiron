@@ -655,7 +655,8 @@ impl Vault {
             super::trailer::validate_repo_provenance_request(self, &row.request()?)?;
             rows.push(row);
         }
-        if rows.is_empty() || rows.len() > 6 {
+        // A batch past one speculation window lands whole (FIX 9948).
+        if rows.is_empty() {
             return Err(invalid("reviewed stack bound exceeded"));
         }
         let mut txn = self.store.env.write_txn()?;

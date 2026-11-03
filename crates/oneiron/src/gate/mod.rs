@@ -188,7 +188,8 @@ pub(crate) use self::effect::{
 };
 pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::grants::{
-    ClaimReadView, PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
+    ClaimReadPolicy, ClaimReadView, PolicyScopedGrant, claim_read_policy_allows,
+    companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_claim_allowed_with_scope, scoped_read_claim_view_allowed,
     scoped_read_grant_reads_world, scoped_read_note_allowed, scoped_read_note_world_witness,
     scoped_read_record_allowed, scoped_read_record_allowed_with_scope,

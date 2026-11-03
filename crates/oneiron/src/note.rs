@@ -116,6 +116,8 @@ mod overrides;
 #[cfg(feature = "sync")]
 pub(crate) use lifecycle::note_seal_in_txn;
 pub(crate) use lifecycle::{erase_seal_actor_in_txn, note_sealed_in_txn, seal_note_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use overrides::encode_frame_overrides_in_txn;
 pub(crate) use overrides::note_defaults_in_txn;
 pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
 pub use proposals::{

@@ -349,6 +349,11 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // FIX 1162: every imported agent gets its model PERSON in this same
+        // writer, once the bundle's own PERSON and anchor rows are in.
+        super::agent_person_import::ensure_imported_agent_persons_in_txn(
+            self, &mut wtxn, &archive,
+        )?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
@@ -482,8 +487,6 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-                vault.restore_skill_cost_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else {
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
@@ -1281,8 +1284,6 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)
-    } else if body.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-        crate::edit_distance::attribution::imported_skill_cost_body(&body)
     } else if crate::learning::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a
         // projector-only view rebuilt from its receipts after import. The row

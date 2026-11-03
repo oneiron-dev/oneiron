@@ -176,6 +176,15 @@ impl CheckoutRepoOps for GitWire<'_> {
         }
         Ok(())
     }
+
+    /// The owned worktree path still exists: a collection that removed it
+    /// resumes unchecked, one that never reached it is checked again.
+    fn tree_present(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<bool> {
+        Ok(self
+            .checkout_worktree_path(lease)?
+            .symlink_metadata()
+            .is_ok())
+    }
 }
 
 pub(super) fn verify_checkout_head(

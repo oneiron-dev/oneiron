@@ -95,6 +95,7 @@ fn refresh_connector(
         return Ok(Refreshed {
             connector: name,
             changed: false,
+            staged: false,
             key: KeyView::new(catalog.key, catalog.record)?,
             slate: SlateView::new(vault, slate_id, &slate)?,
             reask: Vec::new(),
