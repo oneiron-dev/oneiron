@@ -48,6 +48,21 @@ impl DreamerExcludedConversations {
         self.conversations.contains(conversation)
     }
 
+    /// Whether `turn` belongs to one of these conversations, resolved in
+    /// `txn`. A TURN with no conversation edge is never excluded.
+    pub(crate) fn contains_turn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+    ) -> Result<bool> {
+        if self.is_empty() {
+            return Ok(false);
+        }
+        Ok(super::redirty::conversation_in_txn(vault, txn, turn)?
+            .is_some_and(|conversation| self.contains(&conversation)))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.conversations.is_empty()
     }
@@ -75,6 +90,14 @@ impl Vault {
     pub fn dreamer_excluded_conversations(&self) -> Result<DreamerExcludedConversations> {
         let txn = self.store.env.read_txn()?;
         self.dreamer_excluded_conversations_in_txn(&txn)
+    }
+
+    /// Whether `turn` sits in an operator-excluded conversation, for
+    /// execution doors with no ambient transaction.
+    pub(crate) fn dreamer_turn_excluded(&self, turn: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.dreamer_excluded_conversations_in_txn(&txn)?
+            .contains_turn(self, &txn, turn)
     }
 
     pub(crate) fn dreamer_excluded_conversations_in_txn(

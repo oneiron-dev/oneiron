@@ -88,6 +88,13 @@ impl ConsolidationExecutor<'_> {
             .now_ms
             .div_ceil(1_000)
             .saturating_add(input.policy.rung_retry_secs);
+        // As with a rung: excluded work parks before any source read.
+        if ctx.vault.dreamer_turn_excluded(&input.window.turn)? {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "conversation excluded from Dreamer passes".to_owned(),
+                cause: DreamerParkCause::Retry,
+            });
+        }
         let evidence = match sieve::window_read(ctx.vault, &input)? {
             WindowRead::Ready(evidence) => evidence,
             WindowRead::Superseded => {
