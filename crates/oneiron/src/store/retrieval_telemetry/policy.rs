@@ -2,7 +2,8 @@
 
 use crate::error::{Error, Result};
 use crate::pipeline::retrieval_policy::{RetrievalPolicyAction, RetrievalPolicyPosterior};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{Store, active_write_txn_depth};
 

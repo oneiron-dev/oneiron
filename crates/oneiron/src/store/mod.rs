@@ -171,6 +171,13 @@ pub mod retrieval_deadline;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
 mod gate_decision;
+mod scan_kind;
+mod scan_kind_table;
+mod scan_checks;
+
+pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
+pub use scan_checks::ScanCheck;
+pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
