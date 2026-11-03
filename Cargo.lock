@@ -8710,6 +8710,7 @@ dependencies = [
  "heed",
  "oneiron-contracts",
  "oneiron-model",
+ "rmpv",
  "schemars 0.8.22",
  "serde",
  "zeroize",
