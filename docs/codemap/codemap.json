@@ -11959,7 +11959,7 @@
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 8,
       "struct": 8
      }
@@ -12147,7 +12147,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CampaignChannelSender"
@@ -12155,7 +12155,7 @@
      "path": "src/campaign/sender.rs",
      "purpose": "One campaign program step's send through the served channel transports (FIX 11513)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -12974,7 +12974,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GmailDelegatedAdapter",
@@ -12989,7 +12989,7 @@
      "purpose": "Gmail/Workspace adapter for `delegated_grant` rows: reads, and (OF-374) member send-as through…",
      "surface": {
       "const": 6,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 21,
       "re-export": 4,
       "struct": 6,
@@ -36165,7 +36165,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -36400,7 +36400,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/doors/claim_write.rs",
@@ -44043,18 +44043,20 @@
       "MemoryReceipts",
       "PermitFacts",
       "RunEvent",
+      "RunOverageSource",
       "RunReceipt",
       "RunReceiptSink",
       "RunStreamUsage",
       "RunTokenUsage",
+      "RunUsageOverage",
       "TeacherReport"
      ],
      "path": "src/llm/run_admission/receipt.rs",
      "purpose": "The run admission's receipts: every admission, refusal, dispatch, settlement and revision, keyed by lease",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "fn": 1,
-      "struct": 7,
+      "struct": 8,
       "trait": 1
      }
     },
@@ -85088,7 +85090,7 @@
     "channel_identity_provider": {
      "files": 32,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
     },
@@ -86451,7 +86453,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 108,
+   "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5858,
    "test_files": 902
@@ -98616,7 +98618,7 @@
      "purpose": "Media call answers, usage and job states",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
