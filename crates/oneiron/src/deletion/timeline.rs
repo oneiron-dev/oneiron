@@ -3,13 +3,13 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::store::{ManifestDbs, Store};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 use super::tombstone::{
     ARCHIVE_MARKER, PendingTombstoneKey, decode_tombstone_value, window_label_from_timestamp,
@@ -95,9 +95,12 @@ fn row_window(
     let world = if pad {
         crate::world_keys::pad_body_world(raw).and_then(Result::ok)
     } else {
-        crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .ok()
-            .and_then(|body| body.world)
+        crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )
+        .ok()
+        .and_then(|body| body.world)
     };
     if let Some(world) = world {
         label.push('@');

@@ -8,7 +8,7 @@ use crate::claim::ClaimRecordScope;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 
 use super::types::{GateDecisionId, GateDecisionRecord};
 
@@ -290,7 +290,10 @@ impl GateDecisionReadContext {
     /// history control, which ordinary recall never reads, or one whose
     /// words come from records past its subject (a conversation summary, a
     /// merge header, a reaction outcome), which only its row walks.
-    pub(crate) fn claim(id: &EntityId, body: &crate::write_envelope::claim_body::ClaimBody) -> Option<Self> {
+    pub(crate) fn claim(
+        id: &EntityId,
+        body: &crate::write_envelope::claim_body::ClaimBody,
+    ) -> Option<Self> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some()
             || matches!(
                 body.predicate.as_str(),
@@ -312,7 +315,9 @@ impl GateDecisionReadContext {
         };
         let about = match &body.subject {
             crate::write_envelope::claim_body::ClaimSubject::Entity(subject) => vec![*subject],
-            crate::write_envelope::claim_body::ClaimSubject::Edge { source, target, .. } => vec![*source, *target],
+            crate::write_envelope::claim_body::ClaimSubject::Edge { source, target, .. } => {
+                vec![*source, *target]
+            }
         };
         let (relationship, private) = crate::claim::claim_access_axes(body);
         Some(Self {
@@ -323,7 +328,9 @@ impl GateDecisionReadContext {
                 scope: body.record_scope("read"),
                 claim: Some(GateClaimReadSelectors {
                     principal,
-                    sensitivity_band: crate::write_envelope::claim_body::claim_sensitivity_band(body),
+                    sensitivity_band: crate::write_envelope::claim_body::claim_sensitivity_band(
+                        body,
+                    ),
                     relationship,
                     private,
                     scope,

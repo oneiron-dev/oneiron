@@ -298,9 +298,9 @@ impl Vault {
             return Err(Error::InvalidClaimBody("foreign principal identity"));
         }
         crate::consent::ActorBound::new(principal)?;
-        let mut scope = crate::federation::Scope::top();
+        let mut scope = oneiron_authority::federation::Scope::top();
         scope.verbs =
-            crate::federation::ScopeAxis::Some(["read".to_owned(), "propose".to_owned()].into());
+            oneiron_authority::federation::ScopeAxis::Some(["read".to_owned(), "propose".to_owned()].into());
         let grant = Value::Map(vec![
             (ACTOR_REF_KEY.into(), principal.into()),
             (
@@ -309,7 +309,7 @@ impl Vault {
             ),
             (
                 GRANT_SCOPE_KEY.into(),
-                crate::federation::scope_codec::encode_scope_value(&scope)?,
+                oneiron_authority::federation::scope_codec::encode_scope_value(&scope)?,
             ),
             (GRANT_RECEIPT_REQUIRED_KEY.into(), false.into()),
         ]);

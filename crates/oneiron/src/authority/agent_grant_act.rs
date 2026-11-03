@@ -18,7 +18,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
+use oneiron_authority::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
 use crate::{TimeRange, Vault};
 
 use super::machine_standing::{InstallCounted, Standing};
