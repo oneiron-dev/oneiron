@@ -10,11 +10,10 @@ use zeroize::{Zeroize, Zeroizing};
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use oneiron_contracts::memory::{MemoryResult};
-use crate::deletion::{SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
@@ -27,6 +26,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, Vault, entity_revision, live_entity_row_in_txn};
+use oneiron_contracts::memory::MemoryResult;
 
 /// Gate reason code: the owner ruled a found key no secret.
 pub const FOUND_KEY_REASON_NOT_A_SECRET: &str = "gate.secret.found_key.not_a_secret";
@@ -715,6 +715,5 @@ fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u
 }
 
 pub(crate) use crate::file_secret_marks::unmask_value;
-
 
 use crate::file_secret_marks::as_text;

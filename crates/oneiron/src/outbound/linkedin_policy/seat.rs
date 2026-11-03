@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-use super::{LinkedInSandboxHostConfig, bounded_ref};
 use super::{
-    LINKEDIN_CHANNEL, LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_SEAT_VERB_CATALOG,
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
+    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB,
 };
+use super::{LinkedInSandboxHostConfig, bounded_ref};
 
 /// The day a seat's daily caps count over when its host names no reset
 /// instant: they reset at the next UTC midnight (FIX 8791, FIX 8813).
@@ -504,4 +506,3 @@ impl LinkedInSeatPolicyDecision {
         }
     }
 }
-

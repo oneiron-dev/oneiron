@@ -8,11 +8,11 @@ use super::document::{NoteDocument, invalid};
 use super::document_store::{load, persist_replica};
 use super::sync_rows::SYNC_DS_E;
 use super::{NotePin, NoteSpanResolution};
-use crate::side_table::HexId;
+use crate::claim::selector_world::SyncSelectorWorld;
 use crate::note::frame_envelope::NoteStateEnvelope;
+use crate::side_table::HexId;
 use crate::store::document_frame_tags::document_sub_tags;
 use crate::sync::SyncSelector;
-use crate::claim::selector_world::SyncSelectorWorld;
 use crate::{EntityId, FederationGrantScope, Result, Vault};
 
 pub(super) fn admit_pin_disclosure(
