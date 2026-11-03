@@ -3,6 +3,14 @@
   "oneiron": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "benches/agent_verb_rows_replay.rs",
+     "purpose": "FIX 837 speed bench: cold full-record reads versus warm cached repeated reads",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16518,6 +16526,7 @@
      "path": "src/code_run/read_set.rs",
      "purpose": "Read-set witnesses a resident attempt's replay record can prove (FIX 7020)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -16620,7 +16629,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 24,
       "struct": 12
@@ -86425,7 +86434,7 @@
    },
    "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5856,
+   "source_files": 5857,
    "test_files": 902
   },
   "oneiron-android": {
