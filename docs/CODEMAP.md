@@ -14,9 +14,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5889 | 902 | 112 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5878 | 902 | 112 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 53 | 1 | 0 |
+| [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 13 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 153 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 17 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 88 | 0 | 0 |
@@ -66,7 +67,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `agent_dispatch` | dir | 72 | L | yes | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `agent_inbox_lens` | file+dir | 6 | m | yes | Renderer-neutral inbox query |
 | `agent_run_status` | file | 1 | s | — | AgentRunStatus contract shared by Context Board and run-tree viewers |
-| `analyzer` | file | 1 | s | — | Multilingual analyzer subsystem |
 | `anchored_annotation` | dir | 18 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 14 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 64 | L | yes | Generic LMDB-backed background attempt queue |
@@ -128,7 +128,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `delivery_window` | dir | 8 | m | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 12 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 28 | L | yes | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
-| `distance` | file | 1 | s | — | Cosine distance kernels, defined in `oneiron-retrieval` |
 | `dreamer_consolidation` | dir | 155 | L | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `dreamer_prefilter` | dir | 8 | m | yes | ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth… |
@@ -144,14 +143,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `engine_executor` | dir | 49 | L | — | Engine-native JS code-mode executor |
 | `entity_doc` | dir | 38 | m | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |
-| `error` | file | 1 | s | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
-| `extraction_eval` | file | 1 | s | — | OF-360 extraction-quality evaluation |
 | `failure_ladder` | dir | 17 | m | yes | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `failure_signals` | file+dir | 14 | m | yes | Content-free, versioned tier-1 agent failure counts |
 | `fanout_auto` | file+dir | 2 | m | — | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `federation` | dir | 68 | L | yes | Federation grant record substrate |
 | `feedback` | dir | 51 | L | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
-| `fusion` | file | 1 | s | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `gate` | dir | 172 | L | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 13 | m | yes | OF-336 generated-UI component contract |
 | `git_wire` | dir | 38 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
@@ -174,7 +170,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `learning_setting_doors` | file | 1 | m | — | The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a… |
 | `lens` | dir | 60 | L | yes | Closed generated-lens atom vocabulary |
 | `limit_ask` | file | 1 | s | yes | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
-| `limits` | file | 1 | s | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `linear_sync` | dir | 16 | m | yes | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 9 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
@@ -184,7 +179,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `maintain` | dir | 6 | m | — | — |
 | `memory` | dir | 322 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 33 | m | yes | Durable batched speculation over real detached worktrees |
-| `msgpack_shape` | file | 1 | s | — | A budget check of untrusted MessagePack before it is decoded |
 | `note` | file+dir | 67 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 31 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 38 | L | yes | Live office body records and Vault doors |
@@ -196,13 +190,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `outbound_intent_ledger` | dir | 18 | L | yes | Device-local durable intent ledger for effectful outbound calls |
 | `overlay_db` | dir | 5 | m | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
-| `panic_report` | file | 1 | s | — | The content-free panic report a host installs before it opens a vault |
 | `persona_snapshot` | dir | 9 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
 | `pipeline` | dir | 69 | L | — | — |
 | `policy_model` | dir | 62 | m | yes | Policy classification over two planes |
 | `policy_setting_doors` | file | 1 | m | yes | The app's policy actions as host verbs (OF-181) |
 | `ports` | dir | 49 | m | yes | Transaction-composable storage ports |
-| `posterior` | file | 1 | s | — | Shared Beta posterior bandit seam |
 | `ppr` | dir | 10 | m | — | — |
 | `ppr_community` | dir | 8 | m | — | Deterministic community projection, cache, and bounded retrieval prior |
 | `prompt` | file+dir | 2 | m | — | — |
@@ -219,7 +211,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `result_body` | dir | 5 | s | yes | Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of… |
 | `result_memory` | file | 1 | s | — | The memory code-mode result bodies may hold (OF-190 B++) |
 | `retrieval_depth` | file+dir | 7 | m | — | ONE-207: the retrieval half of the effort dial |
-| `retrieval_quality` | file | 1 | s | — | Retrieval quality report vocabulary |
 | `run_tree` | dir | 11 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `runtime_hooks` | dir | 45 | m | yes | Runtime hooks (ARCH-0080) |
 | `saved_query` | dir | 18 | L | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
@@ -264,7 +255,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests_bug` | file | 1 | m | — | — |
 | `thread_lens` | file+dir | 2 | m | — | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
 | `thread_passport` | file+dir | 8 | m | yes | Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02) |
-| `tokenizer` | file | 1 | s | — | — |
 | `training_pack` | dir | 11 | m | yes | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
 | `typed_body` | file+dir | 8 | m | yes | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `vault` | dir | 44 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
@@ -297,6 +287,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `credential_door` | file | 1 | s | Credential-door bounds the authority log's slip checks share with the door itself |
 | `federation` | dir | 8 | m | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `share_travel` | file | 1 | s | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
+
+## oneiron-base
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `analyzer` | file | 1 | s | Multilingual analyzer subsystem |
+| `distance` | file | 1 | s | Cosine distance kernels, defined in `oneiron-retrieval` |
+| `entity_id` | file | 1 | s | Entity ids, world ids and the presentation-id grammar, defined in `oneiron-contracts` |
+| `error` | file | 1 | s | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
+| `extraction_eval` | file | 1 | s | OF-360 extraction-quality evaluation |
+| `fusion` | file | 1 | s | Score fusion kernels, defined in `oneiron-retrieval` |
+| `limits` | file | 1 | s | Traversal safety caps, defined in `oneiron-contracts` |
+| `msgpack_shape` | file | 1 | s | A budget check of untrusted MessagePack before it is decoded |
+| `panic_report` | file | 1 | s | The content-free panic report a host installs before it opens a vault |
+| `posterior` | file | 1 | s | Shared Beta posterior bandit seam |
+| `retrieval_quality` | file | 1 | s | Retrieval quality report vocabulary |
+| `tokenizer` | file | 1 | s | — |
 
 ## oneiron-bench
 
