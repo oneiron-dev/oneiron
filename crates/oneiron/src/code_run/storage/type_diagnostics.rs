@@ -425,6 +425,13 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
             RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
             release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
         }
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", ROWS.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(
+            &place,
+            &ROWS.key_bytes(&(run, program_seq, invocation)),
+        )?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         ROWS.delete(&vault.store, wtxn, &(run, program_seq, invocation))?;
     }
     Ok(())

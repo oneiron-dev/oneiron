@@ -268,6 +268,13 @@ pub(crate) fn erase_attempt_attribution_scope_in_txn(
                     %error,
                     "a live attempt attribution that no longer decodes is deleted"
                 );
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                let place = format!("side:{}", ATTEMPT_ATTRIBUTION.decl().name);
+                let origin = crate::batch::secret_scan::side_row_origin(
+                    &place,
+                    &ATTEMPT_ATTRIBUTION.key_bytes(&key),
+                )?;
+                crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
                 ATTEMPT_ATTRIBUTION.delete(&vault.store, wtxn, &key)?;
             }
         }

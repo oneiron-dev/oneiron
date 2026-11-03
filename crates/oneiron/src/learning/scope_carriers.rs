@@ -129,6 +129,18 @@ pub(crate) fn erase_team_receipt_scope_in_txn(
 /// # Errors
 ///
 /// Storage errors.
+///
+/// Revokes the custody the side-row wall minted from one deleted row (FIX 12085).
+fn revoke_deleted_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    place: &str,
+    full: &[u8],
+) -> Result<()> {
+    let origin = crate::batch::secret_scan::side_row_origin(place, full)?;
+    crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)
+}
+
 pub(crate) fn erase_review_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -162,6 +174,13 @@ pub(crate) fn erase_review_scope_in_txn(
                     branch_attempt: artifact.branch_attempt,
                     artifact_id: artifact.artifact_id.clone(),
                 };
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                revoke_deleted_row_in_txn(
+                    vault,
+                    wtxn,
+                    &format!("side:{}", ARTIFACT.decl().name),
+                    &ARTIFACT.key_bytes(&key),
+                )?;
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
                 let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
                 match CRITIQUE_ARTIFACT.put(&vault.store, &mut savepoint, &moved, &artifact) {
@@ -175,6 +194,13 @@ pub(crate) fn erase_review_scope_in_txn(
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(%error, "a critique artifact that no longer decodes is deleted");
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                revoke_deleted_row_in_txn(
+                    vault,
+                    wtxn,
+                    &format!("side:{}", ARTIFACT.decl().name),
+                    &ARTIFACT.key_bytes(&key),
+                )?;
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
             }
         }
@@ -193,6 +219,13 @@ pub(crate) fn erase_review_scope_in_txn(
             Ok(review) => review,
             Err(error) => {
                 tracing::warn!(%error, "a cached review that no longer decodes is deleted");
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                revoke_deleted_row_in_txn(
+                    vault,
+                    wtxn,
+                    &format!("side:{}", REVIEW.decl().name),
+                    &REVIEW.key_bytes(&hash),
+                )?;
                 REVIEW.delete(&vault.store, wtxn, &hash)?;
                 dropped.push(REVIEW.key_bytes(&hash));
                 continue;
@@ -246,6 +279,13 @@ pub(crate) fn erase_review_scope_in_txn(
         hasher.update(salt.as_bytes());
         hasher.update(&hash);
         let moved = *hasher.finalize().as_bytes();
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        revoke_deleted_row_in_txn(
+            vault,
+            wtxn,
+            &format!("side:{}", REVIEW.decl().name),
+            &REVIEW.key_bytes(&hash),
+        )?;
         REVIEW.delete(&vault.store, wtxn, &hash)?;
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         if let Err(error) = REVIEW.put(&vault.store, &mut savepoint, &moved, &review) {
@@ -308,6 +348,13 @@ fn erase_review_session_rows_in_txn(
             Ok(review) => review,
             Err(error) => {
                 tracing::warn!(%error, "a cached review that no longer decodes is deleted");
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                revoke_deleted_row_in_txn(
+                    vault,
+                    wtxn,
+                    &format!("side:{}", REVIEW.decl().name),
+                    &REVIEW.key_bytes(&hash),
+                )?;
                 REVIEW.delete(&vault.store, wtxn, &hash)?;
                 dropped.push(REVIEW.key_bytes(&hash));
                 continue;
@@ -318,6 +365,13 @@ fn erase_review_session_rows_in_txn(
         hasher.update(salt.as_bytes());
         hasher.update(&hash);
         let moved = *hasher.finalize().as_bytes();
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        revoke_deleted_row_in_txn(
+            vault,
+            wtxn,
+            &format!("side:{}", REVIEW.decl().name),
+            &REVIEW.key_bytes(&hash),
+        )?;
         REVIEW.delete(&vault.store, wtxn, &hash)?;
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         if let Err(error) = REVIEW.put(&vault.store, &mut savepoint, &moved, &review) {
