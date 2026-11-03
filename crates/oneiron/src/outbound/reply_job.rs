@@ -275,9 +275,10 @@ impl Vault {
     /// once the hold or the provider clears. Otherwise `result` is kept as
     /// the job's result and the job ends: completed when it answered or had
     /// nothing to answer, failed with its stage as the reason when the send
-    /// is ambiguous or the fault waits on the owner. The first result a job
-    /// keeps stands; a rerun after a restart names the same ref. Returns
-    /// that ref, or `None` for a requeued job.
+    /// is ambiguous or the fault waits on the owner. Each run's result is
+    /// kept as a version of the same artifact, so a rerun after a restart
+    /// appends its own and the head is the latest run's. Returns that ref,
+    /// or `None` for a requeued job.
     ///
     /// # Errors
     /// The result does not encode, or a vault or queue write fails.
@@ -302,6 +303,7 @@ impl Vault {
             let shift = claimed.attempt_count.saturating_sub(1).min(6);
             let wait =
                 (CONNECTOR_REPLY_RETRY_FIRST_SECS << shift).min(CONNECTOR_REPLY_RETRY_MAX_SECS);
+            self.keep_connector_reply_result(claimed, job, result, now)?;
             queue.requeue(RequeueAttempt {
                 id: claimed.id,
                 lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
@@ -311,31 +313,7 @@ impl Vault {
             })?;
             return Ok(None);
         }
-        let artifact_id = connector_reply_result_id(claimed.id)?;
-        let result_ref = format!("{CONNECTOR_REPLY_RESULT_PREFIX}{}", artifact_id.to_hex());
-        if self.get_blob_artifact(&artifact_id)?.is_none() {
-            let bytes = serde_json::to_vec(result)
-                .map_err(|_| Error::InvariantViolation("connector reply result did not encode"))?;
-            let run_ref = connector_reply_job_key(job.agent, &job.event.event_id);
-            let at = TimeRange {
-                start: now,
-                end: now,
-            };
-            self.put_blob_artifact(
-                &artifact_id,
-                &BlobArtifactBody::new(run_ref.clone(), CONNECTOR_REPLY_RESULT_MEDIA_TYPE),
-                at,
-                now,
-            )?;
-            self.append_blob_artifact_version(
-                &artifact_id,
-                &bytes,
-                &BlobVersionProvenance::AgentRun { run_ref },
-                WriteActor::new(job.agent, EdgeActorClass::Agent),
-                at,
-                now,
-            )?;
-        }
+        let result_ref = self.keep_connector_reply_result(claimed, job, result, now)?;
         queue.set_result(SetAttemptResult {
             id: claimed.id,
             lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
@@ -366,6 +344,116 @@ impl Vault {
             }
         }
         Ok(Some(result_ref))
+    }
+
+    /// Runs a `Failed` reply job again now, as its successor: the row is
+    /// read and must be a failed connector reply job, the successor is
+    /// minted in a write transaction, and its observers are notified, so the
+    /// next pass claims it (FIX 10899). Returns the successor's id.
+    ///
+    /// # Errors
+    /// No attempt has `attempt`, the row is no failed connector reply job,
+    /// the successor cannot be minted, or a vault write fails.
+    pub fn retry_failed_connector_reply_job(
+        &self,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<AttemptId> {
+        let queue = AttemptQueue::new(self);
+        let record = queue.get(attempt)?.ok_or(Error::EntityNotFound)?;
+        if record.kind != CONNECTOR_REPLY_JOB_KIND {
+            return Err(Error::InvalidConfig(
+                "the attempt is not a connector reply job".to_owned(),
+            ));
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let successor = queue.successor_of_failed_in_txn(&mut wtxn, attempt, now)?;
+        wtxn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(successor.id)
+    }
+
+    /// Keeps `result` as the job's result: the artifact is ensured, then the
+    /// run's result is appended as a new version unless it is byte-equal to
+    /// the head, so every run's result stays and the head is the latest
+    /// run's (FIX 10900). Returns the ref the head names.
+    ///
+    /// # Errors
+    /// The result does not encode, or a vault write fails.
+    fn keep_connector_reply_result(
+        &self,
+        claimed: &AttemptRecord,
+        job: &ConnectorReplyJob,
+        result: &ConnectorReplyJobResult,
+        now: u64,
+    ) -> Result<String> {
+        let artifact_id = connector_reply_result_id(claimed.id)?;
+        if self.get_blob_artifact(&artifact_id)?.is_none() {
+            let at = TimeRange {
+                start: now,
+                end: now,
+            };
+            self.put_blob_artifact(
+                &artifact_id,
+                &BlobArtifactBody::new(
+                    connector_reply_job_key(job.agent, &job.event.event_id),
+                    CONNECTOR_REPLY_RESULT_MEDIA_TYPE,
+                ),
+                at,
+                now,
+            )?;
+        }
+        let bytes = serde_json::to_vec(result)
+            .map_err(|_| Error::InvariantViolation("connector reply result did not encode"))?;
+        let head_bytes = self
+            .blob_artifact_versions(&artifact_id)?
+            .last()
+            .map(|head| self.read_blob_artifact_version(&artifact_id, head.version))
+            .transpose()?
+            .flatten();
+        if head_bytes.as_deref() != Some(bytes.as_slice()) {
+            let run_ref = connector_reply_job_key(job.agent, &job.event.event_id);
+            let at = TimeRange {
+                start: now,
+                end: now,
+            };
+            self.append_blob_artifact_version(
+                &artifact_id,
+                &bytes,
+                &BlobVersionProvenance::AgentRun { run_ref },
+                WriteActor::new(job.agent, EdgeActorClass::Agent),
+                at,
+                now,
+            )?;
+        }
+        Ok(format!(
+            "{CONNECTOR_REPLY_RESULT_PREFIX}{}",
+            artifact_id.to_hex()
+        ))
+    }
+
+    /// Every result the job's runs kept, oldest first; the head is the
+    /// latest run's. A version that does not decode is passed over, so one
+    /// bad write never hides the rest (FIX 10900).
+    ///
+    /// # Errors
+    /// The version chain does not read.
+    pub fn connector_reply_job_results(
+        &self,
+        attempt: AttemptId,
+    ) -> Result<Vec<ConnectorReplyJobResult>> {
+        let artifact_id = connector_reply_result_id(attempt)?;
+        let mut results = Vec::new();
+        for version in self.blob_artifact_versions(&artifact_id)? {
+            let Some(bytes) = self.read_blob_artifact_version(&artifact_id, version.version)?
+            else {
+                continue;
+            };
+            if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&bytes) {
+                results.push(result);
+            }
+        }
+        Ok(results)
     }
 }
 
@@ -421,34 +509,75 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 ) -> Result<()> {
     for attempt in attempts {
         let artifact = connector_reply_result_id(*attempt)?;
-        let stored = EntityStoreRead::port_entity_raw(store, txn, &artifact)?
+        erase_connector_reply_result_artifact_in_txn(store, txn, &artifact)?;
+    }
+    Ok(())
+}
+
+/// Erases one kept reply result, whole: its artifact with its version chain,
+/// head and indexes, and the kept reply body its head version names, when
+/// the head still decodes to a result naming one (FIX 10902). The body goes
+/// through this same erasure, so its own hold keeps it, logged, like the
+/// result's. A version the body read cannot parse names no body.
+fn erase_connector_reply_result_artifact_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    {
+        let stored = EntityStoreRead::port_entity_raw(store, txn, artifact)?
             .as_deref()
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .map(|header| header.entity_type);
         if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
-            continue;
+            return Ok(());
         }
-        if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
-            if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
-                return Err(error);
+    }
+    let mut body_artifact = None;
+    if let Some(head) = crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
+    {
+        let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash)?;
+        if let Some(row) = EntityStoreRead::port_entity_get(store, txn, &asset)? {
+            if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
+                || blake3::hash(&row.body).as_bytes() != &head.content_hash
+            {
+                return Err(Error::CorruptedIndex("blob content hash"));
             }
-            tracing::warn!(
-                artifact = %artifact.to_hex(),
-                "connector reply erase: a legal hold keeps the job's result"
-            );
-            continue;
+            if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&row.body)
+                && let Some(body_ref) = result.body_ref.as_deref()
+                && let Some(rest) =
+                    body_ref.strip_prefix(crate::outbound::CONNECTOR_REPLY_BODY_PREFIX)
+                && let Some(hex) = rest.split('@').next()
+                && let Ok(body) = EntityId::from_hex(hex)
+                && body != *artifact
+            {
+                body_artifact = Some(body);
+            }
         }
-        crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
-            store, txn, &artifact, true,
-        )?;
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &artifact)?;
-        crate::ppr::invalidate_ppr_for_delete(store, txn, &artifact, &neighbors)?;
-        if graph {
-            crate::ppr::increment_graph_version(store, txn)?;
+    }
+    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+        if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+            return Err(error);
         }
-        if vector {
-            crate::hnsw::increment_vector_version(store, txn)?;
-        }
+        tracing::warn!(
+            artifact = %artifact.to_hex(),
+            "connector reply erase: a legal hold keeps the job's result"
+        );
+        return Ok(());
+    }
+    crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
+        store, txn, artifact, true,
+    )?;
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, artifact)?;
+    crate::ppr::invalidate_ppr_for_delete(store, txn, artifact, &neighbors)?;
+    if graph {
+        crate::ppr::increment_graph_version(store, txn)?;
+    }
+    if vector {
+        crate::hnsw::increment_vector_version(store, txn)?;
+    }
+    if let Some(body) = body_artifact {
+        erase_connector_reply_result_artifact_in_txn(store, txn, &body)?;
     }
     Ok(())
 }
