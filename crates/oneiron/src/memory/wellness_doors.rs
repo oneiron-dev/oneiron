@@ -134,7 +134,7 @@ impl Memory<'_> {
                 if self.vault.get_entity_type_in_txn(txn, &turn)?
                     == Some(crate::registry::ENTITY_TYPE_TURN)
                 {
-                    let annotation = crate::affect::vad_annotation_claim_id(
+                    let annotation = crate::write_envelope::vad_annotation::vad_annotation_claim_id(
                         crate::registry::ENTITY_TYPE_TURN,
                         &turn,
                     )?;

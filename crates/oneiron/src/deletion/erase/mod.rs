@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::affect::VadAnnotationCleanup;
+use crate::write_envelope::vad_annotation::VadAnnotationCleanup;
 use crate::affect::delete_vad_annotation_metadata_for_type_in_txn;
 use crate::affect::delete_vad_annotation_metadata_in_txn;
 use crate::affect::vad_annotation_delete_scope_exists_in_txn;

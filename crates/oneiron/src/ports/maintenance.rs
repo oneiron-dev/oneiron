@@ -69,7 +69,7 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
         &self,
         txn: &mut Self::Write<'_>,
         id: &EntityId,
-        streak: crate::habit::HabitStreak,
+        streak: crate::write_envelope::task_body::HabitStreak,
     ) -> Result<()>;
     /// FloorWrites is the only durable session crossing; it authorizes this append.
     fn port_redaction_audit_append(

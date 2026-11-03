@@ -136,13 +136,13 @@ pub(super) fn fields_for_profile(
             crate::outbound_grant::OUTBOUND_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Standard) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_STANDARD
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_STANDARD
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Full) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_FULL
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_FULL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
             crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL

@@ -4,7 +4,7 @@ use super::codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body, invalid, scope_value,
 };
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]

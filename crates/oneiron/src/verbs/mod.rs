@@ -547,8 +547,8 @@ pub struct QueryAffect {
 
 impl QueryAffect {
     /// The affect as the engine takes it, refused out of range.
-    pub fn vad(self) -> MemoryResult<crate::affect::Vad> {
-        let vad = crate::affect::Vad {
+    pub fn vad(self) -> MemoryResult<oneiron_contracts::affect::Vad> {
+        let vad = oneiron_contracts::affect::Vad {
             valence: self.valence,
             arousal: self.arousal,
             dominance: self.dominance,

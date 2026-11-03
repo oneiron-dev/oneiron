@@ -12,7 +12,7 @@
 //! decision is not kept: a decision about evaporating content follows that
 //! content, and the room keeps no decision rows of its own.
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;

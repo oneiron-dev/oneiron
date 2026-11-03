@@ -745,7 +745,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
             kind: crate::edge::EdgeKind::FacetOf,
             tgt: body.scope_facet,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
     // Same txn, no second writer. A failure rolls back both controls and the

@@ -2,7 +2,7 @@
 
 use heed::RoTxn;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 #[cfg(test)]
 use crate::config::PPR_VAD_ALPHA_DEFAULT;
 use crate::edge::EdgeKind;

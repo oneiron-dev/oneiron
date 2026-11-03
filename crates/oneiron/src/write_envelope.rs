@@ -15,6 +15,16 @@ use oneiron_contracts::claim::ClaimSource;
 pub mod carry_forward;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod task_body;
+pub mod profile_snapshot;
+pub mod voice_segment;
+pub mod affect_trigger;
+pub mod coping_outcome;
+pub mod claim_vad;
+pub mod vad_annotation;
+pub mod person_identity;
+pub mod companion_subject;
+pub mod companion_task_kind;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

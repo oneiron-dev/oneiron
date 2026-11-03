@@ -1,7 +1,7 @@
 //! Vault edge writes, adjacency queries and graph traversal.
 
 use super::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 
 use crate::edge::{EdgeInfo, EdgeKind};
 #[cfg(test)]

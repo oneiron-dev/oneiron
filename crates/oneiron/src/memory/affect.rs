@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, CommitReceipt, Memory, MemoryError, MemoryResult, ScopedClaimInput};
-use crate::affect::{VadAnnotation, VadAnnotationSource};
+use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::task_verb::sdk::QueryAffect;
@@ -44,7 +44,7 @@ pub struct AffectClaimConsolidation {
     pub superseded_state_refs: Vec<String>,
 }
 
-fn query_affect(vad: crate::affect::Vad) -> QueryAffect {
+fn query_affect(vad: oneiron_contracts::affect::Vad) -> QueryAffect {
     QueryAffect {
         valence: vad.valence,
         arousal: vad.arousal,
@@ -67,8 +67,8 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("annotation requires a TURN"));
         }
         let annotation = VadAnnotation::new(input.vad.vad()?, input.source, input.annotated_at)?;
-        let body = crate::affect::vad_annotation_claim_body(&turn, &annotation)?;
-        let id = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+        let body = crate::write_envelope::vad_annotation::vad_annotation_claim_body(&turn, &annotation)?;
+        let id = crate::write_envelope::vad_annotation::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
         self.claim_upsert_scoped(&ScopedClaimInput {
             id: Some(id.to_hex()),
             predicate: body.predicate,

@@ -188,7 +188,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 return Err(invalid("invalid edge value layout"));
             }
             if let Some(vad) = edge.vad {
-                let vad = crate::affect::Vad {
+                let vad = oneiron_contracts::affect::Vad {
                     valence: vad[0],
                     arousal: vad[1],
                     dominance: vad[2],

@@ -48,3 +48,5 @@ pub use world_partition::WORLD_STALE_FIELD;
 pub(crate) use validation::disclosure_admits_target;
 
 pub(crate) use hydration::{context_entity_matches_read_snapshot, same_claim_body};
+
+pub mod profile_sources;
