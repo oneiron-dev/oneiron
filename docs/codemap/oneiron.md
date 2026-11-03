@@ -2722,7 +2722,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
 | `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 8 fn · 6 re-export · 4 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
 | `src/failure_signals/code_fix.rs` | src | m | 6 struct · 9 enum · 2 trait · 3 fn · 1 const · 1 re-export · 11 crate-vis | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber +9 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
-| `src/failure_signals/code_fix/exact.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExactReplayRequest, ReplayFidelity | The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it… |
+| `src/failure_signals/code_fix/exact.rs` | src | m | 1 struct · 1 enum · 1 fn · 6 crate-vis | ExactReplayRequest, ReplayFidelity | The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it… |
 | `src/failure_signals/code_fix/queue.rs` | src | s | 2 fn · 4 crate-vis | — | The sealed code-fix records' export queue: what the host reads and what a delivery acks, moved out of the… |
 | `src/failure_signals/code_fix/subject.rs` | src | m | 7 crate-vis | — | What a code fix reads of the real failure behind its source: the text and every world it touched, a failure… |
 | `src/failure_signals/count_delivery.rs` | src | s | 2 fn · 3 crate-vis | — | The tier-1 aggregate's delivery side: the export a batch reads and the subtraction its delivery settles… |
@@ -6627,7 +6627,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/doors/provenance.rs` | src | s | 1 crate-vis | — | A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does… |
 | `src/world_keys/kit.rs` | src | m | 7 struct · 5 fn · 1 const · 13 crate-vis | ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WorldKitRestore, WorldKitStatus | The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of… |
 | `src/world_keys/kit/settle.rs` | src | s | 1 crate-vis | — | A world kit's settle (FIX 11977, 12046, 12135, 12136): once a confirm commits, the confirmed kit's pending… |
-| `src/world_keys/kit_piece.rs` | src | s | 2 fn · 4 crate-vis | — | This machine's own kit pieces on the vault handle (FIX 1957, 2063) |
+| `src/world_keys/kit_piece.rs` | src | s | 3 fn · 4 crate-vis | — | This machine's own kit pieces on the vault handle (FIX 1957, 2063) |
 | `src/world_keys/machine.rs` | src | s | 3 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
 | `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 22 re-export · 25 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `src/world_keys/owner_signing.rs` | src | s | 1 struct · 4 fn | OwnerRootSigner | This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key… |

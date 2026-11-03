@@ -34263,7 +34263,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -83502,7 +83502,7 @@
      "purpose": "This machine's own kit pieces on the vault handle (FIX 1957, 2063)",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -90391,6 +90391,7 @@
      "path": "src/row.rs",
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "struct": 2
      }
@@ -110376,9 +110377,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import.rs",
-     "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
+     "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -110674,7 +110675,7 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
