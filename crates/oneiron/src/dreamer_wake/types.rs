@@ -419,6 +419,26 @@ pub trait DreamerAttemptExecutor {
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
 
+    /// Runs one window of plain Micro consolidation partitions the driver
+    /// admitted back to back (FIX 12487): their extractions may overlap,
+    /// but outcomes come back in window order and every commit lands
+    /// serially in that order, so the committed rows equal serial
+    /// `execute` calls over the same attempts. The window holds only
+    /// plain partition attempts (Micro kind, the scope's own attempt
+    /// type, a Ready prepared plan, no thing branch); a wrapper that
+    /// intercepts other shapes never sees its own shape here and may
+    /// forward the window whole. The default runs the window serially.
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        let mut outcomes = Vec::with_capacity(window.len());
+        for (attempt, ctx) in window.iter_mut() {
+            outcomes.push(self.execute(*attempt, ctx).await);
+        }
+        outcomes
+    }
+
     /// The host's answer to a completed TASK try's "Done means met?"
     /// (OF-533), asked once the try's result is attached and outside any
     /// transaction. `None` judges nothing, so a briefed TASK's Done asks up.

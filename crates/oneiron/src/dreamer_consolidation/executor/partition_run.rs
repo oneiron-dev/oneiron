@@ -7,10 +7,47 @@ use std::time::Instant;
 
 use crate::EntityId;
 
+use super::super::parallel::PartitionPrefix;
 use super::super::stage_log::{PartitionStages, ms_since};
 use super::super::{PreparedConsolidationAttempt, PreparedWake};
 use super::*;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+
+/// A partition opened at its wake pin, ready for its model work.
+struct PartitionStarted<'a> {
+    payload: rmpv::Value,
+    resources: BranchResources<'a>,
+    /// The peers this attempt's widening newly assigned beyond its
+    /// queued originals: recorded as taken once its result commits
+    /// (FIX 12246).
+    widened: Vec<EntityId>,
+    charges: StepChargeTally,
+}
+
+/// A partition at its open: already settled (a residency wait), or
+/// running with its opened branch.
+enum PartitionStart<'a> {
+    Early(DreamerAttemptExecution),
+    Running(Box<PartitionStarted<'a>>),
+}
+
+/// One slot of a partition window, from its admission to its finish.
+enum WindowSlotRun<'a> {
+    /// Decided at admission (a gate failure, or a residency wait at the
+    /// open); the stage clock is present once the partition opened.
+    Settled(Option<PartitionStages>, Result<DreamerAttemptExecution>),
+    /// Not a plain prepared partition: executes serially in its place.
+    Serial,
+    /// Opened; its prefix runs (or ran) beside the window's other slots
+    /// and its finish lands in window order.
+    Running {
+        started: Box<PartitionStarted<'a>>,
+        stages: PartitionStages,
+        run_id: Option<String>,
+        run_started: Instant,
+        prefix: Option<crate::llm::DurableStepResult<PartitionPrefix>>,
+    },
+}
 
 impl ConsolidationExecutor<'_> {
     /// Runs `plan`, prepared on `wake`, and settles its outcome. However it
@@ -38,27 +75,16 @@ impl ConsolidationExecutor<'_> {
         wake: &PreparedWake,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
-        let payload = plan.input().clone();
-        let opened = Instant::now();
-        let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake);
-        stages.branch_ms = ms_since(opened);
-        // A turn demoted since the wake prepared it waits for its promotion
-        // (FIX 3861), as one away at preparation does.
-        let resources = match resources {
-            Err(error) if super::super::residency::waits_on_residency(&error) => {
-                return Ok(super::super::residency::residency_deferral(
-                    ctx.now_ms,
-                    0,
-                    Vec::new(),
-                ));
-            }
-            resources => resources?,
+        let started = match self.start_partition(attempt, ctx, plan, wake, stages)? {
+            PartitionStart::Early(done) => return Ok(done),
+            PartitionStart::Running(started) => *started,
         };
-        // The peers this attempt's widening newly assigned beyond its queued
-        // originals: recorded as taken once its result commits (FIX 12246).
-        let widened = Self::widened_turns(attempt, plan);
-        let run_id = attempt.status.attempt.run_id.clone();
-        let mut charges = StepChargeTally::default();
+        let PartitionStarted {
+            payload,
+            resources,
+            widened,
+            mut charges,
+        } = started;
         let run_started = Instant::now();
         let run = self
             .run_partition_attempt(
@@ -66,12 +92,63 @@ impl ConsolidationExecutor<'_> {
                 &resources,
                 ctx,
                 attempt.status.attempt.id,
-                run_id,
+                attempt.status.attempt.run_id.clone(),
                 &mut charges,
                 stages,
             )
             .await;
         stages.close_model_run(run_started);
+        self.settle_partition_run(&resources, run, &widened, ctx, &mut charges, stages)
+            .await
+    }
+
+    /// Opens `plan`'s branch resources at the wake pin: the payload the
+    /// run decodes, the widened turns an accepted commit records as
+    /// taken, and a fresh charge tally. A turn demoted since the wake
+    /// prepared it waits for its promotion (FIX 3861), as one away at
+    /// preparation does; that wait ends the partition before any model
+    /// work.
+    fn start_partition<'a>(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'a>,
+        plan: &PreparedConsolidationAttempt,
+        wake: &'a PreparedWake,
+        stages: &mut PartitionStages,
+    ) -> Result<PartitionStart<'a>> {
+        let payload = plan.input().clone();
+        let opened = Instant::now();
+        let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake);
+        stages.branch_ms = ms_since(opened);
+        let resources = match resources {
+            Err(error) if super::super::residency::waits_on_residency(&error) => {
+                return Ok(PartitionStart::Early(
+                    super::super::residency::residency_deferral(ctx.now_ms, 0, Vec::new()),
+                ));
+            }
+            resources => resources?,
+        };
+        let widened = Self::widened_turns(attempt, plan);
+        Ok(PartitionStart::Running(Box::new(PartitionStarted {
+            payload,
+            resources,
+            widened,
+            charges: StepChargeTally::default(),
+        })))
+    }
+
+    /// Settles one partition run's outcome: an accepted commit, a
+    /// checkpoint, a park or a deferral, each carrying what the attempt
+    /// already spent.
+    async fn settle_partition_run(
+        &mut self,
+        resources: &BranchResources<'_>,
+        run: crate::llm::DurableStepResult<PartitionRun>,
+        widened: &[EntityId],
+        ctx: &WakeAttemptContext<'_>,
+        charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
+    ) -> Result<DreamerAttemptExecution> {
         match run {
             // A finished partition lands while its landing window is still
             // open, even past the pass ceiling (FIX 11570): its model steps
@@ -135,6 +212,251 @@ impl ConsolidationExecutor<'_> {
                 other,
                 &mut charges,
             )),
+        }
+    }
+
+    /// The prepared partition path's identity gates and scope pin,
+    /// shared by the serial `execute` and a partition window's slot
+    /// admission.
+    pub(super) fn pin_prepared_partition(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+        plan: &PreparedConsolidationAttempt,
+    ) -> Result<()> {
+        if plan.attempt_id() != attempt.status.attempt.id
+            || !plan.matches_queued(&attempt.status.payload.input)
+            || (ctx.prepared_wake.is_some()
+                && self.scope.as_ref().is_some()
+                && self.scope.as_ref() != plan.scope())
+        {
+            return Err(invalid_consolidation(
+                "executor scope/identity differs from prepared attempt",
+            ));
+        }
+        let branch_scope = super::super::branch_scope::pin_execution_scope(
+            ctx.vault,
+            attempt.status.attempt.id,
+            plan.scope(),
+        )?;
+        if branch_scope.as_ref() != plan.scope() {
+            return Err(invalid_consolidation(
+                "prepared branch scope changed after the wake pin",
+            ));
+        }
+        // FIX 7729: a child its preparation narrowed holds only what it runs.
+        let narrowed = plan.branch().bucket_set();
+        if super::super::partition::decode_partition_payload(&attempt.status.payload.input)
+            .is_ok_and(|queued| queued.bucket_set() != narrowed)
+        {
+            super::super::running_buckets::record_running_buckets(
+                ctx.vault,
+                attempt.status.attempt.id,
+                attempt.status.attempt.attempt_count,
+                &narrowed,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Runs one driver window of plain Micro partitions (FIX 12487):
+    /// every slot is pinned and opened in admission order, the
+    /// extraction prefixes run side by side, then each slot finishes
+    /// serially in order against its branch re-opened at the finish —
+    /// the live state a serial pass would read in that position — so
+    /// the committed rows equal the serial run's. The driver gates the
+    /// window to plain partitions; a slot of any other shape takes the
+    /// serial `execute` in its place as a second lock.
+    pub(super) async fn run_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        let mut slots: Vec<WindowSlotRun<'w>> = window
+            .iter()
+            .map(|(attempt, ctx)| self.admit_window_slot(attempt, ctx))
+            .collect();
+        // The prefixes, side by side, their outputs kept in slot order.
+        let mut jobs = Vec::new();
+        for (index, (slot, (attempt, ctx))) in slots.iter_mut().zip(window.iter()).enumerate() {
+            if let WindowSlotRun::Running {
+                started, run_id, ..
+            } = slot
+            {
+                jobs.push((
+                    index,
+                    self.extract_partition_prefix(
+                        &started.payload,
+                        &started.resources,
+                        ctx,
+                        attempt.status.attempt.id,
+                        run_id.clone(),
+                        &mut started.charges,
+                    ),
+                ));
+            }
+        }
+        let (indices, prefixes): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+        let width = prefixes.len().max(1);
+        let outcomes = super::super::sieve_ports::ordered_slots(prefixes, width).await;
+        for (index, outcome) in indices.into_iter().zip(outcomes) {
+            if let WindowSlotRun::Running { prefix, .. } = &mut slots[index] {
+                *prefix = Some(outcome);
+            }
+        }
+        // The finishes, one by one in admission order.
+        let mut results = Vec::with_capacity(window.len());
+        for (slot, (attempt, ctx)) in slots.into_iter().zip(window.iter_mut()) {
+            results.push(self.finish_window_slot(slot, *attempt, ctx).await);
+        }
+        results
+    }
+
+    /// One window slot at its admission: the serial gates and open, in
+    /// window order. What is not a plain prepared Micro partition — an
+    /// unprepared or direct call, another attempt shape, a thing branch
+    /// with its own scoped agent — stays serial in its place.
+    fn admit_window_slot<'w>(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'w>,
+    ) -> WindowSlotRun<'w> {
+        if attempt.status.payload.attempt_type
+            != crate::dreamer_runner::DreamerConsolidationScope::Micro.as_str()
+        {
+            return WindowSlotRun::Serial;
+        }
+        let (Some(plan), Some(wake)) = (ctx.prepared_attempt, ctx.prepared_wake) else {
+            return WindowSlotRun::Serial;
+        };
+        if plan.branch().thing.is_some() {
+            return WindowSlotRun::Serial;
+        }
+        match ctx
+            .vault
+            .dreamer_actor_for_attempt(attempt.status.attempt.id)
+        {
+            Ok(actor) if actor == self.actor => {}
+            Ok(_) => {
+                return WindowSlotRun::Settled(
+                    None,
+                    Err(invalid_consolidation(
+                        "executor actor is not the queued Dreamer authority",
+                    )),
+                );
+            }
+            Err(error) => return WindowSlotRun::Settled(None, Err(error)),
+        }
+        if let Err(error) = self.pin_prepared_partition(attempt, ctx, plan) {
+            return WindowSlotRun::Settled(None, Err(error));
+        }
+        let mut stages = PartitionStages::start(wake.prepared_ms());
+        match self.start_partition(attempt, ctx, plan, wake, &mut stages) {
+            Ok(PartitionStart::Early(done)) => WindowSlotRun::Settled(Some(stages), Ok(done)),
+            Ok(PartitionStart::Running(started)) => WindowSlotRun::Running {
+                started,
+                stages,
+                run_id: attempt.status.attempt.run_id.clone(),
+                run_started: Instant::now(),
+                prefix: None,
+            },
+            Err(error) => WindowSlotRun::Settled(Some(stages), Err(error)),
+        }
+    }
+
+    /// One window slot's serial position: its finish and settle, with
+    /// its stage line, in admission order.
+    async fn finish_window_slot<'w>(
+        &mut self,
+        slot: WindowSlotRun<'w>,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'w>,
+    ) -> Result<DreamerAttemptExecution> {
+        let turns = ctx.prepared_attempt.map_or(0, |plan| plan.turn_ids().len());
+        match slot {
+            WindowSlotRun::Settled(stages, executed) => {
+                if let Some(stages) = stages {
+                    stages.log(attempt, turns, &executed);
+                }
+                executed
+            }
+            WindowSlotRun::Serial => self.execute(attempt, ctx).await,
+            WindowSlotRun::Running {
+                started,
+                mut stages,
+                run_started,
+                prefix,
+                ..
+            } => {
+                let PartitionStarted {
+                    resources,
+                    widened,
+                    mut charges,
+                    ..
+                } = *started;
+                let executed = match prefix.expect("a running slot's prefix ran") {
+                    Err(error) => {
+                        stages.close_model_run(run_started);
+                        self.settle_partition_run(
+                            &resources,
+                            Err(error),
+                            &widened,
+                            ctx,
+                            &mut charges,
+                            &mut stages,
+                        )
+                        .await
+                    }
+                    Ok(PartitionPrefix::Done(run)) => {
+                        stages.close_model_run(run_started);
+                        self.settle_partition_run(
+                            &resources,
+                            Ok(run),
+                            &widened,
+                            ctx,
+                            &mut charges,
+                            &mut stages,
+                        )
+                        .await
+                    }
+                    Ok(PartitionPrefix::Extracted(extracted)) => {
+                        // The finish reads live state (admitted priors,
+                        // candidate signals): re-open the branch now, so
+                        // it sees what the serial order before it landed.
+                        let plan = ctx.prepared_attempt.expect("a running slot is prepared");
+                        let wake = ctx.prepared_wake.expect("a running slot is prepared");
+                        match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
+                            Ok(fresh) => {
+                                let run = self
+                                    .finish_partition_run(
+                                        *extracted,
+                                        &fresh,
+                                        ctx,
+                                        attempt.status.attempt.id,
+                                        &mut charges,
+                                        &mut stages,
+                                    )
+                                    .await;
+                                stages.close_model_run(run_started);
+                                self.settle_partition_run(
+                                    &fresh,
+                                    run,
+                                    &widened,
+                                    ctx,
+                                    &mut charges,
+                                    &mut stages,
+                                )
+                                .await
+                            }
+                            Err(error) => {
+                                stages.close_model_run(run_started);
+                                super::super::residency::spent_or_deferred(error, ctx, &charges)
+                            }
+                        }
+                    }
+                };
+                stages.log(attempt, turns, &executed);
+                executed
+            }
         }
     }
 
