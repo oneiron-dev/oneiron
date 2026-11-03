@@ -269,7 +269,7 @@ impl PaidRequests for AdmittedRequests {
         let posted = post();
         // The request went out: a failed one keeps its reservation as spend.
         let outcome = match &posted {
-            Ok(_) => CallOutcome::Used(tokens),
+            Ok(_) => CallOutcome::UsedCounted(tokens),
             Err(_) => CallOutcome::Failed,
         };
         if let Err(denied) = permit.settle(outcome) {
