@@ -44,8 +44,8 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
 use crate::task_verb::sdk::vault_delete;
-use serde::{Deserialize, Serialize};
 use crate::temporal::TimeRange;
+use serde::{Deserialize, Serialize};
 
 mod session;
 

@@ -17,7 +17,6 @@ use super::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
     machine_claim_transition_transcript,
 };
-use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::history_projection::{
     machine_history_for_restriction, machine_history_rows, pin_key, project_machine_claim,
@@ -36,6 +35,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;
 use crate::{EntityId, TimeRange, VaultConfig};
+use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 
 fn incomplete() -> Error {
     Error::Claim(ClaimError::MachineClaimHistoryIncomplete)

@@ -15,4 +15,3 @@ pub struct CodeTreeBlob {
     pub size_bytes: u64,
     pub mode: u32,
 }
-
