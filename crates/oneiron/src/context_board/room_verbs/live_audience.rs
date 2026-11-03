@@ -4,7 +4,7 @@
 //! members' alone, and an entry ref is never proof of membership.
 
 use crate::conversation::RoomLiveSpeakerEntries;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::{EntityId, Vault};
 
 /// `members` with the entry refs of `live`, sorted and unique: the audience

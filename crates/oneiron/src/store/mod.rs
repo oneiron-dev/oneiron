@@ -138,6 +138,8 @@ mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
 pub mod diagnostic_record;
+pub mod derivation;
+pub mod world_registration_keys;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
