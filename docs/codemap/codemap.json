@@ -7297,7 +7297,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -7347,7 +7347,7 @@
      "path": "src/batch/secret_scan/container/retained_iterative.rs",
      "purpose": "The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
