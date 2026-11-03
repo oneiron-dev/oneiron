@@ -5,7 +5,7 @@
 
 use super::consent::{AnsweringAuthority, MEMBERSHIP, MemberVerdict, PROPOSALS, close_if_done};
 use super::pptx::ORACLE;
-use super::{EXPORTS, FORKS, ForkState};
+use super::{EXPORT_AUTHORS, EXPORTS, FORKS, ForkState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -47,6 +47,34 @@ pub(crate) fn erase_export_actor_in_txn(
     }
     for (key, record) in exports {
         EXPORTS.put(&vault.store, wtxn, &key, &record)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from a DOCX revision group's author binding (FIX 595):
+/// the token stays so the bytes still resolve, but the actor becomes `None`
+/// and the outgoing copy shows `erased`.
+///
+/// # Errors
+///
+/// Storage errors, or an author row that cannot be read.
+pub(crate) fn erase_export_author_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut authors = Vec::new();
+    for (key, mut record) in EXPORT_AUTHORS.scan(&vault.store, wtxn)? {
+        if record.actor == Some(*actor) {
+            record.actor = None;
+            authors.push((key, record));
+        }
+    }
+    for (key, record) in authors {
+        EXPORT_AUTHORS.put(&vault.store, wtxn, &key, &record)?;
     }
     Ok(())
 }

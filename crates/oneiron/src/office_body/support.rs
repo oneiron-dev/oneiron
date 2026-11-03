@@ -5,13 +5,14 @@
 use super::*;
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
-/// office records, its proposals and its export records. The body itself, a Loro document in
+/// office records, its proposals and its export and revision-author records. The body itself, a Loro document in
 /// every format, goes with its forks in the typed body's own eraser.
 /// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
+    EXPORT_AUTHORS.delete_from(store, txn, entity.as_bytes())?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }

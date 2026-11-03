@@ -118,6 +118,10 @@ side_tables! {
     /// (version).
     OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named
         => crate::office_body::erase_export_actor_in_txn;
+    /// One DOCX revision group's opaque author token. Key: id16 (artifact) + u64be (version) +
+    /// u64be (consecutive group index); value: optional actor + token (FIX 595).
+    OFFICE_BODY_EXPORT_AUTHOR: VaultMeta b"office_body:export_author:v1:" Named
+        => crate::office_body::erase_export_author_actor_in_txn;
     /// Machine work on a live office body: opener, base frontier and state. Key: id16 (artifact) +
     /// id16 (fork).
     OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named
