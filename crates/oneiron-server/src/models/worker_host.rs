@@ -188,6 +188,9 @@ impl BoundWork {
                         let changed = ticket.pressure_change();
                         tokio::pin!(changed);
                         changed.as_mut().enable();
+                        let cancel_changed = ticket.cancel_change();
+                        tokio::pin!(cancel_changed);
+                        cancel_changed.as_mut().enable();
                         if ticket.request.cancel.load(Ordering::Acquire)
                             || ticket
                                 .deadline()
@@ -202,6 +205,7 @@ impl BoundWork {
                         tokio::select! {
                             _ = unload.as_mut() => break None,
                             () = changed.as_mut() => continue,
+                            () = cancel_changed.as_mut() => continue,
                             () = async {
                                 if let Some(deadline) = deadline {
                                     tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
@@ -229,6 +233,9 @@ impl BoundWork {
             let changed = ticket.pressure_change();
             tokio::pin!(changed);
             changed.as_mut().enable();
+            let cancel_changed = ticket.cancel_change();
+            tokio::pin!(cancel_changed);
+            cancel_changed.as_mut().enable();
             match ticket.resolve_pressure_excluding(&tried) {
                 PressureDecision::Grant(grant) => {
                     self.armed = false;
@@ -254,6 +261,7 @@ impl BoundWork {
             let deadline = ticket.deadline();
             tokio::select! {
                 () = changed.as_mut() => {},
+                () = cancel_changed.as_mut() => {},
                 _ = victim_wake => {},
                 () = async {
                     if let Some(deadline) = deadline {
@@ -452,6 +460,7 @@ pub(super) fn admit_bound_work(
         request.deadline = context.deadline;
         request.parent = context.parent;
         request.cancel = context.cancel.shared();
+        request.cancel_changed = context.cancel.shared_notify();
         Some(admission.enqueue(request))
     });
     BoundWork {
