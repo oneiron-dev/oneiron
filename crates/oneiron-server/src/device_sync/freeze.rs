@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use crate::server::HousekeepingAdmission;
 
 /// One run's, refresh's, write's or import's admission, released as it drops.
-pub(super) type Admitted = Box<dyn Send>;
+pub(crate) type Admitted = Box<dyn Send>;
 
 /// What device sync takes for each run, refresh, write and import, and the
 /// freeze that pauses a run.
@@ -39,20 +39,18 @@ impl ReapFreeze {
     }
 
     /// One admission now, or `None` while frozen.
-    pub(super) fn admit(&self) -> Option<Admitted> {
+    pub(crate) fn admit(&self) -> Option<Admitted> {
         (self.admit)()
     }
 
     /// The admission alone, for a refresh or write beside the run.
-    #[cfg(feature = "mesh")]
-    pub(super) fn admission(&self) -> HousekeepingAdmission {
+    pub(crate) fn admission(&self) -> HousekeepingAdmission {
         std::sync::Arc::clone(&self.admit)
     }
 
     /// Resolves once the vault is frozen for reap; never where no freeze
     /// can come (serve's freeze, whose sender is gone).
-    #[cfg(feature = "mesh")]
-    pub(super) async fn frozen(&mut self) {
+    pub(crate) async fn frozen(&mut self) {
         let closed = self.frozen.wait_for(|frozen| *frozen).await.is_err();
         if closed {
             std::future::pending::<()>().await;
@@ -63,8 +61,7 @@ impl ReapFreeze {
     /// once `stop` is sent (or the freeze is gone). A vault frozen again
     /// before the admission is waited out again. The archive receiver waits
     /// on it too, so it runs without the `mesh` feature as well.
-    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
-    pub(super) async fn resumed(
+    pub(crate) async fn resumed(
         &mut self,
         stop: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> Option<Admitted> {

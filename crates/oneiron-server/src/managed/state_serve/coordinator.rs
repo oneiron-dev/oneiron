@@ -629,6 +629,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             state.device_sync_freeze(),
         )
         .await;
+        // The supervisor's settings file carries each dedicated environment
+        // with its paths checked before this point (FIX 2051, FIX 11136).
+        let env_config = config.vault_config();
+        let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+            config.shared_env.clone(),
+            &env_config,
+            config.lease_vault_id,
+            state.background_admission(WriteKind::DeviceSync),
+            Some(state.device_sync_freeze()),
+        )
+        .await;
+        sync_server.install_shared_envs(shared);
         let artifact_task = artifacts.map(|listener| {
             let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
             let stop = shutdown.triggered();
@@ -649,6 +661,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;
         }
+        sync_server.stop_shared_envs().await;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
