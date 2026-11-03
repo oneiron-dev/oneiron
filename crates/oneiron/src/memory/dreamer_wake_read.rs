@@ -16,7 +16,7 @@ use crate::dreamer_wake::{
     WakeObservedCheckpoint, WakeObservedGeneration, WakeRef,
 };
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLeaseState;
+use oneiron_model::llm::BudgetLeaseState;
 
 /// The input: an attempt's observation (`job_ref`, with `wake_ref` naming
 /// the pass whose generation to read, else its latest), or one pass's

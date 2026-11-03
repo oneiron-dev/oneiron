@@ -34,8 +34,8 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::context_projection::ContextSpec;
-use crate::llm::RsiSpendPurpose;
-use crate::llm::run_admission::LeaseUnit;
+use crate::research_budget::RsiSpendPurpose;
+use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::{AttemptId, AttemptQueue, EntityId, Error, Result, Vault};

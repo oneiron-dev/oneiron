@@ -2,10 +2,10 @@
 
 use super::room::{RoomPresence, room_clearance, room_worlds};
 use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
-use oneiron_authority::federation::Scope;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 mod ceiling;
 mod live_audience;
