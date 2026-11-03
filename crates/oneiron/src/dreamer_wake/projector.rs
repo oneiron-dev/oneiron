@@ -727,24 +727,62 @@ pub(crate) fn words_taken_in_txn(
         .is_some_and(|statements| reading(&statements) == taken))
 }
 
-/// Records `turn`'s current words as taken by work a Micro selection retry
-/// just assigned (its widened branch or an owed chunk), the same
-/// assignment-time record `hold_in_txn` makes for a projector round (FIX
-/// 12246): without it a later deferral re-widens to the same peer and
-/// extracts its words again. Only the taken reading is recorded; round
-/// membership stays the projector's. A turn whose statements do not read
-/// here is left as it stands.
-pub(crate) fn take_words_in_txn(
+/// The reading of `text` said in `class`, as a branch froze it: the
+/// version a completed widened branch records as taken, never a live
+/// reread after its commit.
+pub(crate) fn reading_of_text(text: &str, class: Option<ClaimSource>) -> [u8; 32] {
+    reading(&super::statement_material::statements(text, class))
+}
+
+/// Records one frozen reading as taken by the widened branch that read it
+/// (FIX 12246): without it a later deferral re-widens to the same peer and
+/// extracts its words again.
+pub(crate) fn take_reading_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
+    reading: [u8; 32],
 ) -> Result<()> {
-    let Some(statements) = turn_statements_in_txn(vault, txn, turn)? else {
-        return Ok(());
-    };
     let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
-    given.taken = Some(reading(&statements));
+    given.taken = Some(reading);
     GIVEN.put(&vault.store, txn, turn, &given)
+}
+
+/// Records a fresh owed chunk as a projection round and its turns' current
+/// words as taken, in its enqueue transaction (FIX 12246): the same
+/// assignment-time record `hold_in_txn` makes, so erasing or demoting one
+/// pending chunk member retires the round and puts its surviving turns
+/// back to be read again. Completion marks this round applied through the
+/// same kind + dedupe-key id every projector round uses.
+pub(crate) fn take_chunk_words_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    kind: &str,
+    dedupe_key: &str,
+    turns: &[EntityId],
+) -> Result<()> {
+    let id = round_id(kind, dedupe_key);
+    let mut round = ROUND
+        .get(&vault.store, txn, &id)?
+        .unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+    round.applied = false;
+    round.turns = turns.to_vec();
+    ROUND.put(&vault.store, txn, &id, &round)?;
+    for turn in turns {
+        let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
+        if !given.rounds.contains(&id) {
+            given.rounds.push(id);
+        }
+        if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
+            given.taken = Some(reading(&statements));
+        }
+        GIVEN.put(&vault.store, txn, turn, &given)?;
+    }
+    Ok(())
 }
 
 /// The version of one turn's statements.

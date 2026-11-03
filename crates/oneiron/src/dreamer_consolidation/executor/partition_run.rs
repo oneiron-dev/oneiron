@@ -55,8 +55,19 @@ impl ConsolidationExecutor<'_> {
             resources => resources?,
         };
         // The peers this attempt's widening newly assigned beyond its queued
-        // originals: recorded as taken once its result commits (FIX 12246).
-        let widened = Self::widened_turns(attempt, plan);
+        // originals, with the readings this branch froze of their words:
+        // recorded as taken only once the run completes (FIX 12246). A held
+        // run stamps none of them, so its retry rereads every widened turn
+        // whose candidates are still waiting.
+        let widened: Vec<(EntityId, [u8; 32])> = Self::widened_turns(attempt, plan)
+            .into_iter()
+            .filter_map(|turn| {
+                resources
+                    .taken_reading(&turn)
+                    .ok()
+                    .map(|reading| (turn, reading))
+            })
+            .collect();
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
         let run_started = Instant::now();
@@ -108,7 +119,7 @@ impl ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
+                    .commit_candidates(&resources, candidates, &[], ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -139,14 +150,14 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an
-    /// accepted commit it also records the words this branch's widening
-    /// assigned (`widened`) as taken, in the stamp's own commit after the
-    /// candidates' (FIX 12246).
+    /// accepted commit it also records the frozen readings this branch's
+    /// widening assigned (`widened`) as taken, in the stamp's own commit
+    /// after the candidates' (FIX 12246).
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
-        widened: &[EntityId],
+        widened: &[(EntityId, [u8; 32])],
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
     ) -> Result<()> {
@@ -165,8 +176,8 @@ impl ConsolidationExecutor<'_> {
             // A failed stamp never fails the commit the extraction already
             // landed; it only costs a later duplicate extraction.
             let stamped = ctx.vault.with_write_txn_grouped(|txn| {
-                for turn in widened {
-                    crate::dreamer_wake::take_words_in_txn(ctx.vault, txn, turn)?;
+                for (turn, reading) in widened {
+                    crate::dreamer_wake::take_reading_in_txn(ctx.vault, txn, turn, *reading)?;
                 }
                 Ok(())
             });

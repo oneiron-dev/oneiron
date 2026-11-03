@@ -135,19 +135,24 @@ impl WakePreparationChunks {
                     "sieve receipts follow their TURNs to the split-off sibling"
                 );
             }
-            if matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_)) {
+            if let EnqueueDreamerAttemptOutcome::Enqueued(status) = &outcome {
                 crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                     vault, txn, source, sibling,
                 )?;
                 // The chunk's turns are assigned work from this commit on: a
-                // Micro retry records their current words as taken, as a
-                // projector round does at enqueue (FIX 12246), so no later
-                // widening takes them again. The chunk itself keeps them as
-                // its own originals and runs them whole.
+                // Micro retry records the chunk as a projector round and
+                // their current words as taken (FIX 12246), so no later
+                // widening takes them again and an erase/demote of one
+                // member releases the survivors. The chunk itself keeps
+                // them as its own originals and runs them whole.
                 if scope == DreamerConsolidationScope::Micro {
-                    for turn in chunk.turn_ids() {
-                        crate::dreamer_wake::take_words_in_txn(vault, txn, &turn)?;
-                    }
+                    crate::dreamer_wake::take_chunk_words_in_txn(
+                        vault,
+                        txn,
+                        &status.attempt.kind,
+                        key,
+                        &chunk.turn_ids(),
+                    )?;
                 }
                 queued += 1;
             }
