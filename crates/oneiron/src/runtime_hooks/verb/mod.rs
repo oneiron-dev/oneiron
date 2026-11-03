@@ -35,6 +35,7 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 use super::block::HookTurnTarget;
 pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
+pub(super) use chain::admit_verb_outcome;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,

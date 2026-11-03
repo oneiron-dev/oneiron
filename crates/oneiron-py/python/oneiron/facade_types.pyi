@@ -5797,7 +5797,10 @@ class HookReplayCaseVerb(TypedDict):
     invocation: str
     verb: str
     phase: HookPhase
-HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+class HookReplayCaseUnknownRun(TypedDict):
+    on: Literal["unknown_run"]
+    run_key: str
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb | HookReplayCaseUnknownRun
 HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
@@ -22376,6 +22379,7 @@ class EffectReceipt(TypedDict):
     action: NotRequired[ReplayAction | None]
     source_url: NotRequired[str | None]
     source_origin: NotRequired[str | None]
+    audience: NotRequired[str | None]
     source_title: NotRequired[str | None]
     tab: NotRequired[str | None]
     result_tab: NotRequired[str | None]

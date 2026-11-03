@@ -51,6 +51,11 @@ pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
 /// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
 /// again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+/// The most unsettled open rows one prune pass reads through their asks.
+/// This budget is separate from the deletion cap: a row whose ask cannot be
+/// read is kept (it is not provably dead), and must not starve deletions of
+/// rows already known dead (FIX 2185).
+const PRUNE_UNSETTLED_READ_MAX: usize = 32;
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -674,7 +679,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     {
         let rtxn = vault.store.env.read_txn()?;
         for entry in ASKS.iter_raw_from(&vault.store, &rtxn, &[])? {
-            if old.len() + unsettled.len() >= max {
+            if old.len() >= max && unsettled.len() >= PRUNE_UNSETTLED_READ_MAX {
                 break;
             }
             let (key, value) = entry?;
@@ -685,10 +690,13 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
                 continue;
             };
             if outlived(&row, cutoff) {
-                old.push(key);
+                if old.len() < max {
+                    old.push(key);
+                }
             } else if row.state == VerbAskState::Open
                 && row.created_at < cutoff
                 && row.settled_at.is_none()
+                && unsettled.len() < PRUNE_UNSETTLED_READ_MAX
             {
                 unsettled.push((key, row.author, row.author_class, row.ask));
             }
@@ -697,7 +705,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     for (key, author, class, ask) in unsettled {
         let status = author_memory(vault, author, class, None)
             .tasks_ask_status(TaskAskHandle { group_ref: ask });
-        if matches!(status, Ok(TaskAskStatus::Settled(_))) {
+        if matches!(status, Ok(TaskAskStatus::Settled(_))) && old.len() < max {
             old.push(key);
         }
     }

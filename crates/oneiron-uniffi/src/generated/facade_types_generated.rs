@@ -17919,6 +17919,11 @@ pub enum HookReplayCase {
         #[serde(rename = "phase")]
         phase: HookPhase,
     },
+    #[serde(rename = "unknown_run")]
+    UnknownRun {
+        #[serde(rename = "run_key")]
+        run_key: String,
+    },
 }
 
 /// `oneiron::runtime_hooks::replay::HookReplayCompare`.
@@ -69287,6 +69292,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_origin: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     #[serde(
         rename = "source_title",
         default,

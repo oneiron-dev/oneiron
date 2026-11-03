@@ -5,10 +5,11 @@ use crate::claim::{PointRead, ScopedRead};
 use crate::runtime_hooks::body::{HookBudgetOverrun, HookRunContext};
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::read::{self, HistoryAdmission, grant_view::shows_row};
-use crate::runtime_hooks::runner::{ask_verdict, input_json, judge, verdict_context};
+use crate::runtime_hooks::runner::{Verdict, ask_verdict, input_json, judge, verdict_context};
 use crate::runtime_hooks::source::FactEntry;
-use crate::runtime_hooks::store::{self, HookRunRecord};
-use crate::runtime_hooks::verb::HookVerbRunRecord;
+use crate::runtime_hooks::store::{self, HookRunRecord, HookRunState};
+use crate::runtime_hooks::verb::{HookVerbRunRecord, admit_verb_outcome};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Error, Result};
 
 use super::{HookReplayResult, PinnedReads, PinnedVerdicts, Replay, input_too_large, ran};
@@ -221,8 +222,46 @@ impl Replay<'_> {
         if let Some(reason) = reads.missing {
             return HookReplayResult::MissingHistory { reason };
         }
+        let mut verdict = judge(self.binding, result, overrun, &context);
+        // The chain's own checks beside the judge (FIX 2393), as the live
+        // run applied them: a Rewrite the checks refuse, a host.compact
+        // Skip or an empty Redact reads `refused` here too, so the token
+        // stands beside the recorded one. The Rewrite check replay can
+        // run is the static half — the host doors' add-only rules over
+        // the args the saved input showed the hook, and the row's own
+        // input shape for a verb the SDK table knows; a door's own
+        // rewrite admission was never saved, so replay stays more
+        // accepting than that door was, never less.
+        if let Some(reason) = verdict.outcome.as_ref().and_then(|outcome| {
+            let before = serde_json::from_str::<serde_json::Value>(input)
+                .ok()
+                .and_then(|shown| shown.get("args").cloned());
+            let check = |next: &serde_json::Value| {
+                if let Some(before) = &before {
+                    crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
+                }
+                if crate::task_verb::sdk::input_schema(&saved.verb).is_some() {
+                    crate::task_verb::sdk::validate_input(&saved.verb, next)
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            };
+            // The live post chain gives a Rewrite nothing to check its
+            // args with, as a pre chain gives it its door's check.
+            let check = (saved.phase == HookPhase::Pre)
+                .then_some(&check as crate::runtime_hooks::verb::VerbArgsCheck<'_>);
+            admit_verb_outcome(&saved.verb, outcome, check).err()
+        }) {
+            verdict = Verdict {
+                state: HookRunState::Refused,
+                outcome: None,
+                token: "refused".to_owned(),
+                reason: Some(reason),
+                ..verdict
+            };
+        }
         ran(
-            judge(self.binding, result, overrun, &context),
+            verdict,
             Some(saved.outcome.as_str()),
             saved.outcome_json.as_deref(),
             true,
