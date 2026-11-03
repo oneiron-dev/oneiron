@@ -166,3 +166,5 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
 }
 
 pub mod companion_task;
+
+pub mod run_tree_view;

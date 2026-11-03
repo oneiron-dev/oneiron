@@ -419,3 +419,9 @@ pub mod repo_mutation_record;
 pub mod code_commit_metadata;
 
 pub mod code_import_manifest;
+
+pub mod own_rate_record;
+
+pub mod repo_provenance_trailer;
+
+pub mod code_revision_identity;

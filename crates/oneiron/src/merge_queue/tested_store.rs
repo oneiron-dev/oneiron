@@ -18,7 +18,10 @@ use super::{
     QueueSealTarget,
 };
 use super::{CheckPhase, QueueCheckTarget, QueueReceiptLink, QueueTestedTarget};
-use crate::code_revision::{CodeRevision, queue_aggregation_session, queue_revision_id};
+use crate::{
+    code_revision::CodeRevision,
+    store::code_revision_identity::{queue_aggregation_session, queue_revision_id},
+};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
 use crate::{EntityId, Vault};
