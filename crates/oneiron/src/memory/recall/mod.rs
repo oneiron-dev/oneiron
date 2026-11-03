@@ -1186,7 +1186,6 @@ impl Memory<'_> {
     }
 }
 
-use serde::{Deserialize, Serialize};
 use crate::memory::affect::QueryAffect;
 use crate::retrieval_depth::RecallTelemetry;
 
