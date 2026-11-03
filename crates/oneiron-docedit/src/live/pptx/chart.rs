@@ -472,11 +472,15 @@ fn plot_moved(
             .map(|was| plot_key(base_family, was))
     };
     let (_, at) = plot_key(side_family, side);
+    // Staying in its base plot is never a move, however many other base
+    // series join it there.
+    if at == ordinal {
+        return None;
+    }
     // Its side plot's base series, drawn in its family there as in the
     // base: a new series never moves it, and a series that changed family
     // is judged by that field instead.
     let mut targets: Vec<u32> = Vec::new();
-    let mut present = false;
     for line in side_series {
         let Some(other) = line.id else {
             continue;
@@ -493,16 +497,25 @@ fn plot_moved(
         if kind != family {
             continue;
         }
-        if nth == ordinal {
-            present = true;
-        } else {
+        if nth != ordinal {
             targets.push(nth);
         }
     }
+    // Every surviving base-plot mate joined the destination: a group move,
+    // not an own move. One surviving mate left behind still makes it a move.
+    let joined = base_series
+        .iter()
+        .filter_map(|line| line.id)
+        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)))
+        .all(|other| {
+            side_series
+                .iter()
+                .any(|line| line.id == Some(other) && plot_key(side_family, line) == (family, at))
+        });
     if !targets.is_empty() {
-        // Beside series of another base plot: moved, unless its mates are
-        // beside it too (they joined it there).
-        if present {
+        // Beside series of another base plot: moved, unless every surviving
+        // base-plot mate joined it there too.
+        if joined {
             return None;
         }
         targets.sort_unstable();
@@ -523,7 +536,7 @@ fn plot_moved(
                 })
         })
         .collect();
-    if left.is_empty() || present {
+    if left.is_empty() || joined {
         return None;
     }
     let last = side_series
@@ -725,13 +738,8 @@ pub(crate) fn conflicts(
                     out.push(series(SeriesField::Order));
                 }
                 // Both sides moved it to different plots of its family.
-                let head_plot = plot_moved(
-                    *base_family,
-                    base_series,
-                    *head_family,
-                    head_series,
-                    id,
-                );
+                let head_plot =
+                    plot_moved(*base_family, base_series, *head_family, head_series, id);
                 let proposal_plot = plot_moved(
                     *base_family,
                     base_series,
