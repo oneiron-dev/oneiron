@@ -28,7 +28,7 @@ impl SessionReadSet {
             return Ok(receipt);
         };
         if loaded && kind == ENTITY_TYPE_SKILL {
-            let skill = crate::skill::decode_skill_record(body)?;
+            let skill = crate::write_envelope::skill_record::decode_skill_record(body)?;
             self.loaded_skill(id.to_hex(), skill.version);
         }
         self.served(id.to_hex(), state);
@@ -125,12 +125,16 @@ fn lifecycle(
     let state = match kind {
         ENTITY_TYPE_CLAIM => decode_claim_body(body, true)?.lifecycle,
         ENTITY_TYPE_SKILL => {
-            return match match crate::skill::decode_skill_record(body) {
+            return match match crate::write_envelope::skill_record::decode_skill_record(body) {
                 Ok(record) => record.lifecycle_status,
                 Err(_) => return Ok((None, None)),
             } {
-                crate::skill::SkillLifecycle::Active => Ok((Some(ServedLifecycle::Active), None)),
-                crate::skill::SkillLifecycle::Superseded => successor(read, id, kind),
+                crate::write_envelope::skill_record::SkillLifecycle::Active => {
+                    Ok((Some(ServedLifecycle::Active), None))
+                }
+                crate::write_envelope::skill_record::SkillLifecycle::Superseded => {
+                    successor(read, id, kind)
+                }
                 _ => Ok((None, None)),
             };
         }

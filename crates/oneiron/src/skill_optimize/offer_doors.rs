@@ -8,10 +8,9 @@ use super::{
     union_source_rows,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
+use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
+use crate::claim::maintenance_kind::COACH_TRAINING_OFFER_FACET;
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::maintenance::coach::{
-    COACH_HOST_QUEUE_KIND, COACH_TRAINING_OFFER_FACET,
-};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };

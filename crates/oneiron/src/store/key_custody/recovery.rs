@@ -33,8 +33,10 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 use self::admission::{AdmittedCustody, admit_recovery};
 pub(crate) use self::takeover::{PreparedTakeover, TakeoverRefusal};

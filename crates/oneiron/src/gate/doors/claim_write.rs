@@ -28,6 +28,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, DreamerIsolationClass, claim_sensitivity_band,
     dreamer_isolation_class,
 };
+use crate::claim_check::{AutoCheckCandidate, AutoCheckOutcome};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
@@ -42,7 +43,6 @@ use crate::gate::delegation_chain::evaluate_with_delegation_chain;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::gate::weave_grant::{GATE_REASON_ALLOW_WEAVE_GRANT, landing_weave_grant_in_txn};
-use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
 use crate::store::{
     GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
     checker_hold_receipt_reason,
@@ -500,7 +500,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 checker.check(&candidate)
             });
             let (outcome, verdict_note) =
-                crate::llm::manifest::apply_verdict_floor(verdict_binding, outcome);
+                crate::claim_check::apply_verdict_floor(verdict_binding, outcome);
             if let Some(note) = verdict_note.and_then(checker_hold_receipt_reason) {
                 checker_receipt_reasons.push(note);
             }
