@@ -331,6 +331,13 @@ fn mark_room_stale_in_txn(
     view.vault_meta
         .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     crate::bm25::deindex_text(view, txn, id)?;
+    // A room's count is advisory: base can advance after the room snapshot.
+    // Reconcile it before the shared delete applies base's strict decrement.
+    if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
+        let count = view.hnsw_neighbors.len(&*txn)?;
+        view.hnsw_meta
+            .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+    }
     crate::hnsw::hnsw_deindex(view, txn, id)?;
     view.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
