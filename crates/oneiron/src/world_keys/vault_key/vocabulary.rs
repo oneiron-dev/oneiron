@@ -102,12 +102,29 @@ pub enum VaultKeyUnlock<'a> {
         /// 11976). `None` joins none.
         keystore: Option<&'a Arc<dyn DeviceKeystore>>,
     },
+    /// The world (recovery-root) kit's pieces, two or one and the kit
+    /// passphrase (FIX 11974): they rebuild the recovery-root seed bound to
+    /// `vault_id`, the id the owner names, which must be the artifact's or
+    /// the vault's, and the seed's recovery secret opens the `world-kit`
+    /// escrow wrap the artifact carries, as an [`Escrow`](Self::Escrow) of
+    /// that label rebuilt in plain would. A fresh restore never carries
+    /// pieces this way: a new install has no kept piece to join (FIX 11973).
+    WorldKit {
+        vault_id: [u8; 32],
+        pieces: &'a [crate::recovery::KitPiece],
+        passphrase: Option<&'a crate::recovery::KitPassphrase>,
+        /// This host's keystore, as a sealed vault's pages unlock on it: the
+        /// recovery-root piece of the kit it keeps for an install a carried
+        /// device wrap or the vault id alone names joins `pieces`, so the
+        /// owner gives one piece fewer here (FIX 12055). `None` joins none.
+        keystore: Option<&'a Arc<dyn DeviceKeystore>>,
+    },
 }
 
 impl<'a> VaultKeyUnlock<'a> {
-    /// This unlock with `keystore` as a data-key kit's
-    /// ([`VaultKeyUnlock::Kit`]), whose kept piece of the kit joins the pieces
-    /// given (FIX 11976). Every other unlock is as it was.
+    /// This unlock with `keystore` as a kit's ([`VaultKeyUnlock::Kit`] or
+    /// [`VaultKeyUnlock::WorldKit`]), whose kept piece of the kit joins the
+    /// pieces given (FIX 11976, FIX 12055). Every other unlock is as it was.
     #[must_use]
     pub fn with_kept_piece(self, keystore: Option<&'a Arc<dyn DeviceKeystore>>) -> Self {
         match self {
@@ -117,6 +134,17 @@ impl<'a> VaultKeyUnlock<'a> {
                 passphrase,
                 ..
             } => Self::Kit {
+                vault_id,
+                pieces,
+                passphrase,
+                keystore,
+            },
+            Self::WorldKit {
+                vault_id,
+                pieces,
+                passphrase,
+                ..
+            } => Self::WorldKit {
                 vault_id,
                 pieces,
                 passphrase,

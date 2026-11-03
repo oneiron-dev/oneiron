@@ -506,6 +506,15 @@ pub fn page_seal_vault_id(vault_path: &Path) -> Result<[u8; 32]> {
     Ok(read_mirror(vault_path)?.vault_id)
 }
 
+/// The vault id and carried wraps the mirror of the sealed vault at
+/// `vault_path` names, for a pre-open kept-piece count
+/// ([`sealed_keeps_kit_piece`](super::sealed_keeps_kit_piece)): the carried
+/// value stays crate-private, so counting is the mirror's only other reader.
+pub(crate) fn read_mirror_carried(vault_path: &Path) -> Result<([u8; 32], CarriedVaultKey)> {
+    let mirror = read_mirror(vault_path)?;
+    Ok((mirror.vault_id, mirror.carried))
+}
+
 fn read_mirror(vault_path: &Path) -> Result<Mirror> {
     let path = page_seal_custody_path(vault_path)?;
     let mut file = open_no_follow(&path, false)?;

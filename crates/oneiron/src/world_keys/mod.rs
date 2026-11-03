@@ -135,7 +135,7 @@ pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub use self::state::{WorldPadAvailability, WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
-pub use self::vault_key::kit::IssuedVaultKeyKit;
+pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
     EscrowAddWarning, EscrowAdded, EscrowRetirement, NewVaultKeyWrap, ResealedEscrowCapsule,
