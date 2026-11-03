@@ -426,12 +426,12 @@ impl Vault {
                 let path = "local_delete_committed";
                 manager.materializer().notify_live_queries(
                     path,
-                    &crate::sync::bridge::MaterializedDiffSummary {
+                    &crate::store::materialization_event::MaterializedDiffSummary {
                         containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
                         bytes: 0,
                         revision_events: Vec::new(),
                     },
-                    &crate::sync::bridge::OriginMark {
+                    &crate::store::materialization_event::OriginMark {
                         conn_id: None,
                         origin: Some("local_delete_committed".to_owned()),
                     },
@@ -460,7 +460,7 @@ impl Vault {
         if let Some(manager) = manager {
             manager.materializer().notify_live_queries(
                 &format!("w:{window}/tombstones"),
-                &crate::sync::bridge::MaterializedDiffSummary {
+                &crate::store::materialization_event::MaterializedDiffSummary {
                     containers: if value.reason.is_hard() {
                         vec![format!("w:{window}/entities/{}", id.to_hex())]
                     } else {
@@ -470,7 +470,7 @@ impl Vault {
 
                     revision_events: Vec::new(),
                 },
-                &crate::sync::bridge::OriginMark {
+                &crate::store::materialization_event::OriginMark {
                     conn_id: None,
                     origin: Some(crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN.to_owned()),
                 },

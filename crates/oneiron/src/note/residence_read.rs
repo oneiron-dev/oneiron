@@ -6,7 +6,7 @@ use super::{NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView};
 use crate::authority::VerifiedSlip;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::settings::ReadDestination;
-use crate::sync::{OpenedItem, ThinItem};
+use crate::memory::residence_item::{OpenedItem, ThinItem};
 use crate::{Vault, WriteActor};
 
 /// The residence host has already checked the owner's own credential. It

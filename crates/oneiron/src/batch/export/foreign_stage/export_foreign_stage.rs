@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::sync::selector::{FederationAdmissionRole, admit_staged_window_update};
+use crate::sync::selector::{admit_staged_window_update};
+use crate::store::window_protocol::FederationAdmissionRole;
 use crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES;
 use crate::window_key::WindowKey;
 
