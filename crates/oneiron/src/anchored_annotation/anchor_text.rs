@@ -15,7 +15,7 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_docedit::xlsx_body::read_xlsx_cells;
 use oneiron_xlsx_formula::cell_display_text;
 
-use super::model::{A1Range, Locator};
+use super::model::{A1Range, ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
 
 /// Cells joined in a range snapshot: across a row, then down rows.
@@ -335,9 +335,14 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
             let explicit = node
                 .attr("data-part-id")
                 .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty());
+                .filter(|value| {
+                    !value.is_empty() && value.len() <= ANNOTATION_LOCATOR_TEXT_MAX_BYTES
+                });
             let (part_id, explicit) = match explicit {
-                Some(id) if used_ids.insert(id.clone()) => (id, true),
+                Some(id) => {
+                    used_ids.insert(id.clone());
+                    (id, true)
+                }
                 _ => {
                     let ordinals = path
                         .iter()
@@ -345,8 +350,13 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
                         .collect::<Vec<_>>()
                         .join(".");
                     let tag = node.node_name().unwrap_or_else(|| "block".into());
-                    let structural = format!("{tag}/{ordinals}#{}", blocks.len());
-                    used_ids.insert(structural.clone());
+                    let base = format!("{tag}/{ordinals}");
+                    let mut structural = base.clone();
+                    let mut collision = 0;
+                    while !used_ids.insert(structural.clone()) {
+                        collision += 1;
+                        structural = format!("{base}#{collision}");
+                    }
                     (structural, false)
                 }
             };
@@ -359,6 +369,7 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
         }
         let children = node
             .element_children()
+            .into_iter()
             .enumerate()
             .map(|(index, child)| {
                 let mut path = path.clone();
@@ -389,7 +400,7 @@ fn html_block_candidate(node: &NodeRef<'_>) -> bool {
     if !HTML_LEAF_CONTAINERS.contains(&name.as_ref()) {
         return false;
     }
-    let mut pending = node.element_children().collect::<Vec<_>>();
+    let mut pending = node.element_children();
     while let Some(child) = pending.pop() {
         if html_ignored(&child) {
             continue;
@@ -398,11 +409,11 @@ fn html_block_candidate(node: &NodeRef<'_>) -> bool {
             HTML_BLOCK_TAGS.contains(&name.as_ref())
                 || HTML_LEAF_CONTAINERS.contains(&name.as_ref())
         }) {
-            return true;
+            return false;
         }
         pending.extend(child.element_children());
     }
-    false
+    true
 }
 
 fn html_text(node: NodeRef<'_>) -> String {
@@ -719,13 +730,14 @@ pub(super) fn unit_texts(
             let Some(blocks) = html_blocks(bytes)? else {
                 return Ok(None);
             };
+            let mut counts = BTreeMap::new();
+            for block in &blocks {
+                *counts.entry(block.part_id.as_str()).or_insert(0) += 1;
+            }
             Ok(blocks
                 .into_iter()
                 .map(|block| {
-                    let matches = blocks
-                        .iter()
-                        .filter(|candidate| candidate.part_id == block.part_id)
-                        .count();
+                    let matches = counts.get(block.part_id.as_str()).copied().unwrap_or(0);
                     let end = block.text.chars().count() as u64;
                     let locator = Locator::html(block.part_id.clone(), 0, end).ok()?;
                     let quote = (matches == 1 && end > 0).then_some(block.text);

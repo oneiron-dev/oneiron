@@ -43,7 +43,7 @@ impl Memory<'_> {
         let unsupported = |kind| ArtifactUnitsView::Unsupported {
             artifact_id: artifact,
             kind,
-            reason: "this kind has no office annotation unit adapter".to_owned(),
+            reason: "this kind has no annotation unit adapter".to_owned(),
         };
         if kind == ArtifactKind::Code {
             return Ok(unsupported(kind));
