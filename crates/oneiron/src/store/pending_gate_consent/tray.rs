@@ -112,6 +112,8 @@ impl Store {
         self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
         self.put_pending_gate_consent_critical_confirm_index_in_txn(wtxn, record)?;
         self.ensure_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)?;
+        // FIX 12374: every gate write moves the sequence its fingerprints echo.
+        crate::claim::history_seal::bump_gate_sequence_in_txn(self, wtxn)?;
         Ok(())
     }
 
@@ -180,6 +182,8 @@ impl Store {
         if removal == TrayRemoval::Unanswered {
             crate::gate::show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
         }
+        // FIX 12374: every gate write moves the sequence its fingerprints echo.
+        crate::claim::history_seal::bump_gate_sequence_in_txn(self, wtxn)?;
         Ok(())
     }
 

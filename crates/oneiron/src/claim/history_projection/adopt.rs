@@ -134,6 +134,9 @@ impl Vault {
         // The live claim id is a derived view. Heal a stale or missing LWW
         // snapshot under the SAME authenticated pin before publishing it.
         let projection = resolved_machine_history_from(source, &self.store, txn, &fold, target)?;
+        // FIX 12374: the loop just proved today's gate verdict over the pin
+        // stored above; memoize it for the heal put and later adoptions.
+        super::super::history_seal::store_gate_fingerprint_in_txn(&self.store, txn, target, true)?;
         let projected = project_machine_claim(&projection);
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &target)?
         else {
