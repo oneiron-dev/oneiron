@@ -15,7 +15,8 @@ use oneiron::llm::media::{
     Modality,
 };
 use oneiron::llm::run_admission::{
-    HostAccount, MediaGate, OfferBinding, PayerPerson, RunAdmission, RunPermit, RunReceiptSink,
+    HostAccount, MediaGate, OfferBinding, PayerPerson, RunAdmission, RunOverageSource, RunPermit,
+    RunReceiptSink,
 };
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::voice_cascade::media::BankVoiceBinding;
@@ -134,11 +135,16 @@ impl HeldJob {
             MediaJobState::Done { response } => {
                 self.charge_requested_length(response);
                 let units = response.usage.token_units(self.operation, &self.caps);
+                let source = if response.usage.is_provider_counted() {
+                    RunOverageSource::ProviderReported
+                } else {
+                    RunOverageSource::Counted
+                };
                 if self.paid {
                     self.hand_off();
                 } else if let Some(permit) = self.permit.take()
                     && let Err(denied) =
-                        permit.settle_media(units, response.usage.inference_calls())
+                        permit.settle_media(units, response.usage.inference_calls(), source)
                 {
                     tracing::error!(%denied, "a media job's settlement was refused");
                 }
