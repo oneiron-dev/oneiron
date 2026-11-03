@@ -6,8 +6,6 @@ use oneiron_authority::federation::{ScopeAxis, ScopeId};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-#[cfg(doc)]
-use crate::pipeline::{PipelineBuilder, WorldScope};
 
 pub use crate::write_envelope::world_access_predicates::{
     PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
@@ -139,7 +137,7 @@ impl WorldAuthoritySet {
     }
 }
 
-/// The per-turn world selection carried on [`PipelineBuilder`] — in memory for
+/// The per-turn world selection carried on [`crate::pipeline::PipelineBuilder`] — in memory for
 /// exactly one query, never written to the vault.
 ///
 /// `agent_ref` names the CLAIM subject whose stored authority rows the

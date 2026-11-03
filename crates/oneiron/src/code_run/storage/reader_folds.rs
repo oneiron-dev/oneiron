@@ -14,6 +14,7 @@ use crate::code_run::{
     seal_parked_code_consent_in_txn,
 };
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::result_manifest::ResultOccurrence;
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 /// One receipt per folded occurrence, keyed by its run and its occurrence.
