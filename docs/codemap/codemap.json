@@ -423,7 +423,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -473,9 +473,21 @@
      "path": "src/affect/mod.rs",
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
-      "re-export": 3
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/affect/processed.rs",
+     "purpose": "Processed marks on memories: the `affect.processed` state claim the engine writes once a memory is worked…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -85230,7 +85242,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86772,7 +86784,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5886,
+   "source_files": 5887,
    "test_files": 902
   },
   "oneiron-android": {
@@ -117060,7 +117072,7 @@
      "path": "src/oneironer/endpoint.rs",
      "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
