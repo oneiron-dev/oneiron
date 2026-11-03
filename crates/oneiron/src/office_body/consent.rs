@@ -454,7 +454,9 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
     for (proposal, record) in changed {
         match record {
             Some(record) => PROPOSALS.put(store, txn, &proposal, &record)?,
-            None => PROPOSALS.delete(store, txn, &proposal)?,
+            None => {
+                PROPOSALS.delete(store, txn, &proposal)?;
+            }
         }
     }
     MEMBERSHIP.delete_from(store, txn, artifact.as_bytes())?;
