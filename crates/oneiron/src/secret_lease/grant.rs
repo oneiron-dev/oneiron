@@ -30,7 +30,7 @@ use crate::error::{Error, Result, SecretError};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding,
 };
-use crate::secret_custody::CustodyTier;
+use crate::secret_record::CustodyTier;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;

@@ -446,7 +446,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Grant bodies contain both private diary ids. They are authority,
         // never a readable graph/search result of their own.

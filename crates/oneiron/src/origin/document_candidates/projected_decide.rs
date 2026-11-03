@@ -51,7 +51,7 @@ use crate::repo_mutation::proposal::RepoProposedFile;
 use crate::repo_mutation::{
     ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
-use crate::secret_custody::KeyPlaces;
+use crate::file_secret_marks::KeyPlaces;
 use crate::{EntityId, Vault};
 
 /// A projected decision: the prepared attachment, or a hold with the pins

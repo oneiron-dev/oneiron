@@ -47,7 +47,7 @@ impl GraphFsResolver<'_, '_> {
                                 txn,
                                 body.clone(),
                                 None,
-                                crate::secret_custody::SecretSight::Masked,
+                                crate::file_secret_marks::SecretSight::Masked,
                             )?;
                         } else {
                             let mut cursor = std::io::Cursor::new(body.as_slice());

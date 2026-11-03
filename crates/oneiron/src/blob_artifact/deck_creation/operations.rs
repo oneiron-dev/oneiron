@@ -8,7 +8,7 @@ use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 use crate::typed_body::LiftedSources;
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
@@ -504,9 +504,9 @@ impl Memory<'_> {
                 .read_blob_artifact_version_in_txn(txn, &at.artifact, at.version)?
                 .ok_or_else(|| MemoryError::not_found("deck input version not found"))?;
             let sight = if lane.actor_key().reads_as_vault_owner() {
-                crate::secret_custody::SecretSight::Owner
+                crate::file_secret_marks::SecretSight::Owner
             } else {
-                crate::secret_custody::SecretSight::Masked
+                crate::file_secret_marks::SecretSight::Masked
             };
             let sighted = crate::secret_custody::sighted_bytes_in_txn(
                 &self.vault().store,

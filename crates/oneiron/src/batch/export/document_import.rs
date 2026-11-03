@@ -703,7 +703,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
     usize,
     usize,
     usize,
-    Vec<crate::secret_custody::SecretCustodyMetadata>,
+    Vec<crate::secret_record::SecretCustodyMetadata>,
 )> {
     use base64::Engine as _;
     let (mut restored, mut unchanged, mut skipped, mut missing) = (0, 0, 0, Vec::new());
@@ -729,7 +729,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         let body = base64::engine::general_purpose::STANDARD
             .decode(body)
             .map_err(|_| invalid("invalid archive custody record body"))?;
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        let mut record = crate::secret_record::decode_secret_custody_body(&body)?;
         if record.metadata() != secret.metadata {
             return Err(invalid("archive custody record disagrees with its body"));
         }

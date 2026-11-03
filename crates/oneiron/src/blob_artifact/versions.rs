@@ -193,7 +193,7 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if header.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(

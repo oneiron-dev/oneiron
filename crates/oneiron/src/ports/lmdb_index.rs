@@ -353,7 +353,7 @@ impl ShortIdStore for Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         if self.archive_tombstone_in_txn(rtxn, &id)?.is_some() {

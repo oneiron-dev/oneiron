@@ -54,7 +54,7 @@ impl Vault {
                 .decode(body)
                 .map_err(|_| invalid("its body is not base64"))?,
         );
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        let mut record = crate::secret_record::decode_secret_custody_body(&body)?;
         if record.metadata() != row.metadata {
             zeroize::Zeroize::zeroize(&mut record.value_bytes);
             return Err(invalid("its body disagrees with its metadata"));

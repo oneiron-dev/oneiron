@@ -311,7 +311,7 @@ impl Vault {
             return Ok(Some(bytes));
         };
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
             &self.store,
@@ -587,7 +587,7 @@ impl Vault {
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
@@ -625,7 +625,7 @@ impl Vault {
         scan: usize,
     ) -> Result<LatestBodiesPage> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         let scan = scan.max(1);
         let txn = self.store.env.read_txn()?;

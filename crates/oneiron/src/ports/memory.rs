@@ -130,7 +130,7 @@ impl EntityStore for Memory {
         }
         let row = txn.entities.get(id);
         if row.is_some_and(|r| r.entity_type == ENTITY_TYPE_SECRET_CUSTODY) {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         Ok(row
             .filter(|row| !super::safe_read::body_is_stale(&row.body))

@@ -10,11 +10,13 @@ use crate::Vault;
 use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
+use crate::secret_custody::{ActiveChange, CustodyKeptHere, CustodyPlan, Material};
+use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::secret_custody::{
-    ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyRecord, SecretCustodyStatus,
-    SecretCustodyWork, SecretRevoked, SecretRotated, custody_portable, put_secret_custody_in_txn,
-    read_secret_custody_meta_in_txn, refuse_bindings_wider_than_live_floor,
-    refuse_revoked_use_in_txn, resolve_secret_ref_in_txn,
+    SecretCustodyWork, SecretRevoked, SecretRotated, custody_portable,
+    put_secret_custody_in_txn, read_secret_custody_meta_in_txn,
+    refuse_bindings_wider_than_live_floor, refuse_revoked_use_in_txn,
+    resolve_secret_ref_in_txn,
 };
 use crate::side_table::HexId;
 use zeroize::Zeroize;

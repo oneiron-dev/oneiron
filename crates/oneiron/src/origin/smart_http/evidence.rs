@@ -16,7 +16,7 @@ use crate::write_envelope::claim_body::{
     ClaimBody, ClaimSubject, decode_claim_body, encode_claim_body,
 };
 use crate::codebase::RepoRef;
-use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};

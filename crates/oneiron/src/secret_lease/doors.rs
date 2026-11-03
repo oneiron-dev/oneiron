@@ -16,7 +16,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use zeroize::Zeroizing;
 
 use crate::vault::Vault;

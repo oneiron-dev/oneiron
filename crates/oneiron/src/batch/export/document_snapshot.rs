@@ -691,7 +691,7 @@ fn archive_custody_secret(
     on_device: bool,
     include_secrets: bool,
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
-    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use crate::secret_record::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
