@@ -501,13 +501,15 @@ fn plot_moved(
             targets.push(nth);
         }
     }
-    // Every surviving base-plot mate joined the destination: a group move,
-    // not an own move. One surviving mate left behind still makes it a move.
-    let joined = base_series
+    // At least one base-plot mate exists, and every surviving one joined
+    // the destination: a group move, not an own move. One surviving mate
+    // left behind still makes it a move; no mate at all never suppresses it.
+    let mut mates = base_series
         .iter()
         .filter_map(|line| line.id)
-        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)))
-        .all(|other| {
+        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)));
+    let joined = mates.next().is_some()
+        && mates.all(|other| {
             side_series
                 .iter()
                 .any(|line| line.id == Some(other) && plot_key(side_family, line) == (family, at))
