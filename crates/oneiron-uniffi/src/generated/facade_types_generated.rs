@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1219 facade rows, 4421 generated types.
+// UniFFI census: 1219 facade rows, 4420 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1171.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -40715,9 +40715,9 @@ pub enum OriginPublishState {
     Expired,
 }
 
-/// `oneiron::origin::publish::types::OriginPublishActorClass`.
+/// `oneiron_contracts::edge::EdgeActorClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum OriginPublishActorClass {
+pub enum EdgeActorClass {
     #[serde(rename = "human")]
     Human,
     #[serde(rename = "agent")]
@@ -40745,7 +40745,7 @@ pub struct OriginPublishAct {
     #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
     #[serde(rename = "class")]
-    pub class: OriginPublishActorClass,
+    pub class: EdgeActorClass,
     #[serde(rename = "authority")]
     pub authority: OriginPublishAuthority,
     #[serde(rename = "at")]
@@ -54871,17 +54871,6 @@ pub struct QuestionDefinitionDecisionQuestion {
     pub artifacts: Option<Vec<ArtifactUnits>>,
 }
 
-/// `oneiron::llm::decision::questions::records::QuestionAskerClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum QuestionAskerClass {
-    #[serde(rename = "human")]
-    Human,
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "system")]
-    System,
-}
-
 /// `oneiron::claim::scoped_read::frozen::FrozenReadLane`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -54925,7 +54914,7 @@ pub struct QuestionRecord {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub asker_class: Option<QuestionAskerClass>,
+    pub asker_class: Option<EdgeActorClass>,
     #[serde(rename = "read_lane")]
     pub read_lane: FrozenReadLane,
 }
