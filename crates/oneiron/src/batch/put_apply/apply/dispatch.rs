@@ -232,7 +232,7 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
-        crate::skill_hub::decode_skill_hub_record(data)?;
+        crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
         crate::comm::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {

@@ -554,7 +554,7 @@ fn remove_member(
         && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
         && let Some(content_hash) = record.content_hash
     {
-        crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+        crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
             store,
             txn,
             id,

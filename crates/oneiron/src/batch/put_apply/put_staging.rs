@@ -196,7 +196,7 @@ pub(super) fn stage_skill_index_rows(
     previous: Option<&crate::write_envelope::skill_record::SkillRecord>,
     record: &crate::write_envelope::skill_record::SkillRecord,
 ) -> Result<()> {
-    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+    crate::store::skill_content_index::maintain_skill_content_hash_index_for_put(
         store,
         wtxn,
         id,

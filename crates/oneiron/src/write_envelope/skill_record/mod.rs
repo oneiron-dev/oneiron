@@ -1,5 +1,6 @@
 //! Stored skill records, canonical identity, call contracts and pure validation.
 
+pub(crate) mod admission;
 pub(crate) mod identity;
 pub(crate) mod record;
 pub(crate) mod codec;
@@ -26,3 +27,4 @@ pub use role::{
 pub(crate) use codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
 pub(crate) use resident::resident_of;
 pub(crate) use validate::{validate_hub_sync_skill_update, validate_skill_update};
+pub(crate) use admission::skill_loadable;

@@ -185,7 +185,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
-        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+        Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,

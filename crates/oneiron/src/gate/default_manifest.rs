@@ -185,7 +185,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),

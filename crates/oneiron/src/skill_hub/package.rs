@@ -14,23 +14,7 @@ pub(super) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
-/// One file in a fetched, exportable skill package.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HubFile {
-    pub path: String,
-    pub content: Vec<u8>,
-}
-
-impl HubFile {
-    /// Constructs an owned package file.
-    #[must_use]
-    pub fn new(path: impl Into<String>, content: impl Into<Vec<u8>>) -> Self {
-        Self {
-            path: path.into(),
-            content: content.into(),
-        }
-    }
-}
+pub use crate::write_envelope::skill_source::{HubFile, SkillPackageFormat};
 
 /// Capability surface used by the rug-pull widening diff.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -89,17 +73,6 @@ impl SkillCapabilitySurface {
             && self.mcp.is_subset(&prior.mcp)
             && self.allowed_tools.is_subset(&prior.allowed_tools)
     }
-}
-
-/// How source fields relate to native metadata. Neither variant grants trust.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillPackageFormat {
-    /// Required name, description and version come from scalar SKILL.md frontmatter.
-    Folder,
-    /// Native metadata is separate from exact authored bytes. Frontmatter may be
-    /// partial or absent; any capabilities still come from the source, not a grant.
-    Native,
 }
 
 /// Offline package fetched by an adapter or supplied directly to a vault door.

@@ -620,7 +620,7 @@ impl Vault {
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
-        crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;

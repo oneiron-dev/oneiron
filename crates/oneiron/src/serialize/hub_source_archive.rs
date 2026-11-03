@@ -5,7 +5,8 @@ use super::ExportBody;
 use super::source_tree::HeldFiles;
 use crate::batch::export::{ArchiveFiles, ExportFileTree, ExportSourceContent, FileSpool};
 use crate::error::{Error, Result};
-use crate::skill_hub::{HubPackage, SkillCapabilitySurface, SkillPackageFormat};
+use crate::write_envelope::skill_source::{SkillPackageFormat};
+use crate::skill_hub::{HubPackage, SkillCapabilitySurface};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

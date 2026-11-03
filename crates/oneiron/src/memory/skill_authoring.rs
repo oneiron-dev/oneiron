@@ -151,7 +151,7 @@ impl Memory<'_> {
         &self,
         id: EntityId,
         proposed: &SkillRecord,
-        files: Vec<crate::skill_hub::HubFile>,
+        files: Vec<crate::write_envelope::skill_source::HubFile>,
         expected_version: Option<&str>,
         now: u64,
     ) -> MemoryResult<SkillAuthoringReceipt> {
@@ -170,7 +170,7 @@ impl Memory<'_> {
         proposed: &SkillRecord,
         expected_version: Option<&str>,
         now: u64,
-        source: Option<Vec<crate::skill_hub::HubFile>>,
+        source: Option<Vec<crate::write_envelope::skill_source::HubFile>>,
     ) -> MemoryResult<SkillAuthoringReceipt> {
         let actor = self.write_actor();
         verify_live_actor(self.vault, txn, actor)?;
@@ -248,7 +248,7 @@ impl Memory<'_> {
             let package = crate::skill_hub::package_from_source(
                 &record,
                 files,
-                crate::skill_hub::SkillPackageFormat::Native,
+                crate::write_envelope::skill_source::SkillPackageFormat::Native,
             )?;
             self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
         }

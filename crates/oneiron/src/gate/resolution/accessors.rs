@@ -239,7 +239,7 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
-    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+    ) -> Option<crate::gate::judge_calibration::JudgeCalibrationPolicy> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
