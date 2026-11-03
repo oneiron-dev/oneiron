@@ -3,6 +3,7 @@ use super::super::pdf::RevisionBoundary;
 use super::timestamp_evidence::TimestampResult;
 use super::verify_dss_core::EmbeddedCert;
 use crate::api::{ByteRangeEvidence, Coverage, SignatureKind, SignedRangeDigest, VerifyCheck};
+use crate::error::{SealError, SealStage};
 
 /// A timestamp already passed token integrity, trusted TSA path, and clock
 /// bounds. Untrusted/invalid tokens are checks, never time proofs.
@@ -64,10 +65,15 @@ pub(super) fn evaluate_envelope(
     ctx: &super::verify_chain_gates::VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
     is_last: bool,
-) -> EnvelopeEvidence {
+) -> Result<EnvelopeEvidence, SealError> {
     use super::super::pdf;
     use super::verify_sig_pipeline::{Checks, check_byte_range, verify_cades_sig, verify_doc_ts};
     use crate::api::{DigestAlgorithm, SignedRangeDigest};
+    let memory = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
     let br_ok = check_byte_range(bytes, entry);
     let end = entry.byte_range[2].checked_add(entry.byte_range[3]);
     let covers_to = end.filter(|_| br_ok);
@@ -90,10 +96,11 @@ pub(super) fn evaluate_envelope(
                 is_last,
                 &mut covered,
                 ctx.clock_ms,
-            ),
+                &memory,
+            )?,
         )
     } else {
-        let cades = verify_cades_sig(bytes, entry, ctx, anchors, &mut checks, &mut covered);
+        let cades = verify_cades_sig(bytes, entry, ctx, anchors, &mut checks, &mut covered)?;
         (cades.signer_chain, cades.timestamp)
     };
     let untrusted_time = token.untrusted_time.filter(|_| revision.is_some());
@@ -132,7 +139,11 @@ pub(super) fn evaluate_envelope(
     } else {
         None
     };
-    EnvelopeEvidence {
+    // The envelope id below (field name, colon, decimal index).
+    memory
+        .admit_len::<u8>(entry.field_name.len().saturating_add(24))
+        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
+    Ok(EnvelopeEvidence {
         index,
         id: format!("{}:{index}", entry.field_name),
         kind,
@@ -150,5 +161,5 @@ pub(super) fn evaluate_envelope(
         time_proof,
         untrusted_time,
         covered,
-    }
+    })
 }
