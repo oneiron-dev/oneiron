@@ -17,7 +17,7 @@ pub(crate) fn check_share_create_policy(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
-    travel: &crate::share_travel::TravelChoice,
+    travel: &oneiron_authority::share_travel::TravelChoice,
 ) -> Result<(GateDecisionId, GateDecision)> {
     let policy = resolve_policy_manifest(store, txn)?;
     let effect = share_create_effect(share_id, issuer, share, travel)?;
@@ -31,7 +31,7 @@ pub(crate) fn share_create_effect(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
-    travel: &crate::share_travel::TravelChoice,
+    travel: &oneiron_authority::share_travel::TravelChoice,
 ) -> Result<ExternalEffectGateInput> {
     Ok(ExternalEffectGateInput {
         actor: GateActor {

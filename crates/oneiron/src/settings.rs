@@ -16,9 +16,10 @@ mod device_only;
 pub mod model_versioning;
 mod models;
 pub(crate) mod room_threads;
+pub mod web_connector;
 
 pub use destination::{
-    ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
+    CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
 };
 pub(crate) use destination::{
     machine_recipient_hold_in, recipient_limits_in, withheld_row_hold_in, withheld_worlds_in,

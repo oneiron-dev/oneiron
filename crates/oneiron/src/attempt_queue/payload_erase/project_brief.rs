@@ -13,11 +13,11 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input, record_dispatch_input,
-};
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::agent_dispatch::{decode_agent_dispatch_input, record_dispatch_input};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
+    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;

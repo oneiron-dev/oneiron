@@ -47,7 +47,7 @@ use self::work::{
 };
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
-use crate::code_run::StepReplayCapsule;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
@@ -55,9 +55,10 @@ use crate::failure_signals::{
     InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::CODE_FIX_JUDGMENT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};

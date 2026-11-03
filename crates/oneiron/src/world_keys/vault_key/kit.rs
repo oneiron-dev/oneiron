@@ -40,10 +40,12 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::recovery::{
-    KitError, KitId, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, RestoredKitSecret, issue_vault_key_kit, join_kept_piece,
-    recovery_root_pending_piece_install, recovery_root_piece_install, restore_kit,
-    vault_key_piece_install,
+    KitPieceStore, issue_vault_key_kit, join_kept_piece, recovery_root_pending_piece_install,
+    recovery_root_piece_install, restore_kit, vault_key_piece_install,
+};
+use crate::store::recovery_kit::{
+    KitError, KitId, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitSecretKind,
+    RestoredKitSecret,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
 use crate::world_keys::kit_piece::keep_this_machine_piece;

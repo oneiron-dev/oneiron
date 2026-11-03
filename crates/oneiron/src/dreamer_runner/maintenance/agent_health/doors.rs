@@ -12,7 +12,7 @@ use super::{
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::run_tree::{RunTree, RunTreeAdapter};
+use crate::{attempt_queue::run_tree_view::RunTree, run_tree::RunTreeAdapter};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The first time in `[from, to)` that `card` was opened, updated or

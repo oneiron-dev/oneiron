@@ -13,7 +13,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, encode_claim_body};
 use crate::codebase::RepoRef;
