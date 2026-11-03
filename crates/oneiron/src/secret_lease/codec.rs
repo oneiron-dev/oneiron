@@ -10,7 +10,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::CustodyTier;
+use crate::secret_record::CustodyTier;
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------

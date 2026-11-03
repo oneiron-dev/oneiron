@@ -38,7 +38,7 @@ use crate::model_decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
 use crate::receipt::ReceiptRecord;
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 use crate::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;

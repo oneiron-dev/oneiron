@@ -269,7 +269,7 @@ impl RepoIndexMarks {
         vault: &Vault,
         txn: &RoTxn<'_>,
         source: &[u8; 32],
-    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+    ) -> Result<Option<crate::file_secret_marks::KeyPlaces>> {
         self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {

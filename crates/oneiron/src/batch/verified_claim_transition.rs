@@ -374,7 +374,7 @@ impl VerifiedClaimTransition {
             ));
         }
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
-        let text_form = format!("{}{handle}]", crate::secret_custody::HANDLE_TEXT_OPEN);
+        let text_form = format!("{}{handle}]", crate::file_secret_marks::HANDLE_TEXT_OPEN);
         let mut expected = prior;
         let mut changed = false;
         for part in [
@@ -385,7 +385,7 @@ impl VerifiedClaimTransition {
         .into_iter()
         .flatten()
         {
-            changed |= crate::secret_custody::unmask_value(part, handle, &text_form, value)
+            changed |= crate::file_secret_marks::unmask_value(part, handle, &text_form, value)
                 .map_err(|_| Error::InvalidClaimBody("owner restore body changed"))?;
         }
         if !changed || expected != next {
