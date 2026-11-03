@@ -85,6 +85,7 @@ pub(crate) use projection_index::{
 };
 mod put;
 mod read;
+pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
 mod scoped_read;
