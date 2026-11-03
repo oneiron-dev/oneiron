@@ -519,9 +519,14 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
         .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
         .and_then(JsonValue::as_array)
         .and_then(|calls| {
-            calls
-                .iter()
-                .find_map(|call| serde_json::from_value::<InferenceCallReceipt>(call.clone()).ok())
+            calls.iter().find_map(|call| {
+                let mut call = call.clone();
+                // Physical is host-owned: never deserialize a worker-spelled value.
+                if let Some(object) = call.as_object_mut() {
+                    let _ = object.remove("physical");
+                }
+                serde_json::from_value::<InferenceCallReceipt>(call).ok()
+            })
         });
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
