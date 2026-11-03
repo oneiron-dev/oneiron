@@ -4119,7 +4119,7 @@ pub struct GrantAskedRequest {
     pub limit: Option<u32>,
 }
 
-/// `oneiron::verbs::grants::GrantRequestedScope`.
+/// `oneiron::memory::people_verbs::GrantRequestedScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]

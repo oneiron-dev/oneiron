@@ -487,7 +487,7 @@ export type GrantAskRequest = { pr: string; scope: GrantAskScope }
 export type GrantAskReceipt = { request: string; asked: string; status: string }
 /** `oneiron::memory::people_verbs::GrantAskedRequest` */
 export type GrantAskedRequest = { after?: string | null; limit?: number | null }
-/** `oneiron::verbs::grants::GrantRequestedScope` */
+/** `oneiron::memory::people_verbs::GrantRequestedScope` */
 export type GrantRequestedScope = { kind: "messages"; space_ref: EntityId } | { kind: "summaries"; space_ref: EntityId } | { kind: "relationship_claims"; space_ref: EntityId } | { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null }
 /** `oneiron::memory::people_verbs::GrantAskedRow` */
 export type GrantAskedRow = { request: string; asker: string; capability: string; scope: GrantRequestedScope; created_at: number; expires_at?: number | null }
@@ -1487,7 +1487,7 @@ export type ScopedExport = { selector: RecordSelector; credential: CredentialCei
 export type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] | null; after?: string | null }
 /** `oneiron::memory::claims::MemoryReceipt` */
 export type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> }
-/** `oneiron::verbs::receipts_page::VaultReceiptsPage` */
+/** `oneiron::memory::reads::receipt_page::VaultReceiptsPage` */
 export type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean; undecodable: number }
 /** `oneiron::memory::asset_doors::AssetIngestRequest` */
 export type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: InputKind; mime_type: string; bytes_b64: string; text?: string | null; occurred_at: number }
