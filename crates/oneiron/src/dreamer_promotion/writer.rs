@@ -546,7 +546,6 @@ pub(super) fn promote_one_answering(
         .transpose()
         .map_err(|error| PromotionRejection::engine_in("checker admission failed", error))?;
     let write = if let Some(checker) = checker.as_ref() {
-        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
         vault
             .batch()
             .claim_candidate_with_lexical_hints(
@@ -558,7 +557,12 @@ pub(super) fn promote_one_answering(
                 &hints,
             )
             .text(&candidate.claim_id, &[("val", birth_text.as_str())])
-            .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
+            .commit_with_checker_guard_and_then(
+                checker,
+                read_prior,
+                finish_promotion,
+                Some("promotion"),
+            )
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
