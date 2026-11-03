@@ -10,7 +10,7 @@ use crate::{Failure, MAX_STREAM, Refusal, Shape};
 /// Request headers a call may not carry: the HTTP stack writes the framing and
 /// connection ones itself, the broker sets the encoding (so the reply stays
 /// strippable) and adds the auth.
-const RESERVED_HEADERS: [&str; 13] = [
+const RESERVED_HEADERS: [&str; 18] = [
     "accept-encoding",
     "connection",
     "content-encoding",
@@ -24,6 +24,11 @@ const RESERVED_HEADERS: [&str; 13] = [
     "transfer-encoding",
     "upgrade",
     "cookie",
+    "sec-websocket-accept",
+    "sec-websocket-extensions",
+    "sec-websocket-key",
+    "sec-websocket-protocol",
+    "sec-websocket-version",
 ];
 
 const MAX_HEADER_VALUE: usize = 1024;
@@ -75,8 +80,28 @@ impl CallHeader {
         cloud: bool,
         body: &[u8],
     ) -> Self {
+        Self::new_with_digest_body(
+            call, shape, origin, path, headers, wire_model, cloud, body, body,
+        )
+    }
+
+    /// A call whose admission digest covers `digest_body`, which may be the
+    /// whole turn while `body` is its planned delta. Responses uses this: the
+    /// daemon binds the whole turn before checkout, and the broker checks the
+    /// delta's shape and model rather than pretending it equals that whole turn.
+    pub fn new_with_digest_body(
+        call: String,
+        shape: Shape,
+        origin: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        wire_model: String,
+        cloud: bool,
+        body: &[u8],
+        digest_body: &[u8],
+    ) -> Self {
         let method = shape.method().to_owned();
-        let digest = request_digest(&method, &path, &headers, body);
+        let digest = request_digest(&method, &path, &headers, digest_body);
         Self {
             version: PROTOCOL_VERSION,
             call,
@@ -116,7 +141,10 @@ impl CallHeader {
         if named.map_or(self.wire_model.is_empty(), |model| model != self.wire_model) {
             return Err(Refusal::WireModel);
         }
-        if request_digest(&self.method, &self.path, &self.headers, body) != self.digest {
+        // Responses' admission digest covers the whole turn; its body may be a planned delta.
+        if self.shape != Shape::OpenAiResponses
+            && request_digest(&self.method, &self.path, &self.headers, body) != self.digest
+        {
             return Err(Refusal::Digest);
         }
         Ok(url)

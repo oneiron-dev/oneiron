@@ -20,6 +20,7 @@ mod digest;
 mod error;
 mod form;
 mod frame;
+mod responses;
 mod send;
 mod shape;
 mod strip;
