@@ -81,7 +81,7 @@ impl Vault {
             )?;
         }
         if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            crate::store::vector_index::increment_vector_version(&self.store, &mut wtxn)?;
         }
         let mut changed = vec![*id];
         // D16: SoftErase tombstones the Claim, and "the derived edge
@@ -284,7 +284,7 @@ impl Vault {
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id, true)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, &mut wtxn)?;
             }
             if existed && let Some(captured) = captured.refs() {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(

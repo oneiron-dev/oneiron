@@ -2,7 +2,7 @@
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::consent::AuthenticatedOwner;
-use crate::embed::{EmbeddingMatchEvidence, InputKind};
+use crate::store::embedding::{EmbeddingMatchEvidence, InputKind};
 use serde::{Deserialize, Serialize};
 
 /// The compatibility shape fixed when the vault opens. Changing a populated
@@ -120,7 +120,8 @@ impl Memory<'_> {
         let (mut limit, mut limit_clamped) = caps::clamp_search_limit(input.limit);
         let skip_rescore = input.lane == VectorSearchLane::VoiceHot;
         if skip_rescore {
-            let reduced = limit.min(crate::speculative::SPECULATIVE_FIRE_LIMIT_DEFAULT);
+            let reduced =
+                limit.min(crate::memory::speculative_limits::SPECULATIVE_FIRE_LIMIT_DEFAULT);
             limit_clamped |= reduced != limit;
             limit = reduced;
         }

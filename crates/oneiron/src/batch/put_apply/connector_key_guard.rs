@@ -31,7 +31,8 @@ pub(super) fn validate_connector_manifest_put(
             let old = crate::connector_key::decode_connector_key_body(
                 &previous[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )?;
-            let leaves_pending = old.status == crate::connector_key::ConnectorKeyStatus::Pending
+            let leaves_pending = old.status
+                == crate::connector_key_status::ConnectorKeyStatus::Pending
                 && incoming.status != old.status;
             if leaves_pending
                 || incoming.retained_manifest != old.retained_manifest

@@ -1,7 +1,7 @@
 //! Strict POLICY_MANIFEST experiment-selection row decoder.
 use rmpv::Value;
 
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 
 pub(super) fn parse_experiment_selection(value: &Value) -> Option<Vec<SelectionPolicyRow>> {
     let mut bytes = Vec::new();

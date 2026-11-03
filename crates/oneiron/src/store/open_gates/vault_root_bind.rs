@@ -600,7 +600,9 @@ pub(super) fn open_existing_environment(
             },
         )
     }
-    .map_err(|error| crate::world_keys::page_seal_open_error(error, config.page_seal.is_some()))?;
+    .map_err(|error| {
+        crate::key_material::page_seal_open_error(error, config.page_seal.is_some())
+    })?;
     // Wrap IMMEDIATELY so every `?` below releases the environment instead of
     // leaking it into heed's process-global registry (ONE-1142).
     let mut env = OwnedEnv {

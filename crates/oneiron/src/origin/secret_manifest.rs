@@ -12,7 +12,6 @@
 use std::path::Path;
 
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
@@ -22,6 +21,7 @@ use crate::origin::smart_http::{
     ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, origin_repo_dir, validate_repo_name,
 };
 use crate::secret_manifest::{SecretManifest, parse_secret_manifest};
+use crate::store::code_snapshot::RepoRef;
 
 /// Where a repository declares its secrets, relative to its root.
 ///

@@ -9,7 +9,7 @@ use std::io::Read;
 use zeroize::Zeroizing;
 
 use super::{Budget, Walked, encode_failed, over_budget, unreadable};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 /// Whether `bytes`' frame parses as a tar archive: its first header's
 /// checksum verifies (FIX 2471).

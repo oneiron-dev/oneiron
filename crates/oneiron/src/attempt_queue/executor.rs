@@ -3,7 +3,7 @@
 use super::validate::{validate_lease_owner, validate_planned_binding, validate_transition_lease};
 use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, PlannedBinding, decode_record};
 use crate::error::{Error, Result};
-use crate::llm::manifest::ModelRole;
+use crate::model_binding::ModelRole;
 
 impl AttemptQueue<'_> {
     /// Binds the placed task type and team context, and appends actual-use
