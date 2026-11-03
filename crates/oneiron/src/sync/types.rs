@@ -179,6 +179,14 @@ pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
 /// world's key wrap entries name a world. Other entity families, a world's
 /// settings entries included, remain in the shared base window.
 pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
+    entity_world_with(raw, &authority_wrap_world)
+}
+
+/// [`entity_world`] reading its key-wrap arm through `wrap_world`.
+fn entity_world_with(
+    raw: &[u8],
+    wrap_world: &dyn Fn(&[u8]) -> Option<crate::EntityId>,
+) -> crate::error::Result<Option<crate::EntityId>> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     // ITEM11_LIVE_PAD_CARRIER: a live pad rides its world's month windows. A
     // pad that does not decode stays in the base window's quarantine.
@@ -190,7 +198,7 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         // A world's key wraps ride its month windows, to its readers only (FIX
         // 3871). An entry that does not decode stays in the base window.
-        return Ok(authority_wrap_world(raw));
+        return Ok(wrap_world(raw));
     }
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
@@ -214,7 +222,16 @@ pub(crate) fn authority_wrap_world(raw: &[u8]) -> Option<crate::EntityId> {
 /// Validate residence before replay/export. A malformed CLAIM cannot be
 /// assigned to any partition and therefore must not cross the wire.
 pub(crate) fn entity_belongs_to_window(raw: &[u8], key: &WindowKey) -> bool {
-    match entity_world(raw) {
+    entity_belongs_with(raw, key, &entity_world)
+}
+
+/// [`entity_belongs_to_window`] reading the row's world through `world_of`.
+fn entity_belongs_with(
+    raw: &[u8],
+    key: &WindowKey,
+    world_of: &dyn Fn(&[u8]) -> crate::error::Result<Option<crate::EntityId>>,
+) -> bool {
+    match world_of(raw) {
         Ok(world) => {
             world == key.world()
                 && (world.is_none()
@@ -225,6 +242,52 @@ pub(crate) fn entity_belongs_to_window(raw: &[u8], key: &WindowKey) -> bool {
         // Retain existing base-mode quarantine for malformed opaque carriers.
         // A world window never admits a row with no proven world assignment.
         Err(_) => key.world().is_none(),
+    }
+}
+
+/// One pass's memo of the world an AUTHORITY_LOG row's key wraps name
+/// (FIX 4667). Reading it decodes and verifies the whole log entry, and
+/// one scrub pass asks after the same row up to three times; the answer
+/// is a pure function of the row bytes, so a pass decodes each distinct
+/// row once. Keyed by the row's blake3, never its map key: a peer
+/// chooses those. The row's id is no use either — it is content-addressed
+/// from the body and carries no world.
+pub(crate) struct AuthorityWorldMemo {
+    seen: std::cell::RefCell<std::collections::HashMap<[u8; 32], Option<crate::EntityId>>>,
+}
+
+impl AuthorityWorldMemo {
+    pub(crate) fn new() -> Self {
+        Self {
+            seen: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// [`authority_wrap_world`], decoded once per distinct row per pass.
+    pub(crate) fn wrap_world(&self, raw: &[u8]) -> Option<crate::EntityId> {
+        if crate::batch::EntityMetadataHeader::parse(raw)?.entity_type
+            != crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+        {
+            return None;
+        }
+        let digest = *blake3::hash(raw).as_bytes();
+        if let Some(world) = self.seen.borrow().get(&digest) {
+            return *world;
+        }
+        let world = authority_wrap_world(raw);
+        self.seen.borrow_mut().insert(digest, world);
+        world
+    }
+
+    /// [`entity_world`] with its key-wrap arm read through this memo.
+    pub(crate) fn entity_world(&self, raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
+        entity_world_with(raw, &|row| self.wrap_world(row))
+    }
+
+    /// [`entity_belongs_to_window`] with its key-wrap arm read through
+    /// this memo.
+    pub(crate) fn belongs(&self, raw: &[u8], key: &WindowKey) -> bool {
+        entity_belongs_with(raw, key, &|row| self.entity_world(row))
     }
 }
 
