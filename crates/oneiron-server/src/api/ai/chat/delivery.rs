@@ -106,7 +106,7 @@ pub(in crate::api::ai::chat) fn streamed(
 /// request's future does, and keeps this reply for each duplicate (FIX 12315).
 pub(in crate::api::ai::chat) async fn whole(
     started: Started,
-    claim: Option<InvocationClaim>,
+    claim: Option<DoorInvocationClaim>,
 ) -> Response {
     let started = kept_on_claim(started, claim);
     let Started {
@@ -165,7 +165,7 @@ pub(in crate::api::ai::chat) async fn whole(
 /// (FIX 2004): once the producer ends, the claim saves the answer [`whole`]
 /// would send ([`whole_reply`]), and the outcome goes on to the stream or to
 /// [`whole`] (FIX 12315). Unclaimed, `started` is as it was.
-fn kept_on_claim(mut started: Started, claim: Option<InvocationClaim>) -> Started {
+fn kept_on_claim(mut started: Started, claim: Option<DoorInvocationClaim>) -> Started {
     let Some(claim) = claim else {
         return started;
     };
