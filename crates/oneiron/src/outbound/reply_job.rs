@@ -74,6 +74,30 @@ pub struct ConnectorReplyJob {
     pub budget_steering: Vec<String>,
 }
 
+impl ConnectorReplyJob {
+    /// The ids the job names, whose erase takes its event payload: its
+    /// agent, and the event's actor, receiving identity and known
+    /// counterparty, as far as the event still decodes.
+    pub(crate) fn named_ids(&self) -> Vec<EntityId> {
+        let mut ids = vec![self.agent];
+        if let Ok(origin) = SurfaceConnectorPayload::from_connector_event(&self.event) {
+            let known = match &origin.counterparty {
+                SurfaceCounterpartyStamp::Known { counterparty_ref } => {
+                    EntityId::from_hex(counterparty_ref).ok()
+                }
+                SurfaceCounterpartyStamp::Unknown { .. }
+                | SurfaceCounterpartyStamp::Unparsed { .. } => None,
+            };
+            ids.extend(
+                [origin.actor().ok(), origin.receiving_identity().ok(), known]
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        ids
+    }
+}
+
 /// Where a reply job ended. The outbound receipt stays the authority on
 /// the send itself; this names which way the job went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,20 +396,7 @@ pub(crate) fn erase_connector_reply_job_payload(
     if job.event.payload.is_null() {
         return Ok(false);
     }
-    let names_erased = erased.contains(&job.agent)
-        || SurfaceConnectorPayload::from_connector_event(&job.event).is_ok_and(|origin| {
-            let known = match &origin.counterparty {
-                SurfaceCounterpartyStamp::Known { counterparty_ref } => {
-                    EntityId::from_hex(counterparty_ref).ok()
-                }
-                SurfaceCounterpartyStamp::Unknown { .. }
-                | SurfaceCounterpartyStamp::Unparsed { .. } => None,
-            };
-            [origin.actor().ok(), origin.receiving_identity().ok(), known]
-                .into_iter()
-                .flatten()
-                .any(|id| erased.contains(&id))
-        });
+    let names_erased = job.named_ids().iter().any(|id| erased.contains(id));
     if !names_erased {
         return Ok(false);
     }
