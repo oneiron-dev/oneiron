@@ -25,6 +25,9 @@ requests_sha256 = "7aefa996e6287c71be7a993af0713fcb10a7d444c19d88cf4213d5587180a
 [scopes.generic-agent]
 requests_sha256 = "3d56eb8abca0e8c77feb02feb669a323c5a6847f0969dc21b39653e3a6472bff"
 
+[scopes.vault]
+requests_sha256 = "30ab251b3ce6bd30b11860bbcb49c6b6e2b35515816e909a685473526e889b57"
+
 [[package]]
 name = "abiword"
 version = "3.0.6~dfsg-1"
