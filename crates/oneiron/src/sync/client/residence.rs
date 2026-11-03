@@ -3,6 +3,7 @@
 //! Device-side opened-item residence; the home side lives in `crate::sync::residence`.
 
 mod authority;
+pub(crate) mod backoff;
 mod bundle;
 mod checkpoint_roots;
 pub(crate) mod custody;

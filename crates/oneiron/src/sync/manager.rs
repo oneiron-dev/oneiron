@@ -104,6 +104,9 @@ pub struct WindowManager {
     promotions: tokio::sync::broadcast::Sender<WindowKey>,
     /// Rows local commits wrote, on their way into the loaded windows.
     live_mirror: Arc<live_mirror::LiveMirror>,
+    /// Fetch backoff for pad objects this machine cannot open yet
+    /// (FIX 6691), held across upkeep ticks.
+    pad_object_backoff: Mutex<crate::sync::client::residence::backoff::PadObjectBackoff>,
     /// Test-only handle-issue pause slot (ONE-1608), owned by THIS manager.
     ///
     /// The hook that parks a caller between issuing a window `Arc` and
@@ -151,9 +154,19 @@ impl WindowManager {
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
             live_mirror: Arc::default(),
+            pad_object_backoff: Mutex::default(),
             #[cfg(test)]
             handle_issue_pause: Mutex::new(None),
         }
+    }
+
+    /// The pad-object fetch backoff (FIX 6691), locked for one upkeep.
+    pub(crate) fn pad_object_backoff(
+        &self,
+    ) -> MutexGuard<'_, crate::sync::client::residence::backoff::PadObjectBackoff> {
+        self.pad_object_backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The materializer shared by every window this manager opens.
