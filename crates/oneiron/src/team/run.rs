@@ -34,17 +34,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatcher,  TeamRunStamp, attempt_team_stamp,
-    decode_agent_dispatch_input,
+    AgentDispatcher, TeamRunStamp, attempt_team_stamp, decode_agent_dispatch_input,
 };
-use crate::team::team_shape::CoordinationPattern;
-use crate::team::team_shape::team_pattern;
 use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestKind};
 use crate::autoreason_campaign::authoring::tournament_team_stamp;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::receipt::task_type_ref::TypeRef;
+use crate::team::team_shape::CoordinationPattern;
+use crate::team::team_shape::team_pattern;
 
 use super::market::market;
 use super::observations::team_run_observations;

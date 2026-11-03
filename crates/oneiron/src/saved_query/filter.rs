@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use super::evidence::RelevantEvidence;
 use super::support::{edge_kind_from_name, invalid, parse_entity_ref, validate_bounded_text};
 
-pub use crate::memory::query_records::FilterAst;
 pub use crate::memory::query_records::ClaimComparison;
+pub use crate::memory::query_records::FilterAst;
 pub use crate::memory::query_records::MatcherSpec;
 
 /// Operators that express ranked or global-relative membership.

@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::store::code_tree_blob::CodeTreeBlob;
 use super::{CodePathRetirement, CodeRevision};
 use crate::error::{ArtifactError, Error, Result};
 use crate::merge_queue::QueueTestedRevision;
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidCodeArtifactBody(

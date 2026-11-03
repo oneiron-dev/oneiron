@@ -14,7 +14,10 @@ use super::RunTreeAdapter;
 mod intent;
 pub(crate) use intent::SignalIntent;
 
-pub use crate::attempt_queue::run_signal::{RunSignalInput, RunSignalKind, RunSignalState, RunBranchSignal, RunAskAnswerKind, RunAskAnswer, RunAskQuestion, RunAsk, RunAskState};
+pub use crate::attempt_queue::run_signal::{
+    RunAsk, RunAskAnswer, RunAskAnswerKind, RunAskQuestion, RunAskState, RunBranchSignal,
+    RunSignalInput, RunSignalKind, RunSignalState,
+};
 use crate::attempt_queue::run_signal::{field, validate_questions};
 
 /// A run ask's rows, as `tasks.ask` measures its own: its recipients (one

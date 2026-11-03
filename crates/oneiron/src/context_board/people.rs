@@ -602,7 +602,9 @@ fn person_row_without_definition(
 fn person_is_model(vault: &Vault, at: u64, person: EntityId) -> bool {
     matches!(
         vault.person_substrate(&person, at),
-        Ok(Some(crate::write_envelope::subject_record::PersonSubstrate::Model))
+        Ok(Some(
+            crate::write_envelope::subject_record::PersonSubstrate::Model
+        ))
     )
 }
 

@@ -69,12 +69,17 @@ impl ScopedRead<'_> {
                 claim.lifecycle
             }
             ENTITY_TYPE_SKILL => {
-                let Ok(skill) = crate::write_envelope::skill_record::decode_skill_record(body) else {
+                let Ok(skill) = crate::write_envelope::skill_record::decode_skill_record(body)
+                else {
                     return Ok(None);
                 };
                 match skill.lifecycle_status {
-                    crate::write_envelope::skill_record::SkillLifecycle::Active => ClaimLifecycleStatus::Active,
-                    crate::write_envelope::skill_record::SkillLifecycle::Superseded => ClaimLifecycleStatus::Superseded,
+                    crate::write_envelope::skill_record::SkillLifecycle::Active => {
+                        ClaimLifecycleStatus::Active
+                    }
+                    crate::write_envelope::skill_record::SkillLifecycle::Superseded => {
+                        ClaimLifecycleStatus::Superseded
+                    }
                     _ => return Ok(None),
                 }
             }

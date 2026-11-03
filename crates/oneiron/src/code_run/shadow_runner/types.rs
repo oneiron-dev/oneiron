@@ -5,13 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::{
-    CodeRunDeterminism, ProgramStepFeedback, SelfDurableWait,
-};
-use crate::engine_executor::{EngineExecutorStatus, WindowFullReason};
 use crate::EntityId;
+use crate::code_run::{CodeRunDeterminism, ProgramStepFeedback, SelfDurableWait};
+use crate::engine_executor::{EngineExecutorStatus, WindowFullReason};
 
-pub use crate::dreamer_runner::shadow_values::{ArtifactDigestAlgorithm, ArtifactDigest, EngineArtifactPin, ShadowTarget, ShadowStepIdentity, ShadowRequestDigest, ShadowSource, ShadowBodyRef};
+pub use crate::dreamer_runner::shadow_values::{
+    ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowBodyRef, ShadowRequestDigest,
+    ShadowSource, ShadowStepIdentity, ShadowTarget,
+};
 
 /// An arm's guest clock and random seed, as a frame carries them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,7 +38,9 @@ impl From<CodeRunDeterminism> for ShadowDeterminism {
     }
 }
 
-pub use crate::dreamer_runner::shadow_values::{ShadowModelPin, ShadowMeterContext, ShadowIsolationRequired, ShadowSandboxBinding, ShadowScope};
+pub use crate::dreamer_runner::shadow_values::{
+    ShadowIsolationRequired, ShadowMeterContext, ShadowModelPin, ShadowSandboxBinding, ShadowScope,
+};
 
 /// One arm to run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +63,7 @@ pub struct ShadowRunRequest {
     pub scope: ShadowScope,
 }
 
-pub use crate::dreamer_runner::shadow_values::{ShadowUnavailableReason, ShadowUnavailable};
+pub use crate::dreamer_runner::shadow_values::{ShadowUnavailable, ShadowUnavailableReason};
 
 /// Why an arm's window was full, as a frame carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,7 +139,10 @@ impl ShadowStatus {
     }
 }
 
-pub use crate::dreamer_runner::shadow_values::{ShadowIsolation, ShadowUsage, ShadowModelReceipt, ShadowTraceKind, ShadowTraceEntry, ShadowBridgeWindow};
+pub use crate::dreamer_runner::shadow_values::{
+    ShadowBridgeWindow, ShadowIsolation, ShadowModelReceipt, ShadowTraceEntry, ShadowTraceKind,
+    ShadowUsage,
+};
 
 /// What one captured step's run in an arm left: its status, its bodies and
 /// its two traces, kept apart.
@@ -155,7 +161,7 @@ pub struct ShadowStepRun {
     pub type_feedback: Option<ProgramStepFeedback>,
 }
 
-pub use crate::dreamer_runner::shadow_values::{ShadowArmLease};
+pub use crate::dreamer_runner::shadow_values::ShadowArmLease;
 
 /// What one arm answered.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

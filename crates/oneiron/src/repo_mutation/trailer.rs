@@ -195,8 +195,8 @@ fn require_unique_msgpack_key<'a>(entries: &'a [(Value, Value)], key: &str) -> R
     )))
 }
 
-pub use crate::store::repo_provenance_trailer::parse_repo_provenance_trailer;
 use crate::store::repo_provenance_trailer::has_final_trailer_block;
+pub use crate::store::repo_provenance_trailer::parse_repo_provenance_trailer;
 
 pub fn repo_commit_provenance(
     repo_root: &Path,

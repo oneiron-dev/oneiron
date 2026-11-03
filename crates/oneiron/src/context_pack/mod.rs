@@ -4,7 +4,6 @@
 //! Directory module. This file carries declarations and re-exports only; each
 //! sibling file owns one concern. `builder` is the hub that composes them.
 
-pub(crate) mod turn_fold;
 mod builder;
 mod edge_walk;
 mod empty_pack;
@@ -15,6 +14,7 @@ mod once_disclosure;
 mod psych_mirror;
 mod quarantine;
 pub(crate) mod retained_copies;
+pub(crate) mod turn_fold;
 #[cfg(test)]
 pub(crate) use self::quarantine::quarantined_entity_count_for_test;
 pub mod source_ranking;

@@ -431,7 +431,9 @@ pub enum WorldScope {
 }
 
 pub use crate::claim::world_access::{
-    WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, ActiveWorldSelection, ResolvedWorldAuthority, world_access_claim_body, decode_world_access_claim_value, PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, ResolvedWorldAuthority, WORLD_ACCESS_SCHEMA_VERSION,
+    WorldAuthoritySet, decode_world_access_claim_value, world_access_claim_body,
 };
 
 /// Opaque Dreamer working-set cursor.

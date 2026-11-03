@@ -130,7 +130,6 @@
 //! skill. They converge to two open questions a decider answers, never to a
 //! silent double edit — nothing here writes canon.
 
-pub mod training_choice;
 mod ask_band;
 pub(crate) mod audit_rate;
 mod brief;
@@ -154,6 +153,7 @@ mod response_pair;
 mod selection;
 mod tier;
 mod tradeoff_route;
+pub mod training_choice;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 #[cfg(test)]

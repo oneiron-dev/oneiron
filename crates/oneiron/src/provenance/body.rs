@@ -23,7 +23,9 @@ mod retained;
 #[cfg(all(unix, feature = "sync"))]
 pub(crate) use self::retained::retained_body_side_keys_in_txn;
 
-pub use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance};
+pub use crate::store::body_descriptor::{
+    BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance,
+};
 
 /// Body descriptors by owner. Key: id16 (owner) + id16 (occurrence).
 const BODY: SideTable<(EntityId, EntityId), OwnedBody, Named> =

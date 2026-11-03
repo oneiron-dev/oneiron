@@ -12,4 +12,3 @@ pub enum SyncSelectorWorld {
     /// Include base-reality claims and claims scoped to this world.
     World(LocalWorldId),
 }
-
