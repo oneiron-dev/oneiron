@@ -90,7 +90,7 @@ pub(super) fn identity_topology_receipts(
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);
             if fold.rejections.iter().any(|(rejected, reason)| {
                 *rejected == event_id && matches!(reason,
-                    crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
+                    oneiron_contracts::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
             }) {
                 continue;
             }

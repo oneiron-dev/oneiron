@@ -147,6 +147,7 @@ mod host_issuer_custody;
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
 mod key_encoding;
