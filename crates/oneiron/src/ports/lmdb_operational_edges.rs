@@ -149,7 +149,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .edges_in
             .put(txn, &Store::encode_edge_key(&to, kind, &from), &value)?;
         crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
-        crate::ppr::increment_graph_version(&self.store, txn)
+        crate::store::graph_version::increment_graph_version(&self.store, txn)
     }
     fn port_blocks_remove(
         &self,
@@ -169,7 +169,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .delete(txn, &Store::encode_edge_key(&to, kind, &from))?;
         if existed {
             crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
-            crate::ppr::increment_graph_version(&self.store, txn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, txn)?;
         }
         Ok(existed)
     }

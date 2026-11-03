@@ -332,7 +332,7 @@ impl EngineScan {
             Self::ProjectDepthPredecessors => 256,
             Self::ProjectDepthContributionBytes => 16 * 1024,
             Self::DispatchAncestorRows => {
-                crate::context_projection::CONTEXT_PROJECTION_ANCESTOR_CHECK
+                crate::config::context_spec::CONTEXT_PROJECTION_ANCESTOR_CHECK
             }
             Self::LinearProvenanceRows => 200,
             Self::NoteDocumentBytes => 1_048_576,

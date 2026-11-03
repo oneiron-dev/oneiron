@@ -8,9 +8,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
-use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
+use crate::store::{ManifestDbs, Rows, Store};
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
@@ -493,16 +492,7 @@ pub(crate) fn invalidate_ppr_for_delete(
     }
     Ok(())
 }
-pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
-    let current = read_graph_version(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("ppr graph version"))?;
-    store
-        .hnsw_meta
-        .put(wtxn, GRAPH_VERSION_KEY, &next.to_le_bytes())?;
-    Ok(())
-}
+pub(crate) use crate::store::graph_version::increment_graph_version;
 pub(super) fn encode_dep_key(
     entity_id: &EntityId,
     seed_hash: &[u8; SEED_HASH_LEN],
@@ -736,17 +726,8 @@ pub(super) fn encode_cache_value_with_state(
     }
     Ok(value)
 }
-pub(crate) fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    Ok(store
-        .port_index_meta_with_raw(txn, IndexMetaKey::GraphVersion, |raw| {
-            decode_u64(raw, "ppr graph version")
-        })?
-        .unwrap_or(0))
-}
-fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {
-    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
-    Ok(u64::from_le_bytes(bytes))
-}
+pub(crate) use crate::store::graph_version::read_graph_version;
+use crate::store::graph_version::decode_u64;
 fn decode_u32(raw: &[u8], context: &'static str) -> Result<u32> {
     let bytes: [u8; 4] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
     Ok(u32::from_le_bytes(bytes))

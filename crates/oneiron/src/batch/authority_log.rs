@@ -151,10 +151,10 @@ pub(super) fn evict_authority_log_store_key_squatter(
     let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(induced_shell_sources)
 }

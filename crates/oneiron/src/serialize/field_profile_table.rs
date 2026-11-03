@@ -1,6 +1,6 @@
 //! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
 
-use crate::context_pack::FieldProfile;
+use crate::serialize::pack_format::FieldProfile;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
