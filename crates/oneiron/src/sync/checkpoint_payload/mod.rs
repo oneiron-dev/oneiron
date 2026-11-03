@@ -282,7 +282,12 @@ pub(crate) struct SyncAtom {
 }
 
 /// An emitted atom's capture-local ordinal: never an owner, a key or a
-/// digest.
+/// digest. For Loro window carriers, [`project_checkpoint_windows`]' caller
+/// assigns ordinals from one counter for the whole call, stable across a
+/// window's snapshot and updates groups and across later filtering; restore
+/// resolves that ordinal, never a position in a filtered row list. A
+/// window's snapshot and updates seals are kept or dropped together, since
+/// an updates slot may reference a snapshot copy (FIX 10281).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct AtomRef(pub(crate) u32);
 
@@ -324,8 +329,9 @@ pub(crate) struct SlotCopy {
 }
 
 /// One skeleton slot, by its vendored atom id: a copy per rightful holder,
-/// never merged by owner (FIX 9128), and the fields of the actors its value
-/// names (FIX 9127).
+/// never merged by owner within a capture (FIX 9128; a window's updates
+/// slot may reference the identical Owner copy sealed for its snapshot
+/// base, FIX 10281), and the fields of the actors its value names (FIX 9127).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoroSlot {
     pub(crate) copies: Vec<SlotCopy>,
@@ -558,8 +564,10 @@ pub(crate) fn restore_checkpoint_documents(
 /// snapshot alone, and its pending and queued updates over that snapshot.
 /// Each value's copies go to `emit`, one per rightful holder, only once the
 /// window's capture, its codecs' splits and its all-open join all proved;
-/// a window that does not stays whole, named, with nothing emitted for it.
-/// Only `emit`'s own error stops it.
+/// `emit` returns the stable call-wide ordinal [`AtomRef`] names, so an
+/// updates slot may carry a snapshot copy's ordinal rather than seal that
+/// base value again. A window that does not prove stays whole, named, with
+/// nothing emitted for it. Only `emit`'s own error stops it.
 pub(crate) fn project_checkpoint_windows(
     rows: &CapturedSyncRows<'_>,
     owners: &dyn SyncPayloadOwners,

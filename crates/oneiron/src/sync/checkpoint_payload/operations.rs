@@ -9,10 +9,11 @@
 //! a deleted one's too, must be one that may stand plaintext
 //! ([`key_refusal`]). A Loro PeerID only writes; the owner handles the
 //! capture records are indexes into this capture's own holders. Within one
-//! window, an identical copy — same root and key, value, home, dependencies
-//! and actors — is emitted once: the updates capture over the snapshot base
-//! references the snapshot capture's copy by its resting locator and
-//! capture ordinal instead of sealing the base again (FIX 10281).
+//! window, an identical Owner copy — same root and key, exact value, owner,
+//! dependencies and actors — is sealed by the snapshot capture once: the
+//! updates capture over that base references it by resting locator and
+//! capture ordinal instead of sealing it again (FIX 10281). Copies within
+//! one capture, and Structure/Client copies, are still emitted per group.
 //!
 //! A window splits only once its all-open join gives each stored row back
 //! under [`WINDOW_ROUND_TRIP`]: every split value fills back to its stored
@@ -153,10 +154,10 @@ pub(super) fn project(
     }
     for (window, rows) in windows {
         let base = rows.snapshot.as_ref().map(|row| row.blob);
-        // One window's copies are emitted once: its updates group, captured
-        // over the snapshot base, references the base copies the snapshot
-        // group already emitted (FIX 10281).
-        let mut emitted = EmittedCopies::new();
+        // The snapshot group records its Owner copies; the updates group,
+        // captured over that base, references an identical one instead of
+        // sealing the base value again (FIX 10281).
+        let mut snapshot_copies = SnapshotCopies::new();
         if let Some(snapshot) = rows.snapshot {
             group(
                 &window,
@@ -164,7 +165,8 @@ pub(super) fn project(
                 vec![snapshot],
                 owners,
                 emit,
-                &mut emitted,
+                &mut snapshot_copies,
+                CopyGroup::Snapshot,
                 &mut projection,
             )?;
         }
@@ -176,7 +178,8 @@ pub(super) fn project(
                 updates,
                 owners,
                 emit,
-                &mut emitted,
+                &mut snapshot_copies,
+                CopyGroup::Updates,
                 &mut projection,
             )?;
         }
@@ -192,13 +195,18 @@ fn group(
     rows: Vec<LoroIn<'_>>,
     owners: &dyn SyncPayloadOwners,
     emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
-    emitted: &mut EmittedCopies,
+    snapshot_copies: &mut SnapshotCopies,
+    copy_group: CopyGroup,
     projection: &mut WindowProjection,
 ) -> Result<()> {
     match prepare(base, &rows, owners) {
-        Ok(prepared) => projection
-            .carriers
-            .push(prepared.emit(window, rows, emit, emitted)?),
+        Ok(prepared) => projection.carriers.push(prepared.emit(
+            window,
+            rows,
+            emit,
+            snapshot_copies,
+            copy_group,
+        )?),
         Err((owner, reason)) => {
             let whole = rows.into_iter().map(|row| SkeletonRow::Unclassified {
                 at: row.at,
@@ -528,58 +536,47 @@ fn prove(
     Ok(())
 }
 
-/// Where one copy goes, as its identity is keyed by: [`AtomHome`] with its
-/// custody client spelled as a tag (it has no hash of its own).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum CopyHome {
-    Owner(OwnerRef),
-    Structure,
-    Client(u8),
+/// Which capture of a window is emitting: its snapshot, whose Owner copies
+/// are recorded, or its updates over that snapshot, which may reference
+/// them. A group never references its own copies (FIX 9128).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CopyGroup {
+    Snapshot,
+    Updates,
 }
 
-fn copy_home(target: AtomHome) -> CopyHome {
-    match target {
-        AtomHome::Owner(owner) => CopyHome::Owner(owner),
-        AtomHome::Structure => CopyHome::Structure,
-        AtomHome::Client(client) => CopyHome::Client(match client {
-            OtherClient::Body => 0,
-            OtherClient::Response => 1,
-            OtherClient::WorldPad => 2,
-            OtherClient::Credential => 3,
-        }),
-    }
-}
-
-/// What makes two copies the same copy (FIX 10281): the slot it fills, its
-/// value in no-one form (by BLAKE3), the home it goes to and what it holds
-/// only while, and each actor it names by field. The resting locator is no
-/// part of it: a referenced copy keeps the first one's, which its actor
-/// parts name.
+/// What makes an updates copy the snapshot copy (FIX 10281): the slot it
+/// fills, its exact value in no-one form, the owner it is sealed under and
+/// what it holds only while, and each actor it names by field. Only Owner
+/// copies share: Structure and Client copies have no ordinal store yet.
+/// The resting locator is no part of it: a referenced copy keeps the
+/// snapshot copy's, which its actor parts name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct CopyKey {
     root: String,
     key: String,
-    value: [u8; 32],
-    home: CopyHome,
+    value: Vec<u8>,
+    owner: OwnerRef,
     dependencies: Vec<OwnerRef>,
     actors: Vec<(String, EntityId)>,
 }
 
-/// The copies one window's groups have emitted, by identity: the updates
-/// group over the snapshot base references these instead of sealing the
-/// base's values a second time.
-type EmittedCopies = HashMap<CopyKey, SlotCopy>;
+/// One window snapshot's Owner copies, by identity: its updates group
+/// references these instead of sealing the base's values a second time.
+type SnapshotCopies = HashMap<CopyKey, SlotCopy>;
 
 impl Prepared {
     /// Emits each value's copies, one per holder, each at its own member
-    /// path — or references the copy `emitted` already holds for this
-    /// window — and returns the window's outer skeleton.
+    /// path, and returns the window's outer skeleton. A snapshot records
+    /// its Owner copies in `snapshot_copies`; its updates group references
+    /// an identical recorded copy instead of emitting it.
     fn emit(
         self,
         window: &str,
         rows: Vec<LoroIn<'_>>,
         emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
-        emitted: &mut EmittedCopies,
+        snapshot_copies: &mut SnapshotCopies,
+        copy_group: CopyGroup,
     ) -> Result<LoroCarrier> {
         let Self {
             parts,
@@ -614,21 +611,28 @@ impl Prepared {
                     (Some(_), _) => return Err(bad_part()),
                     (None, _) => Vec::new(),
                 };
-                // An identical copy this window already emitted is
-                // referenced, resting locator and ordinal together, so its
-                // actor parts still name the copy they were sealed beside.
-                let identity = CopyKey {
-                    root: plan.root.clone(),
-                    key: plan.key.clone(),
-                    value: *blake3::hash(&plan.value).as_bytes(),
-                    home: copy_home(target),
-                    dependencies: dependencies.clone(),
-                    actors: actors
-                        .iter()
-                        .map(|part| (part.field.clone(), part.actor_entity))
-                        .collect(),
+                // The updates group references an identical Owner copy the
+                // snapshot group sealed, resting locator and ordinal
+                // together, so its actor parts still name the copy they
+                // were sealed beside. Every other copy is emitted here.
+                let identity = match target {
+                    AtomHome::Owner(owner) => Some(CopyKey {
+                        root: plan.root.clone(),
+                        key: plan.key.clone(),
+                        value: plan.value.clone(),
+                        owner,
+                        dependencies: dependencies.clone(),
+                        actors: actors
+                            .iter()
+                            .map(|part| (part.field.clone(), part.actor_entity))
+                            .collect(),
+                    }),
+                    AtomHome::Structure | AtomHome::Client(_) => None,
                 };
-                if let Some(copy) = emitted.get(&identity) {
+                if copy_group == CopyGroup::Updates
+                    && let Some(identity) = &identity
+                    && let Some(copy) = snapshot_copies.get(identity)
+                {
                     copies.push(copy.clone());
                     continue;
                 }
@@ -640,7 +644,13 @@ impl Prepared {
                 };
                 let ordinal = emit(target, copy)?;
                 let copy = SlotCopy { at, atom: ordinal };
-                emitted.insert(identity, copy.clone());
+                if copy_group == CopyGroup::Snapshot
+                    && let Some(identity) = identity
+                {
+                    snapshot_copies
+                        .entry(identity)
+                        .or_insert_with(|| copy.clone());
+                }
                 copies.push(copy);
             }
             let holes = plan
