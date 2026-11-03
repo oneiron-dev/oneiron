@@ -201,10 +201,14 @@ pub(in crate::commands::owner) fn open_with_unlock(
     let path = &config.vault_path;
     if world_keys::vault_is_sealed(path)? {
         refuse_orphaned_page_seal(path)?;
-        let unlock = HostUnlock::read_for_vault(request, || {
-            world_keys::page_seal_vault_id(path)
-                .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
-        })?;
+        let unlock = HostUnlock::read_for_vault(
+            request,
+            || {
+                world_keys::page_seal_vault_id(path)
+                    .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
+            },
+            None,
+        )?;
         let opened = open_sealed(config, &unlock, instead);
         name_released(&unlock);
         return opened;
@@ -213,7 +217,8 @@ pub(in crate::commands::owner) fn open_with_unlock(
     if need != KeyNeed::Held && vault.vault_key_status()? == VaultKeyStatus::NoKey {
         return Ok(vault);
     }
-    let unlock = HostUnlock::read_for_vault(request, || Ok(vault.vault_key_vault_id()))?;
+    let unlock =
+        HostUnlock::read_for_vault(request, || Ok(vault.vault_key_vault_id()), Some(&vault))?;
     let unlocked = unlock.unlock_live(&vault).map_err(|error| {
         anyhow::anyhow!(
             "the vault key did not unlock with {}: {error}",

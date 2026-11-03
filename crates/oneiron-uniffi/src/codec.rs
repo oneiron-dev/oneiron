@@ -1186,6 +1186,8 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
                 world_ref: scope.world_ref,
                 facet: scope.facet,
                 kinds: scope.kinds,
+                conversation_refs: scope.conversation_refs.unwrap_or_default(),
+                person_ref: scope.person_ref,
                 ..Default::default()
             }),
         )
