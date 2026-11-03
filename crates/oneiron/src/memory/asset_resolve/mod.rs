@@ -30,19 +30,20 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, Sc
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::IMAGE_FULL;
-use crate::llm::decision::{
-    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
+use crate::llm::decision::{AudioRef, DecisionLadder, ImageRef, ResolvedMedia};
+use crate::model_decision::catalogue::IMAGE_FULL;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, EvidenceVersion,
+    Reversibility, cut_text, fit_state,
 };
-use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
-use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
-use crate::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::receipt::{PixelPull, ServedForm};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
+use oneiron_model::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
+use oneiron_model::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
+use oneiron_model::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
 
 mod blob;
 mod generation;

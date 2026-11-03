@@ -48,10 +48,23 @@ use super::{
 use crate::authority::AuthorityEntryHash;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{
-    CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
-    KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit,
-    restore_kit,
+use crate::{
+    store::recovery_kit::{
+        CodeKeeping,
+        KitCoverage,
+        KitError,
+        KitId,
+        KitIssue,
+        KitMachine,
+        KitManifest,
+        KitPassphrase,
+        KitPiece,
+        KitPiecePair,
+        KitSecretKind,
+        PieceHome,
+        RestoredKitSecret,
+    },
+    recovery::{issue_recovery_root_kit, restore_kit},
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -60,6 +73,12 @@ use crate::{EntityId, Vault};
 pub const WORLD_KIT_ESCROW: &str = "world-kit";
 
 const KITS: SideTable<String, StoredKit, Named> = SideTable::new(&side_table::RECOVERY_KIT);
+
+/// The drawn kits whose pending row never committed and whose pending piece
+/// a best-effort delete could not remove, named until a settle's sweep
+/// deletes each piece (FIX 12202). Key: [`kit_key`]; the row holds the kit id.
+pub(super) const UNLISTED_KITS: SideTable<String, KitId, Named> =
+    SideTable::new(&side_table::RECOVERY_KIT_UNLISTED_SWEEP);
 
 /// The passphrase piece's Argon2id cost, as the inventory keeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,7 +223,7 @@ pub struct IssuingRequest {
     pub status: OwnerWorkStatus,
 }
 
-fn kit_key(id: KitId) -> String {
+pub(super) fn kit_key(id: KitId) -> String {
     id.0.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

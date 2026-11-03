@@ -2,7 +2,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::{EntityId, Result, Vault};
 
 use super::{PolicyClassifyRequest, PolicyClassifySubject, PolicyRowChange, PolicyRowReceipt};

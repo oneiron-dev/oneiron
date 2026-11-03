@@ -7,9 +7,9 @@ The runbook is [docs/ops/guest-image-family.md](../../../docs/ops/guest-image-fa
 
 | File | Holds |
 |---|---|
-| `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (absent until measured). |
-| `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, owners, OCI run config). |
-| `packages.lock.toml` | The resolved Debian closure, written by the first `fetch --learn`. |
+| `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (state `unbuilt` until a build measures them). |
+| `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, directories, empty files, owners, OCI run config). |
+| `packages.lock.toml` | The resolved Debian closure and each scope's exact `.deb` file list, written by `fetch --learn` in isolated per-scope package caches. |
 | `build.py`, `imagebuild/` | `validate`, `fetch`, `build --variant`, `receipt`, `manifest`; `imagebuild/attest.py` writes each build's SBOM and provenance statement. |
 | `release-manifest.schema.json`, `manifest.md` | The release manifest's closed wire (`image-release.json` and its detached signature envelope), the verification results and the observe-only policy. |
 | `mkosi.conf`, `mkosi.tools.conf` | Fixed mkosi defaults the generated per-build configs include. |
@@ -24,8 +24,12 @@ python3 build.py manifest --work /srv/oneiron-images/work --variant base
 ```
 
 `<checkout>` is a git checkout that holds `inputs.engine.commit`. One fetch
-can take several `--variant` flags; a `--learn` fetch writes a replacement
-lock, so it must name every variant the lock should cover. A payload kind
+can take several `--variant` flags. `--only-requested` verifies just tools
+and those variants' learned file lists; without it, fetch still verifies the
+whole lock. A `--learn` fetch writes a replacement lock, so it must name
+every variant the lock should cover. Each scope learns in an empty package
+cache of its own, then merges its packages into the mirror, so shared
+dependencies appear in every scope that needs them. A payload kind
 with no installer (`file`, `archive`, `npm`, `rust-toolchain` have one) or an
 incompletely pinned source build is refused before any namespace, fetch or
 download. Every tool's output goes to stderr; `build` prints its record JSON
@@ -42,6 +46,34 @@ What the phase-3 variants install, all from pins checked in the fetch:
   `/opt/tsrs/node_modules` (their sha512 integrity checked on every use), and
   `/usr/local/bin/tsrs` and `/usr/local/bin/tsrs-wasm`, two-line launchers
   that run the packages' entry files under Bun. There is no Node.
+
+What the vault (phase 4) installs, with no guest plumbing:
+- the engine's `oneiron-server`, `oneiron-broker`, `oneiron-vm-init` and
+  `oneiron-vm-outbox` in `/usr/bin`, built in release in the image's build
+  overlay (build-essential, pkg-config, and libexpat1-dev, so expat-sys
+  links Debian's Expat; `libexpat1` is in the image);
+- the pinned `deploy/firecracker/oneiron-vault-init`, unmodified, at
+  `/usr/sbin/oneiron-vault-init` (the kernel's `init=/sbin/oneiron-vault-init`
+  in the merged /usr);
+- `mount`, and busybox with one link, `/usr/bin/reboot`, for the init's
+  `reboot -f`;
+- the mountpoints `/vault`, `/config`, `/restore` and `/etc/oneiron`, and an
+  empty regular file, `/etc/resolv.conf` (0644), which the guest network
+  covers with a file bind mount.
+
+Its receipt's `vault_capabilities` holds what deploy/firecracker/build.py's
+rootfs receipt would: guest runtime revision 0 with a null descriptor (no
+rootless guest runtime is staged), and trusted organ builds revision 1.
+Measured (run v9): OCI archive 261,918,720 B (249.8 MiB), unpacked files 828,253,513 B (789.9 MiB; 291,382,601 B above the proposed 512 MiB budget), sparse ext4 989,855,744 B (944.0 MiB; 3,305,111,552 B below the 4 GiB cap), and builder peak RSS 40,156,364,800 B (37.40 GiB).
+
+The vault output is an export, not something this family launches. It has an
+OCI form because every output does, but the vault runs only as a Firecracker
+microVM (`host.kvm` is true). LC's vault VM boots `rootfs.ext4` read-only,
+with a kernel the family does not build (`manifest --kernel` lists one) and
+its own vault, config and restore disks. Hypnos imports the standalone image
+of deploy/firecracker/build.py (its `manifest.json` and `rootfs-receipt.json`),
+not this output: taking the family's vault is LC's
+`vault-family-artifact-import`.
 
 Each build writes these under `<work>/artifacts/<variant>/`:
 - `rootfs.tar` (xattrs: only security.capability is exported, as v2) and

@@ -9,6 +9,7 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod browser_candidate;
 pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
@@ -346,3 +347,8 @@ fn require_active_person_in_txn(
     }
     Ok(actor)
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::agent_health::call_receipt_accepts_masked;
+pub(crate) use self::curator::dreamer_curator_rubric_accepts_masked;

@@ -2,12 +2,12 @@
 //! lifecycle validator checks the complete operation in its write transaction.
 //! This is not actor or Gate authorization and never crosses replicated replay.
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, encode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimBody, encode_claim_body};
 
 #[derive(Debug, Clone)]
 pub(crate) struct VerifiedClaimTransition {
@@ -166,9 +166,12 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
-        if prior.approval != crate::claim::ClaimApprovalStatus::Proposed {
+        if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed {
             return Err(Error::InvalidClaimBody(
                 "consent predecessor must be Proposed",
             ));
@@ -187,12 +190,14 @@ impl VerifiedClaimTransition {
         }
         let mut expected = prior;
         match next.approval {
-            crate::claim::ClaimApprovalStatus::Approved => expected.approval = next.approval,
-            crate::claim::ClaimApprovalStatus::Rejected => {
+            oneiron_contracts::claim::ClaimApprovalStatus::Approved => {
+                expected.approval = next.approval
+            }
+            oneiron_contracts::claim::ClaimApprovalStatus::Rejected => {
                 expected.approval = next.approval;
                 // A MACHINE claim's signed fold rejects without retracting.
                 if !crate::authority::machine_claim_needs_history(store, txn, &expected)? {
-                    expected.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
+                    expected.lifecycle = oneiron_contracts::claim::ClaimLifecycleStatus::Retracted;
                     expected.valid_to = next.valid_to;
                 }
             }
@@ -239,9 +244,12 @@ impl VerifiedClaimTransition {
             .ok_or(Error::InvalidClaimBody(
                 "rejection predecessor is not a claim",
             ))?;
-        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        if prior.approval != crate::claim::ClaimApprovalStatus::Proposed
-            || prior.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
+        if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed
+            || prior.lifecycle != oneiron_contracts::claim::ClaimLifecycleStatus::Active
         {
             return Err(Error::InvalidClaimBody(
                 "rejection predecessor must be an active proposal",
@@ -259,8 +267,8 @@ impl VerifiedClaimTransition {
         }
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         let mut expected = prior;
-        expected.approval = crate::claim::ClaimApprovalStatus::Rejected;
-        expected.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
+        expected.approval = oneiron_contracts::claim::ClaimApprovalStatus::Rejected;
+        expected.lifecycle = oneiron_contracts::claim::ClaimLifecycleStatus::Retracted;
         expected.valid_to = Some(now);
         let closed = TimeRange {
             start: header.occurred_start,
@@ -284,15 +292,18 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         store
             .pending_gate_consent_in_txn(txn, id)?
             .ok_or(Error::InvalidClaimBody(
                 "consent edit missing pending binding",
             ))?;
-        if prior.approval != crate::claim::ClaimApprovalStatus::Proposed
-            || next.approval != crate::claim::ClaimApprovalStatus::Approved
+        if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed
+            || next.approval != oneiron_contracts::claim::ClaimApprovalStatus::Approved
             || prior.predicate != next.predicate
             || prior.subject != next.subject
         {
@@ -315,17 +326,70 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         let mut expected = prior.clone();
-        expected.approval = crate::claim::ClaimApprovalStatus::Approved;
-        if prior.approval != crate::claim::ClaimApprovalStatus::Proposed
+        expected.approval = oneiron_contracts::claim::ClaimApprovalStatus::Approved;
+        if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed
             || prior.session_tag.is_none()
             || expected != next
         {
             return Err(Error::InvalidClaimBody(
                 "session merge body or producer changed",
             ));
+        }
+        Self::after_validation(store, txn, op)
+    }
+
+    /// The owner's not-a-secret ruling on a key found in a claim puts the
+    /// value back where the mask left its handle (FIX 11882). The found-key
+    /// door holds the owner proof and the Gate record; we check only the
+    /// exact restore shape: the next body is the stored one with `value`
+    /// back in its value, evidence and scope (the parts the mask reads),
+    /// and nothing else changed. A claim whose body its MACHINE signed
+    /// history owns cannot be restored here: its proof would fail over the
+    /// restored body, and no door re-signs a stored claim.
+    pub(crate) fn after_owner_restore(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+        handle: &str,
+        value: &[u8],
+    ) -> Result<Self> {
+        let BatchOp::Put { id, data, .. } = op else {
+            return Err(Error::InvalidClaimBody("owner restore requires claim put"));
+        };
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
+        if crate::authority::machine_claim_needs_history(store, txn, &prior)? {
+            return Err(Error::InvalidClaimBody(
+                "a MACHINE claim's body is owned by its signed history",
+            ));
+        }
+        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let text_form = format!("{}{handle}]", crate::file_secret_marks::HANDLE_TEXT_OPEN);
+        let mut expected = prior;
+        let mut changed = false;
+        for part in [
+            Some(&mut expected.value),
+            expected.evidence.as_mut(),
+            expected.scope.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            changed |= crate::file_secret_marks::unmask_value(part, handle, &text_form, value)
+                .map_err(|_| Error::InvalidClaimBody("owner restore body changed"))?;
+        }
+        if !changed || expected != next {
+            return Err(Error::InvalidClaimBody("owner restore body changed"));
         }
         Self::after_validation(store, txn, op)
     }

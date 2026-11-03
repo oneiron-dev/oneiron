@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};

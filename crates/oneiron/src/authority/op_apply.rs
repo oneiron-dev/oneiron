@@ -3,7 +3,7 @@
 //! Roster, actor-binding, federation-lifecycle, and pact-merge
 //! mutations. Treated as a black box by [`super::entry_transition`].
 
-use crate::federation::{
+use oneiron_authority::federation::{
     FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
 };
 
@@ -116,6 +116,7 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_) => {}
@@ -446,8 +447,8 @@ pub(super) fn apply_federation_lifecycle(
             let party = super::current_scope::narrowing_party(state, signer);
             let bound =
                 super::current_scope::pact_scope_beside(&local_vault_id, &pact, Some(&party));
-            if !crate::federation::Ceiling::new(effective.clone())
-                .is_within(&crate::federation::Ceiling::new(bound))
+            if !oneiron_authority::federation::Ceiling::new(effective.clone())
+                .is_within(&oneiron_authority::federation::Ceiling::new(bound))
             {
                 return Err(FederationLifecycleRejection::WidenWithoutGesture);
             }

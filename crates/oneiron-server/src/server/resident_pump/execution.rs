@@ -454,6 +454,7 @@ fn continued_seat(
             override_effort: config.seat_effort,
             listed,
             worlds: Vec::new(),
+            served: None,
         }
     })
 }
