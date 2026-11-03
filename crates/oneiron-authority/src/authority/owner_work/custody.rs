@@ -413,7 +413,7 @@ impl Ord for CustodyPermitSet {
 
 impl std::hash::Hash for CustodyPermitSet {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.len());
+        state.write_length_prefix(self.len());
         for permit in self.iter() {
             permit.hash(state);
         }
@@ -422,7 +422,12 @@ impl std::hash::Hash for CustodyPermitSet {
 
 impl serde::Serialize for CustodyPermitSet {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.iter())
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.len()))?;
+        for permit in self.iter() {
+            seq.serialize_element(permit)?;
+        }
+        seq.end()
     }
 }
 
