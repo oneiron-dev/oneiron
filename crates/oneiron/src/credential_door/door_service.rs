@@ -11,7 +11,7 @@ use super::door_types::{
     DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, UNUSABLE_PATH,
     custody, repo_record,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::secret_lease::VaultInstant;
 use crate::vault::Vault;
 

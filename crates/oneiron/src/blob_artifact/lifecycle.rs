@@ -129,10 +129,10 @@ pub(super) fn release_bytes_of_deleted_artifact(
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
     if cleanup.had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if cleanup.had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(())
 }
@@ -245,10 +245,10 @@ pub(crate) fn release_response_version_in_txn(
         tear_in_txn(store, wtxn, artifact, &mut cleanup)?;
     }
     if cleanup.had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if cleanup.had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(())
 }

@@ -493,7 +493,7 @@ fn insert_ready_row<R: Read + Seek>(
             }
         }
         ENTITY_TYPE_SKILL => {
-            let record = crate::skill::decode_skill_record(&body)?;
+            let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
             if at.section != Section::Skill {
                 return Err(Error::InvariantViolation("skill bundle missing"));
             }
@@ -1136,13 +1136,13 @@ fn imported_body(
             encode_claim_body(&body)
         }
         ENTITY_TYPE_SKILL => {
-            let mut body = crate::skill::decode_skill_record(&bytes)?;
+            let mut body = crate::write_envelope::skill_record::decode_skill_record(&bytes)?;
             body.source = ClaimSource::Imported;
             body.generated = false;
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
-            body.lifecycle_status = crate::skill::SkillLifecycle::Candidate;
-            crate::skill::encode_skill_record(&body)
+            body.lifecycle_status = crate::write_envelope::skill_record::SkillLifecycle::Candidate;
+            crate::write_envelope::skill_record::encode_skill_record(&body)
         }
         ENTITY_TYPE_AGENT_DEF => {
             let mut body = crate::agent_def::decode_agent_definition(&bytes)?;
@@ -1174,7 +1174,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             }
             refs
         }
-        ENTITY_TYPE_SKILL => crate::skill::decode_skill_record(bytes)?
+        ENTITY_TYPE_SKILL => crate::write_envelope::skill_record::decode_skill_record(bytes)?
             .forked_from
             .into_iter()
             .collect(),
@@ -1257,7 +1257,7 @@ pub(super) fn import_edge(
     }
     let vad = edge
         .vad
-        .map_or(crate::affect::Vad::NEUTRAL, |v| crate::affect::Vad {
+        .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| oneiron_contracts::affect::Vad {
             valence: v[0],
             arousal: v[1],
             dominance: v[2],

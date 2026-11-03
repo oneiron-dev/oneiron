@@ -688,7 +688,7 @@ impl ScopedRead<'_> {
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts_with_receipt`, which opens a transaction of its own.
-impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
+impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;

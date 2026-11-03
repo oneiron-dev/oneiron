@@ -24,7 +24,8 @@ use crate::learning::{
     LearningCell, LearningPredicate, put_cell_prior,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::skill::{LoadedSkillPack, SkillRole};
+use crate::write_envelope::skill_record::{SkillRole};
+use crate::skill::{LoadedSkillPack};
 use crate::write_envelope::WriteActor;
 
 /// Pattern skills, by skill entity.

@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::sync::selector::{FederationAdmissionRole, admit_staged_window_update};
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-use crate::sync::types::WindowKey;
+use crate::window_key::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
 use super::export_foreign_receipt::{

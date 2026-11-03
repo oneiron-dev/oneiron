@@ -310,7 +310,7 @@ impl Vault {
         };
         let asked = self
             .code_consent_question_text(wait_id)
-            .map_err(crate::memory::MemoryError::from)
+            .map_err(oneiron_contracts::memory::MemoryError::from)
             .and_then(|text| memory.ask_code_consent(wait_id, &text));
         if let Err(error) = asked {
             tracing::warn!(

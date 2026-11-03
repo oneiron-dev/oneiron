@@ -11,7 +11,7 @@ use super::PublishScope;
 use super::authority::anchor_serves;
 use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequestView};
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::error::Result;
 use oneiron_authority::federation::RepoTarget;
 

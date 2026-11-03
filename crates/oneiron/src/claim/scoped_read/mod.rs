@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::ContextEntity;
+use crate::serialize::context_entity::ContextEntity;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

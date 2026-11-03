@@ -1,6 +1,6 @@
 //! Thread claims reuse the existing ClaimOf index at every storage door.
 use super::*;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

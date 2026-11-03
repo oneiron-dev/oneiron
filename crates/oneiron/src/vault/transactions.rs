@@ -358,8 +358,8 @@ impl Vault {
         // published revision; marked while the vectors still say who had one.
         crate::vault::entity_revision::schedule_vector_refills(self, wtxn)?;
         hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
-        hnsw::increment_vector_version(&self.store, wtxn)?;
-        hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
+        crate::store::vector_index::increment_embedding_model_epoch(&self.store, wtxn)?;
         // The sweep below queues the work where the build has a queue. A
         // build without one marks the records only, and leaves the queueing
         // to the next serving open, which runs it from this marker (cold

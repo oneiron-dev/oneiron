@@ -4,7 +4,7 @@ use super::super::*;
 use super::BatchBuilder;
 use super::ops::capture_invalid_vector_component;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;

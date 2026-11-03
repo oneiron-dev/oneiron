@@ -124,7 +124,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) ppr_community: crate::config::PprCommunityConfig,
     /// The query side of emotion congruence. When unset, a run bound to a
     /// retrieval turn reads that turn's VAD annotation.
-    pub(super) query_affect: Option<crate::affect::Vad>,
+    pub(super) query_affect: Option<oneiron_contracts::affect::Vad>,
     pub(super) skip_vector_rescore: bool,
     /// The no-match floors the run judges, hashes and records by, read once
     /// when it starts ([`Self::no_match_floors`]).
@@ -688,7 +688,7 @@ impl<'a> PipelineBuilder<'a> {
 
     /// The current turn's VAD, the query side of emotion congruence.
     /// Validated when the run starts.
-    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+    pub fn query_affect(mut self, vad: oneiron_contracts::affect::Vad) -> Self {
         self.query_affect = Some(vad);
         self
     }

@@ -185,7 +185,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),
@@ -285,7 +285,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from("goal_limits"),
-            crate::workspace_roster::GoalLimits::default().encode(),
+            crate::policy_model::goal_limits::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -468,7 +468,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                        Value::from(crate::write_envelope::voice_segment::PREDICATE_VOICE_SEGMENT),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (

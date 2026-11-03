@@ -22,16 +22,7 @@ use crate::error::Result;
 use crate::side_table;
 use crate::store::Store;
 
-/// One family of a code document's stored rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CodeDocumentRows {
-    /// The live head: its text and every operation's edit.
-    Head,
-    /// One tested frontier's text.
-    Frontier,
-    /// One ingress receipt's edit.
-    Ingress,
-}
+pub(crate) use crate::store::code_document_values::CodeDocumentRows;
 
 /// The texts one stored row of `rows` holds, by its key after the table's
 /// prefix; none for a row that is gone or a key no row of it has.

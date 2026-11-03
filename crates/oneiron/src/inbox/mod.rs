@@ -31,6 +31,7 @@ mod model;
 mod notification;
 mod outbox_ask;
 mod projection;
+pub mod notification_recipient;
 mod resolve;
 mod root_group;
 mod takeover_ask;
