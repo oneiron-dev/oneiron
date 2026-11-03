@@ -19399,7 +19399,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -19563,12 +19563,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "EpochEmbedder"
+      "EpochEmbedder",
+      "TurnVector"
      ],
      "path": "src/compaction/epoch_vector.rs",
-     "purpose": "The vector an off-record room's epoch summary carries (ARCH-0052 K6)",
+     "purpose": "The vectors an off-record room's epoch summary and turns carry (ARCH-0052 K6)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -107368,7 +107371,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 54
+      "crate-vis": 55
      }
     },
     {
@@ -107378,7 +107381,7 @@
      "path": "src/api/off_record_rooms.rs",
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
