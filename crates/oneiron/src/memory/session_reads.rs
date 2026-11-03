@@ -36,7 +36,26 @@ use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
-use crate::task_verb::sdk::{EntityRequest, HydrateRequest, QueryBm25Request};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HydrateRequest {
+    pub refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityRequest {
+    pub entity_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryBm25Request {
+    pub query: String,
+    pub limit: usize,
+}
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
@@ -564,4 +583,11 @@ fn decode<T: serde::de::DeserializeOwned>(value: &serde_json::Value) -> MemoryRe
 
 fn encode(value: &impl serde::Serialize) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateNoteRequest {
+    pub kind: String,
+    pub markdown: String,
 }

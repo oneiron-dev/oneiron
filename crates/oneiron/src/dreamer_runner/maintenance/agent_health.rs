@@ -43,6 +43,7 @@ mod environment;
 mod erase;
 mod loaded;
 mod moves;
+pub mod steer;
 mod outcomes;
 mod pipeline;
 mod policy;
