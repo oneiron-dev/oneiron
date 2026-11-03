@@ -137,10 +137,11 @@ struct LatestTurn {
 struct Given {
     /// The rounds it gave words to, for erasure.
     rounds: Vec<[u8; 32]>,
-    /// The reading of the words the latest round that queued it took;
-    /// `None` once those words changed or the projector put it back to be
-    /// read again. A window leaves the turn out while its words still read
-    /// this way.
+    /// The reading of the words the latest assignment that queued it took
+    /// (a projector round, or a Micro selection retry's widening or owed
+    /// chunk); `None` once those words changed or the projector put it back
+    /// to be read again. A window leaves the turn out while its words still
+    /// read this way.
     taken: Option<[u8; 32]>,
 }
 
@@ -724,6 +725,26 @@ pub(crate) fn words_taken_in_txn(
     };
     Ok(turn_statements_in_txn(vault, txn, turn)?
         .is_some_and(|statements| reading(&statements) == taken))
+}
+
+/// Records `turn`'s current words as taken by work a Micro selection retry
+/// just assigned (its widened branch or an owed chunk), the same
+/// assignment-time record `hold_in_txn` makes for a projector round (FIX
+/// 12246): without it a later deferral re-widens to the same peer and
+/// extracts its words again. Only the taken reading is recorded; round
+/// membership stays the projector's. A turn whose statements do not read
+/// here is left as it stands.
+pub(crate) fn take_words_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    let Some(statements) = turn_statements_in_txn(vault, txn, turn)? else {
+        return Ok(());
+    };
+    let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
+    given.taken = Some(reading(&statements));
+    GIVEN.put(&vault.store, txn, turn, &given)
 }
 
 /// The version of one turn's statements.

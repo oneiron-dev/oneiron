@@ -2,7 +2,10 @@
 //! the wake's pin, the partition's model work, and what its outcome settles
 //! (accepted candidates, a checkpoint, a park or a deferral).
 
+use std::collections::BTreeSet;
 use std::time::Instant;
+
+use crate::EntityId;
 
 use super::super::stage_log::{PartitionStages, ms_since};
 use super::super::{PreparedConsolidationAttempt, PreparedWake};
@@ -51,6 +54,9 @@ impl ConsolidationExecutor<'_> {
             }
             resources => resources?,
         };
+        // The peers this attempt's widening newly assigned beyond its queued
+        // originals: recorded as taken once its result commits (FIX 12246).
+        let widened = Self::widened_turns(attempt, plan);
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
         let run_started = Instant::now();
@@ -87,7 +93,7 @@ impl ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, ctx, stages)
+                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -102,7 +108,7 @@ impl ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, ctx, stages)
+                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -132,11 +138,15 @@ impl ConsolidationExecutor<'_> {
         }
     }
 
-    /// Hands `candidates` to the sink, its wall ms the commit stage.
+    /// Hands `candidates` to the sink, its wall ms the commit stage. On an
+    /// accepted commit it also records the words this branch's widening
+    /// assigned (`widened`) as taken, in the stamp's own commit after the
+    /// candidates' (FIX 12246).
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
+        widened: &[EntityId],
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
     ) -> Result<()> {
@@ -151,6 +161,50 @@ impl ConsolidationExecutor<'_> {
             )
             .await;
         stages.commit_ms = ms_since(started);
+        if accepted.is_ok() && !widened.is_empty() {
+            // A failed stamp never fails the commit the extraction already
+            // landed; it only costs a later duplicate extraction.
+            let stamped = ctx.vault.with_write_txn_grouped(|txn| {
+                for turn in widened {
+                    crate::dreamer_wake::take_words_in_txn(ctx.vault, txn, turn)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = stamped {
+                tracing::warn!(
+                    turns = widened.len(),
+                    kind = ?error.kind(),
+                    "widened turns were not recorded as taken"
+                );
+            }
+        }
         accepted
+    }
+
+    /// The turn ids `plan` runs beyond the attempt's queued originals: the
+    /// peers a Micro selection retry's widening newly assigned (FIX 12246).
+    /// Empty for every other scope and for branches widening kept to their
+    /// originals; an unreadable queued payload also yields empty (no stamp
+    /// is the safe direction: a later widening re-takes the words).
+    fn widened_turns(
+        attempt: &DreamerAdmittedAttempt,
+        plan: &PreparedConsolidationAttempt,
+    ) -> Vec<EntityId> {
+        if attempt.status.attempt.kind.as_str()
+            != crate::dreamer_runner::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+        {
+            return Vec::new();
+        }
+        let Ok(queued) =
+            super::super::partition::decode_partition_payload(&attempt.status.payload.input)
+        else {
+            return Vec::new();
+        };
+        let originals: BTreeSet<EntityId> = queued.turn_ids().into_iter().collect();
+        plan.turn_ids()
+            .iter()
+            .copied()
+            .filter(|turn| !originals.contains(turn))
+            .collect()
     }
 }

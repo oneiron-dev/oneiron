@@ -139,6 +139,16 @@ impl WakePreparationChunks {
                 crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                     vault, txn, source, sibling,
                 )?;
+                // The chunk's turns are assigned work from this commit on: a
+                // Micro retry records their current words as taken, as a
+                // projector round does at enqueue (FIX 12246), so no later
+                // widening takes them again. The chunk itself keeps them as
+                // its own originals and runs them whole.
+                if scope == DreamerConsolidationScope::Micro {
+                    for turn in chunk.turn_ids() {
+                        crate::dreamer_wake::take_words_in_txn(vault, txn, &turn)?;
+                    }
+                }
                 queued += 1;
             }
         }

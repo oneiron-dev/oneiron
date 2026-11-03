@@ -10,6 +10,9 @@
 //! retry widens only to peers whose current words no round has taken yet
 //! (FIX 12246): a peer another window already queued is that window's work,
 //! and taking it again re-extracts the same facts (Dreamer proof run 2).
+//! Turns an owed chunk carries are recorded as taken at its enqueue, and
+//! turns a running branch took at its commit, so a later deferral cannot
+//! widen to them again.
 
 use std::collections::{BTreeMap, BTreeSet};
 
