@@ -607,9 +607,12 @@ impl AgentPackSkill {
             ClaimSource::Imported,
             0.5,
             false,
-            false,
+            true,
             Vec::new(),
-            rmpv::Value::Nil,
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("hub-folder"),
+            )]),
         )
         .with_role(self.role.into(), self.call.clone().map(Into::into))
         .with_content_hash(SkillContentHash::parse_hex(&self.content_hash)?);
