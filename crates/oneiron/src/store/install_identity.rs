@@ -268,4 +268,3 @@ fn decode_client_id_row(raw: &[u8]) -> Result<u64> {
     }
     Ok(decoded)
 }
-
