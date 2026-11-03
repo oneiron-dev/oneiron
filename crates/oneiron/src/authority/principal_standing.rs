@@ -18,8 +18,9 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
-    AgentGrantStanding, FederationGrant, FederationGrantKind, FederationGrantScope, ScopeAxis,
+    AgentGrantStanding, FederationGrant, FederationGrantScope,
 };
+use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 

@@ -26,7 +26,7 @@ use super::WEAVE_DIGEST_NOTIFICATION_PRODUCER;
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use crate::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;

@@ -258,7 +258,7 @@ impl Memory<'_> {
                         || !terms
                             .worlds
                             .worlds
-                            .contains(&crate::federation::ScopeId(world))
+                            .contains(&oneiron_authority::federation::ScopeId(world))
                     {
                         continue;
                     }

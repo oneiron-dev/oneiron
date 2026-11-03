@@ -6,7 +6,7 @@ use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::error::Result;
 use crate::federation::facet_read::{facets_admit_in, placed_facets_admit};
-use crate::federation::{ScopeAxis, ScopeId};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 impl ScopedRead<'_> {
     /// Read inside `room`'s signed facets, as a turn in it does, while
