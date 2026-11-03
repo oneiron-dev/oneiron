@@ -38,6 +38,7 @@ use oneiron_llm_openai::{
 use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
+use super::http::is_cloud_node;
 use super::llama_identity::{AnsweringIdentity, execution_mode};
 use super::output_cap::OutputCap;
 use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind, ResponseFormatWire};
@@ -287,6 +288,7 @@ impl BrokerBackend {
             join(&self.prefix, &path),
             headers.into_iter().collect(),
             wire_model.to_owned(),
+            is_cloud_node(),
             &bytes,
         );
         header
