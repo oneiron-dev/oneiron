@@ -529,17 +529,7 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
         return Ok(());
     };
     let mut sealed = vec![world];
-    let claims = store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
-        .collect::<Result<Vec<_>>>()?;
-    for id in claims {
-        let Some(claim) = store.port_entity_raw(txn, &id)? else {
-            continue;
-        };
-        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world) {
-            sealed.push(id);
-        }
-    }
+    sealed.extend(sealed_claims_in_txn(store, txn, world)?);
     store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
