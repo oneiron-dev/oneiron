@@ -122,7 +122,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 23;
+pub const STORAGE_ABI_VERSION: u16 = 24;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
