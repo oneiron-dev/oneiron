@@ -16,12 +16,12 @@ use super::{
 use crate::Vault;
 use crate::authority::{HolderExportNeed, HolderExportRequest};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::settings::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
 use crate::write_envelope::WriteActor;
 
