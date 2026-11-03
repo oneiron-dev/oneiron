@@ -19,7 +19,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncProtocolValidation, SyncSelectorValidation};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::share_travel::{GrantTravel, TravelChoice, travelled_value};
+use oneiron_authority::share_travel::TravelChoice;
+use crate::share_travel::{GrantTravel, travelled_value};
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
 };

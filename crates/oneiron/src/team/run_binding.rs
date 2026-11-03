@@ -25,7 +25,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_optimize::union_source_rows;
+use crate::attempt_queue::source_rows::union_source_rows;
 
 /// Team starts. Key: the leader's attempt in hex, `:`, the team reference.
 const TEAM_RUN: SideTable<String, StoredTeamRunBinding, Named> =

@@ -46,13 +46,7 @@ pub struct ThreadJoinRequest {
     pub thread_ref: String,
 }
 
-/// `vault.rooms.thread_join.requests`'s input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ThreadJoinRequestsRequest {
-    /// The private thread's root TURN, 32-hex.
-    pub thread_ref: String,
-}
+pub use crate::store::conversation_body::ThreadJoinRequestsRequest;
 
 /// `vault.rooms.thread_join.approve` and `.deny`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -6,7 +6,7 @@ use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
 use super::people::PeopleView;
 use super::scratchpad::clip;
 use super::{one_line_token, quoted_leaf};
-use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem};
+use crate::{inbox::view_values::AgentInboxItemKind, agent_inbox_lens::AgentInboxLensItem};
 use crate::entity_id::EntityId;
 
 /// Longest stated reason a review row quotes, in bytes: READERS' bound.

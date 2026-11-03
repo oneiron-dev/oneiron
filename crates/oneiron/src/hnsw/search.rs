@@ -9,7 +9,7 @@ use crate::config::VaultConfig;
 use crate::distance::PreparedCosine;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 
 use super::keys::{

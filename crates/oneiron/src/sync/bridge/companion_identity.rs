@@ -2,7 +2,7 @@
 
 use loro::LoroDoc;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
