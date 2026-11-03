@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::agent_def::{CompactionOwnership, MemoryProfile};
+use crate::{store::agent_record::CompactionOwnership, agent_def::MemoryProfile};
 use crate::context_pack::SerializedContextPack;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -950,7 +950,7 @@ impl CompactionDriver {
 fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
     let watermark = crate::dreamer_consolidation::read_watermark(
         vault,
-        crate::dreamer_runner::DreamerConsolidationScope::Micro,
+        crate::store::consolidation_scope::DreamerConsolidationScope::Micro,
     )?;
     Ok(CompactionWatermark {
         learned_at: watermark.last_learned_at,

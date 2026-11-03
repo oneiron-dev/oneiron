@@ -384,7 +384,7 @@ pub(crate) fn reconcile_project_rooms(
                     kind: crate::edge::EdgeKind::BelongsTo,
                     tgt: EntityId::from_hex(parent).map_err(|_| invalid())?,
                     weight: HUB_MEMBERSHIP_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 });
             }
         }

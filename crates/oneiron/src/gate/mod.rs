@@ -3,6 +3,7 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
@@ -21,7 +22,10 @@ mod constants;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
+pub(crate) mod experiment_selection_policy;
+pub(crate) mod failure_signal_policy;
 mod default_manifest;
+pub(crate) mod team_review;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.
@@ -33,6 +37,7 @@ mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
+pub(crate) mod dispatch_compliance;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
@@ -44,6 +49,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
@@ -289,3 +295,5 @@ use crate::write_envelope::WriteEnvelope;
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) mod voice_ref_limits;

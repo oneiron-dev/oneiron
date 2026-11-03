@@ -8,7 +8,7 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
-use crate::campaign::send_hygiene::ListUnsubscribeTarget;
+use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
@@ -636,35 +636,7 @@ pub trait OutboundExecutionSink {
     }
 }
 
-/// Coarse pipeline outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum OutboundDispatchOutcome {
-    DeliveredToChannel,
-    Held,
-    Degraded,
-    Suppressed,
-    LetGo,
-    Failed,
-    Ambiguous,
-    /// The provider accepted the send as a remote task (FIX 7960).
-    Deferred,
-}
-
-impl OutboundDispatchOutcome {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DeliveredToChannel => "delivered_to_channel",
-            Self::Held => "held",
-            Self::Degraded => "degraded",
-            Self::Suppressed => "suppressed",
-            Self::LetGo => "let_go",
-            Self::Failed => "failed",
-            Self::Ambiguous => "ambiguous",
-            Self::Deferred => "deferred",
-        }
-    }
-}
+pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
 
 /// Result of the single dispatch pipeline.
 #[derive(Clone, Debug, Eq, PartialEq)]

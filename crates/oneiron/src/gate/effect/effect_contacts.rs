@@ -1,6 +1,6 @@
 //! Counterparty hydration plus send-override and do-not-contact fold.
 
-use crate::comm::SendOverrideMatch;
+use crate::write_envelope::communication::SendOverrideMatch;
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, normalize_channel_class,
 };
@@ -175,9 +175,9 @@ pub(crate) fn counterparty_send_override_in_txn(
 /// Lowers a comm-family read failure into the gate's error type. An engine
 /// error travels unchanged; a comm-shaped one (an undecodable head) becomes a
 /// corrupted-index refusal rather than an answer.
-fn comm_result<T>(result: crate::comm::CommResult<T>) -> Result<T> {
+fn comm_result<T>(result: crate::write_envelope::communication::CommResult<T>) -> Result<T> {
     result.map_err(|error| match error {
-        crate::comm::CommError::Engine(error) => error,
+        crate::write_envelope::communication::CommError::Engine(error) => error,
         _ => Error::CorruptedIndex("comm send override head"),
     })
 }

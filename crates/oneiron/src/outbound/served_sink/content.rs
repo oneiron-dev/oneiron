@@ -2,7 +2,7 @@
 //! typed content-family loaders this engine has. A ref no loader claims
 //! resolves to nothing; a bare entity id is never dumped as text.
 
-use crate::campaign::step_body::CAMPAIGN_STEP_BODY_PREFIX;
+use crate::blob_artifact::body_tags::CAMPAIGN_STEP_BODY_PREFIX;
 use crate::dreamer_runner::maintenance::representation::REPRESENTATION_CONTENT_PREFIX;
 use crate::error::{Error, Result};
 use crate::outbound::reply_content::CONNECTOR_REPLY_BODY_PREFIX;

@@ -122,7 +122,7 @@ impl Vault {
                     event.received_at,
                 )
                 .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
+                    crate::write_envelope::communication::CommError::Engine(error) => error,
                     _ => Error::InvalidClaimBody("CC thread membership refused"),
                 })?;
             }
@@ -288,7 +288,7 @@ impl Vault {
                     event.received_at,
                 )
                 .map_err(|error| match error {
-                    crate::comm::CommError::Engine(error) => error,
+                    crate::write_envelope::communication::CommError::Engine(error) => error,
                     _ => Error::InvalidClaimBody("CC thread membership refused"),
                 })?;
             }

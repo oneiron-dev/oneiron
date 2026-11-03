@@ -47,12 +47,15 @@
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
 //! rewrite, or a byte/status/codec change to the source record.
 
+pub mod approval_proof;
+pub mod tool_scope;
 mod adapters;
 mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
 mod codec;
+pub mod code_wait_state;
 mod contact_clearance;
 mod doors;
 mod effect;

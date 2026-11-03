@@ -1,8 +1,5 @@
 //! Actor-bound web acquisition and import. Network work never holds a writer.
-use crate::ingest::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    admit_imported_evidence_in_content, docs_semantic_segments,
-};
+use crate::{ingest::ImportedEvidenceAdmission, ingest::ImportedEvidenceEntityResolution, ingest::admit_imported_evidence_in_content, store::document_segments::docs_semantic_segments};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;

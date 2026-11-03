@@ -45,7 +45,8 @@ use crate::memory::{
 use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
-use crate::task_verb::sdk::{RecallDoor, RecallRequest};
+use crate::task_verb::recall_door::RecallDoor;
+use crate::memory::RecallRequest;
 use oneiron_model::llm::BudgetLease;
 
 mod lineage;
@@ -349,7 +350,7 @@ impl Memory<'_> {
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
         media: &[RecallMediaSeed<'_>],
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,

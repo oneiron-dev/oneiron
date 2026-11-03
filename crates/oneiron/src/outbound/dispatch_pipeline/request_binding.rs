@@ -5,7 +5,7 @@ use super::{
     policy_risk::outbound_dispatch_policy_risk,
 };
 use crate::attempt_queue::AttemptId;
-use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
+use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, OffRecordError};
@@ -21,16 +21,9 @@ use crate::outbound_intent_ledger::{
 };
 use crate::ports::TombstoneStore;
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Exact effect binding. The full frozen bytes, not a connector-local field list,
-/// are the only replay identity. Receipt id/time are separate per-try evidence.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FrozenDispatchIdentity {
-    pub(crate) attempt_ref: String,
-    pub(crate) payload: Vec<u8>,
-}
+pub(crate) use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
 
 pub(super) struct PreparedOutboundDispatch {
     pub(super) request: OutboundDispatchRequest,

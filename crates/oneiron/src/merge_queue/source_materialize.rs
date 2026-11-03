@@ -20,7 +20,7 @@ use super::source::{BoundQueueSource, NO_SOURCE, queue_source_root, served_store
 use super::source_types::{PreparedQueueInit, ServedQueueSource};
 use super::types::QueueRecord;
 use crate::code_revision::CodeImportManifest;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};

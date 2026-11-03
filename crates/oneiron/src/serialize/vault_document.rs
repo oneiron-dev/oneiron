@@ -74,7 +74,7 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each agent's birth-source ASSET, kept as it passes.
     birth_sources: BTreeSet<EntityId>,
     agents: Vec<ExportEntity>,
-    skills: Vec<(EntityId, crate::skill::SkillRecord)>,
+    skills: Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     knowledge: Vec<ExportEntity>,
     birth_bodies: BTreeMap<EntityId, ExportBody>,
     /// Each result body's row by digest, nulled and with its file detached.
@@ -265,8 +265,8 @@ impl<'v> DocumentWriter<'v> {
                     blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                     bytes: output.raw_len,
                     kind: match output.kind {
-                        crate::code_run::CodeRunOutputKind::Text => "text",
-                        crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        crate::store::result_manifest::CodeRunOutputKind::Text => "text",
+                        crate::store::result_manifest::CodeRunOutputKind::Binary => "binary",
                     }
                     .to_owned(),
                     lines: output.lines,

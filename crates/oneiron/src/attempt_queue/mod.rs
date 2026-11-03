@@ -17,6 +17,7 @@ mod borrowed_lease;
 mod budget_hold;
 mod cancel;
 mod completion;
+pub mod run_signal;
 mod encoding;
 mod engine;
 mod executor;
@@ -28,10 +29,13 @@ mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
+pub mod source_rows;
+pub mod skill_edit_cycle;
 mod result;
 mod settlement;
 mod telemetry;
 mod types;
+pub mod dispatch_payload;
 mod validate;
 #[cfg(test)]
 pub(crate) use validate::validate_lease_owner;
@@ -118,7 +122,7 @@ pub(crate) fn admission_order(record: &AttemptRecord) -> Option<(u64, [u8; 16])>
 /// for a bounded trace history). No content-side cleanup proposes such a row,
 /// and no scan of another kind reads one.
 pub(crate) fn owner_retained_kind(kind: &str) -> bool {
-    kind == crate::tagging::TAGGING_MARKER_KIND
+    kind == crate::config::tagging::TAGGING_MARKER_KIND
 }
 
 /// The first byte of every owner-retained row's id: those rows sit at the
@@ -160,3 +164,5 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
         ))
     }
 }
+
+pub mod companion_task;

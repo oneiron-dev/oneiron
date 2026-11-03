@@ -31,7 +31,7 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use crate::skill::SkillLifecycle;
+use crate::write_envelope::skill_record::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, TimeRange, Vault};

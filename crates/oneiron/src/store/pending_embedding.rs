@@ -92,7 +92,7 @@ impl Store {
         id: &EntityId,
         claim_body: &[u8],
     ) -> Result<Vec<u8>> {
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, &*wtxn)?;
         let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         let token = Self::scoped_embedding_token(epoch, claim_body, owner);
         MARKERS.put(self, wtxn, &HexId(*id), &token.to_vec())?;
@@ -111,7 +111,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         owner: crate::store::derivation::DerivationOwner,
     ) -> Result<()> {
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
         let pending = MARKERS.scan(self, &*wtxn)?;
         for (HexId(id), marker) in pending {
             let Some(record) = self.port_entity_raw(&*wtxn, &id)? else {
@@ -167,7 +167,7 @@ impl Store {
         let Some(record) = self.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, rtxn)?;
         let owner = crate::store::derivation::owner_in_txn(self, rtxn)?;
         Ok(self
             .marker_is_current_for_record(&marker, &record, epoch, owner)
@@ -186,7 +186,7 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(None);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
             .marker_is_current_for_record(&marker, &record, epoch, owner)
@@ -204,7 +204,7 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
     }
@@ -230,7 +230,7 @@ impl Store {
         let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
-        let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
+        let epoch = crate::store::vector_index::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::store::derivation::owner_in_txn(self, wtxn)?;
         Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
     }

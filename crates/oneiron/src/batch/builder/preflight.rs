@@ -96,7 +96,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         owner_authored: None,
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,
@@ -147,7 +147,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                     owner_authored: None,
                                 },
                                 &policy,
-                                crate::gate::GateWriteMode {
+                                crate::store::GateWriteMode {
                                     record_decision: true,
                                     persist_pending_consent: false,
                                     resolve_pending: false,
@@ -187,7 +187,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         owner_authored: None,
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,
