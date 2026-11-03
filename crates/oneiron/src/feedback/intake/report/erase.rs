@@ -12,18 +12,20 @@
 //! A checkpoint image carries each cluster row whole, owned by every member
 //! it names, so any member's erase retires every image's copy.
 
+use std::collections::BTreeSet;
+
 use crate::ports::{DeletionMarker, DependentWalkDoor, TombstoneStoreRead};
 use crate::store::{ResponseCarriage, ResponseScan, Store};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::super::normalized;
-use super::{CLUSTERS, ReportCluster};
+use super::{CLUSTER_BY_MEMBER, CLUSTERS, ReportCluster};
 
 /// Forgets `id` in every report cluster, in the caller's transaction, once
 /// its erase is hard: a physical deindex (`door` is the purge), or its
 /// permanent hard-delete marker stands. Any other door keeps every cluster
-/// as it is. The table is scanned whole; a row that does not decode is
-/// left as it is.
+/// as it is. The cluster it roots is read directly and its member rows
+/// through the by-member index; a row that does not decode is left as it is.
 pub(crate) fn forget_report_cluster_member_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -59,37 +61,95 @@ fn hard_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
 /// emptied one goes, and every other it was in is remade from the members
 /// left. One whose members no longer agree on their dimensions cannot be
 /// remade and is unusable to intake: it goes whole too, so the erase
-/// always lands.
+/// always lands. The root leg reads directly; the member leg reads through
+/// the by-member index (FIX 10835). A cluster row that does not decode is
+/// left as it is (FIX 10836); a storage fault still fails the erase.
 fn forget_member_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     let member = id.to_hex();
-    let mut dropped = Vec::new();
-    let mut remade = Vec::new();
-    for row in CLUSTERS.iter_from(store, &*txn, &[])? {
-        let Ok((root, mut cluster)) = row else {
-            continue;
-        };
+    // Root leg: the cluster it roots goes whole. `get_bytes` propagates a
+    // storage fault; a value that does not decode skips, like the old
+    // whole-scan's `let Ok(..) = row else continue`.
+    if let Some(bytes) = CLUSTERS.get_bytes(store, txn, id)? {
+        if let Ok(cluster) = CLUSTERS.decode_value(&bytes) {
+            CLUSTERS.delete(store, txn, id)?;
+            drop_cluster_membership(store, txn, id, &cluster)?;
+        }
+    }
+    // Member leg: every cluster that copied this member's vector. Stale
+    // membership rows (no cluster row, or a cluster that no longer names
+    // the member) are dropped as they are met.
+    let roots = CLUSTER_BY_MEMBER.scan_keys(store, txn, id.as_bytes())?;
+    for (_, root) in roots {
         if root == *id {
-            dropped.push(root);
             continue;
         }
+        let Some(bytes) = CLUSTERS.get_bytes(store, txn, &root)? else {
+            CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
+            continue;
+        };
+        let Ok(mut cluster) = CLUSTERS.decode_value(&bytes) else {
+            continue;
+        };
         if cluster.members.remove(&member).is_none() {
+            CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
             continue;
         }
         if cluster.members.is_empty() {
-            dropped.push(root);
-        } else {
-            remade.push((root, cluster));
-        }
-    }
-    for root in dropped {
-        CLUSTERS.delete(store, txn, &root)?;
-    }
-    for (root, mut cluster) in remade {
-        if recompute_centroid(&mut cluster).is_ok() {
+            CLUSTERS.delete(store, txn, &root)?;
+            CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
+        } else if recompute_centroid(&mut cluster).is_ok() {
             CLUSTERS.put(store, txn, &root, &cluster)?;
+            CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
         } else {
             CLUSTERS.delete(store, txn, &root)?;
+            CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
+            drop_cluster_membership(store, txn, &root, &cluster)?;
         }
+    }
+    Ok(())
+}
+
+/// Every parseable member id of `cluster`: exactly the ids its erase reads
+/// (FIX 10835). An unparseable member key can never equal an erased id's
+/// hex, so it is never erase-relevant.
+fn cluster_member_ids(cluster: &ReportCluster) -> BTreeSet<EntityId> {
+    cluster
+        .members
+        .keys()
+        .filter_map(|member| EntityId::from_hex(member).ok())
+        .collect()
+}
+
+/// Moves `root`'s `(member, root)` rows from `old` to `new` in the caller's
+/// txn (FIX 10835): drops `(old - new)`, puts `(new - old)`.
+pub(super) fn sync_cluster_membership(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    root: &EntityId,
+    old: Option<&ReportCluster>,
+    new: Option<&ReportCluster>,
+) -> Result<()> {
+    let old_ids = old.map(cluster_member_ids).unwrap_or_default();
+    let new_ids = new.map(cluster_member_ids).unwrap_or_default();
+    for member in old_ids.difference(&new_ids) {
+        CLUSTER_BY_MEMBER.delete(store, txn, &(*member, *root))?;
+    }
+    for member in new_ids.difference(&old_ids) {
+        CLUSTER_BY_MEMBER.put(store, txn, &(*member, *root), &())?;
+    }
+    Ok(())
+}
+
+/// Drops every `(member, root)` row of `cluster`'s parseable members in the
+/// caller's txn, when the cluster itself goes whole.
+fn drop_cluster_membership(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    root: &EntityId,
+    cluster: &ReportCluster,
+) -> Result<()> {
+    for member in cluster_member_ids(cluster) {
+        CLUSTER_BY_MEMBER.delete(store, txn, &(member, *root))?;
     }
     Ok(())
 }
