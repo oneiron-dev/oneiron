@@ -756,6 +756,11 @@ impl PipelineBuilder<'_> {
                 )?
             };
 
+            crate::stage_timing::record(
+                "count.prepare_scores",
+                u64::try_from(scores.len()).unwrap_or(u64::MAX),
+            );
+            let l15_fusion_prepare = crate::stage_timing::stage("pipe.fusion_prepare");
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
                 &mut scores,
@@ -764,6 +769,11 @@ impl PipelineBuilder<'_> {
                 &mut empty_reason,
                 overrides.skip_ret01_abstain,
             )?;
+            drop(l15_fusion_prepare);
+            crate::stage_timing::record(
+                "count.prepare_capabilities",
+                u64::try_from(capabilities.len()).unwrap_or(u64::MAX),
+            );
 
             // OF-023 hold-both: an observed claim never sits above a stated
             // claim of its question (ARCH-0003), in order or score, so no
@@ -1062,6 +1072,7 @@ impl PipelineBuilder<'_> {
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
+        let l15_prepare_partition = crate::stage_timing::stage("pipe.fusion_prepare_partition");
         let mut capabilities = if self.context_pack_budget.is_some() {
             partition_capabilities(
                 scores,
@@ -1075,6 +1086,7 @@ impl PipelineBuilder<'_> {
         } else {
             Vec::new()
         };
+        drop(l15_prepare_partition);
         if skip_ret01_abstain {
             return Ok(capabilities);
         }
