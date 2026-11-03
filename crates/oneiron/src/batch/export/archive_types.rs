@@ -120,7 +120,7 @@ pub(crate) struct ArchiveSecretCustody {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) handle: Option<String>,
-    pub(crate) metadata: crate::secret_custody::SecretCustodyMetadata,
+    pub(crate) metadata: crate::secret_record::SecretCustodyMetadata,
     pub(crate) body: Option<String>,
 }
 

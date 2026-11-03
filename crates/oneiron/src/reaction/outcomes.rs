@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 /// String-valued facts consumed by the existing OF-516 event outcome projector.
 /// Subjects are the reacted message and any explicitly selected commitments.
-pub const PREDICATE_REACTION_OUTCOME: &str = "conversation.reaction.outcome";
+pub use crate::store::reaction_predicate::PREDICATE_REACTION_OUTCOME;
 pub const REACTION_MEANINGS: [&str; 5] = ["ack", "agree", "disagree", "affect", "none"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

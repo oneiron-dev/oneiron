@@ -26,7 +26,7 @@ use crate::consent::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::memory::MemoryResult;
+use oneiron_contracts::memory::MemoryResult;
 use crate::store::{GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
 

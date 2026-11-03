@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, GateError};
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::codec::GRANTS;
 use super::lifecycle::{ConsentActReceipt, parse_digest};

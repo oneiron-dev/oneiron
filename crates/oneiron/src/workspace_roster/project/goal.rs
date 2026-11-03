@@ -6,7 +6,7 @@ use crate::claim::{
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};

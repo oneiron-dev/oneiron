@@ -1,7 +1,7 @@
 //! Caller-supplied index inputs retained until atomic idle publication.
 use super::RevisionRef;
 use super::storage::state;
-use crate::embed::EmbeddingProvenance;
+use crate::store::embedding::EmbeddingProvenance;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Result};

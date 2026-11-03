@@ -19,7 +19,7 @@ use super::{
     push_admission, receive_pack_repo_identity_hex,
 };
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::error::Result;
 use crate::federation::git_push::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;

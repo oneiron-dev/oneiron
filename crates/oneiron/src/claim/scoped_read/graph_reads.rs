@@ -4,7 +4,8 @@ use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::EdgeKind;
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
+use oneiron_contracts::gate::{RetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EdgeInfo, EntityId, Error, Result};
@@ -440,7 +441,7 @@ impl ScopedRead<'_> {
         raw: &[u8],
     ) -> Result<bool> {
         use crate::federation::record_scope::{default_stamp, scope_for_blob};
-        use crate::federation::{Scope, ScopeAxis};
+        use oneiron_authority::federation::{Scope, ScopeAxis};
         // A read limited to facets names only a shell that still proves a
         // place inside them.
         if !self.facets_allow_in(txn, id, raw)? {

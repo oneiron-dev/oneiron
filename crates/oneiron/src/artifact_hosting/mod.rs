@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::code_artifact::{CodeArtifactClass, decode_code_artifact_body};
-use crate::codebase::{
+use crate::store::code_artifact_body::{CodeArtifactClass, decode_code_artifact_body};
+use crate::store::code_snapshot::{
     CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
 };
@@ -377,7 +377,7 @@ impl Vault {
     pub fn artifact_publish_approval_digest(
         &self,
         request: &ArtifactPublishVerbRequest,
-    ) -> Result<crate::consent::EffectDigest> {
+    ) -> Result<crate::write_envelope::EffectDigest> {
         publish::artifact_publish_approval_digest(self, request)
     }
 }

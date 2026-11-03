@@ -33,7 +33,7 @@ pub struct BriefView {
     pub citations: Vec<BriefCitationView>,
     /// The brief's born-with text its share lets travel (OF-491); empty in
     /// the owner's own view, where nothing leaves.
-    pub born_with: crate::share_travel::BornWith,
+    pub born_with: oneiron_authority::share_travel::BornWith,
 }
 
 impl Vault {
@@ -292,7 +292,7 @@ impl Vault {
             value: Some(BriefView {
                 instrument,
                 citations,
-                born_with: crate::share_travel::BornWith::new(),
+                born_with: oneiron_authority::share_travel::BornWith::new(),
             }),
             receipt,
         })
