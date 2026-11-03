@@ -35996,6 +35996,8 @@
       "FeedbackTriageChild",
       "FeedbackTriageErased",
       "FeedbackTriageHold",
+      "FeedbackTriagePending",
+      "FeedbackTriageProgress",
       "FeedbackTriageRun",
       "FeedbackTriageRunRequest",
       "FeedbackTriageStatus",
@@ -36006,7 +36008,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 7
+      "struct": 9
      }
     },
     {
