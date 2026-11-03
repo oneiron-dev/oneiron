@@ -5,8 +5,6 @@
 //! keeps the lasting receipt every wire reply carries (OF-538). Admission
 //! observations keep named calls visible before their wire settlement.
 
-pub mod dispatch_identity;
-pub mod intent_id;
 pub mod admission;
 mod authority_audit;
 mod brief_share;
@@ -14,12 +12,14 @@ mod call;
 mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
+pub mod dispatch_identity;
 mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
 mod guest_revoke;
 mod identity_kind;
+pub mod intent_id;
 mod kernel;
 mod ledgers;
 mod lens;
@@ -92,12 +92,13 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
-    GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
-    QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
-    QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
-    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
+    AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
+    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
