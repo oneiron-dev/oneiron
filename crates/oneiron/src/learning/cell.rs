@@ -12,94 +12,12 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::estimate::EstimateForm;
-use super::{
-    PREDICATE_LEARNING_EDIT_COST, PREDICATE_LEARNING_RELIABILITY, PREDICATE_LEARNING_RETEST_NOISE,
-    PREDICATE_LEARNING_SETTING,
-};
-
 pub use crate::receipt::task_type_ref::{ROOT_TYPE_NODE, TypeRef};
 
 /// Longest qualifier text a cell keeps, in bytes.
 const MAX_QUALIFIER_BYTES: usize = 256;
 
-/// The four members of the family.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum LearningPredicate {
-    /// How often a thing worked: any skill role, or an actor.
-    Reliability,
-    /// How much people had to fix, after attribution.
-    EditCost,
-    /// How often a judge or scorer disagrees with itself.
-    RetestNoise,
-    /// The fitted value of a named knob.
-    Setting,
-}
-
-impl LearningPredicate {
-    /// Every member, in canon order.
-    pub const ALL: [Self; 4] = [
-        Self::Reliability,
-        Self::EditCost,
-        Self::RetestNoise,
-        Self::Setting,
-    ];
-
-    /// The claim predicate.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Reliability => PREDICATE_LEARNING_RELIABILITY,
-            Self::EditCost => PREDICATE_LEARNING_EDIT_COST,
-            Self::RetestNoise => PREDICATE_LEARNING_RETEST_NOISE,
-            Self::Setting => PREDICATE_LEARNING_SETTING,
-        }
-    }
-
-    /// The member a claim predicate names, if any.
-    #[must_use]
-    pub fn from_predicate(predicate: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|p| p.as_str() == predicate)
-    }
-
-    /// Whether `form` is a shape this member may carry.
-    #[must_use]
-    pub const fn admits_form(self, form: EstimateForm) -> bool {
-        matches!(
-            (self, form),
-            (Self::Reliability, EstimateForm::Beta)
-                | (Self::EditCost, EstimateForm::Mean | EstimateForm::Counts)
-                | (Self::RetestNoise, EstimateForm::Beta | EstimateForm::Mean)
-                | (Self::Setting, EstimateForm::Mean | EstimateForm::Counts)
-        )
-    }
-
-    /// What counted, when the cell names nothing more specific.
-    #[must_use]
-    pub const fn default_of(self, form: EstimateForm) -> &'static str {
-        match (self, form) {
-            (Self::Reliability, _) => "won",
-            (Self::EditCost, EstimateForm::Counts) => "untouched",
-            (Self::EditCost, _) => "normalized edit distance",
-            (Self::RetestNoise, EstimateForm::Beta) => "retest disagreement",
-            (Self::RetestNoise, _) => "retest score difference",
-            (Self::Setting, _) => "fitted value",
-        }
-    }
-}
+pub use crate::claim::learning_predicate::LearningPredicate;
 
 /// One cell's key.
 #[derive(

@@ -59,7 +59,7 @@ const BUDGET_HOLD_NOTICE_DETAIL: &str =
 const SURFACED_JOB_KINDS: &[&str] = &[
     crate::dispatch_byoa::BYOA_ATTEMPT_KIND,
     crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
-    crate::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND,
+    crate::store::dreamer_attempt_kind::WAVE_PLAN_ATTEMPT_KIND,
 ];
 
 /// What happened. A job's kind names its real outcome: a failed, cancelled

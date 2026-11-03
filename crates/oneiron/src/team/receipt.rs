@@ -22,7 +22,10 @@ use crate::agent_dispatch::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::task_type_ref::TypeRef;
-use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation};
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
 use crate::side_table::{self, Named, SideTable};
 use crate::attempt_queue::source_rows::union_source_rows;
 use crate::task_type::TypeTree;

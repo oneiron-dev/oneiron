@@ -436,7 +436,7 @@ fn issues_draft_of_other_target(
     provenance: &Value,
     target: &EntityId,
 ) -> bool {
-    use crate::dreamer_runner::maintenance::coach::COACH_ISSUES_FACET;
+    use crate::claim::maintenance_kind::COACH_ISSUES_FACET;
     let Value::Map(fields) = provenance else {
         return false;
     };

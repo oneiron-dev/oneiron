@@ -159,6 +159,7 @@ pub mod retained_memory;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod consolidation_scope;
 pub mod setting_seed;
