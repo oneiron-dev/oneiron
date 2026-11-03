@@ -34,7 +34,7 @@ use super::project_goal::{
 };
 use super::*;
 use crate::consent::AuthenticatedOwner;
-use crate::llm::decision::{DecisionAnswer, DecisionBand, DecisionRung, ProviderPin};
+use crate::model_decision::{DecisionAnswer, DecisionBand, DecisionRung, ProviderPin};
 use serde::{Deserialize, Serialize};
 
 mod ladder;

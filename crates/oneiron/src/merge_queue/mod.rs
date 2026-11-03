@@ -39,7 +39,7 @@ mod types;
 
 use crate::{
     Vault,
-    codebase::RepoRef,
+    store::code_snapshot::RepoRef,
     error::Result,
     git_wire::{GitWire, GitWireRepo},
 };

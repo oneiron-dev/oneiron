@@ -31,6 +31,7 @@ mod model;
 mod notification;
 mod outbox_ask;
 mod projection;
+pub mod notification_recipient;
 mod resolve;
 mod root_group;
 mod takeover_ask;
@@ -88,3 +89,5 @@ use crate::error::{Error, Result};
 use crate::store::GateDecisionRecord;
 #[cfg(test)]
 use crate::temporal::TimeRange;
+
+pub mod view_values;
