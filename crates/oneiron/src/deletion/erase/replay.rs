@@ -122,7 +122,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
+                crate::key_material::WorldKeyDestroyCause::ReplayedTombstone,
                 decoded.request_id,
             )?;
             // A hard tombstone of one pad row retires that key's pad in
@@ -426,7 +426,7 @@ impl Vault {
             // A peer's tombstone proves no owner intent either: a credential
             // leaves only through the local revoke door.
             if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-                return Err(crate::secret_custody::reject_secret_custody_byte());
+                return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
                 || crate::workspace_roster::is_project_revision_type(
@@ -452,7 +452,7 @@ impl Vault {
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
         use crate::error::{ArtifactError, SecretError, SyncError};
         use oneiron_contracts::identity_topology::IdentityTopologyRejection;
-        use crate::secret_custody::CUSTODY_SEAL_REASON;
+        use crate::secret_record::CUSTODY_SEAL_REASON;
         matches!(
             error,
             Error::Registry(
