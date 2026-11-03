@@ -74,6 +74,7 @@ mod doors;
 mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
+mod handle_labels;
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -144,6 +145,14 @@ pub(crate) use self::found_keys::{
     found_key_notices_due_in_txn, kept_as_text_in_txn, note_found_keys_in_txn,
     raise_found_key_notices_in_txn, raise_found_key_notices_page, ruled_no_secret_in_txn,
     settle_found_key_in_txn,
+};
+pub use self::handle_labels::{
+    SecretHandleLabel, SecretHandleLabelSet, suggest_secret_handle_label_for_kind,
+    suggest_secret_handle_label_for_prefix,
+};
+pub(crate) use self::handle_labels::{
+    erase_secret_handle_label_in_txn, secret_handle_label_in_txn,
+    suggested_secret_handle_label_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
