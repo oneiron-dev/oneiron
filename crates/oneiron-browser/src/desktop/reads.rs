@@ -206,14 +206,19 @@ impl DesktopSession {
         })
     }
 
-    pub(super) fn fingerprint(&mut self) -> Result<blake3::Hash, BrowserError> {
+    pub(super) fn fingerprint(
+        &mut self,
+        until: Option<Instant>,
+    ) -> Result<blake3::Hash, BrowserError> {
         self.polling = true;
-        let read = self.snapshot(false);
+        let read = self.snapshot_on(false, None, until);
         self.polling = false;
         print_of(&read?)
     }
 
     /// Waits for the window to settle after an action that began at `start`.
+    /// Each poll's walk is capped at the settle cap: a slow window's walk no
+    /// longer stretches a settle past [`SETTLE_CAP`] (FIX 3782).
     pub(super) fn settle(
         &mut self,
         before: blake3::Hash,
@@ -221,10 +226,11 @@ impl DesktopSession {
     ) -> Result<(), BrowserError> {
         let mut last = before;
         let mut changed_at = None;
+        let cap = start + SETTLE_CAP;
         loop {
             std::thread::sleep(POLL);
             let now = Instant::now();
-            let print = self.fingerprint()?;
+            let print = self.fingerprint(Some(cap))?;
             if print != last {
                 last = print;
                 changed_at = Some(now);
