@@ -442,9 +442,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         )?),
     };
     let slide_review_policy = match single_map_value(&entries, POLICY_SLIDE_REVIEW_KEY) {
-        MapValue::Missing => crate::llm::decision::SlideReviewPolicy::default(),
+        MapValue::Missing => crate::model_decision::SlideReviewPolicy::default(),
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => crate::llm::decision::SlideReviewPolicy::decode(value)?,
+        MapValue::Present(value) => crate::model_decision::SlideReviewPolicy::decode(value)?,
     };
     let docedit_resource_policy = match single_map_value(&entries, POLICY_DOCEDIT_RESOURCE_KEY) {
         MapValue::Missing => None,

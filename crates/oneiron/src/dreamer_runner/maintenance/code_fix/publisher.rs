@@ -17,7 +17,8 @@ use crate::code_run::shadow_runner::{
     ShadowRunResult, ShadowStatus, ShadowStepIdentity, ShadowUnavailable, ShadowUsage,
 };
 use crate::compaction::output::OutputRef;
-use crate::{EntityId, LlmInputUsage, LlmOutputUsage, Result};
+use crate::{EntityId, Result};
+use oneiron_model::llm::{LlmInputUsage, LlmOutputUsage};
 
 /// What a publisher candidate is: an instruction the replay adds to the
 /// failing agent's own, or a pinned engine the host's shadow runner runs in

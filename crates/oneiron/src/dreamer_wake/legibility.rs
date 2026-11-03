@@ -1,6 +1,6 @@
 //! Budget legibility envelope derived from one BudgetGuard read.
 
-use crate::llm::BudgetRead;
+use oneiron_model::llm::BudgetRead;
 
 use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakePassDeadline};
 

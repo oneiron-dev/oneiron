@@ -4,7 +4,7 @@
 //! settlement carry them; any other call sends on its route as it is, its
 //! sources unknown. Capture only: no call is refused, held or narrowed here.
 use crate::entity_id::EntityId;
-use crate::llm::LlmBackend;
+use oneiron_model::llm::LlmBackend;
 
 /// A host route that can send one call under the rows its input was read
 /// from: the host binds its run to them for that call alone, on the same

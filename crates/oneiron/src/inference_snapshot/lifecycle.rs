@@ -29,7 +29,7 @@ use serde::Serialize;
 use super::retention::Ledger;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::llm::VaultRef;
+use oneiron_model::llm::VaultRef;
 
 /// How long past the runtime's own bound a lock still waits for its answer
 /// before the key goes without one: the engine's bound on a host that hung

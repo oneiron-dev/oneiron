@@ -1,6 +1,6 @@
 //! Scoped exports carry the caller's verified ceiling, never a caller-authored grant.
 use super::{Memory, MemoryError, MemoryResult};
-        use oneiron_authority::federation::Scope;
+use oneiron_authority::federation::Scope;
 use serde::{Deserialize, Serialize};
 
 /// A position may select rows but cannot be supplied as a permission ceiling.

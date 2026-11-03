@@ -707,7 +707,8 @@ pub(super) fn enforce_step_failure_policy(
     payload: &[u8],
     actor: Option<crate::entity_id::EntityId>,
 ) -> Result<(), IntentLedgerError> {
-    let Some(binding) = crate::llm::StepEffectBinding::from_frozen_payload(payload)? else {
+    let Some(binding) = crate::model_step_effect::StepEffectBinding::from_frozen_payload(payload)?
+    else {
         return Ok(());
     };
     let actor = actor.ok_or(IntentLedgerError::InvalidBoundActor)?;
