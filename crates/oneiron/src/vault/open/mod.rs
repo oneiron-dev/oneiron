@@ -619,6 +619,8 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        vault.backfill_widen_contact_verdict_index(false)?;
+        crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
