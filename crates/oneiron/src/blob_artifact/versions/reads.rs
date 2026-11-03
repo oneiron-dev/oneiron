@@ -6,12 +6,12 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::write_envelope::claim_body::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::secret_custody::{SecretSight, sighted_bytes_in_txn};
+use crate::write_envelope::claim_body::ClaimSubject;
 
 use super::super::body::decode_blob_artifact_body;
 use super::super::made_by::made_by_text;
