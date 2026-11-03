@@ -306,9 +306,9 @@ impl EmbeddedCert {
     ///
     /// # Errors
     /// The ledger's refusal.
-    pub(crate) fn extend_admitted<'d>(
+    pub(crate) fn extend_admitted(
         into: &mut Vec<Self>,
-        ders: impl IntoIterator<Item = &'d [u8]>,
+        ders: impl IntoIterator<Item = &[u8]>,
         memory: &MemoryLedger,
     ) -> Result<(), SealMemoryRefusal> {
         for der in ders {
