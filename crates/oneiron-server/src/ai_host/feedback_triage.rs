@@ -347,7 +347,7 @@ fn advance(
         return parts::begin(run, input, &loaded, &instruction, window);
     };
     let instruction = instruction(&loaded)?;
-    let finish = |work: &FeedbackTriageWork| {
+    let finish = |work: &FeedbackTriageWork| -> oneiron::Result<Option<FeedbackTriageStep>> {
         let level: Vec<_> = work.current().collect();
         let batches = synthesis::batches(input, work, &level, &window, &instruction)?;
         if !batches.iter().any(|batch| batch.len() > 1) {
