@@ -29,7 +29,8 @@ pub use world_privacy_will::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowChange;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::{EntityId, Vault};
 
 fn denied() -> Error {

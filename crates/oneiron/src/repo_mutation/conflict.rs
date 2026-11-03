@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,

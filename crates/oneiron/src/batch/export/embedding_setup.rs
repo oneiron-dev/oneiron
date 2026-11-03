@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::ArchiveRecordKind;
 use super::archive_index::{IndexedArchive, Tag};
 use crate::config::VectorEvidenceFloors;
-use crate::embed::{EmbeddingSpace, InputKind, KindSlotBindings};
+use crate::store::embedding::{EmbeddingSpace, InputKind, KindSlotBindings};
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
 

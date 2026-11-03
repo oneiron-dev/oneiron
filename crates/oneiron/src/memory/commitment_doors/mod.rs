@@ -10,7 +10,8 @@ use crate::commitment_schedule::{
     ScheduleError,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
+use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;
+use crate::dreamer_consolidation::{encode_consolidation_evidence};
 use crate::entity_id::EntityId;
 use crate::{Error, TimeRange};
 use rmpv::Value;

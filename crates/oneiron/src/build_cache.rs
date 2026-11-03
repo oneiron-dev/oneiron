@@ -8,7 +8,7 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::codebase::{CodebaseForkHash, RepoRef};
+use crate::store::code_snapshot::{CodebaseForkHash, RepoRef};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::secret_rotation::ArtifactTaintState;
