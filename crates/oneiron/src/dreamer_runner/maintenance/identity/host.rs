@@ -302,10 +302,10 @@ impl Vault {
                 if current.surfaced_turn.is_some_and(|turn| turn >= newest) {
                     return Ok(false);
                 }
+                let old = current.clone();
                 current.surfaced_turn = Some(newest);
-                // No membership sync (FIX 10376): a resurface stamps
-                // `surfaced_turn` only, which the ask's erase never reads.
                 ASKS.put(&self.store, txn, &key, &current)?;
+                index::sync_ask_membership(&self.store, txn, &key, Some(&old), Some(&current))?;
                 notify_in_txn(self, txn, &key, &newest, now)?;
                 Ok(true)
             })?;
