@@ -1,20 +1,21 @@
 //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`.
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 
 /// Defined in `oneiron-contracts`: the write actor names it.
 pub use oneiron_contracts::edge::EdgeActorClass;
 
-pub(crate) const EDGE_KEY_LEN: usize = 33;
+pub const EDGE_KEY_LEN: usize = 33;
 
-pub(crate) const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
+pub const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
 
-pub(crate) const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
+pub const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
 
-pub(crate) const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
+pub const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
 
 mod kind;
+pub mod kind_tables;
 pub use self::kind::EdgeKind;
 
 impl EdgeKind {
@@ -151,7 +152,7 @@ pub struct DecodedEdgeValue {
 }
 
 /// Selects the value layout for writes. Reads dispatch on value length.
-pub(crate) fn edge_value_layout_for_kind(
+pub fn edge_value_layout_for_kind(
     kind: EdgeKind,
     has_provenance_claim: bool,
 ) -> EdgeValueLayout {
@@ -233,7 +234,7 @@ fn read_vad(value: &[u8]) -> crate::error::Result<Vad> {
     })
 }
 
-pub(crate) fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdgeValue> {
+pub fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdgeValue> {
     let layout = EdgeValueLayout::from_len(value.len())
         .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
     let weight = read_f32_le(value, 0)?;
@@ -274,7 +275,7 @@ pub(crate) fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdg
     })
 }
 
-pub(crate) fn decode_edge_value_for_kind(
+pub fn decode_edge_value_for_kind(
     kind: EdgeKind,
     value: &[u8],
 ) -> crate::error::Result<DecodedEdgeValue> {
@@ -296,7 +297,7 @@ pub(crate) fn decode_edge_value_for_kind(
 
 /// Fully parsed strict edge row shared by fail-closed graph readers.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct StrictEdgeRecord {
+pub struct StrictEdgeRecord {
     pub source: EntityId,
     pub kind: EdgeKind,
     pub target: EntityId,
@@ -304,7 +305,7 @@ pub(crate) struct StrictEdgeRecord {
 }
 
 impl StrictEdgeRecord {
-    pub(crate) fn into_edge_info(self) -> EdgeInfo {
+    pub fn into_edge_info(self) -> EdgeInfo {
         EdgeInfo {
             kind: self.kind,
             target: self.target,
@@ -323,7 +324,7 @@ impl StrictEdgeRecord {
 /// a reserved/invalid source or peer id, or a value that does not decode as
 /// a valid layout for the kind (12/24/26 B per ARCH-0034) is normalized to
 /// `Error::CorruptedIndex("edge record")`.
-pub(crate) fn parse_strict_edge_record(
+pub fn parse_strict_edge_record(
     key: &[u8],
     value: &[u8],
 ) -> crate::error::Result<StrictEdgeRecord> {
@@ -338,7 +339,7 @@ pub(crate) fn parse_strict_edge_record(
     })
 }
 
-pub(crate) fn parse_strict_edge_record_key(
+pub fn parse_strict_edge_record_key(
     key: &[u8],
 ) -> crate::error::Result<(EntityId, EdgeKind, EntityId)> {
     if key.len() != EDGE_KEY_LEN {
@@ -389,7 +390,7 @@ fn edge_record_error() -> crate::error::Error {
 /// direction without the other, so the pair stays reachable only through
 /// `commitment_lifecycle::link_brief_fulfillment`. As with the arms above,
 /// one arm reserves BOTH generic doors — creation and deletion.
-pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
+pub fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
     match kind {
         EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::AddressedTo | EdgeKind::RepliesTo => {
             Err(crate::error::Error::Registry(
@@ -445,7 +446,7 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
 /// side a carried link is admitted by [`regeneration_pair`] on the topology
 /// its materializer applies, never by this refusal; on the delete side an
 /// existing link keeps its delete, weight and VAD doors.
-pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
+pub fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
     validate_public_edge_kind(kind)?;
     match kind {
         EdgeKind::SameAs => Err(crate::error::Error::Registry(
@@ -459,7 +460,7 @@ pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error
 /// What the stored rows say of a `regenerates` link (FIX 5972): the stream's
 /// own source checks, shared with every carrier that admits one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Regeneration {
+pub enum Regeneration {
     /// Every fact the link asserts is stored and holds.
     Admits,
     /// A MESSAGE row, or one of its sole axes, is not stored yet.
@@ -471,144 +472,8 @@ pub(crate) enum Regeneration {
 }
 
 /// The refusal for a `regenerates` link the stream did not prove.
-pub(crate) fn reserved_regenerates() -> crate::error::Error {
+pub fn reserved_regenerates() -> crate::error::Error {
     crate::error::Error::Registry(crate::error::RegistryError::ReservedEdgeKind("regenerates"))
-}
-
-/// The source a `regenerates` link from `new` names, judged against the axes
-/// `new` has or will have: a live companion MESSAGE other than `new`, whose
-/// sole `authored_by` is `actor` and whose sole `belongs_to` is
-/// `conversation`. A Retry's seed proves this before its reply is born.
-pub(crate) fn regeneration_source(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    new: &EntityId,
-    source: &EntityId,
-    actor: EntityId,
-    conversation: EntityId,
-) -> crate::error::Result<Regeneration> {
-    if new == source {
-        return Ok(Regeneration::Refuses);
-    }
-    let verdict = companion_message(store, txn, source)?;
-    if verdict != Regeneration::Admits {
-        return Ok(verdict);
-    }
-    for (kind, expected) in [
-        (EdgeKind::AuthoredBy, actor),
-        (EdgeKind::BelongsTo, conversation),
-    ] {
-        match message_axis(store, txn, source, kind)?.as_slice() {
-            [] => return Ok(Regeneration::Pending),
-            [target] if *target == expected => {}
-            _ => return Ok(Regeneration::Refuses),
-        }
-    }
-    Ok(Regeneration::Admits)
-}
-
-/// A stored `new -regenerates-> source` pair, proven as the stream proved it:
-/// `new` is a live companion MESSAGE whose own sole axes name the actor and
-/// conversation [`regeneration_source`] checks the source against. Peer
-/// replay and restoration admit a carried link on [`Regeneration::Admits`]
-/// alone.
-pub(crate) fn regeneration_pair(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    new: &EntityId,
-    source: &EntityId,
-) -> crate::error::Result<Regeneration> {
-    let verdict = companion_message(store, txn, new)?;
-    if verdict != Regeneration::Admits {
-        return Ok(verdict);
-    }
-    let actor = message_axis(store, txn, new, EdgeKind::AuthoredBy)?;
-    let conversation = message_axis(store, txn, new, EdgeKind::BelongsTo)?;
-    match (actor.as_slice(), conversation.as_slice()) {
-        ([actor], [conversation]) => {
-            regeneration_source(store, txn, new, source, *actor, *conversation)
-        }
-        (actor, conversation) if actor.len() > 1 || conversation.len() > 1 => {
-            Ok(Regeneration::Refuses)
-        }
-        _ => Ok(Regeneration::Pending),
-    }
-}
-
-/// True when this pair's `regenerates` row is already stored: it was proven
-/// when it landed, so a carried copy, byte-equal or with new value fields
-/// (an owner's weight), is no new pair, whatever has since become of its
-/// MESSAGEs' bodies.
-#[cfg(feature = "sync")]
-pub(crate) fn regeneration_stored(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    new: &EntityId,
-    source: &EntityId,
-) -> crate::error::Result<bool> {
-    Ok(crate::ports::EdgeStoreStaging::port_edge_encoded(
-        store,
-        txn,
-        new,
-        EdgeKind::Regenerates,
-        source,
-    )?
-    .is_some())
-}
-
-/// Whether `id` is a live companion MESSAGE.
-fn companion_message(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> crate::error::Result<Regeneration> {
-    let body = match crate::vault::live_entity_row_in_txn(store, txn, id)? {
-        crate::vault::LiveEntityRow::Absent => return Ok(Regeneration::Pending),
-        crate::vault::LiveEntityRow::DeletedShell => return Ok(Regeneration::Erased),
-        crate::vault::LiveEntityRow::Live { entity_type, body } => {
-            if entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
-                return Ok(Regeneration::Refuses);
-            }
-            body
-        }
-    };
-    #[cfg(feature = "sync")]
-    let body = crate::entity_doc::resolve_record_body(store, txn, id, &body)?;
-    let body: serde_json::Value = rmp_serde::from_slice(&body)
-        .map_err(|_| crate::error::Error::CorruptedIndex("message body"))?;
-    Ok(
-        if body.get("author").and_then(serde_json::Value::as_str)
-            == Some(crate::memory::WitnessAuthor::Companion.as_str())
-        {
-            Regeneration::Admits
-        } else {
-            Regeneration::Refuses
-        },
-    )
-}
-
-/// Up to two targets of `id`'s `kind` edges: a MESSAGE's axis has one.
-fn message_axis(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    kind: EdgeKind,
-) -> crate::error::Result<Vec<EntityId>> {
-    let mut targets = Vec::new();
-    for row in crate::ports::EdgeStoreRead::port_edges(
-        store,
-        txn,
-        id,
-        crate::ports::EdgeDirection::Out,
-        Some(kind),
-        None,
-    )? {
-        targets.push(row?.target);
-        if targets.len() > 1 {
-            break;
-        }
-    }
-    Ok(targets)
 }
 
 /// Validates a stored edge weight against the contract-pinned range.
@@ -622,14 +487,14 @@ fn message_axis(
 /// unchanged.
 ///
 /// [`Error::InvalidEdgeWeight`]: crate::error::Error::InvalidEdgeWeight
-pub(crate) fn validate_edge_weight(weight: f32) -> crate::error::Result<()> {
+pub fn validate_edge_weight(weight: f32) -> crate::error::Result<()> {
     if !(0.0..=1.0).contains(&weight) {
         return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
     }
     Ok(())
 }
 
-pub(crate) fn encode_edge_value(
+pub fn encode_edge_value(
     kind: EdgeKind,
     weight: f32,
     created_at: u64,
