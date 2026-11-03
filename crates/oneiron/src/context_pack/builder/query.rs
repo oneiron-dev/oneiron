@@ -6,9 +6,9 @@ use crate::codebase::RepoRef;
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::pipeline::{PipelineBuilder, Signal, WorldScope};
-use crate::write_envelope::profile_snapshot::PsychProfileKey;
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::write_envelope::profile_snapshot::PsychProfileKey;
 
 use oneiron_model::llm::ModelId;
 
@@ -130,7 +130,10 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Replaces the vault's affect retrieval policy for this pack (OF-423).
-    pub fn affect_policy(mut self, policy: crate::config::retrieval_affect::AffectRetrievalPolicy) -> Self {
+    pub fn affect_policy(
+        mut self,
+        policy: crate::config::retrieval_affect::AffectRetrievalPolicy,
+    ) -> Self {
         self.pipeline = self.pipeline.affect_policy(policy);
         self
     }
@@ -425,7 +428,10 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
     /// [`PipelineBuilder::fold_messages_into_turns`].
-    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::context_pack::turn_fold::TurnFold) -> Self {
+    pub(crate) fn fold_messages_into_turns(
+        mut self,
+        fold: crate::context_pack::turn_fold::TurnFold,
+    ) -> Self {
         self.pipeline = self.pipeline.fold_messages_into_turns(fold);
         self
     }

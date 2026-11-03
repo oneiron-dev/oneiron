@@ -26,4 +26,3 @@ pub(crate) fn actor_class_from_token(token: &str) -> Option<EdgeActorClass> {
     .into_iter()
     .find(|class| actor_class_token(*class) == token)
 }
-

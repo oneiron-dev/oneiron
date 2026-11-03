@@ -7,7 +7,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::live_entity_row_in_txn;
 
 pub(crate) use crate::write_envelope::subject_record::{
-    imported_subject_body, is_subject_model_predicate, invalid,
+    imported_subject_body, invalid, is_subject_model_predicate,
 };
 
 /// A host-authenticated owner reviews this exact proposal and supersession set.

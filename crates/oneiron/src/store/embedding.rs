@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_base::config::VectorEvidenceFloors;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use oneiron_base::config::VectorEvidenceFloors;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;
@@ -200,7 +200,6 @@ pub(crate) fn validate_space_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-
 
 pub(crate) const TEXT_HASH_LEN: usize = 32;
 
@@ -568,4 +567,3 @@ pub struct MediaEmbedReport {
     /// a device-local world keeps them (FIX 382). They stay unsent, for a later pass.
     pub withheld: usize,
 }
-

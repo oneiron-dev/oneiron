@@ -73,7 +73,4 @@ impl SandboxLinkedImport {
     pub const fn class(self) -> SandboxImportClass {
         self.class
     }
-
-
 }
-

@@ -24,8 +24,6 @@ use std::collections::HashMap;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::write_envelope::vad_annotation::VAD_ANNOTATION_CLAIM_PREDICATE;
-use oneiron_contracts::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimRetrievability, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -34,11 +32,14 @@ use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::StoreRead;
+use crate::write_envelope::vad_annotation::VAD_ANNOTATION_CLAIM_PREDICATE;
+use oneiron_contracts::affect::Vad;
 
 use super::types::{EntityMetadataCache, ScoredEntity};
 
 pub use crate::config::retrieval_affect::{
-    AFFECT_AROUSAL_STRETCH_MAX, AFFECT_EMOTION_WEIGHT_MAX, AFFECT_FLOOR_AROUSAL_DEFAULT, AffectRetrievalPolicy,
+    AFFECT_AROUSAL_STRETCH_MAX, AFFECT_EMOTION_WEIGHT_MAX, AFFECT_FLOOR_AROUSAL_DEFAULT,
+    AffectRetrievalPolicy,
 };
 
 /// A claim's active consolidated VAD: the `affect.claim_vad` state claim the

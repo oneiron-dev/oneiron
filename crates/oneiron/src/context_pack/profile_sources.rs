@@ -2,9 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use crate::write_envelope::profile_snapshot::codec::{canonical_revision_refs_allow_empty, invalid_profile};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::profile_snapshot::codec::{
+    canonical_revision_refs_allow_empty, invalid_profile,
+};
 
 /// Default source-selection weights for Psych Mirror snapshots.
 ///

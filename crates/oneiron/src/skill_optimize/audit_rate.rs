@@ -6,13 +6,11 @@
 //! the rate its draw stamped. The draw itself is no check: only a finished
 //! audit observes anything.
 
-use crate::receipt::task_type_ref::TypeRef;
 use crate::claim::learning_evidence::Anchor;
-use crate::store::setting_seed::AUDIT_RATE;
-use crate::learning_setting::{
-    SettingCheck, global_setting_subject, record_setting_check_in_txn,
-};
+use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::self_heal::audit::{SealCheckKind, SealedAttemptReceipt};
+use crate::store::setting_seed::AUDIT_RATE;
 use crate::{Result, Vault};
 
 /// The rate one completed random audit argues for: every attempt, when it

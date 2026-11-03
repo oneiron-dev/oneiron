@@ -14,12 +14,12 @@ use super::shape::{
 };
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::store::conversation_body::ConversationBody;
 use crate::edge::EdgeActorClass;
-use crate::memory::{Memory};
-use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 /// A conversation to create. A body that names members also authors the
 /// room's membership ledger, its creator and its role grants, as the

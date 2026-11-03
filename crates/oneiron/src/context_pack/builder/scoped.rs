@@ -30,7 +30,10 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// [`crate::pipeline::PipelineBuilder::gate_candidates`] (FIX 11648).
-    pub(crate) fn gate_candidates(mut self, gate: &'a dyn crate::store::retrieval_values::CandidateGate) -> Self {
+    pub(crate) fn gate_candidates(
+        mut self,
+        gate: &'a dyn crate::store::retrieval_values::CandidateGate,
+    ) -> Self {
         self.pipeline = self.pipeline.gate_candidates(gate);
         self
     }

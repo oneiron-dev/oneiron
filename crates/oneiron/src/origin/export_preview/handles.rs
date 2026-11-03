@@ -13,10 +13,10 @@ use std::collections::BTreeMap;
 use super::PinnedLeaf;
 use super::types::{CodeExportByteHandle, CodeExportFileBytes, CodeExportPreview, CodeExportSide};
 use crate::EntityId;
-use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::store::code_revision_record::{ CodeTreeInventory};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::store::code_revision_record::CodeTreeInventory;
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 /// The one versioned identity domain (CALL O `preview_identity`).
 const PREVIEW_IDENTITY_DOMAIN: &[u8] = b"oneiron:code-export-preview:v1";

@@ -24,9 +24,9 @@ use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::HexId;
 use crate::store::Store;
+pub(crate) use crate::store::conversation_body::AUDIENCE_EDIT_BOUND;
 use crate::vault::live_entity_row_in_txn;
 use std::cell::RefCell;
-pub(crate) use crate::store::conversation_body::{AUDIENCE_EDIT_BOUND};
 
 thread_local! {
     /// The edits their root's erase is tearing on this thread now. A write

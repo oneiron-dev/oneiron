@@ -20,7 +20,10 @@ impl ScopedRead<'_> {
                 ..
             } = row
             {
-                events.push((*id, crate::store::diagnostic_record::decode_diagnostic_event_body(body)?));
+                events.push((
+                    *id,
+                    crate::store::diagnostic_record::decode_diagnostic_event_body(body)?,
+                ));
             }
         }
         Ok(ScopedReadResult {

@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 
 use super::HubPackage;
 use super::package_codec::invalid;
-use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 use crate::agent_dispatch::team_shape_skill;
 use crate::side_table::{self, Raw, SideTable, StagedRow};
+use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 use crate::task_type::{TaskTypeTree, TreeScope};
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},

@@ -347,7 +347,9 @@ impl CodeWaitReceiptLinks {
             ConsentReceipt::CodeWaitSettled {
                 decision_id: record.decision_id,
                 links,
-                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(kind & 0x0f)?,
+                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
+                    kind & 0x0f,
+                )?,
             }
         };
         (record.content_kind == CONSENT_CONTENT_KIND

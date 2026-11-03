@@ -12,7 +12,9 @@ use crate::{
 /// scenario mask, so a FACET body shaped as a persona or relationship is
 /// refused on every local door (put apply and checkpoint restore).
 pub(crate) fn validate_local_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
-    if entity_type == ENTITY_TYPE_FACET && crate::write_envelope::person_identity::is_identity_facet_body(body) {
+    if entity_type == ENTITY_TYPE_FACET
+        && crate::write_envelope::person_identity::is_identity_facet_body(body)
+    {
         return Err(Error::InvalidClaimBody(
             "FACET cannot carry PERSON identity",
         ));

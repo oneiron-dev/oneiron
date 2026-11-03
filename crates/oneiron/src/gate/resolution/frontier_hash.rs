@@ -192,8 +192,7 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
         hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
     }
-    if resolution.voice_ref_limits
-        != crate::gate::voice_ref_limits::VoiceRefLimitPolicy::default()
+    if resolution.voice_ref_limits != crate::gate::voice_ref_limits::VoiceRefLimitPolicy::default()
     {
         hash_voice_ref_policy(
             hasher,
