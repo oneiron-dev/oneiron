@@ -21,11 +21,14 @@ use crate::consent::AuthenticatedOwner;
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskReceipt,
+      TaskAskOptionId, TaskAskQuestion, TaskAskReceipt,
     TaskAskSpec, TaskAskTarget,
 };
+use crate::claim::consult_payload_ref::ConsultPayloadRef;
+use crate::disclosure::task_ask_default::TaskAskDefault;
 
 use super::tier_classification::{
     PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,

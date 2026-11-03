@@ -5,13 +5,16 @@ use super::{
     model::invalid,
 };
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimOutcome,
+    CompleteAttempt, FailAttempt, RetryAttempt,
 };
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
+    OutboundDispatchError, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};

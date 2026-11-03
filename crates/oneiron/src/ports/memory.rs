@@ -2,7 +2,9 @@
 mod auxiliary;
 mod query;
 use super::*;
-use crate::attempt_queue::*;
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome};
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;
@@ -130,7 +132,7 @@ impl EntityStore for Memory {
         }
         let row = txn.entities.get(id);
         if row.is_some_and(|r| r.entity_type == ENTITY_TYPE_SECRET_CUSTODY) {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         Ok(row
             .filter(|row| !super::safe_read::body_is_stale(&row.body))

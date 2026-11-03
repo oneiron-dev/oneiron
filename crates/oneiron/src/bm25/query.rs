@@ -9,7 +9,7 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, To
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 
 use super::codec::{

@@ -22,11 +22,11 @@ use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
 use crate::claim::ScopedRead;
 use crate::compaction::self_writer::hex32;
 use crate::compaction::{CompactionWindowMessage, decode_epoch_summary_body};
-use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text_in};
+use crate::store::conversation_span::ConversationSpanRead;
+use crate::dreamer_consolidation::{conversation_span_text_in};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::memory::{
-    MAX_TRANSCRIPT_PAGE_TURNS, Memory, MemoryResult, TranscriptTurn, WitnessAuthor,
-};
+use crate::memory::{MAX_TRANSCRIPT_PAGE_TURNS, Memory, TranscriptTurn, WitnessAuthor};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{EntityId, Error, Vault, WriteActor};
 

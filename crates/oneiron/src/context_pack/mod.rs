@@ -4,6 +4,7 @@
 //! Directory module. This file carries declarations and re-exports only; each
 //! sibling file owns one concern. `builder` is the hub that composes them.
 
+pub(crate) mod turn_fold;
 mod builder;
 mod edge_walk;
 mod empty_pack;
@@ -48,3 +49,5 @@ pub use world_partition::WORLD_STALE_FIELD;
 pub(crate) use validation::disclosure_admits_target;
 
 pub(crate) use hydration::{context_entity_matches_read_snapshot, same_claim_body};
+
+pub mod profile_sources;
