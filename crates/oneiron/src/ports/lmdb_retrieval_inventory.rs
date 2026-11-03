@@ -48,7 +48,7 @@ fn meta_key(key: IndexMetaKey) -> &'static [u8] {
         IndexMetaKey::Count => crate::hnsw::COUNT_KEY,
         IndexMetaKey::ModelId => crate::store::MODEL_ID_KEY,
         IndexMetaKey::EmbeddingTransform => crate::store::EMBEDDING_TRANSFORM_KEY,
-        IndexMetaKey::ColdAttachPending => crate::embed::COLD_ATTACH_PENDING_KEY,
+        IndexMetaKey::ColdAttachPending => crate::store::embedding::COLD_ATTACH_PENDING_KEY,
         IndexMetaKey::GraphVersion => crate::store::GRAPH_VERSION_KEY,
         IndexMetaKey::HnswConfig => crate::store::HNSW_CONFIG_KEY,
         IndexMetaKey::TemporalLongIntervalsSchemaVersion => {

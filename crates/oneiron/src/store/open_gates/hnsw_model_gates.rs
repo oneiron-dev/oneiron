@@ -165,7 +165,7 @@ pub(super) fn persist_model_id_if_missing(store: &Store, requested: &str) -> Res
                 .put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
             store
                 .hnsw_meta
-                .put(&mut wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+                .put(&mut wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY, b"1")?;
             wtxn.commit()?;
         }
     }

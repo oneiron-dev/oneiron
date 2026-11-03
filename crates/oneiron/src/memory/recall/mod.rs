@@ -263,7 +263,7 @@ pub struct MemoryItem {
     pub asset_ref: Option<String>,
     /// Raw per-kind evidence from each exact space, before fusion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub embedding_matches: Vec<crate::embed::EmbeddingMatchEvidence>,
+    pub embedding_matches: Vec<crate::store::embedding::EmbeddingMatchEvidence>,
     /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,

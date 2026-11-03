@@ -136,6 +136,7 @@ mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
 mod diagnostics;
+pub mod embedding;
 mod gate_decision;
 mod group_commit;
 mod handle;

@@ -154,9 +154,9 @@ impl ScopedRead<'_> {
         vector: Option<&[f32]>,
         media: &[(
             &str,
-            crate::embed::InputKind,
+            crate::store::embedding::InputKind,
             &[f32],
-            &[crate::embed::InputKind],
+            &[crate::store::embedding::InputKind],
         )],
         limit: usize,
         requested: Option<&RetrievalFilter>,

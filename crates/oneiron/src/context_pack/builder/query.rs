@@ -95,9 +95,9 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn search_media(
         mut self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         vector: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
     ) -> Self {
         self.pipeline = self

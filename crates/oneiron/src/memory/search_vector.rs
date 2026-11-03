@@ -2,7 +2,7 @@
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::consent::AuthenticatedOwner;
-use crate::embed::{EmbeddingMatchEvidence, InputKind};
+use crate::store::embedding::{EmbeddingMatchEvidence, InputKind};
 use serde::{Deserialize, Serialize};
 
 /// The compatibility shape fixed when the vault opens. Changing a populated
