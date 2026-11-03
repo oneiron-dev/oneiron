@@ -135,6 +135,10 @@ mod body_envelope;
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+pub mod code_artifact_body;
+pub mod code_document_values;
+pub mod code_memory_values;
+pub mod code_snapshot;
 mod claim_vad_owed;
 pub(crate) use claim_vad_owed::{
     owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
