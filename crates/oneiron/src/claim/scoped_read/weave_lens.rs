@@ -353,8 +353,8 @@ fn weave_report_instruction(vault: &Vault) -> Result<Option<(EntityId, String, S
                 Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
                 Err(error) => return Err(error),
             };
-            if crate::skill::resident_of(&record)?.is_some()
-                || !crate::skill::skill_loadable(&record)
+            if crate::write_envelope::skill_record::resident_of(&record)?.is_some()
+                || !crate::write_envelope::skill_record::skill_loadable(&record)
             {
                 return Ok(None);
             }

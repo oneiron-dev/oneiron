@@ -63,7 +63,7 @@ use crate::gate::resolution::{
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
+use crate::gate::voice_ref_limits::VoiceRefLimitPolicy;
 use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
     parse_failure_rules,
@@ -185,7 +185,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
-        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+        Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,

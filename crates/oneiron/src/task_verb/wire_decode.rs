@@ -14,7 +14,7 @@ use crate::consult_ladder::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
 
 use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
@@ -215,7 +215,7 @@ pub(super) fn task_entity_role_in(
     if header.entity_type != ENTITY_TYPE_TASK {
         return Ok(None);
     }
-    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    crate::write_envelope::task_body::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {

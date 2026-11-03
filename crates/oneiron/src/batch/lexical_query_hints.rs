@@ -6,11 +6,11 @@ use std::str;
 use heed::RwTxn;
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
 use crate::scan_check::{EngineScan, ScanCount};
@@ -117,7 +117,7 @@ pub(super) fn validate_public_raw_put(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             )));
         }
-        ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
+        ENTITY_TYPE_SKILL => crate::write_envelope::skill_record::validate_skill_record_bytes(data)?,
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only
@@ -126,7 +126,7 @@ pub(super) fn validate_public_raw_put(
         // inbound counters from the local reducer, so a peer cannot mint a
         // streak either.
         ENTITY_TYPE_TASK => {
-            crate::habit::reject_public_streak_fields(data)?;
+            crate::write_envelope::task_body::reject_public_streak_fields(data)?;
             // Coherence the DECODER already demands: a terminal claiming
             // `countered` names its counter, and one naming a counter claims
             // it. Held here as well as there, because a body that fails only
@@ -168,7 +168,7 @@ pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Res
 }
 
 pub(super) fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
-    match crate::habit::task_role_from_body_bytes(data)? {
+    match crate::write_envelope::task_body::task_role_from_body_bytes(data)? {
         TaskRole::HabitCheckin => Ok(()),
         _ => Err(Error::Record(RecordError::InvalidTaskBody(
             "habit check-in writes require HabitCheckin role",

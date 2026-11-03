@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops, apply_ops_with_gate_mode,
 };

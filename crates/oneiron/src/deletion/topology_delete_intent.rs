@@ -6,7 +6,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
-use crate::identity_topology::IdentityTopologyRejection;
+use oneiron_contracts::identity_topology::IdentityTopologyRejection;
 use crate::ports::WindowDeletionRows;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::Store;

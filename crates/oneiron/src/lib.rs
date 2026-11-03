@@ -57,6 +57,7 @@ pub mod registry {
     #[cfg(test)]
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
+pub use oneiron_base::request_limits;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
@@ -302,7 +303,7 @@ pub mod voice_segment;
 // module-qualified (`oneiron::<module>::Name`); nothing was removed from the
 // module tree.
 pub use crate::access_grant::AccessGrant;
-pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
 pub use crate::agent_def::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
     MemoryProfile,
@@ -397,10 +398,11 @@ pub use crate::compaction::{
     EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
-pub use crate::companion::{
-    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome,
+pub use crate::write_envelope::companion_subject::{
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind,
 };
+pub use crate::write_envelope::companion_task_kind::CompanionTaskKind;
+pub use crate::attempt_queue::companion_task::EnqueueCompanionTaskOutcome;
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
@@ -544,7 +546,7 @@ pub use crate::provider_confidence::{
     clear_provider_confidence_indexes, provider_confidence_index_presence,
     set_provider_confidence_index_raw,
 };
-pub use crate::psych_profile::{
+pub use crate::write_envelope::profile_snapshot::{
     PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };
 pub use crate::repo_mutation::{

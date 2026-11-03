@@ -4,7 +4,7 @@ use super::codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body, invalid, scope_value,
 };
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
@@ -18,7 +18,8 @@ use crate::conversation_dag::{
 use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
