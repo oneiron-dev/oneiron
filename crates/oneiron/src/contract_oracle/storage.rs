@@ -15,10 +15,20 @@ use std::path::Path;
 /// Immutable baseline rows, keyed by their content digest.
 const BASELINES: SideTable<String, ContractBaseline, Named> =
     SideTable::new(&side_table::CONTRACT_ORACLE_BASELINE);
+/// Whether a masked copy of a `CONTRACT_ORACLE_BASELINE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn contract_oracle_baseline_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ContractBaseline, Named>(bytes)
+}
 
 /// Immutable verdict rows, keyed by their content digest.
 const VERDICTS: SideTable<String, ContractVerdict, Named> =
     SideTable::new(&side_table::CONTRACT_ORACLE_VERDICT);
+/// Whether a masked copy of a `CONTRACT_ORACLE_VERDICT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn contract_oracle_verdict_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ContractVerdict, Named>(bytes)
+}
 
 pub struct ContractOracle<'a> {
     vault: &'a Vault,
