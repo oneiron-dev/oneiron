@@ -54,7 +54,7 @@ enum CustodyBodyShape {
     /// ([`CustodyPermitPieces`]) in that map and its permits in numbered
     /// main-log piece rows ([`CustodyPermitPiece`], FIX 11866); no permit
     /// store of its own exists. The permits are one shared set
-    /// ([`CustodyRecipientPermits`], FIX 12281): a clone of the body copies
+    /// ([`CustodyPermitSet`], FIX 12281, 12370): a clone of the body copies
     /// none.
     CloneNotCopy,
 }
@@ -194,6 +194,244 @@ impl std::fmt::Debug for CustodyRecipientPermits {
     }
 }
 
+/// The recipients a custody request permits, in its order: one shared run,
+/// or the shared runs of its pieces read in place (FIX 12370).
+///
+/// A request the fold joins from several pieces holds every kept run under
+/// one small `Arc` and reads them in piece order without copying a permit;
+/// any other request holds one run. The logical permit sequence is what
+/// serde, equality, ordering, hashing, `Debug`, validation and commitment
+/// all read, so a segmented set is indistinguishable from its contiguous
+/// join. Runs are immutable snapshots: a clone shares them and copies no
+/// permit. Decoding lands as one run; stored rows never carry a segmented
+/// form, and no set is ever deduped or reordered.
+#[derive(Clone)]
+pub struct CustodyPermitSet(CustodyPermitSetRuns);
+
+/// One shared run, or several under one `Arc` (see [`CustodyPermitSet`]).
+#[derive(Clone)]
+enum CustodyPermitSetRuns {
+    One(CustodyRecipientPermits),
+    Many(Arc<Vec<CustodyRecipientPermits>>),
+}
+
+impl CustodyPermitSet {
+    /// One run, shared: what an inline, single-piece or decoded set holds.
+    #[must_use]
+    pub fn from_run(run: CustodyRecipientPermits) -> Self {
+        Self(CustodyPermitSetRuns::One(run))
+    }
+
+    /// `runs` in order, shared: what a multi-piece join holds, one small
+    /// descriptor over the kept runs, copying no permit. One run or none
+    /// lands as one run.
+    #[must_use]
+    pub fn from_runs(runs: Vec<CustodyRecipientPermits>) -> Self {
+        if runs.len() <= 1 {
+            Self::from_run(runs.into_iter().next().unwrap_or_default())
+        } else {
+            Self(CustodyPermitSetRuns::Many(Arc::new(runs)))
+        }
+    }
+
+    /// The one run when this holds exactly one (an inline, staged or decoded
+    /// set); `None` for a multi-piece join.
+    #[must_use]
+    pub fn single_run(&self) -> Option<&CustodyRecipientPermits> {
+        match &self.0 {
+            CustodyPermitSetRuns::One(run) => Some(run),
+            CustodyPermitSetRuns::Many(_) => None,
+        }
+    }
+
+    /// How many permits the set holds, over all its runs.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match &self.0 {
+            CustodyPermitSetRuns::One(run) => run.len(),
+            CustodyPermitSetRuns::Many(runs) => runs.iter().map(|run| run.len()).sum(),
+        }
+    }
+
+    /// Whether the set holds no permit.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The permit at `index` in the set's order; `None` past its end.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&CustodyRecipientPermit> {
+        match &self.0 {
+            CustodyPermitSetRuns::One(run) => run.get(index),
+            CustodyPermitSetRuns::Many(runs) => {
+                let mut offset = index;
+                for run in runs.iter() {
+                    if let Some(permit) = run.get(offset) {
+                        return Some(permit);
+                    }
+                    offset -= run.len();
+                }
+                None
+            }
+        }
+    }
+
+    /// The permits in the set's order, run by run.
+    pub fn iter(&self) -> CustodyPermitSetIter<'_> {
+        CustodyPermitSetIter {
+            set: self,
+            run: 0,
+            index: 0,
+        }
+    }
+
+    /// The permits in `start..end` in the set's order; empty past the set's
+    /// end. Callers that need exact bounds check `end <= len` first.
+    pub fn range(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> impl Iterator<Item = &CustodyRecipientPermit> + '_ {
+        self.iter().skip(start).take(end.saturating_sub(start))
+    }
+
+    /// Whether the set ascends by machine, one each, across every run
+    /// boundary too.
+    #[must_use]
+    pub fn is_ascending(&self) -> bool {
+        let mut previous: Option<&CustodyRecipientPermit> = None;
+        for permit in self.iter() {
+            if previous.is_some_and(|held| held.machine >= permit.machine) {
+                return false;
+            }
+            previous = Some(permit);
+        }
+        true
+    }
+
+    /// Whether any permit names a zero digest.
+    #[must_use]
+    pub fn has_zero_digest(&self) -> bool {
+        self.iter()
+            .any(|permit| permit.profile == [0; 32] || permit.encryption_key == [0; 32])
+    }
+
+    /// The commitment to the set ([`custody_recipient_set`]), streamed run
+    /// by run: the same bytes the contiguous join hashes.
+    #[must_use]
+    pub fn recipient_set(&self) -> [u8; 32] {
+        hash_permit_sequence(self.len(), self.iter())
+    }
+}
+
+/// Borrowed iteration over a [`CustodyPermitSet`], run by run in order.
+#[derive(Debug, Clone)]
+pub struct CustodyPermitSetIter<'a> {
+    set: &'a CustodyPermitSet,
+    run: usize,
+    index: usize,
+}
+
+impl<'a> Iterator for CustodyPermitSetIter<'a> {
+    type Item = &'a CustodyRecipientPermit;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let set: &'a CustodyPermitSet = self.set;
+        loop {
+            let slice = match &set.0 {
+                CustodyPermitSetRuns::One(run) => {
+                    if self.run > 0 {
+                        return None;
+                    }
+                    run.as_slice()
+                }
+                CustodyPermitSetRuns::Many(runs) => runs.get(self.run)?.as_slice(),
+            };
+            if let Some(permit) = slice.get(self.index) {
+                self.index += 1;
+                return Some(permit);
+            }
+            self.run += 1;
+            self.index = 0;
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a CustodyPermitSet {
+    type Item = &'a CustodyRecipientPermit;
+    type IntoIter = CustodyPermitSetIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl Default for CustodyPermitSet {
+    fn default() -> Self {
+        Self::from_run(CustodyRecipientPermits::default())
+    }
+}
+
+impl From<Vec<CustodyRecipientPermit>> for CustodyPermitSet {
+    fn from(permits: Vec<CustodyRecipientPermit>) -> Self {
+        Self::from_run(CustodyRecipientPermits::from(permits))
+    }
+}
+
+impl From<&[CustodyRecipientPermit]> for CustodyPermitSet {
+    fn from(permits: &[CustodyRecipientPermit]) -> Self {
+        Self::from_run(CustodyRecipientPermits::from(permits))
+    }
+}
+
+impl std::fmt::Debug for CustodyPermitSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for CustodyPermitSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for CustodyPermitSet {}
+
+impl PartialOrd for CustodyPermitSet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CustodyPermitSet {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.iter().cmp(other.iter())
+    }
+}
+
+impl std::hash::Hash for CustodyPermitSet {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.len());
+        for permit in self.iter() {
+            permit.hash(state);
+        }
+    }
+}
+
+impl serde::Serialize for CustodyPermitSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CustodyPermitSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<CustodyRecipientPermit>::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// The commitment to a custody change's complete permitted set, in its
 /// order: BLAKE3 under [`CUSTODY_RECIPIENT_SET_DOMAIN`] over the count and
 /// each permit's machine, profile entry and key digest. A transition that
@@ -201,9 +439,19 @@ impl std::fmt::Debug for CustodyRecipientPermits {
 /// a partial set.
 #[must_use]
 pub fn custody_recipient_set(recipients: &[CustodyRecipientPermit]) -> [u8; 32] {
+    hash_permit_sequence(recipients.len(), recipients.iter())
+}
+
+/// The commitment bytes of `len` permits in `permits`' order: the one
+/// engine [`custody_recipient_set`] hashes for one run and
+/// [`CustodyPermitSet::recipient_set`] streams for all of them.
+fn hash_permit_sequence<'a>(
+    len: usize,
+    permits: impl Iterator<Item = &'a CustodyRecipientPermit>,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(CUSTODY_RECIPIENT_SET_DOMAIN);
-    hasher.update(&(recipients.len() as u64).to_be_bytes());
-    for permit in recipients {
+    hasher.update(&(len as u64).to_be_bytes());
+    for permit in permits {
         hasher.update(permit.machine.as_bytes());
         hasher.update(&permit.profile);
         hasher.update(&permit.encryption_key);
@@ -251,19 +499,12 @@ impl CustodyPermitPieces {
         Ok(())
     }
 
-    /// Whether `recipients` is the whole set this commits to, in its order.
+    /// Whether `set` is the whole set this commits to, in its order.
     #[must_use]
-    pub fn commits_to(self, recipients: &[CustodyRecipientPermit]) -> bool {
-        usize::try_from(self.count).is_ok_and(|count| count == recipients.len())
-            && custody_recipient_set(recipients) == self.set
+    pub fn commits_to(self, set: &CustodyPermitSet) -> bool {
+        usize::try_from(self.count).is_ok_and(|count| count == set.len())
+            && set.recipient_set() == self.set
     }
-}
-
-/// Whether `recipients` ascend by machine, one each.
-fn ascending(recipients: &[CustodyRecipientPermit]) -> bool {
-    recipients
-        .windows(2)
-        .all(|pair| pair[0].machine < pair[1].machine)
 }
 
 /// A custody request's shape. A register or rotate states its input and its
@@ -281,16 +522,16 @@ pub(super) fn validate_custody(
     change: CustodyChange,
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
-    recipients: &[CustodyRecipientPermit],
+    recipients: &CustodyPermitSet,
     pieces: Option<CustodyPermitPieces>,
     authority: CustodyRequestAuthority,
 ) -> Result<()> {
     let permitted = match pieces {
-        None => !recipients.is_empty() && ascending(recipients),
+        None => !recipients.is_empty() && recipients.is_ascending(),
         Some(pieces) => {
             pieces.validate().is_ok()
                 && (recipients.is_empty()
-                    || (ascending(recipients) && pieces.commits_to(recipients)))
+                    || (recipients.is_ascending() && pieces.commits_to(recipients)))
         }
     };
     // A kit request: a rewrap with no input and no holder, to its permits;
@@ -318,10 +559,7 @@ pub(super) fn validate_custody(
             }
         }
     };
-    let zero = input.is_some_and(|input| input == [0; 32])
-        || recipients
-            .iter()
-            .any(|permit| permit.profile == [0; 32] || permit.encryption_key == [0; 32]);
+    let zero = input.is_some_and(|input| input == [0; 32]) || recipients.has_zero_digest();
     if !shaped || zero {
         return Err(invalid_authority());
     }
@@ -339,7 +577,7 @@ pub(super) fn custody_work_value(
     generation: u32,
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
-    (recipients, pieces): (&[CustodyRecipientPermit], Option<CustodyPermitPieces>),
+    (recipients, pieces): (&CustodyPermitSet, Option<CustodyPermitPieces>),
     authority: CustodyRequestAuthority,
 ) -> Value {
     let recipients = match (CUSTODY_SHARED_BODY, pieces) {
@@ -430,7 +668,7 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
     let listed = required(work, "recipients")?;
     let (recipients, pieces) = match (CUSTODY_SHARED_BODY, listed) {
         (CustodyBodyShape::CloneNotCopy, Value::Array(permits)) => (
-            CustodyRecipientPermits::from(
+            CustodyPermitSet::from(
                 permits
                     .iter()
                     .map(decode_permit)
@@ -439,7 +677,7 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
             None,
         ),
         (CustodyBodyShape::CloneNotCopy, Value::Map(_)) => (
-            CustodyRecipientPermits::default(),
+            CustodyPermitSet::default(),
             Some(decode_permit_pieces(listed)?),
         ),
         _ => return Err(invalid_authority()),
