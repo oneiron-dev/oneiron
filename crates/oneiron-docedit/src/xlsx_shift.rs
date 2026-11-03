@@ -147,7 +147,7 @@ pub fn retarget_sheets(
 /// follows `fate` as an unlinked one does: a renamed sheet keeps the link
 /// (`[1]Sales!A1`), and a deleted one reads `#REF!` (FIX 9080).
 #[must_use]
-pub fn retarget_linked_sheets(
+pub(crate) fn retarget_linked_sheets(
     formula: &str,
     order: &[String],
     fate: &dyn Fn(&str) -> SheetFate,
