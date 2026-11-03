@@ -375,7 +375,7 @@ fn channel_identity_lifecycle_receipt(
     }
 
     ReceiptRecord {
-        receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),
+        receipt_id: crate::store::lifecycle_receipt_ref(record.receipt_id),
         receipt_kind: ReceiptKind::IdentityLifecycle,
         occurred_at: record.created_at,
         actor: record

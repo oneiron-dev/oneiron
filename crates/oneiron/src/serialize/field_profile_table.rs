@@ -109,13 +109,13 @@ pub(super) fn fields_for_profile(
             crate::federation::FEDERATION_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal) => {
-            crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Standard) => {
-            crate::access_grant::ACCESS_GRANT_FIELDS_STANDARD
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
-            crate::access_grant::ACCESS_GRANT_FIELDS_FULL
+            crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
             crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
