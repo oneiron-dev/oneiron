@@ -2,7 +2,7 @@
 
 use super::room::{RoomPresence, room_clearance, room_worlds};
 use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};

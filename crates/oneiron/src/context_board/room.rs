@@ -2,7 +2,7 @@
 
 use super::people::{PeopleView, PersonKind, PersonRow};
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 use crate::claim::world_access::WorldAuthoritySet;
 use crate::{EntityId, Result};
 
