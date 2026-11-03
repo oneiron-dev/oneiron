@@ -74,6 +74,28 @@ impl Vault {
         }
     }
 
+    /// Whether `proof` is the vault owner's own held credential (FIX 9155):
+    /// the owner rule [`Self::credential_facets_owner_exempt`] judges, built
+    /// without asking the read verb, so an owner's narrowed credential that
+    /// grants no read still counts as the owner's. Judged in one snapshot by
+    /// the target key [`Self::credential_target_key`] builds (the same
+    /// holder, class, proof and record, world, facet and channel bounds, its
+    /// verb axis taken to admit `read`): the owner's own live credential,
+    /// and a narrower one the owner still holds, pass; a delegate's or a
+    /// transferred one never does. It lifts no world, record or channel
+    /// bound; it only answers whose credential it is.
+    pub fn credential_owner_held(&self, proof: &VerifiedSlip) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        match self.credential_key_in_with(
+            &txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip_as_target,
+        )? {
+            Some(key) => key.facets_owner_exempt_in(self, &txn),
+            None => Ok(false),
+        }
+    }
+
     /// [`Self::credential_read_key`], judged in the caller's snapshot.
     pub(crate) fn credential_read_key_in(
         &self,
