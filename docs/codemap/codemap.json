@@ -10729,7 +10729,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CalendarRemoteObjectRow",
@@ -21133,13 +21133,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/widen/contact_verdict_index.rs",
+     "purpose": "The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "WidenKind",
       "WidenProposal"
      ],
-     "path": "src/consent/widen.rs",
+     "path": "src/consent/widen/mod.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
       "const": 1,
@@ -23545,6 +23555,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/identity_index.rs",
+     "purpose": "The identity-value index over live `counterparty_contact.identity_ref` heads (FIX 1855): the disclosure…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23562,7 +23582,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
      }
     },
@@ -23573,7 +23593,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -35976,6 +35996,8 @@
       "FeedbackTriageChild",
       "FeedbackTriageErased",
       "FeedbackTriageHold",
+      "FeedbackTriagePending",
+      "FeedbackTriageProgress",
       "FeedbackTriageRun",
       "FeedbackTriageRunRequest",
       "FeedbackTriageStatus",
@@ -35986,7 +36008,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 7
+      "struct": 9
      }
     },
     {
@@ -53703,7 +53725,7 @@
      "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
      "surface": {
       "crate-vis": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -85266,7 +85288,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85343,7 +85365,7 @@
      "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86463,9 +86485,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 111,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5859,
+   "source_files": 5861,
    "test_files": 902
   },
   "oneiron-android": {
@@ -115179,7 +115201,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -115624,7 +115646,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -116185,7 +116207,7 @@
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
       "crate-vis": 9,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
