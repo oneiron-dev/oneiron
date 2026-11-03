@@ -12,7 +12,7 @@ use crate::batch::export::{
 };
 use crate::batch::secret_scan::scan_file_content;
 use crate::error::{Error, Result};
-use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
+use crate::write_envelope::skill_record::{SkillContentHash, canonical_skill_tree_hash};
 use crate::skill_hub::HubFile;
 use sha2::{Digest, Sha256};
 

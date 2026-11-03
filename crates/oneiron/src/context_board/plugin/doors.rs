@@ -12,7 +12,7 @@ use super::manifest::{
     SectionBindingResolver, StateFamilyRef,
 };
 use crate::entity_id::EntityId;
-use crate::skill::SkillRecord;
+use crate::write_envelope::skill_record::SkillRecord;
 use crate::skill_hub::{
     HubIndexEntry, HubPackage, HubPin, HubRef, RefFetch, SkillHubAdapter, pinned_tracking,
 };

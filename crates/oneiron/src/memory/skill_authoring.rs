@@ -7,7 +7,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
-use crate::skill::{SkillLifecycle, SkillRecord};
+use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -182,7 +182,7 @@ impl Memory<'_> {
         }
         let mut record = proposed.clone();
         if let Some(files) = &source {
-            let hash = crate::skill::canonical_skill_tree_hash(
+            let hash = crate::write_envelope::skill_record::canonical_skill_tree_hash(
                 files
                     .iter()
                     .map(|file| (file.path.as_str(), file.content.as_slice())),
@@ -402,7 +402,7 @@ impl Memory<'_> {
             Value::from(AUTHOR_PROOF),
             Value::from(receipt.decision_id.to_hex()),
         ));
-        let data = crate::skill::encode_skill_record(record)?;
+        let data = crate::write_envelope::skill_record::encode_skill_record(record)?;
         receipt.diff_handle = blake3::hash(&data).as_bytes().to_vec();
         self.vault.put_skill_record_in_txn(
             txn,

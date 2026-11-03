@@ -15,6 +15,7 @@ use oneiron_contracts::claim::ClaimSource;
 pub mod carry_forward;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod skill_record;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

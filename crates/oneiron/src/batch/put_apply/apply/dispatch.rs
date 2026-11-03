@@ -243,7 +243,7 @@ pub(super) fn dispatch_put_type(
         crate::provenance::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
-        let decoded = crate::skill::decode_skill_record(data)?;
+        let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(
             store,
             wtxn,

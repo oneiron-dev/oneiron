@@ -44,7 +44,7 @@ impl ExportHubSource {
         Ok(Self {
             holder: holder.to_hex(),
             record: ExportBody::from_bytes(
-                &crate::skill::encode_skill_record(&package.record)?,
+                &crate::write_envelope::skill_record::encode_skill_record(&package.record)?,
                 crate::registry::ENTITY_TYPE_SKILL,
             ),
             format: package.format,
@@ -80,7 +80,7 @@ impl ExportHubSource {
                 .record
                 .to_bytes()
                 .ok()
-                .and_then(|bytes| crate::skill::decode_skill_record(&bytes).ok())
+                .and_then(|bytes| crate::write_envelope::skill_record::decode_skill_record(&bytes).ok())
                 .is_none()
     }
     /// [`Self::to_bytes_in`] with no archive files.
@@ -93,7 +93,7 @@ impl ExportHubSource {
         if matches!(self.record, ExportBody::Pack(_) | ExportBody::HubSource(_)) {
             return Err(invalid("recursive source carrier"));
         }
-        let record = crate::skill::decode_skill_record(&self.record.to_bytes()?)?;
+        let record = crate::write_envelope::skill_record::decode_skill_record(&self.record.to_bytes()?)?;
         let mut package = HubPackage::new(
             record,
             self.source_tree.import_files_in(files)?,

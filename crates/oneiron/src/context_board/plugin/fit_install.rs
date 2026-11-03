@@ -22,7 +22,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
-use crate::skill::SkillRecord;
+use crate::write_envelope::skill_record::SkillRecord;
 use crate::skill_hub::osv::{OsvDevClient, OsvQuery};
 use crate::skill_hub::{
     CallerPermissions, HubRef, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting,

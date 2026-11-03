@@ -387,7 +387,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
