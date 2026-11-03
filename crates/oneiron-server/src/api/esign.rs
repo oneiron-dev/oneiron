@@ -284,8 +284,11 @@ async fn image(
             Err(unread) => return ImageUpload::Unread(unread),
         };
         // The read bytes are held now, so the live reading is not charged
-        // them twice while the lease lives (FIX 9345).
-        lease.materialized(peak, u64::try_from(image.len()).unwrap_or(u64::MAX));
+        // them twice while the lease lives (FIX 9345). Only what was read
+        // is named allocated; the peak's decode and re-encode room stays
+        // pending on the lease until the upload returns.
+        let read = u64::try_from(image.len()).unwrap_or(u64::MAX);
+        lease.materialized(read, read);
         match vault.upload_esign_signature_image(&token, &image) {
             Ok(image_ref) => ImageUpload::Stored(image_ref),
             Err(_) => ImageUpload::Refused,
