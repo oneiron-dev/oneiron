@@ -51,10 +51,9 @@ pub(super) const OPT_OUT_REASONS: [&str; 3] = [
     OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
 ];
 
-/// Longest `send_ref` a one-shot override may bind.
-pub(super) const MAX_SEND_REF_BYTES: usize = 256;
+pub(super) use crate::write_envelope::communication_record::MAX_SEND_REF_BYTES;
 
-pub(super) const OPT_OUT_CLEAR_REASON: &str = "comm_opt_out_clear";
+pub(super) use crate::write_envelope::communication_record::OPT_OUT_CLEAR_REASON;
 
 const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 

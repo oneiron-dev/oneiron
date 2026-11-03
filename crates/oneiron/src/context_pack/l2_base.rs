@@ -1,6 +1,6 @@
 //! Content-addressed persona/user evidence prefix. Retrieval remains the read-time delta.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::Vault;
@@ -14,84 +14,8 @@ use crate::ppr::PprNodeVisibility;
 #[cfg(test)]
 mod tests;
 
-const MAX_CACHE_ENTRIES: usize = 32;
-const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
-
-/// A score-free JSON prefix, ordered by full claim id, with its evidence and
-/// resolved-handle digest. The shared body allocation is reused on a cache hit.
-/// It never contains query scores, relative time, or read-time delta items.
-#[derive(Debug, Clone)]
-pub struct L2BaseSummary {
-    pub content_hash: [u8; 32],
-    pub body: Arc<str>,
-    evidence_ids: Vec<EntityId>,
-    subjects: Vec<EntityId>,
-    max_field_chars: usize,
-}
-
-impl L2BaseSummary {
-    /// The exact claims used to render the prefix, in canonical order.
-    pub fn evidence_ids(&self) -> &[EntityId] {
-        &self.evidence_ids
-    }
-
-    pub(crate) fn fits_field_budget(&self, max: usize) -> bool {
-        max == 0 || self.max_field_chars <= max
-    }
-}
-
-impl serde::Serialize for L2BaseSummary {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("L2BaseSummary", 2)?;
-        state.serialize_field(
-            "content_hash",
-            &crate::entity_id::bytes_to_hex_lower(&self.content_hash),
-        )?;
-        state.serialize_field("body", self.body.as_ref())?;
-        state.end()
-    }
-}
-
-/// Vault-owned, bounded, rebuildable memory. No named database or global state.
-#[derive(Default)]
-pub(crate) struct L2BaseCache {
-    entries: BTreeMap<[u8; 32], L2BaseSummary>,
-    bytes: usize,
-    erased_at_revision: Option<usize>,
-}
-
-impl L2BaseCache {
-    /// Clear before a destructive write and bar pre-commit snapshots from
-    /// repopulating the cache. An aborted erase only delays caching until the
-    /// next commit; it cannot retain erased content or widen a read.
-    pub(crate) fn erase(&mut self, id: &EntityId, committed_revision: usize) {
-        self.entries.retain(|_, summary| {
-            summary.evidence_ids.binary_search(id).is_err()
-                && summary.subjects.binary_search(id).is_err()
-        });
-        self.bytes = self.entries.values().map(summary_bytes).sum();
-        self.erased_at_revision = Some(committed_revision);
-    }
-
-    fn insert(&mut self, summary: L2BaseSummary) {
-        let bytes = summary_bytes(&summary);
-        if bytes > MAX_CACHE_BYTES {
-            return;
-        }
-        while self.entries.len() >= MAX_CACHE_ENTRIES || self.bytes + bytes > MAX_CACHE_BYTES {
-            let Some((_, evicted)) = self.entries.pop_first() else {
-                break;
-            };
-            self.bytes -= summary_bytes(&evicted);
-        }
-        self.bytes += bytes;
-        self.entries.insert(summary.content_hash, summary);
-    }
-}
+pub(crate) use crate::store::l2_evidence::L2BaseCache;
+pub use crate::store::l2_evidence::L2BaseSummary;
 
 /// Select the vault-owned user identity. A generic PERSON row is not proof
 /// that it is this context's user. Its evidence still passes every retrieval,
@@ -383,10 +307,6 @@ fn evidence_hash(
         digest.update(handle.as_bytes());
     }
     Ok(*digest.finalize().as_bytes())
-}
-
-fn summary_bytes(summary: &L2BaseSummary) -> usize {
-    summary.body.len() + (summary.evidence_ids.len() + summary.subjects.len()) * 16
 }
 
 fn max_string_chars(value: &serde_json::Value) -> usize {

@@ -14,8 +14,9 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::lens::{
     GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard, LensRenderFrame,
 };
-use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
+use crate::memory::{ClaimView, Memory};
 use crate::provenance::EdgeRef;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
 // The weave Admin's reads and labels under its proof (OF-499 A3).
@@ -564,7 +565,7 @@ impl Memory<'_> {
         let plan =
             super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
                 MemoryError::new(
-                    crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    oneiron_contracts::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
                     format!("the model's weave lens plan was refused: {reason}"),
                     &["Ask for the lens again."],
                 )

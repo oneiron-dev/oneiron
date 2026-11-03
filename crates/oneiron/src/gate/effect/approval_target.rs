@@ -36,10 +36,10 @@
 //! composed from its facts (`crate::consent::browser_approve_once_digest`).
 
 use crate::calendar::CalendarInvitePayload;
+use crate::consent::approval_proof::PinnedApprovalFamily;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::gate::ExternalEffectGateInput;
 use crate::linear_sync::{LinearEffectRequest, MirroredTaskFields};
-use crate::outbound_intent_ledger::PinnedApprovalFamily;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
