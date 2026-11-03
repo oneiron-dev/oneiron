@@ -9,6 +9,7 @@
 //! a framing failure.
 
 use super::{
+    admitted,
     decode::{self, LoadError},
     last_startxref,
     lex::{Kind, LexError, PdfLexer, Token, stream_delimiter},
@@ -63,22 +64,39 @@ pub(crate) struct RevisionFacts {
     pub(crate) revisions: Vec<RevisionFact>,
 }
 impl RevisionFacts {
-    pub(crate) fn ends(&self) -> Vec<usize> {
-        self.revisions.iter().map(|r| r.byte_end).collect()
+    pub(crate) fn ends(
+        &self,
+        limits: &SealResourceLimits,
+    ) -> Result<Vec<usize>, SealMemoryRefusal> {
+        let mut ends = admitted::vec(limits, self.revisions.len())?;
+        ends.extend(self.revisions.iter().map(|r| r.byte_end));
+        Ok(ends)
     }
-    pub(crate) fn has_duplicates(&self) -> bool {
-        self.revisions.iter().any(|r| {
+    pub(crate) fn has_duplicates(
+        &self,
+        limits: &SealResourceLimits,
+    ) -> Result<bool, SealMemoryRefusal> {
+        for revision in &self.revisions {
+            admitted::btree::<ObjectId, ()>(limits, revision.definitions.len())?;
             let mut ids = BTreeSet::new();
-            r.definitions.iter().any(|d| !ids.insert(d.id))
-        })
+            if revision.definitions.iter().any(|d| !ids.insert(d.id)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     /// A renewal must list EVERY raw object once, at the indexed position.
-    pub(crate) fn accounts_for(&self, index: usize, changed: &BTreeSet<ObjectId>) -> bool {
+    pub(crate) fn accounts_for(
+        &self,
+        limits: &SealResourceLimits,
+        index: usize,
+        changed: &BTreeSet<ObjectId>,
+    ) -> Result<bool, SealMemoryRefusal> {
         let Some(rev) = self.revisions.get(index) else {
-            return false;
+            return Ok(false);
         };
         let Some(prior) = index.checked_sub(1).and_then(|i| self.revisions.get(i)) else {
-            return false;
+            return Ok(false);
         };
         if rev.prev_xref != Some(prior.xref_offset)
             || std::mem::discriminant(&rev.xref_style) != std::mem::discriminant(&prior.xref_style)
@@ -86,15 +104,16 @@ impl RevisionFacts {
             || rev.trailer.get(b"ID").ok() != prior.trailer.get(b"ID").ok()
             || rev.trailer.get(b"Info").ok() != prior.trailer.get(b"Info").ok()
         {
-            return false;
+            return Ok(false);
         }
+        admitted::btree::<ObjectId, ()>(limits, rev.definitions.len())?;
         let mut ids = BTreeSet::new();
         for definition in &rev.definitions {
             if !definition.indexed && !definition.xref_role {
-                return false;
+                return Ok(false);
             }
             if !ids.insert(definition.id) {
-                return false;
+                return Ok(false);
             }
         }
         for def in &rev.definitions {
@@ -102,7 +121,7 @@ impl RevisionFacts {
                 ids.remove(&def.id);
             }
         }
-        ids == *changed
+        Ok(ids == *changed)
     }
 }
 
@@ -270,13 +289,18 @@ fn definitions(
             let (id, begin, span) = current.take().ok_or(RevisionAnalysisError::Framing)?;
             let indexed = matches!(doc.reference_table.get(id.0), Some(XrefEntry::Normal{offset,generation})
                 if *offset as usize == begin && *generation == id.1);
-            out.push(ObjectDefinition {
-                id,
-                byte_span: begin..t.span.end,
-                stream_span: span,
-                indexed,
-                xref_role: begin == xref_offset,
-            });
+            admitted::push(
+                limits,
+                &mut out,
+                ObjectDefinition {
+                    id,
+                    byte_span: begin..t.span.end,
+                    stream_span: span,
+                    indexed,
+                    xref_role: begin == xref_offset,
+                },
+            )
+            .map_err(RevisionAnalysisError::Memory)?;
             first = None;
             second = None;
             continue;
@@ -337,7 +361,8 @@ pub(crate) fn analyze(
     let mut prefix_work = 0usize;
     // Tokens and reconciliation steps this whole analysis took.
     let mut work = 0usize;
-    let mut revisions: Vec<RevisionFact> = Vec::with_capacity(ends.len());
+    let mut revisions: Vec<RevisionFact> =
+        admitted::vec(limits, ends.len()).map_err(RevisionAnalysisError::Memory)?;
     for end in ends {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
@@ -364,6 +389,8 @@ pub(crate) fn analyze(
         // Index exact raw identities and offsets ONCE. Preserve duplicate
         // counts in the facts, then reconcile each normal xref entry in
         // O(log N) rather than walking every definition for every entry.
+        admitted::btree::<(ObjectId, usize), usize>(limits, definitions.len())
+            .map_err(RevisionAnalysisError::Memory)?;
         let mut raw = BTreeMap::<(ObjectId, usize), usize>::new();
         for definition in &definitions {
             *raw.entry((definition.id, definition.byte_span.start))
@@ -383,14 +410,19 @@ pub(crate) fn analyze(
                 }
             }
         }
-        revisions.push(RevisionFact {
-            byte_end: end,
-            xref_offset,
-            prev_xref,
-            xref_style: doc.reference_table.cross_reference_type,
-            trailer: doc.trailer,
-            definitions,
-        });
+        admitted::push(
+            limits,
+            &mut revisions,
+            RevisionFact {
+                byte_end: end,
+                xref_offset,
+                prev_xref,
+                xref_style: doc.reference_table.cross_reference_type,
+                trailer: doc.trailer,
+                definitions,
+            },
+        )
+        .map_err(RevisionAnalysisError::Memory)?;
         previous_end = end;
     }
     Ok(RevisionFacts { revisions })

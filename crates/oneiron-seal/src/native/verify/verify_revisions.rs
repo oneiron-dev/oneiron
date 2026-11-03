@@ -307,12 +307,12 @@ pub(super) fn classify(
     let Some(facts) = facts else {
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
-    if facts.ends() != ends {
+    if facts.ends(limits)? != ends {
         return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
-    if facts.has_duplicates() {
+    if facts.has_duplicates(limits)? {
         anomalies.push(Anomaly::DuplicateObjectNumber);
     }
     let mut previous: Option<Document> = None;
@@ -365,7 +365,7 @@ pub(super) fn classify(
                 anomalies.push(Anomaly::RetypedObject);
             }
             if first_signer.is_some() {
-                let allowed = facts.accounts_for(index, &ids)
+                let allowed = facts.accounts_for(limits, index, &ids)?
                     && match kind {
                         RevisionKind::Dss => dss_allowed(before, &doc, &ids),
                         RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {
