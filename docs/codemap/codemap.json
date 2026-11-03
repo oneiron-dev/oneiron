@@ -44113,18 +44113,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WorkCancel",
-      "WorkContext",
-      "WorkPhysical"
-     ],
+     "notable": [],
      "path": "src/llm/run_admission/work_context.rs",
      "purpose": "Host scheduling and physical-custody context for one run-admission handle",
      "surface": {
-      "enum": 1,
-      "fn": 4,
-      "struct": 2,
-      "type": 1
+      "re-export": 1
      }
     },
     {
@@ -98042,7 +98035,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2,
       "trait": 3,
       "type": 3
@@ -98703,7 +98696,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmissionGrant",
@@ -98715,16 +98708,20 @@
       "ScheduleUpdate",
       "SchedulingCapability",
       "SchedulingReceipt",
+      "WorkCancel",
       "WorkClass",
+      "WorkContext",
+      "WorkPhysical",
       "WorkPriority"
      ],
      "path": "src/llm/scheduling.rs",
      "purpose": "The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its…",
      "surface": {
       "const": 3,
-      "enum": 4,
-      "fn": 4,
-      "struct": 7
+      "enum": 5,
+      "fn": 8,
+      "struct": 9,
+      "type": 1
      }
     },
     {
