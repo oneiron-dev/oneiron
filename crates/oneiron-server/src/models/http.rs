@@ -32,6 +32,12 @@ static CLOUD_NODE: AtomicBool = AtomicBool::new(false);
 pub(crate) fn mark_cloud_node() {
     CLOUD_NODE.store(true, Ordering::Relaxed);
 }
+
+/// Whether this process is a cloud node: what the daemon's broker calls
+/// carry, so the broker skips gzip there as this leg does (OF-603).
+pub(crate) fn is_cloud_node() -> bool {
+    CLOUD_NODE.load(Ordering::Relaxed)
+}
 const GZIP_LEVEL: u32 = 1;
 const ZSTD_LEVEL: i32 = 3;
 
