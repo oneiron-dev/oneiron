@@ -445,6 +445,16 @@ impl AuthorityFold {
         &self.root_anchors
     }
 
+    /// Whether the host holds custody of `key`, as the fold's custody walk
+    /// judged it on the merged history: a key marked as the host's (its
+    /// attested root, a cloud role or tier), or one such a key admitted,
+    /// directly or through others, whatever its own labels say. It reads
+    /// the marks alone, on any posture (FIX 12196).
+    #[must_use]
+    pub(crate) fn in_host_custody(&self, key: &AuthorityKey) -> bool {
+        self.host_custody.contains(key)
+    }
+
     /// The folded standing of one MACHINE row, if any admitter profiled it.
     #[must_use]
     pub fn machine(&self, machine: EntityId) -> Option<&FoldedMachine> {
@@ -497,8 +507,8 @@ mod merge;
 mod owner_answers;
 
 pub(super) use apply::{
-    apply_anchor_profile, apply_machine_profile, in_host_custody, key_is_authority,
-    machine_is_actor,
+    apply_anchor_profile, apply_machine_profile, host_custody_closure, in_host_custody,
+    key_is_authority, machine_is_actor,
 };
 pub(super) use merge::{merge_machine, merge_machine_chain, merge_machine_maps};
 pub(super) use owner_answers::{

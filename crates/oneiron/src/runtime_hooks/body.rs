@@ -337,9 +337,8 @@ pub struct HookSettledCallRef {
 pub struct HookVerdictReply {
     /// The verdict as JSON, or the refusal's text.
     pub reply: std::result::Result<String, String>,
-    /// The rows the ask resolved its evidence to: `Some([])` for one read
-    /// from none, `None` when they are not known.
-    pub evidence: Option<Vec<EntityId>>,
+    /// The rows the ask resolved its evidence to; `[]` for one read from none.
+    pub evidence: Vec<EntityId>,
     /// Each model call the ask settled, in the order they settled, a
     /// refused ask's included.
     pub calls: Vec<HookSettledCallRef>,
@@ -351,7 +350,7 @@ impl HookVerdictReply {
     pub fn refused(reason: impl Into<String>) -> Self {
         Self {
             reply: Err(reason.into()),
-            evidence: Some(Vec::new()),
+            evidence: Vec::new(),
             calls: Vec::new(),
         }
     }

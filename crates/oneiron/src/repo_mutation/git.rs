@@ -44,13 +44,23 @@ pub(super) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
     Ok(PathBuf::from(root).canonicalize()?)
 }
 
-/// The same canonical, commit-independent identity used by document ingress.
+/// The same canonical, commit-independent identity used by document ingress:
+/// a working tree's top level, or a bare repository's own directory, which
+/// is what a served repository is (FIX 12199).
 pub(crate) fn canonical_mutation_scope(repo_root: &Path) -> Result<String> {
     let repo_ref = RepoRef::LocalFolder {
         path: path_arg(repo_root)?,
         commit: String::new(),
     };
-    let root = resolve_mutable_repo_root(&repo_ref)?;
+    let bare = run_git_at_path(
+        repo_root,
+        &["rev-parse".to_owned(), "--is-bare-repository".to_owned()],
+    )?;
+    let root = if utf8_trimmed(bare, "git bare flag must be UTF-8")? == "true" {
+        repo_root.canonicalize()?
+    } else {
+        resolve_mutable_repo_root(&repo_ref)?
+    };
     let canonical = canonical_repo_ref_for_root(&repo_ref, &root)?;
     Ok(super::oplog::repo_mutation_repo_key(&canonical))
 }

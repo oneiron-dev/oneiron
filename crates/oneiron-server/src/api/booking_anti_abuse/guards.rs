@@ -6,12 +6,14 @@ use std::sync::Arc;
 use axum::extract::State;
 use oneiron::Vault;
 use oneiron::booking::anti_abuse::{
-    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission, BookingRateDecision,
-    BookingRequestFacts, admit_quarantine_submission, applicable_booking_anti_abuse_rules,
-    book_rate_knobs, evaluate_booking_amend_request, evaluate_booking_book_request,
-    evaluate_booking_hold_request, evaluate_booking_slot_list_request, hold_rate_knobs,
-    observe_book_request, observe_hold_request, observe_slot_list_request,
-    server_submission_fingerprint, slot_list_rate_knobs,
+    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission,
+    BookingQuarantineRestoreInput, BookingRateDecision, BookingRequestFacts,
+    admit_quarantine_submission, admit_restorable_quarantine_submission,
+    applicable_booking_anti_abuse_rules, book_rate_knobs, evaluate_booking_amend_request,
+    evaluate_booking_book_request, evaluate_booking_hold_request,
+    evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
+    observe_hold_request, observe_slot_list_request, server_submission_fingerprint,
+    slot_list_rate_knobs,
 };
 
 use super::support::{correction_body, engine_error, log_rate_block};
@@ -217,9 +219,27 @@ pub(crate) async fn enforce_hold(
 /// # Errors
 ///
 /// [`ApiError`] internal-server on engine or storage failure.
+// The executor's confirms go through `enforce_book_restorable`; this form
+// keeps no submission.
+#[allow(dead_code)]
 pub(crate) async fn enforce_book(
     State(server): State<Arc<SyncServer>>,
+    facts: BookingRequestFacts,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    enforce_book_restorable(State(server), facts, None).await
+}
+
+/// [`enforce_book`] for a confirm whose raw submission the boundary holds:
+/// a quarantine keeps it restorable (FIX 7851), so the owner's restore books
+/// it through the ordinary booking writer.
+///
+/// # Errors
+///
+/// As [`enforce_book`].
+pub(crate) async fn enforce_book_restorable(
+    State(server): State<Arc<SyncServer>>,
     mut facts: BookingRequestFacts,
+    restore: Option<BookingQuarantineRestoreInput<'_>>,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     // This is the trusted production admission boundary: never honour a
     // fingerprint supplied by the transport.
@@ -250,15 +270,19 @@ pub(crate) async fn enforce_book(
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
         // This one engine door serializes exact-retry lookup, aggregate quota,
         // and first durable quarantine write.
-        match admit_quarantine_submission(
-            vault,
-            &facts,
-            reason,
-            per_minute_per_ip,
-            server.booking_now_secs()?,
-        )
-        .map_err(engine_error)?
-        {
+        let now = server.booking_now_secs()?;
+        let admission = match &restore {
+            Some(restore) => admit_restorable_quarantine_submission(
+                vault,
+                &facts,
+                reason,
+                per_minute_per_ip,
+                now,
+                restore,
+            ),
+            None => admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, now),
+        };
+        match admission.map_err(engine_error)? {
             BookingQuarantineAdmission::Accepted(receipt) => {
                 tracing::info!(
                     endpoint = "book",

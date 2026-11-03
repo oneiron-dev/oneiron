@@ -248,11 +248,15 @@ impl SyncClient {
             .map(|part| (part.key().as_str(), part.bytes()))
             .collect::<Vec<_>>();
         // The rows it brings: an erase of any scrubs the retained bytes (FIX
-        // 7998).
-        let carried = admitted
-            .parts()
-            .flat_map(|part| part.delivered().keys().copied())
-            .collect::<Vec<_>>();
+        // 7998). The raw payload is what is retained, so the rows it brings
+        // that the admitted parts omit are named too (FIX 11184).
+        let mut carried = crate::sync::ingest::payload_rows(&key, update);
+        carried.extend(
+            admitted
+                .parts()
+                .flat_map(|part| part.delivered().keys().copied()),
+        );
+        let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
             &peer,

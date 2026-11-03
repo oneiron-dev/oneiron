@@ -29,6 +29,13 @@ pub(super) const JUDGMENT: SideTable<String, StoredJudgment, Raw> =
 pub(super) const AMENDMENT_CAUSE: SideTable<([u8; 32], String), StoredAmendmentCause, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_CAUSE);
 
+/// Amendment cause rows by the attempt receipt they name (FIX 11639): blake3
+/// of the attempt's pack receipt, then the cause row's own key. Empty markers;
+/// the cause row stays the record. No erase hook: a project erase re-keys
+/// the rows' project field, never their keys, so these entries stay true.
+pub(super) const AMENDMENT_ATTEMPT: SideTable<([u8; 32], [u8; 32], String), (), Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_ATTEMPT);
+
 /// Minted preference proposals, keyed by receipt id.
 pub(super) const PREFERENCE: SideTable<String, StoredPreference, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PREFERENCE_PROPOSAL);

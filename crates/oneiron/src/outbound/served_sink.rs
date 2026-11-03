@@ -16,7 +16,14 @@
 //!
 //! Slack (OF-519): a send that answers an inbound Slack message posts into
 //! that message's own conversation and thread; any other send posts to the
-//! target user's direct message.
+//! target user's direct message. A send the owner set to post as him (OF-414:
+//! a space posting preset in the owner's mode) posts with his own user token
+//! from the app's install, so Slack shows it as his.
+//!
+//! Telegram (its `telegram` module), and email from a native mail identity
+//! through the host's own mail server (its `email` module), ride beside them.
+//! Each provider's API is where the host's installed [`ServedTransports`]
+//! put it.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -26,9 +33,9 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
+use crate::channel_identity_autonomy::FrozenSpacePosting;
 use crate::channel_identity_provider::{
-    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LineChat, LineChatKind, SLACK_CHANNEL,
-    line_source_audience_key,
+    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, EMAIL_CHANNEL, LINE_CHANNEL, SLACK_CHANNEL,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
@@ -37,11 +44,28 @@ use crate::surface_event::SurfaceConnectorPayload;
 use crate::{EntityId, Vault};
 
 mod content;
+mod email;
+mod host;
+mod line_wire;
+mod telegram;
 
-const SLACK_POST_MESSAGE: &str = "https://slack.com/api/chat.postMessage";
+use self::content::trusted_contact_check_in_text;
+pub use self::host::{
+    LINE_API_BASE, SLACK_API_BASE, ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
+};
+use self::line_wire::{
+    fresh_line_reply_token, line_archived_audience, line_destination, line_retry_key, line_text,
+};
+
+const SLACK_POST_MESSAGE: &str = "chat.postMessage";
 /// The built-in Slack pack connection whose checked credential posts.
 const SLACK_PACK: &str = "oneiron.slack";
 const SLACK_CONNECTION: &str = "slack-app";
+/// The owner's own user token the app's install stored, which a send set to
+/// post as the owner posts with.
+const SLACK_USER_TOKEN: &str = "slack.user_token";
+/// The receipt field naming whose account a send posted as.
+const POSTED_AS_FIELD: &str = "posted_as";
 const MAX_REPLY_BYTES: u64 = 64 * 1024;
 /// Slack refuses a message longer than this many characters.
 const SLACK_MAX_TEXT_CHARS: usize = 40_000;
@@ -54,9 +78,11 @@ const SLACK_THREAD_CHANNEL_REPLIES: bool = true;
 /// The execution field a provider's own cool-down travels on.
 const RETRY_AFTER_FIELD: &str = "retry_after";
 
-const LINE_REPLY_MESSAGE: &str = "https://api.line.me/v2/bot/message/reply";
-const LINE_PUSH_MESSAGE: &str = "https://api.line.me/v2/bot/message/push";
-const LINE_QUOTA_CONSUMPTION: &str = "https://api.line.me/v2/bot/message/quota/consumption";
+const LINE_REPLY_MESSAGE: &str = "/v2/bot/message/reply";
+const LINE_PUSH_MESSAGE: &str = "/v2/bot/message/push";
+const LINE_QUOTA_CONSUMPTION: &str = "/v2/bot/message/quota/consumption";
+/// A LINE user's profile; its `language` picks a fixed line's wording.
+const LINE_PROFILE: &str = "/v2/bot/profile/";
 /// The built-in LINE pack connection whose checked credential sends.
 const LINE_PACK: &str = "oneiron.line";
 const LINE_CONNECTION: &str = "line-channel";
@@ -76,7 +102,8 @@ const LINE_ROOM_TARGET_PREFIX: &str = "line:room:";
 const LINE_INVALID_REPLY_TOKEN: &str = "Invalid reply token";
 /// LINE's answer once the account has no messages left this month.
 const LINE_MONTHLY_LIMIT: &str = "monthly limit";
-/// How long the month-usage read before a push may take.
+/// How long the month-usage read before a push, and the profile read
+/// before a fixed line, may take.
 const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The served sink: one bounded HTTPS client and the vault its credentials
@@ -84,6 +111,8 @@ const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ServedChannelSink<'a> {
     vault: &'a Vault,
     client: reqwest::blocking::Client,
+    /// The host's provider APIs and mail server, read from the vault handle.
+    transports: Arc<ServedTransports>,
     /// The LINE account plan's monthly push allowance.
     line_push_allowance: u32,
 }
@@ -123,21 +152,36 @@ impl<'a> ServedChannelSink<'a> {
     ///
     /// The client could not be built.
     pub fn client() -> Result<reqwest::blocking::Client> {
+        Self::client_with_timeout(Duration::from_secs(20))
+    }
+
+    /// The outbound network boundary every served HTTP call is built on: no
+    /// proxy, no redirects, a five-second connect, and `timeout` for the
+    /// whole request. [`Self::client`] is it with the send bound; a read that
+    /// moves a larger body (a calendar feed or a CalDAV report) names its own.
+    ///
+    /// # Errors
+    ///
+    /// The client could not be built.
+    pub fn client_with_timeout(timeout: Duration) -> Result<reqwest::blocking::Client> {
         reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(20))
+            .timeout(timeout)
             .build()
             .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))
     }
 
-    /// The served sink on a client [`Self::client`] built.
+    /// The served sink on a client [`Self::client`] built, sending through
+    /// the transports the host installed on `vault`
+    /// ([`Vault::install_served_transports`]).
     #[must_use]
     pub fn with_client(vault: &'a Vault, client: reqwest::blocking::Client) -> Self {
         Self {
             vault,
             client,
+            transports: vault.served_transports(),
             line_push_allowance: DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
         }
     }
@@ -169,11 +213,24 @@ impl<'a> ServedChannelSink<'a> {
         let Some((channel, thread_ts)) = self.slack_destination(request) else {
             return OutboundExecutionOutcome::failed("slack_target_unrecognized");
         };
-        let secret = match self
-            .vault
-            .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
-        {
+        // The owner's mode for this space posts with his own token; any
+        // other send posts as the app.
+        let as_owner = posts_as_owner(request);
+        let secret = if as_owner {
+            self.vault.verified_pack_connection_named_secret(
+                SLACK_PACK,
+                SLACK_CONNECTION,
+                SLACK_USER_TOKEN,
+            )
+        } else {
+            self.vault
+                .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
+        };
+        let secret = match secret {
             Ok(secret) => secret,
+            Err(_) if as_owner => {
+                return OutboundExecutionOutcome::failed("slack_owner_token_unchecked");
+            }
             Err(_) => return OutboundExecutionOutcome::failed("slack_connection_unchecked"),
         };
         let mut body = serde_json::json!({ "channel": channel, "text": text });
@@ -193,7 +250,13 @@ impl<'a> ServedChannelSink<'a> {
         );
         // Once the POST ran, what Slack said is the delivery fact, whatever
         // the door reports after it.
-        outcome.unwrap_or_else(|| OutboundExecutionOutcome::failed("slack_credential_unavailable"))
+        let outcome = outcome
+            .unwrap_or_else(|| OutboundExecutionOutcome::failed("slack_credential_unavailable"));
+        if as_owner {
+            outcome.with_receipt_field(POSTED_AS_FIELD, "owner")
+        } else {
+            outcome
+        }
     }
 
     /// Where a Slack send posts: the answered message's own conversation and
@@ -223,7 +286,7 @@ impl<'a> ServedChannelSink<'a> {
     fn slack_send(&self, token: &str, body: &serde_json::Value) -> OutboundExecutionOutcome {
         let response = match self
             .client
-            .post(SLACK_POST_MESSAGE)
+            .post(self.transports.endpoints().slack(SLACK_POST_MESSAGE))
             .bearer_auth(token)
             .json(body)
             .send()
@@ -322,6 +385,11 @@ impl<'a> ServedChannelSink<'a> {
             return OutboundExecutionOutcome::failed("line_reply_token_unavailable");
         }
         let destination = line_destination(&request.intent.target);
+        // A trusted contact's fixed check-in line reads in the contact's own
+        // LINE language when LINE reports one for the target (FIX 4435); a
+        // group, a room or an unread profile reads the default line.
+        let localized = request.intent.content_ref.as_deref()
+            == Some(crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF);
         let mut outcome = None;
         let _door = self.vault.inject_secret_at_door(
             &secret.name,
@@ -329,8 +397,17 @@ impl<'a> ServedChannelSink<'a> {
             &mut |value: &[u8]| {
                 let token = std::str::from_utf8(value)
                     .map_err(|_| Error::InvalidClaimBody("the stored credential is not text"))?;
+                let token = token.trim();
+                let text = match destination.as_deref() {
+                    Some(user) if localized && user.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                        line_text(trusted_contact_check_in_text(
+                            self.line_user_language(token, user).as_deref(),
+                        ))
+                    }
+                    _ => text.clone(),
+                };
                 outcome = Some(self.line_deliver(
-                    token.trim(),
+                    token,
                     request,
                     &text,
                     reply_token.as_deref(),
@@ -357,7 +434,8 @@ impl<'a> ServedChannelSink<'a> {
         let messages = serde_json::json!([{ "type": "text", "text": text }]);
         if let Some(reply_token) = reply_token {
             let body = serde_json::json!({ "replyToken": reply_token, "messages": messages });
-            match self.line_call(LINE_REPLY_MESSAGE, token, &body, None, "reply") {
+            let url = self.transports.endpoints().line(LINE_REPLY_MESSAGE);
+            match self.line_call(&url, token, &body, None, "reply") {
                 LineAnswer::Done(outcome) => return outcome,
                 // A used or expired token delivered nothing, so a send may
                 // still push in the same attempt.
@@ -378,7 +456,8 @@ impl<'a> ServedChannelSink<'a> {
                 .unwrap_or(request.intent_ref),
         );
         let body = serde_json::json!({ "to": to, "messages": messages });
-        match self.line_call(LINE_PUSH_MESSAGE, token, &body, Some(&retry_key), "push") {
+        let url = self.transports.endpoints().line(LINE_PUSH_MESSAGE);
+        match self.line_call(&url, token, &body, Some(&retry_key), "push") {
             LineAnswer::Done(outcome) => outcome,
             LineAnswer::TokenInvalid => OutboundExecutionOutcome::failed("line_http_400"),
         }
@@ -443,7 +522,7 @@ impl<'a> ServedChannelSink<'a> {
     fn line_month_usage(&self, token: &str) -> Option<u64> {
         let response = self
             .client
-            .get(LINE_QUOTA_CONSUMPTION)
+            .get(self.transports.endpoints().line(LINE_QUOTA_CONSUMPTION))
             .bearer_auth(token)
             .timeout(LINE_USAGE_TIMEOUT)
             .send()
@@ -457,6 +536,31 @@ impl<'a> ServedChannelSink<'a> {
             .ok()?
             .get("totalUsage")?
             .as_u64()
+    }
+
+    /// The language a LINE user set (`language`, a BCP 47 tag), read from
+    /// their profile; `None` when LINE reports none or the read fails.
+    fn line_user_language(&self, token: &str, user: &str) -> Option<String> {
+        let response = self
+            .client
+            .get(format!(
+                "{}{user}",
+                self.transports.endpoints().line(LINE_PROFILE)
+            ))
+            .bearer_auth(token)
+            .timeout(LINE_USAGE_TIMEOUT)
+            .send()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let mut body = Vec::new();
+        response.take(MAX_REPLY_BYTES).read_to_end(&mut body).ok()?;
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()?
+            .get("language")?
+            .as_str()
+            .map(str::to_owned)
     }
 
     /// One LINE send call, mapped the way Slack's is: a refused connection
@@ -553,15 +657,12 @@ impl<'a> ServedChannelSink<'a> {
     }
 }
 
-/// A send's text cut to LINE's text-message limit, whole characters only.
-fn line_text(text: &str) -> String {
-    let mut units = 0;
-    text.chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= LINE_MAX_TEXT_UNITS
-        })
-        .collect()
+/// Whether the owner set this send's space to post as him (OF-414).
+fn posts_as_owner(request: &OutboundExecutionRequest<'_>) -> bool {
+    request
+        .space_posting
+        .as_ref()
+        .is_some_and(FrozenSpacePosting::policy_risk)
 }
 
 /// The thread a reply to an archived Slack message posts in: the message's
@@ -590,69 +691,6 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// Where a LINE push goes: the target's user (`line:user:<id>`), group
-/// (`line:group:<id>`), room (`line:room:<id>`) or bare LINE id. `None` for
-/// a target LINE cannot address. A push never takes its chat from an
-/// answered event: that event answers only the audience that is the target
-/// (FIX 10809), and a fresh reply token already answers in its chat.
-fn line_destination(target: &str) -> Option<String> {
-    let to = [
-        LINE_USER_TARGET_PREFIX,
-        LINE_GROUP_TARGET_PREFIX,
-        LINE_ROOM_TARGET_PREFIX,
-    ]
-    .iter()
-    .find_map(|prefix| target.strip_prefix(prefix))
-    .unwrap_or(target);
-    (!to.is_empty() && !to.contains(':')).then(|| to.to_owned())
-}
-
-/// The audience of an archived LINE event, normalized and spelled by
-/// [`line_source_audience_key`] as intake spelled the reply target: the
-/// group or room it was written in, else its sender.
-fn line_archived_audience(answered: &serde_json::Value) -> Option<String> {
-    let source = answered.pointer("/event/source")?;
-    let chat = source
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .and_then(LineChatKind::parse)
-        .and_then(|kind| Some(LineChat::new(kind, source.get(kind.id_field())?.as_str()?)));
-    let user = source.get("userId").and_then(serde_json::Value::as_str);
-    line_source_audience_key(chat.as_ref(), user)
-}
-
-/// The reply token an archived LINE event carries, while the event is
-/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
-fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {
-    let token = value.pointer("/event/replyToken")?.as_str()?.trim();
-    let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;
-    (!token.is_empty() && now.saturating_sub(at) < LINE_REPLY_TOKEN_FRESH_SECS)
-        .then(|| token.to_owned())
-}
-
-/// LINE's retry key for one logical send: a UUID derived from its stable
-/// idempotency key, so a retried push carries the same key and LINE sends
-/// it once.
-fn line_retry_key(idempotency_key: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.line-retry-key.v1\0");
-    hasher.update(idempotency_key.as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    // An RFC 4122 version-4 shape: LINE takes any UUID in hex form.
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    )
-}
-
 impl OutboundExecutionSink for ServedChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         match (
@@ -663,6 +701,8 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "send") => self.line_send(request, LineMode::ReplyOrPush),
             (LINE_CHANNEL, "reply") => self.line_send(request, LineMode::Reply),
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
+            (telegram::TELEGRAM_CHANNEL, "send") => self.telegram_send(request),
+            (EMAIL_CHANNEL, "send") => self.email_send(request),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }

@@ -20,6 +20,7 @@ use crate::attempt_queue::{
 use crate::booking::invite_grant::NoConfirmInviteSink;
 use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
 use crate::dreamer_runner::DreamerRunnerStore;
+use crate::outbound::OutboundExecutionSink;
 use crate::{EntityId, Vault};
 
 /// Validates, encodes, and enqueues one booking verb.
@@ -223,7 +224,7 @@ where
             )
         })
         .map_err(|error| engine_failure("lifecycle attempt claim", error))?;
-    run_claimed(vault, make_oracle, claimed, input)
+    run_claimed::<F, O, NoConfirmInviteSink>(vault, make_oracle, claimed, input, None)
 }
 
 /// Claims and executes exactly the attempt `id` on the home node.
@@ -250,6 +251,46 @@ pub fn run_booking_lifecycle_attempt<F, O>(
 where
     F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
     O: SlotOracle,
+{
+    run_attempt::<F, O, NoConfirmInviteSink>(vault, id, make_oracle, input, None)
+}
+
+/// [`run_booking_lifecycle_attempt`], carrying each committed revision's
+/// invite on `invite_sink` (FIX 7850): a confirm's first `REQUEST`, a move's
+/// revised one and a cancel's `CANCEL`, sent as the page's verified live
+/// publisher through the page's standing invite grant, the gate and the
+/// intent ledger. A page with no live publisher sends nothing, and a send
+/// that fails never fails the committed revision.
+///
+/// # Errors
+///
+/// As [`run_booking_lifecycle_attempt`].
+pub fn run_booking_lifecycle_attempt_with_invites<F, O, S>(
+    vault: &Vault,
+    id: AttemptId,
+    make_oracle: F,
+    input: &BookingLifecycleConsumerInput,
+    invite_sink: &mut S,
+) -> Result<BookingLifecycleTurn, BookingError>
+where
+    F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
+    O: SlotOracle,
+    S: OutboundExecutionSink,
+{
+    run_attempt(vault, id, make_oracle, input, Some(invite_sink))
+}
+
+fn run_attempt<F, O, S>(
+    vault: &Vault,
+    id: AttemptId,
+    make_oracle: F,
+    input: &BookingLifecycleConsumerInput,
+    invite_sink: Option<&mut S>,
+) -> Result<BookingLifecycleTurn, BookingError>
+where
+    F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
+    O: SlotOracle,
+    S: OutboundExecutionSink,
 {
     if let Some(refusal) = home_node_refusal(vault, input)? {
         return Ok(refusal);
@@ -279,7 +320,7 @@ where
             )
         })
         .map_err(|error| engine_failure("lifecycle attempt claim", error))?;
-    run_claimed(vault, make_oracle, claimed, input)
+    run_claimed(vault, make_oracle, claimed, input, invite_sink)
 }
 
 /// Cross-node serialization, read before anything is claimed: a node that is
@@ -304,34 +345,38 @@ fn home_node_refusal(
 }
 
 /// Runs one claimed attempt to a receipt and finalizes its row.
-fn run_claimed<F, O>(
+fn run_claimed<F, O, S>(
     vault: &Vault,
     make_oracle: F,
     claimed: ClaimOutcome,
     input: &BookingLifecycleConsumerInput,
+    invite_sink: Option<&mut S>,
 ) -> Result<BookingLifecycleTurn, BookingError>
 where
     F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
     O: SlotOracle,
+    S: OutboundExecutionSink,
 {
     let ClaimOutcome::Claimed(record) = claimed else {
         return Ok(BookingLifecycleTurn::Empty);
     };
-    let outcome = execute_claimed_attempt(vault, make_oracle, &record, input.now_utc);
+    let outcome = execute_claimed_attempt(vault, make_oracle, &record, input.now_utc, invite_sink);
     finalize_attempt(vault, &record, &outcome, input)?;
     outcome.map(BookingLifecycleTurn::Executed)
 }
 
 /// Decodes one claimed row and runs it, with the oracle built from its request.
-fn execute_claimed_attempt<F, O>(
+fn execute_claimed_attempt<F, O, S>(
     vault: &Vault,
     make_oracle: F,
     record: &AttemptRecord,
     now_utc: u64,
+    invite_sink: Option<&mut S>,
 ) -> Result<BookingVerbReceipt, BookingError>
 where
     F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
     O: SlotOracle,
+    S: OutboundExecutionSink,
 {
     let attempt: BookingLifecycleAttempt = decode_row(&record.payload)?;
     let request = oracle_request(vault, &attempt.request)?;
@@ -347,12 +392,17 @@ where
         Some(oracle) => oracle,
         None => &UnresolvedPageOracle,
     };
-    // No invite dispatch context: the consumer seam that owns the
-    // server-authenticated actor and the real connector sink supplies both
-    // trailing arguments, and a turn without them confirms exactly as before.
-    execute_booking_lifecycle_attempt::<NoConfirmInviteSink>(
-        vault, oracle, &attempt, now_utc, None, None,
-    )
+    // Invites go out as the page's verified live publisher, the principal
+    // its standing grant is bound to, and only on a sink the consumer seam
+    // supplied; a turn without one commits exactly as before.
+    let invite_actor = match (&invite_sink, request.page_ref) {
+        (Some(_), Some(page_ref)) => {
+            crate::booking::publication::live_booking_page_publisher(vault, page_ref, now_utc)
+                .map_err(|error| engine_failure("booking page publisher read", error))?
+        }
+        _ => None,
+    };
+    execute_booking_lifecycle_attempt(vault, oracle, &attempt, now_utc, invite_actor, invite_sink)
 }
 
 /// Completes or fails the attempt row, whatever the transition returned.

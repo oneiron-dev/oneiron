@@ -20,7 +20,9 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
-use crate::secret_custody::read_secret_custody_admission_in_txn;
+use crate::secret_custody::{
+    SecretCustodyStatus, read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn,
+};
 use crate::secret_lease::{SecretGrantCaller, SecretGrantRef, SecretGrantTarget};
 use crate::vault::Vault;
 
@@ -72,13 +74,20 @@ impl Vault {
     /// its record with the grant as `caller` presents it, what came back is
     /// cleared of the value, and one Gate record of `operation` is written.
     /// A grant `caller` does not hold reads as unknown and writes no record.
+    /// A secret the caller's own run found is admitted through its seat's
+    /// binding instead, under the grant effector's door policy (FIX 8334),
+    /// exactly as [`Self::use_secret_with`] admits it.
     ///
     /// # Errors
     /// [`SecretError::SecretLeaseNotFound`] for a grant `caller` does not
-    /// hold. Then, each with its refused Gate record, the redemption's
-    /// refusals ([`Vault::check_secret_grant`]), and for a table operation
-    /// its redemption's at the send: [`SecretError::SecretGrantStale`] once
-    /// the record rotated after the check, nothing sent.
+    /// hold. For a secret the caller's own run found, as
+    /// [`Self::use_secret_with`]: [`SecretError::SecretCustodyNotActive`]
+    /// for a record no longer live or active, then the seat door's own
+    /// refusals. Otherwise, each with its refused Gate record, the
+    /// redemption's refusals ([`Vault::check_secret_grant`]), and for a
+    /// table operation its redemption's at the send:
+    /// [`SecretError::SecretGrantStale`] once the record rotated after the
+    /// check, nothing sent.
     pub(crate) fn use_secret_grant_with(
         &self,
         caller: &SecretGrantCaller,
@@ -89,7 +98,7 @@ impl Vault {
     ) -> Result<SecretUseOutcome> {
         let presented = SecretGrantRef::new(*grant, caller.holder());
         let held = self.secret_grant(caller, grant)?;
-        let (handle, rec) = {
+        let (handle, rec, live) = {
             let txn = self.store.env.read_txn()?;
             let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                 &self.store,
@@ -98,15 +107,28 @@ impl Vault {
             )?
             .map(|(short, _)| short);
             let rec = read_secret_custody_admission_in_txn(&self.store, &txn, &held.custody)?;
-            (handle, rec)
+            let live = match &rec {
+                Some(rec) => {
+                    resolve_secret_ref_in_txn(&self.store, &txn, &rec.name)? == Some(held.custody)
+                }
+                None => false,
+            };
+            (handle, rec, live)
         };
         let (Some(handle), Some(rec)) = (handle, rec) else {
             return Err(Error::Secret(SecretError::SecretRefNotFound {
                 name: held.custody.to_hex(),
             }));
         };
+        // The run the caller acts in, when its host attached one: the run a
+        // run-bound record's name holds (FIX 8028).
+        let run = caller
+            .holder()
+            .run()
+            .and_then(|run| EntityId::from_bytes(*run.as_bytes()).ok());
+        let user = SecretUser::new(caller.actor(), caller.actor_class()).in_run(run);
         let used = Used {
-            user: SecretUser::new(caller.actor(), caller.actor_class()),
+            user,
             handle,
             secret: held.custody,
             generation: held.generation,
@@ -115,7 +137,18 @@ impl Vault {
             grant: Some(held.grant_id),
             first_intent: None,
         };
-        let admitted = self.check_secret_grant(&presented, target).map(drop);
+        let admitted = if let Some(holder) = user.run_holder(&rec.name) {
+            if !live || rec.status != SecretCustodyStatus::Active {
+                Err(super::not_active(&used.handle))
+            } else {
+                // A secret the caller's own run found goes through its
+                // seat's binding, under the grant effector's door policy
+                // (FIX 8334).
+                self.check_run_secret_at_door(&holder, &rec.name, &held.effector)
+            }
+        } else {
+            self.check_secret_grant(&presented, target).map(drop)
+        };
         let granted =
             matches!(target, SecretGrantTarget::Operation { .. }).then_some((presented, target));
         self.use_admitted(&used, &rec.name, admitted, granted, &mut |target| {

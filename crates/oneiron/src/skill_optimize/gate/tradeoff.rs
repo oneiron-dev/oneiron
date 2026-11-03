@@ -206,6 +206,11 @@ pub struct SkillTradeoffAsk {
     /// The highest rung of `question.roles` the ask has reached. Every role
     /// at or below it may answer.
     pub rung: u32,
+    /// The pin (BLAKE3, lower hex) of the judge rubric in force when `jev`
+    /// was asked; `None` while none was. A kept `jev` answers the same
+    /// question again only under this rubric: after a rubric edit Jev is
+    /// asked again (FIX 12083).
+    pub judge_rubric_digest: Option<String>,
 }
 
 impl SkillTradeoffAsk {

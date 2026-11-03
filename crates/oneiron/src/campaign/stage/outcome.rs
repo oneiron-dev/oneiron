@@ -29,7 +29,8 @@ pub enum NoShowRecoveryStep {
     Snooze,
 }
 
-/// The recovery plan a `no_show` outcome produces. It never writes `call_held`.
+/// The recovery plan a `no_show` or `cancelled_pre_start` outcome produces.
+/// It never writes `call_held`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoShowRecoveryPlan {
     /// The EVENT that did not happen.
@@ -52,8 +53,10 @@ pub struct NoShowRecoveryPlan {
 /// elapsed clock might suggest. Only `Some(EventOutcome::Held)` can advance, and
 /// only with the live outcome claim itself as evidence.
 ///
-/// `no_show` returns the ratified recovery plan and never writes a held stage.
-/// `cancelled_pre_start`, an explicit `unknown`, and silence all return
+/// `no_show` and `cancelled_pre_start` return the ratified recovery plan
+/// (same-day reschedule, then the bump, then snooze) and never write a held
+/// stage: a meeting called off before it began routes to the same recovery
+/// without waiting for a no-show. An explicit `unknown` and silence return
 /// [`StageProjectResult::NoChange`].
 ///
 /// The outcome VALUE and the outcome CLAIM the stage cites are bound to each
@@ -90,14 +93,14 @@ pub fn apply_event_outcome(
             },
             mode,
         ),
-        EventOutcome::NoShow => Ok(StageProjectResult::Routed(StageRoute::Reengage(
-            NoShowRecoveryPlan {
+        EventOutcome::NoShow | EventOutcome::CancelledPreStart => Ok(StageProjectResult::Routed(
+            StageRoute::Reengage(NoShowRecoveryPlan {
                 event_ref: *event_ref,
                 outcome_claim_ref,
                 steps: recovery_steps(&definition.no_show_recovery),
-            },
-        ))),
-        EventOutcome::CancelledPreStart | EventOutcome::Unknown => Ok(StageProjectResult::NoChange),
+            }),
+        )),
+        EventOutcome::Unknown => Ok(StageProjectResult::NoChange),
     }
 }
 

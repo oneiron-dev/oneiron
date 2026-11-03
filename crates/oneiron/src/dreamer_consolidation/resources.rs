@@ -11,9 +11,11 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod nightly_link_grant;
 mod parts;
 mod pins;
 mod prior;
+pub(super) use nightly_link_grant::require_nightly_link_write;
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
 pub(super) mod signals;
@@ -469,7 +471,9 @@ impl<'a> BranchResources<'a> {
             let facts = candidate_facts(&candidate.candidate)?;
             if facts.world != scope.world
                 || facts.facet != scope.facet
-                || scope.relationship.is_some_and(|rel| facts.rel != Some(rel))
+                || scope.relationship.as_ref().is_some_and(|bound| {
+                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+                })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()
                 || candidate.claim_id
@@ -480,7 +484,7 @@ impl<'a> BranchResources<'a> {
                         &facts.value,
                         facts.world,
                         facts.facet,
-                        facts.rel,
+                        facts.rel.as_ref(),
                         facts.project,
                         facts.topic.as_deref(),
                     )?

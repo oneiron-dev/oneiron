@@ -19,7 +19,8 @@
 //! roots alone (`pad_scope`, FIX 6706); that is off for now. A world
 //! compartment holds one pad, and the control compartment commits to each
 //! compartment's whole wire, so a restore that does not open one carries it
-//! on as it is (`carried_pads`, PAD-3, FIX 11133).
+//! on as it is (`carried_pads`, PAD-3, FIX 11133). The host-readable
+//! compartments carry every holder debt too (`holder_debts`, FIX 11206).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,11 +36,13 @@ use crate::error::{Error, Result};
 
 use super::body_history::HistoryRows;
 use super::erase_evidence::{CredentialFenceFact, FenceFact, fold_fact};
+use super::holders::HolderDebt;
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::log::{AEAD, CRYPTO_EPOCH, Control, CustodyPosition, open_sym, seal_refused, seal_sym};
 use super::recipients::RecipientRetirement;
 
 mod carried_pads;
+mod holder_debts;
 mod pad_scope;
 mod scope;
 mod wire;
@@ -99,6 +102,9 @@ pub(crate) struct OpenedHead {
     /// Each erased credential's fact at the head's position (FIX 10584 item
     /// 3), from the host-readable compartments the opener opened.
     pub(super) evidence: BTreeMap<EntityId, FenceFact>,
+    /// Each holder debt standing at the head's position (FIX 11206), from
+    /// the host-readable compartments the opener opened.
+    pub(super) holders: BTreeSet<HolderDebt>,
     /// The world pad compartments the opener did not open, the head's own
     /// and those it carried, each at its origin coordinates (PAD-3).
     pub(super) carried: Vec<CarriedWorldPad>,
@@ -224,10 +230,11 @@ fn seal_compartment(
 
 /// Seals a head at `position` holding `entries`, the retirement facts
 /// `retired`, the released escrow recipients `released` retired, the body
-/// history `history`, the erased credentials' facts `evidence` and each of
-/// the `carried` world compartments `recipients` admit (PAD-3), wrapped to
-/// `recipients`. The bytes are key-bearing: they go only to a custody
-/// target, never to a log, error or receipt.
+/// history `history`, the erased credentials' facts `evidence`, the holder
+/// debts `holders` (FIX 11206) and each of the `carried` world compartments
+/// `recipients` admit (PAD-3), wrapped to `recipients`. The bytes are
+/// key-bearing: they go only to a custody target, never to a log, error or
+/// receipt.
 #[allow(
     clippy::too_many_arguments,
     reason = "one head's whole content, each part its own kind"
@@ -240,6 +247,7 @@ pub(super) fn seal_head(
     released: Vec<RecipientRetirement>,
     history: &HistoryRows,
     evidence: &BTreeMap<EntityId, FenceFact>,
+    holders: &BTreeSet<HolderDebt>,
     carried: &[CarriedWorldPad],
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
@@ -287,6 +295,9 @@ pub(super) fn seal_head(
                 fact: fact.code(),
             });
     }
+    // Every holder debt rides the host-readable compartments: a key's ref
+    // and its holder, never a key (FIX 11206).
+    holder_debts::push_debts(&mut bodies, holders);
     // The released escrow recipients are paged with them, public facts only
     // (FIX 5800), so the control compartment stays one size.
     for retirement in released {
@@ -315,6 +326,7 @@ pub(super) fn seal_head(
         recipients: Vec::new(),
         history: Vec::new(),
         evidence: Vec::new(),
+        holders: Vec::new(),
     };
     compartments.insert(
         0,
@@ -429,6 +441,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     if !control.history.is_empty()
         || !control.evidence.is_empty()
         || !control.recipients.is_empty()
+        || !control.holders.is_empty()
         || !carried_pads::committed(rest, &carried, &root)?
     {
         return Err(head_corrupt());
@@ -443,6 +456,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         recipients: Vec::new(),
         history: BTreeMap::new(),
         evidence: BTreeMap::new(),
+        holders: BTreeSet::new(),
         carried: Vec::new(),
     };
     // A scope's compartments follow one another, scopes in order: one
@@ -469,12 +483,14 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         if body.root.is_some()
             || ((!body.history.is_empty()
                 || !body.evidence.is_empty()
-                || !body.recipients.is_empty())
+                || !body.recipients.is_empty()
+                || !body.holders.is_empty())
                 && scope != CompartmentScope::HostReadable)
         {
             return Err(head_corrupt());
         }
         opened.recipients.append(&mut body.recipients);
+        holder_debts::open_debts(&body.holders, &mut opened.holders)?;
         carried_pads::check_pad(compartment.pad.as_ref(), &body)?;
         for wire in &body.evidence {
             let fact = CredentialFenceFact {

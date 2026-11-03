@@ -176,7 +176,7 @@ impl<'v> ScopedRead<'v> {
         }
         if !self.relationship_axes_allowed_in(
             txn,
-            claim.relationship,
+            claim.relationship.clone(),
             claim.private,
             &position.scope,
         )? {
@@ -219,7 +219,7 @@ impl<'v> ScopedRead<'v> {
 }
 
 /// The live rows a kept position's admission stood on: its worlds, facet and
-/// project, the claim's relationship and its principal.
+/// project, the claim's relationships and its principal.
 fn position_rows(position: &GateReadPosition) -> Vec<EntityId> {
     let scope = &position.scope;
     let mut rows: Vec<EntityId> = [&scope.worlds, &scope.facets, &scope.audience]
@@ -230,7 +230,7 @@ fn position_rows(position: &GateReadPosition) -> Vec<EntityId> {
         })
         .collect();
     if let Some(claim) = &position.claim {
-        rows.extend(claim.relationship);
+        rows.extend(claim.relationship.iter().flatten().copied());
         rows.extend(claim.principal);
     }
     rows

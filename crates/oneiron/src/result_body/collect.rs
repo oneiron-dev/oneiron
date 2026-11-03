@@ -26,7 +26,8 @@ pub struct ResultBodyCollectReport {
     /// publisher named again before their file went: off the queue, left
     /// as they are.
     pub held: usize,
-    /// Released bodies a reader still pinned: left for a later pass.
+    /// Released bodies, and orphan files (FIX 11137), a reader still
+    /// pinned: left for a later pass.
     pub pinned: usize,
     /// Orphan body files (and line indexes whose body is gone) removed.
     pub orphans: usize,
@@ -61,7 +62,10 @@ impl Vault {
     pub fn collect_result_bodies(&self, limit: usize) -> Result<ResultBodyCollectReport> {
         let mut report = self.collect_released_result_bodies(limit)?;
         if limit > 0 {
-            report.orphans = self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
+            let (orphans, pinned) =
+                self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
+            report.orphans = orphans;
+            report.pinned += pinned;
         }
         // Unnamed debris and expired history go by the one retention policy
         // (FIX 6022, 6228), warning-only.
@@ -199,12 +203,14 @@ impl Vault {
     /// Removes up to `limit` body files in `dir` that no raw-output row or
     /// descriptor names, each with its line index, and line indexes whose
     /// body is gone: what a writer left before its row committed, or the
-    /// collector left to a reader. Returns how many went.
-    fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<usize> {
+    /// collector left to a reader. Returns how many went, and how many a
+    /// reader's pin kept (FIX 11137).
+    fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<(usize, usize)> {
         let now = SystemTime::now();
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let mut entries = body_entries(dir)?;
         let mut removed = 0;
+        let mut pinned = 0;
         while removed < limit {
             let batch = entries
                 .by_ref()
@@ -220,26 +226,34 @@ impl Vault {
             // Each goes in a fresh writer that finds it unnamed again, so no
             // row naming it commits between that check and the unlink (FIX
             // 5399b).
-            let went = self.with_write_txn_grouped(|txn| {
-                let mut went = 0;
+            let (went, kept) = self.with_write_txn_grouped(|txn| {
+                let (mut went, mut kept) = (0, 0);
                 for entry in &unnamed {
                     if removed + went == limit {
                         break;
                     }
-                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
-                        && remove_unnamed(dir, entry, now, &self.result_body_pins)?
-                    {
+                    if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
+                        continue;
+                    }
+                    if remove_unnamed(dir, entry, now, &self.result_body_pins)? {
                         went += 1;
+                    } else if self
+                        .result_body_pins
+                        .unless_pinned(&entry.digest, || ())
+                        .is_none()
+                    {
+                        kept += 1;
                     }
                 }
-                Ok(went)
+                Ok((went, kept))
             })?;
             removed += went;
+            pinned += kept;
         }
         if removed > 0 {
             sync_dir(dir)?;
         }
-        Ok(removed)
+        Ok((removed, pinned))
     }
 
     /// The entries of `batch` nothing names, read in one transaction (see

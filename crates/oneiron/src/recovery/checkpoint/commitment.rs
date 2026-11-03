@@ -137,11 +137,40 @@ fn slot(vault_id: [u8; 32], install: [u8; 16]) -> KeystoreSlot {
     }
 }
 
+/// Why a host with no keystore signs no checkpoint or backup, and how the
+/// owner gives it one (FIX 843).
+const NO_KEYSTORE_FOR_CHECKPOINTS: &str = "this host installed no keystore ([keystore] backend = \"off\"), so it \
+                                           holds no checkpoint signing key and takes no backup; set [keystore] \
+                                           backend = \"platform\" (on Linux, a 0600 file store outside the \
+                                           vault directory) to take backups";
+
+/// Why a host with no keystore opens no device wrap of a backup, and how the
+/// owner gives it one (FIX 12225).
+pub(super) const NO_KEYSTORE_FOR_RESTORE: &str = "this host installed no keystore ([keystore] backend = \"off\"), so it \
+                                                 holds no device keys and opens no device wrap; set [keystore] \
+                                                 backend = \"platform\" (on Linux, a 0600 file store outside the \
+                                                 vault directory) to restore with this device's key";
+
+/// The refusal a host with no keystore answers a device unlock of a backup
+/// with (FIX 12225).
+pub(super) fn no_keystore_for_restore() -> Error {
+    Error::Secret(crate::error::SecretError::KeystoreUnavailable(
+        NO_KEYSTORE_FOR_RESTORE,
+    ))
+}
+
 impl Vault {
     /// This install's checkpoint signing keys for this vault, the seed made in
-    /// its keystore slot on first use.
+    /// its keystore slot on first use. With `[keystore] backend = "off"` the
+    /// install holds no device keys, so it signs no checkpoint or backup; the
+    /// refusal names the platform backend, the explicit host-held home (FIX
+    /// 843, Engine 21:35).
     pub(super) fn checkpoint_signing_keys(&self) -> Result<SigningKeys> {
-        let keystore = self.device_keystore()?;
+        let keystore = self.device_keystore().map_err(|_| {
+            Error::Secret(crate::error::SecretError::KeystoreUnavailable(
+                NO_KEYSTORE_FOR_CHECKPOINTS,
+            ))
+        })?;
         let install = *self.prepare_install_signing()?.as_bytes();
         let seed = slot_seed(
             keystore.as_ref(),
