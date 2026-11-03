@@ -106,6 +106,7 @@ impl EngineNativeExecutor<'_> {
         bridge_start: usize,
         bridge_calls: Vec<CodeRunBridgeCall>,
         captured: Vec<CodeRunRawOutput>,
+        bound: Vec<CodeRunResultBinding>,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -126,6 +127,23 @@ impl EngineNativeExecutor<'_> {
             completed_steps,
             bridge_start,
         );
+        // The names the failed step bound join the record with their
+        // bodies, as on the success path (FIX 833), and are hashed into
+        // its checkpoint below.
+        let bindings: Vec<_> = bound
+            .iter()
+            .map(|binding| (binding.name.clone(), binding.handle.clone()))
+            .collect();
+        for binding in bound {
+            match record
+                .bindings
+                .iter_mut()
+                .find(|held| held.name == binding.name)
+            {
+                Some(held) => *held = binding,
+                None => record.bindings.push(binding),
+            }
+        }
         record_text_output(
             &self.storage,
             record,
@@ -136,6 +154,8 @@ impl EngineNativeExecutor<'_> {
         if let Some(status) = &terminal_status {
             record_terminal_output(&self.storage, record, completed_steps, status)?;
         }
+        let mut digests = StepResultDigests::of(&observation, false);
+        digests.bindings = bindings;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -148,7 +168,7 @@ impl EngineNativeExecutor<'_> {
                     .transpiled()
                     .map(TranspiledSource::identity)
                     .as_ref(),
-                &StepResultDigests::of(&observation, false),
+                &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
             )?,
