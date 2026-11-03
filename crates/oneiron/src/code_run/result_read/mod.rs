@@ -749,17 +749,66 @@ enum Seek {
 /// each whole-body 64 KiB block inside it, with the newlines before that
 /// start inside the window. Sorted by offset; a short tail has no later
 /// entries. A missing, short, corrupt, single-block or tight-bound shape is
-/// `None`, and the lookup scans (FIX 1186a).
+/// `None`, and the lookup scans (FIX 1186a). A ranged index sought from
+/// inside its prefix stays pending: `blocks` empty until the seek builds
+/// them once at the boundary, or freezes them empty on a failed build.
 struct WindowIndex {
     blocks: Vec<LinePos>,
+    pending: Option<PendingIndex>,
 }
 
-/// The window's line index from the whole body's, in the window's own
-/// offsets. A whole window maps its entries directly with no read; a range
-/// re-bases the blocks at and past its start, counting the prefix to the
-/// next block boundary through `scan` (at most one block, charged). Any
-/// missing, short, corrupt or tight-bound shape is `None`: the lookup scans.
-fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowIndex>> {
+/// A ranged line index deferred to the seek (B2): pure window metadata —
+/// the whole-body table, the window's base and end, its first block
+/// number and its prefix length. No prefix bytes are read for setup; the
+/// seek builds once at the boundary from its own scan.
+struct PendingIndex {
+    abs: Vec<u64>,
+    base: u64,
+    end: u64,
+    k_block: usize,
+    prefix_len: u64,
+}
+
+/// The bytes of the window's line-index prefix `[base, next_block)`
+/// (B1/B2): the same no-read shape checks as the index plan, with no
+/// `Scan` and no read. `Some(0)` for an aligned window; `None` for a
+/// missing or empty index, a zero length, an unrepresentable `k`, a `k`
+/// past the table, or a prefix past the window.
+fn index_prefix_len(body: &dyn ResultBody) -> Option<u64> {
+    let abs = body.line_index()?;
+    if abs.is_empty() {
+        return None;
+    }
+    let len = body.len();
+    if len == 0 {
+        return None;
+    }
+    let base = body.base();
+    if base == 0 {
+        return Some(0);
+    }
+    let block_bytes = LINE_INDEX_BLOCK_BYTES;
+    let k = base.div_ceil(block_bytes);
+    let next = k.checked_mul(block_bytes)?;
+    let prefix_len = next.checked_sub(base)?;
+    if k >= abs.len() as u64 || prefix_len >= len {
+        return None;
+    }
+    Some(prefix_len)
+}
+
+/// The window's line index for a seek from `from`, in the window's own
+/// offsets. A whole window maps its entries directly with no read. A range
+/// sought from inside its prefix defers to a pending index with no setup
+/// read; sought from at or past the prefix end it keeps the eager prefix
+/// read/rebase, except a setup no block can use is skipped. An impossible
+/// hand cursor, and any missing, short, corrupt or tight-bound shape, is
+/// `None`: the lookup scans.
+fn window_index(
+    body: &dyn ResultBody,
+    scan: &mut Scan,
+    from: LinePos,
+) -> Result<Option<WindowIndex>> {
     let Some(abs) = body.line_index() else {
         return Ok(None);
     };
@@ -774,6 +823,12 @@ fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowI
     let Some(end) = base.checked_add(len) else {
         return Ok(None);
     };
+    if from.offset == 0 && from.lfs != 0 {
+        // An inconsistent hand cursor: byte 0 holds no newlines before
+        // it. A pending build would bake the lie into every block, so the
+        // lookup pure-scans exactly as the old code.
+        return Ok(None);
+    }
     if base == 0 {
         let mut blocks = Vec::with_capacity(abs.len());
         let mut prev = 0_u64;
@@ -799,7 +854,10 @@ fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowI
         if blocks.is_empty() {
             return Ok(None);
         }
-        return Ok(Some(WindowIndex { blocks }));
+        return Ok(Some(WindowIndex {
+            blocks,
+            pending: None,
+        }));
     }
     let block_bytes = LINE_INDEX_BLOCK_BYTES;
     let k = base.div_ceil(block_bytes);
@@ -813,6 +871,40 @@ fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowI
         return Ok(None);
     }
     let k_block = k as usize;
+    if from.offset < prefix_len {
+        // The seek may end inside the prefix: defer the build to the
+        // boundary, with no setup read.
+        return Ok(Some(WindowIndex {
+            blocks: Vec::new(),
+            pending: Some(PendingIndex {
+                abs,
+                base,
+                end,
+                k_block,
+                prefix_len,
+            }),
+        }));
+    }
+    // A setup no candidate can use is skipped: with no block starting
+    // strictly after `from`, no jump can satisfy `candidate.offset >
+    // at.offset`, so the index is provably useless and the pure scan is
+    // old-exact. Block offsets need no prefix read.
+    let mut after = false;
+    for i in k_block..abs.len() {
+        let Some(start) = (i as u64).checked_mul(block_bytes) else {
+            break;
+        };
+        if start >= end {
+            break;
+        }
+        if start - base > from.offset {
+            after = true;
+            break;
+        }
+    }
+    if !after {
+        return Ok(None);
+    }
     let base_lfs = if prefix_len == 0 {
         abs[k_block]
     } else {
@@ -857,15 +949,59 @@ fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowI
     if blocks.is_empty() {
         return Ok(None);
     }
-    Ok(Some(WindowIndex { blocks }))
+    Ok(Some(WindowIndex {
+        blocks,
+        pending: None,
+    }))
+}
+
+/// The pending index's blocks from the seek's own prefix count (B2): the
+/// existing re-base math over `counted` in place of a setup read. `None`
+/// on underflow, invalid count, nonmonotonicity or emptiness: the seek
+/// freezes empty blocks and continues its pure scan.
+fn build_pending(meta: &PendingIndex, counted: u64) -> Option<Vec<LinePos>> {
+    let base_lfs = meta.abs.get(meta.k_block)?.checked_sub(counted)?;
+    let mut blocks = Vec::with_capacity(meta.abs.len().saturating_sub(meta.k_block));
+    for (i, &count) in meta.abs.iter().enumerate().skip(meta.k_block) {
+        let start = (i as u64).checked_mul(LINE_INDEX_BLOCK_BYTES)?;
+        if start >= meta.end {
+            break;
+        }
+        if count < base_lfs {
+            return None;
+        }
+        if i > meta.k_block && count < meta.abs[i - 1] {
+            return None;
+        }
+        let offset = start.checked_sub(meta.base)?;
+        let lfs = count.checked_sub(base_lfs)?;
+        blocks.push(LinePos { offset, lfs });
+    }
+    (!blocks.is_empty()).then_some(blocks)
+}
+
+/// Moves `at` to the last block whose count is below `lfs` — that newline
+/// is in it — when the jump moves forward past what the scan reached.
+fn jump_to_block(blocks: &[LinePos], at: &mut LinePos, lfs: u64) {
+    let found = blocks.partition_point(|pos| pos.lfs < lfs);
+    if found > 0 {
+        let candidate = blocks[found - 1];
+        if candidate.offset > at.offset && candidate.lfs >= at.lfs {
+            *at = candidate;
+        }
+    }
 }
 
 /// Where the line after the `lfs`-th newline starts, looking forward from
 /// `from` (a line start, or a place no earlier than the line's own start).
-/// With the line index it reads only the block the line starts in.
+/// With the line index it reads only the block the line starts in. A
+/// pending index builds once at the prefix boundary from the seek's own
+/// scan: targets and limits inside the prefix return before any build
+/// with old-exact charging, and a failed build freezes empty blocks and
+/// continues the pure scan from the boundary.
 fn seek_line(
     body: &dyn ResultBody,
-    index: Option<&WindowIndex>,
+    mut index: Option<&mut WindowIndex>,
     from: LinePos,
     lfs: u64,
     scan: &mut Scan,
@@ -874,19 +1010,49 @@ fn seek_line(
         return Ok(Seek::At(from.offset));
     }
     let mut at = from;
-    if let Some(index) = index {
-        // The last block whose count is below `lfs`: that newline is in it.
-        let found = index.blocks.partition_point(|pos| pos.lfs < lfs);
-        if found > 0 {
-            let candidate = index.blocks[found - 1];
-            if candidate.offset > at.offset && candidate.lfs >= at.lfs {
-                at = candidate;
-            }
-        }
+    if let Some(built) = index.as_deref()
+        && built.pending.is_none()
+    {
+        jump_to_block(&built.blocks, &mut at, lfs);
     }
     let len = body.len();
     while at.offset < len {
-        let piece = scan.read(body, at.offset, READ_PIECE_BYTES)?;
+        let mut want = READ_PIECE_BYTES;
+        if let Some(idx) = index.as_deref_mut()
+            && let Some(prefix_len) = idx.pending.as_ref().map(|meta| meta.prefix_len)
+        {
+            if at.offset > prefix_len {
+                // Past the boundary with no tiling count: the count is not
+                // the prefix's, so the build is refused and the pure scan
+                // continues. Unreachable from the window's own pending
+                // tokens, which start below the boundary and consume at it.
+                idx.pending = None;
+            } else if at.offset == prefix_len {
+                // The FIRST boundary crossing consumes pending whether the
+                // build succeeds or falls back; it is never retried in
+                // this call, and later seeks reuse the frozen blocks. At
+                // this point `at.lfs` is exactly the eager setup's counted
+                // prefix lines for a consistent `from`.
+                match idx
+                    .pending
+                    .take()
+                    .and_then(|meta| build_pending(&meta, at.lfs))
+                {
+                    Some(built) => {
+                        idx.blocks = built;
+                        jump_to_block(&idx.blocks, &mut at, lfs);
+                    }
+                    None => idx.blocks = Vec::new(),
+                }
+            } else {
+                // Below the boundary with the build still ahead: cap the
+                // read so it cannot cross `prefix_len` before the build.
+                // Every byte still charges exactly once; only piece
+                // boundaries move.
+                want = want.min(usize::try_from(prefix_len - at.offset).unwrap_or(usize::MAX));
+            }
+        }
+        let piece = scan.read(body, at.offset, want)?;
         if piece.is_empty() {
             return Ok(Seek::Limit(at));
         }
@@ -900,7 +1066,8 @@ fn seek_line(
 }
 
 /// The newlines before `offset`, from the line index's block when there is
-/// one, else counted from the start. `None` past the scan bound.
+/// one, else counted from the start. `None` past the scan bound. An
+/// unbuilt pending index holds no blocks, so it pure-scans as `None` does.
 fn lfs_before(
     body: &dyn ResultBody,
     index: Option<&WindowIndex>,

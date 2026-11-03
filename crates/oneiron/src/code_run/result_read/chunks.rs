@@ -342,8 +342,7 @@ fn by_lines(
 ) -> Result<(Option<Value>, bool)> {
     let len = body.len();
     let base = body.base();
-    let index = window_index(body, scan)?;
-    let index = index.as_ref();
+    let mut index = window_index(body, scan, from)?;
     let mut at = from;
     loop {
         if at.offset >= len {
@@ -353,26 +352,27 @@ fn by_lines(
             return Ok((Some(json!({"offset": at.offset, "line": at.lfs})), false));
         }
         let start = at;
-        let (end, whole, cut) = match seek_line(body, index, start, start.lfs + count, scan)? {
-            Seek::At(end) => (
-                LinePos {
-                    offset: end,
-                    lfs: start.lfs + count,
-                },
-                true,
-                false,
-            ),
-            Seek::End(end) => (end, false, false),
-            Seek::Limit(reached) if page.is_empty() && reached.offset > start.offset => {
-                (reached, false, true)
-            }
-            Seek::Limit(_) => {
-                return Ok((
-                    Some(json!({"offset": start.offset, "line": start.lfs})),
+        let (end, whole, cut) =
+            match seek_line(body, index.as_mut(), start, start.lfs + count, scan)? {
+                Seek::At(end) => (
+                    LinePos {
+                        offset: end,
+                        lfs: start.lfs + count,
+                    },
                     true,
-                ));
-            }
-        };
+                    false,
+                ),
+                Seek::End(end) => (end, false, false),
+                Seek::Limit(reached) if page.is_empty() && reached.offset > start.offset => {
+                    (reached, false, true)
+                }
+                Seek::Limit(_) => {
+                    return Ok((
+                        Some(json!({"offset": start.offset, "line": start.lfs})),
+                        true,
+                    ));
+                }
+            };
         // The last line the chunk touches: the one before its end, when it
         // ends on a newline.
         let on_newline = whole
@@ -391,7 +391,7 @@ fn by_lines(
         at = end;
         if whole && overlap > 0 && end.offset < len {
             let back = end.lfs - overlap;
-            if let Seek::At(offset) = seek_line(body, index, start, back, scan)?
+            if let Seek::At(offset) = seek_line(body, index.as_mut(), start, back, scan)?
                 && offset > start.offset
             {
                 at = LinePos { offset, lfs: back };

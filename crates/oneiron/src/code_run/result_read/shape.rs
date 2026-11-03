@@ -1,8 +1,9 @@
 //! The shape a result's head shows of its format, for its card and for the
 //! way `query` reads it. It is sniffed from the first 64 KiB, extended to
 //! 1 MiB when that head is not the whole body and shows fewer than two
-//! whole nonblank lines, so the card and `query` cannot disagree; the
-//! sniff stays uncharged.
+//! whole nonblank lines or fewer than two logical table rows for some
+//! delimiter, so the card and `query` cannot disagree; the sniff stays
+//! uncharged.
 
 use super::query::{CsvOpen, split_fields_open};
 use super::{READ_PIECE_BYTES, ResultBody};
@@ -18,7 +19,8 @@ const SHAPE_KEYS: usize = 64;
 /// The shape of `body` from its initial `head`, the bytes of
 /// `body.read(0, SHAPE_HEAD_BYTES)`, extended forward to `READ_PIECE_BYTES`
 /// in total when that head is not the whole body and shows fewer than two
-/// whole nonblank lines (FIX 1187). The card and `query` share it, so they
+/// whole nonblank lines or fewer than two logical table rows for some
+/// delimiter (FIX 1187). The card and `query` share it, so they
 /// cannot disagree. Binary answers at once with no extension; a whole body
 /// or a head that already shows two lines reads nothing more. The sniff
 /// stays uncharged, and past the ceiling the existing [`shape`] fallback
@@ -36,7 +38,11 @@ pub(super) fn shape_of(body: &dyn ResultBody, mut head: Vec<u8>) -> Result<Value
         Ok(text) => text,
         Err(error) => std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or_default(),
     };
-    if first_lines(text, false).len() >= 2 {
+    if first_lines(text, false).len() >= 2
+        && [b'\t', b',']
+            .iter()
+            .all(|&d| first_table_rows(text, false, d).len() >= 2)
+    {
         return Ok(shape(&head, kind, false));
     }
     let want = READ_PIECE_BYTES.saturating_sub(head.len());
