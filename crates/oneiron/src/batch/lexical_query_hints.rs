@@ -7,7 +7,6 @@ use heed::RwTxn;
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::affect::Vad;
-use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
@@ -19,6 +18,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::claim_body::ClaimSubject;
 
 /// Which builder a raw put arrived through.
 ///
@@ -80,7 +80,9 @@ pub(super) fn validate_public_raw_put(
             // a structurally valid SOURCE-LESS expression preference passed
             // both and reached the write path, which is the forked chain
             // F90, F97 and F108 closed on every other door.
-            if crate::write_envelope::claim_predicate::is_expression_preference_predicate(&body.predicate) {
+            if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+                &body.predicate,
+            ) {
                 return Err(Error::InvalidClaimBody(
                     "expression preference lifecycle is owned by set_expression_preference",
                 ));
@@ -174,10 +176,15 @@ pub(super) fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
     }
 }
 
-pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::write_envelope::claim_body::ClaimBody) -> bool {
+pub(super) fn is_legacy_raw_claim_compatibility_body(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+) -> bool {
     // Code-revision integrity uses legacy raw CLAIM records as provenance anchors.
     body.predicate == "code.revision"
-        && matches!(body.subject, crate::write_envelope::claim_body::ClaimSubject::Entity(_))
+        && matches!(
+            body.subject,
+            crate::write_envelope::claim_body::ClaimSubject::Entity(_)
+        )
         && body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Auto
         && body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
 }
@@ -197,7 +204,9 @@ pub(super) fn is_legacy_raw_claim_compatibility_body(body: &crate::write_envelop
 /// PUBLIC builder doors, where an outside caller reaches the candidate path,
 /// and on the crate-private candidate put that the code-run traps reach.
 pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Result<()> {
-    if crate::write_envelope::claim_predicate::is_expression_preference_predicate(candidate.predicate()) {
+    if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+        candidate.predicate(),
+    ) {
         return Err(Error::InvalidClaimBody(
             "expression preference lifecycle is owned by set_expression_preference",
         ));
@@ -224,15 +233,18 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
     {
         *validation_error = Some(err);
     }
-    let normalized_hints = match crate::write_envelope::claim_body::lexical_query_hint::normalize_lexical_query_hints(hints) {
-        Ok(hints) => hints,
-        Err(err) => {
-            if validation_error.is_none() {
-                *validation_error = Some(err);
+    let normalized_hints =
+        match crate::write_envelope::claim_body::lexical_query_hint::normalize_lexical_query_hints(
+            hints,
+        ) {
+            Ok(hints) => hints,
+            Err(err) => {
+                if validation_error.is_none() {
+                    *validation_error = Some(err);
+                }
+                Vec::new()
             }
-            Vec::new()
-        }
-    };
+        };
     // A machine signature binds the parent's transcript, not a derived stale
     // hint CLAIM's. Signed machine claims still land; their hints stay empty.
     let normalized_hints = if envelope.machine_signature().is_some() {
@@ -265,7 +277,9 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
         let hint_candidate = ClaimCandidate::new(
             crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT,
             ClaimSubject::Entity(*id),
-            crate::write_envelope::claim_body::lexical_query_hint::encode_lexical_query_hint_value(id, &hint),
+            crate::write_envelope::claim_body::lexical_query_hint::encode_lexical_query_hint_value(
+                id, &hint,
+            ),
             1.0,
         )
         .with_stale(true);
@@ -304,7 +318,9 @@ pub(super) fn lexical_query_hint_claim_id(
     material.extend_from_slice(hint.as_bytes());
 
     let mut bytes = xxh3_128(&material).to_le_bytes();
-    bytes[..2].copy_from_slice(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX);
+    bytes[..2].copy_from_slice(
+        &crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX,
+    );
     bytes[ENTITY_ID_LEN - 1] &= 0x7F;
     EntityId::from_bytes(bytes)
         .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
@@ -318,18 +334,23 @@ pub(super) fn lexical_query_hint_for_replayed_put(
 ) -> Result<Option<(EntityId, String)>> {
     if !replicated
         || entity_type != crate::registry::ENTITY_TYPE_CLAIM
-        || !id
-            .as_bytes()
-            .starts_with(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX)
+        || !id.as_bytes().starts_with(
+            &crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX,
+        )
     {
         return Ok(None);
     }
     let body = crate::write_envelope::claim_body::decode_claim_body(data, true)?;
-    if body.predicate != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT {
+    if body.predicate
+        != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+    {
         return Ok(None);
     }
     crate::write_envelope::claim_body::lexical_query_hint::lexical_query_hint_target(&body)?;
-    let hint = crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(&body.value)?;
+    let hint =
+        crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(
+            &body.value,
+        )?;
     Ok(Some((hint.target, hint.query)))
 }
 
@@ -341,7 +362,8 @@ pub(super) fn lexical_query_hint_target_is_ready(
     let Some(body) = stored_claim_body(store, wtxn, target)? else {
         return Ok(false);
     };
-    Ok(body.predicate != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+    Ok(body.predicate
+        != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
         && body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active)
 }
 
@@ -414,7 +436,10 @@ pub(super) fn materialize_lexical_query_hints_for_target(
         let Some(body) = stored_claim_body(store, wtxn, &hint_id)? else {
             continue;
         };
-        let hint = crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(&body.value)?;
+        let hint =
+            crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(
+                &body.value,
+            )?;
         if materialize_lexical_query_hint_text_if_target_ready(
             store,
             wtxn,
@@ -499,11 +524,15 @@ pub(super) fn lexical_query_hint_claim_ids_for_target(
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             continue;
         }
-        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
             continue;
         };
-        if body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT {
+        if body.predicate
+            == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+        {
             hint_ids.push(source);
         }
     }
@@ -554,10 +583,14 @@ pub(crate) fn legacy_lexical_query_hint_claim_ids_for_target(
         let Some(body) = stored_claim_body(store, wtxn, &candidate)? else {
             continue;
         };
-        if body.predicate != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT {
+        if body.predicate
+            != crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+        {
             continue;
         }
-        let Ok(Some(hint_target)) = crate::write_envelope::claim_body::lexical_query_hint::lexical_query_hint_target(&body) else {
+        let Ok(Some(hint_target)) =
+            crate::write_envelope::claim_body::lexical_query_hint::lexical_query_hint_target(&body)
+        else {
             continue;
         };
         if hint_target == *target {
@@ -575,7 +608,8 @@ pub(super) fn stored_entity_is_lexical_query_hint_claim(
     let Some(body) = stored_claim_body(store, wtxn, id)? else {
         return Ok(false);
     };
-    Ok(body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT)
+    Ok(body.predicate
+        == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT)
 }
 
 pub(super) fn stored_entity_is_claim_type(
@@ -606,7 +640,10 @@ pub(super) fn stored_claim_body(
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+    let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    ) else {
         return Ok(None);
     };
     Ok(Some(body))

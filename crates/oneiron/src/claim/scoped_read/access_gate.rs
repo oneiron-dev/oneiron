@@ -1,10 +1,10 @@
 //! Relationship access checks share the row read transaction with grant resolution.
-use crate::claim::ClaimRecordScope;
 use super::access_class::ClassVerdicts;
 use super::agent_grants::{AskedFilter, HeldGrants};
 use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::error::Result;
