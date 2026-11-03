@@ -396,15 +396,23 @@ impl Vault {
                     }
                 }
             }
-            row.file_hash = hash.clone();
-            row.landed_hash = hash;
+            // A file the host could not resolve whole keeps its row pending:
+            // its hash and meta stay, so the mtime shortcut re-reads it and
+            // the equal-hash return does not skip it, and a later whole read
+            // reconciles the links this scan left alone.
+            if file.links.is_some() {
+                row.file_hash = hash.clone();
+                row.landed_hash = hash;
+            }
             row.state = FolderFileState::Landed;
             if !retracted {
                 report.unchanged += 1;
             }
             return self.with_write_txn(|txn| {
-                let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-                row.meta = next_meta(row.meta, facts, at, Some(at));
+                if file.links.is_some() {
+                    let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    row.meta = next_meta(row.meta, facts, at, Some(at));
+                }
                 FILES.put(&self.store, txn, &key, &row)
             });
         }
@@ -482,15 +490,22 @@ impl Vault {
         if untouched && row.landed_hash.is_empty() {
             row.landed_hash = current_hash;
         }
-        row.file_hash = hash;
+        // As above: a file the host could not resolve whole keeps its
+        // row pending, so a later whole read reconciles the links left alone
+        // despite the mtime and equal-hash shortcuts.
+        if file.links.is_some() {
+            row.file_hash = hash;
+        }
         self.with_write_txn(|txn| {
-            let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let indexed_at = if indexed || retracted {
-                Some(at)
-            } else {
-                row.meta.and_then(|meta| meta.indexed_at)
-            };
-            row.meta = next_meta(row.meta, facts, at, indexed_at);
+            if file.links.is_some() {
+                let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                let indexed_at = if indexed || retracted {
+                    Some(at)
+                } else {
+                    row.meta.and_then(|meta| meta.indexed_at)
+                };
+                row.meta = next_meta(row.meta, facts, at, indexed_at);
+            }
             FILES.put(&self.store, txn, &key, &row)
         })
     }
