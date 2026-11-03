@@ -42,13 +42,14 @@ mod live_units;
 mod pptx;
 mod records;
 mod resources;
+mod revision_window;
 mod support;
 mod verbs;
 mod xlsx;
 
 pub(crate) use actor_erase::{
-    erase_export_actor_in_txn, erase_fork_actor_in_txn, erase_oracle_actor_in_txn,
-    erase_proposal_actor_in_txn,
+    erase_export_actor_in_txn, erase_export_author_actor_in_txn, erase_fork_actor_in_txn,
+    erase_oracle_actor_in_txn, erase_proposal_actor_in_txn,
 };
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
@@ -112,10 +113,11 @@ use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
 pub use oneiron_docedit::resource::{RESERVE_STEP, ResourcePort, ResourceRefusal, Resources};
-use records::{EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
+use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
-    ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest,
-    OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcZone, XlsxPreview,
+    ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor, OfficeBodyExportRecord,
+    OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcZone,
+    XlsxPreview,
 };
 pub use resources::{
     DocumentMemory, document_resources, document_resources_until, register_document_memory,
