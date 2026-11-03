@@ -10,7 +10,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{receive_pack_field, receive_pack_fields, receive_pack_provenance_refused};
-use crate::claim::ClaimBody;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::error::Result;
 
 /// The schema a clean or unscanned outcome is written at, as before marks.

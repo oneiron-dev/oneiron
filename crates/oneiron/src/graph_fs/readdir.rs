@@ -4,7 +4,9 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
-use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult};
+use crate::claim::{PointRead, ReadRow, ScopedRead};
+use oneiron_contracts::claim::ScopedReadReceipt;
+use crate::ports::ScopedReadResult;
 use crate::code_sandbox::SandboxLinkedImport;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

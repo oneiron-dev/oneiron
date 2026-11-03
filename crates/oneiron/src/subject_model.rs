@@ -159,7 +159,7 @@ pub const PREDICATE_ACTOR_SUBJECT_REF: &str = "actor.subject_ref";
 
 /// Records whether a PERSON is `meat` or `model`.
 /// Engine-owned individually; other `person.*` predicates remain public.
-pub const PREDICATE_PERSON_SUBSTRATE: &str = "person.substrate";
+pub use crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE;
 
 /// What a PERSON is made of (ARCH-0063 R7).
 ///

@@ -49,7 +49,7 @@ use super::{
     VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::agent_def::KnowledgeFormat;
-use crate::claim::{ClaimSubject, decode_claim_body};
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;

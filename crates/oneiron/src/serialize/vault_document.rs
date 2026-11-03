@@ -558,9 +558,9 @@ impl<'v> DocumentWriter<'v> {
                 .body
                 .to_bytes()
                 .ok()
-                .and_then(|bytes| crate::claim::decode_claim_body(&bytes, false).ok())
+                .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, false).ok())
                 .is_some_and(|claim| {
-                    matches!(claim.subject, crate::claim::ClaimSubject::Entity(id)
+                    matches!(claim.subject, crate::write_envelope::claim_body::ClaimSubject::Entity(id)
                         if self.agent_ids.contains(&id))
                 })
     }

@@ -330,7 +330,7 @@ fn torn_row_window(header: &EntityMetadataHeader, raw: &[u8]) -> String {
     if header.entity_type == ENTITY_TYPE_CLAIM
         && let Some(world) = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            .and_then(|body| crate::write_envelope::claim_body::decode_claim_body(body, true).ok())
             .and_then(|body| body.world)
     {
         window.push('@');
