@@ -245,7 +245,7 @@ impl Memory<'_> {
             self.birth_skill_in_txn(txn, id, &mut record, now)?
         };
         if let Some(files) = source {
-            let package = crate::skill_hub::package_from_source(
+            let package = crate::store::skill_package::package_from_source(
                 &record,
                 files,
                 crate::write_envelope::skill_source::SkillPackageFormat::Native,
@@ -339,7 +339,7 @@ impl Memory<'_> {
             let (author, proof) = self.birth_skill_in_txn(txn, id, &mut record, now)?;
             if let Some(package) = package {
                 let package =
-                    crate::skill_hub::package_from_source(&record, package.files, package.format)?;
+                    crate::store::skill_package::package_from_source(&record, package.files, package.format)?;
                 self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
             }
             self.vault

@@ -34,7 +34,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     if body.content_hash.map(|h| h.to_hex()).as_ref() != Some(hash) {
                         return Err(invalid("skill source hash disagrees with its native row"));
                     }
-                    crate::skill_hub::package_from_source(
+                    crate::store::skill_package::package_from_source(
                         &body,
                         tree.import_files_in(&self.files)?,
                         bundle

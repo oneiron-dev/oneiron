@@ -6,7 +6,7 @@ use super::install::PluginInstallTarget;
 use crate::entity_id::EntityId;
 use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord};
 use crate::write_envelope::skill_source::{HubRef};
-use crate::skill_hub::{HubPackage};
+use crate::store::skill_package::{HubPackage};
 use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 use serde::{Deserialize, Serialize};

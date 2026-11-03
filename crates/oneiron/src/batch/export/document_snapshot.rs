@@ -52,7 +52,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.

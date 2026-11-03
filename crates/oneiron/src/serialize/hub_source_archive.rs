@@ -6,7 +6,7 @@ use super::source_tree::HeldFiles;
 use crate::batch::export::{ArchiveFiles, ExportFileTree, ExportSourceContent, FileSpool};
 use crate::error::{Error, Result};
 use crate::write_envelope::skill_source::{SkillPackageFormat};
-use crate::skill_hub::{HubPackage, SkillCapabilitySurface};
+use crate::store::skill_package::{HubPackage, SkillCapabilitySurface};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ impl ExportHubSource {
         {
             return Ok(());
         }
-        let (_, package) = crate::skill_hub::decode_source_carrier(bytes)?
+        let (_, package) = crate::store::skill_source_carrier::decode_source_carrier(bytes)?
             .ok_or_else(|| invalid("missing source envelope"))?;
         super::source_tree::attach_source_files(&package.export_files()?, &self.source_tree, spool)
     }
@@ -106,7 +106,7 @@ impl ExportHubSource {
             },
         );
         package.format = self.format;
-        crate::skill_hub::encode_source_carrier(
+        crate::store::skill_source_carrier::encode_source_carrier(
             &crate::entity_id::EntityId::from_hex(&self.holder)?,
             &package,
         )
@@ -141,7 +141,7 @@ impl ExportHubSource {
         }
         if !self.redacted() {
             let (holder, package) =
-                crate::skill_hub::decode_source_carrier(&self.to_bytes_in(files)?)?
+                crate::store::skill_source_carrier::decode_source_carrier(&self.to_bytes_in(files)?)?
                     .ok_or_else(|| invalid("missing source envelope"))?;
             if Self::from_package(&holder, &package)? != *self {
                 return Err(invalid("noncanonical source carrier"));

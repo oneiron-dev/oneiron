@@ -14,7 +14,8 @@ use super::manifest::{
 use crate::entity_id::EntityId;
 use crate::write_envelope::skill_record::SkillRecord;
 use crate::write_envelope::skill_source::{HubPin, HubRef};
-use crate::skill_hub::{HubIndexEntry, HubPackage, RefFetch, SkillHubAdapter, pinned_tracking};
+use crate::store::skill_package::{HubIndexEntry, HubPackage};
+use crate::skill_hub::{RefFetch, SkillHubAdapter, pinned_tracking};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
