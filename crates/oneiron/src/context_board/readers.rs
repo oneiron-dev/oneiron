@@ -5,8 +5,9 @@
 //!
 //! Pinned: whether the agent reviews each read first, and the ruled readers
 //! of its sealed pads. Detail: each reader a `diary.read` Grant admits, then
-//! the newest logged reads, each with what it opened (`diary` or `pad`), and
-//! the review asks not yet spent. A reader that is a person is named by its
+//! the newest logged reads, each with what it opened (`diary` or `pad`) and,
+//! for a sealed-pad read, the ruled reader it was admitted as (`as=admin`),
+//! and the review asks not yet spent. A reader that is a person is named by its
 //! board mention, as TASKS names one. The rows read the engine's own reader
 //! list and read log ([`Memory::diary_reader_list`], [`Memory::diary_reads`]).
 
@@ -29,8 +30,17 @@ const REASON_SHOWN_BYTES: usize = 160;
 fn pad_reader_token(reader: SealedPadReader) -> &'static str {
     match reader {
         SealedPadReader::Owner => "owner",
+        SealedPadReader::Admin => "admin",
         SealedPadReader::Coach => "coach",
     }
+}
+
+/// ` as=<reader>` for a read or ask a ruled sealed-pad reader made; empty
+/// for one a `diary.read` Grant covers.
+fn ruled_reader_token(reader: Option<SealedPadReader>) -> String {
+    reader
+        .map(|reader| format!(" as={}", pad_reader_token(reader)))
+        .unwrap_or_default()
 }
 
 /// The SCRATCHPAD block's reader line: who may read the pad once sealed.
@@ -98,9 +108,10 @@ impl Memory<'_> {
             .collect();
         rows.extend(log.reads.iter().take(READS_SHOWN as usize).map(|read| {
             format!(
-                "read: {} source={} class={} at={} {}",
+                "read: {} source={}{} class={} at={} {}",
                 people.label(read.reader),
                 quoted_leaf(&read.source),
+                ruled_reader_token(read.ruled_reader),
                 read.reader_class,
                 read.at,
                 quoted_leaf(clip(&read.reason, REASON_SHOWN_BYTES))
@@ -108,10 +119,11 @@ impl Memory<'_> {
         }));
         rows.extend(log.requests.iter().take(ASKS_SHOWN as usize).map(|ask| {
             format!(
-                "ask: {} {} {} {}",
+                "ask: {} {} {}{} {}",
                 ask.request.to_hex(),
                 state_token(ask.state),
                 people.label(ask.reader),
+                ruled_reader_token(ask.ruled_reader),
                 quoted_leaf(clip(&ask.reason, REASON_SHOWN_BYTES))
             )
         }));
