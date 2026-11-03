@@ -13,11 +13,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/analyzer.rs` | src | s | 1 re-export | — | Multilingual analyzer subsystem |
 | `src/distance.rs` | src | s | 1 re-export | — | Cosine distance kernels, defined in `oneiron-retrieval` |
+| `src/edge.rs` | src | m | 4 struct · 3 enum · 13 fn · 4 const · 1 mod · 2 re-export | DecodedEdgeValue, EdgeConfirmationStatus, EdgeInfo, EdgeProvenanceFlags, EdgeValueLayout, Regeneration, StrictEdgeRecord | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
+| `src/edge/kind.rs` | src | s | 1 enum · 4 fn · 1 const | EdgeKind | The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and… |
+| `src/edge/kind_tables.rs` | src | s | 2 fn | — | Exhaustive tables over [`EdgeKind`] |
+| `src/edge/tests.rs` | test | s | — | — | — |
 | `src/entity_id.rs` | src | s | 2 re-export | — | Entity ids, world ids and the presentation-id grammar, defined in `oneiron-contracts` |
 | `src/error.rs` | src | s | 2 re-export | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
 | `src/extraction_eval.rs` | src | s | 1 re-export | — | OF-360 extraction-quality evaluation |
 | `src/fusion.rs` | src | s | 1 re-export | — | Score fusion kernels, defined in `oneiron-retrieval` |
-| `src/lib.rs` | src | s | 2 fn · 13 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
+| `src/lib.rs` | src | s | 2 fn · 14 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
 | `src/limits.rs` | src | s | 1 re-export | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/msgpack_shape.rs` | src | s | 1 struct · 1 enum · 1 fn | OverBudget, ShapeBudget | A budget check of untrusted MessagePack before it is decoded |
 | `src/panic_report.rs` | src | s | 1 fn · 1 const | — | The content-free panic report a host installs before it opens a vault |
