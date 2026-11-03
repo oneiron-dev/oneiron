@@ -51,6 +51,12 @@ pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
 /// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
 /// again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+/// The error code a retry gets when its ask was used up but no outcome was
+/// ever saved (FIX 1996): something stopped between the resumed chain's
+/// commit and the outcome's, so the engine cannot tell whether the verb
+/// ran, and never runs it again under this invocation. The caller decides
+/// from what the verb would have changed.
+pub const HOOK_OUTCOME_UNCERTAIN: &str = "HOOK_OUTCOME_UNCERTAIN";
 /// The most unsettled open rows one prune pass reads through their asks.
 /// This budget is separate from the deletion cap: a row whose ask cannot be
 /// read is kept (it is not provably dead), and must not starve deletions of
@@ -291,6 +297,18 @@ pub(super) fn retry(
     if row.state == VerbAskState::Consumed {
         return match &row.outcome {
             Some(outcome) if same => Ok(Retry::Stop(completed(call.invocation, outcome)?)),
+            // Used up, with no outcome saved (FIX 1996, Engine 2026-11-03
+            // ruling (iv)): the verb may or may not have run — its commit
+            // cannot be told from the pre chain's from this row — so the
+            // retry is told exactly that, never Skipped "already used",
+            // and the verb never runs again under this invocation.
+            None => Ok(Retry::Stop(VerbHookStop::CompletedWithError {
+                invocation: call.invocation.to_hex(),
+                code: HOOK_OUTCOME_UNCERTAIN.to_owned(),
+                message: "this invocation's ask was used but no outcome was saved; the verb                           may or may not have run, and it will not run again under this                           invocation"
+                    .to_owned(),
+                receipt_ref: None,
+            })),
             _ => skipped(USED),
         };
     }

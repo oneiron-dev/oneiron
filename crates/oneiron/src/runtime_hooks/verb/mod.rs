@@ -33,8 +33,8 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
-pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED};
 pub(super) use chain::admit_verb_outcome;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,

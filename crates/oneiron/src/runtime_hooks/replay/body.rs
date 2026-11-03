@@ -240,9 +240,15 @@ impl Replay<'_> {
                 if let Some(before) = &before {
                     crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
                 }
-                if crate::task_verb::sdk::input_schema(&saved.verb).is_some() {
-                    crate::task_verb::sdk::validate_input(&saved.verb, next)
-                        .map_err(|error| error.to_string())?;
+                if crate::task_verb::sdk::input_schema(&saved.verb).is_some()
+                    && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
+                {
+                    // A browser row's run checked its rewrites against the
+                    // browser shape, not the live-run wrapper: the saved
+                    // record does not say which ran, so the browser check
+                    // gets its say before the row's refuses.
+                    crate::task_verb::sdk::validate_browser_input(&saved.verb, next)
+                        .map_err(|_| error.to_string())?;
                 }
                 Ok(())
             };
