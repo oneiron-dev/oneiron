@@ -217,7 +217,8 @@ def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
 # or unknown exception names stay NOASSERTION rather than guessing a version.
 DEBIAN_EXCEPTION_TO_SPDX = {
     "autoconf generic exception": "Autoconf-exception-generic",
-    "bison exception": "Bison-exception-2.2",
+    "bison-exception-1.24": "Bison-exception-1.24",
+    "bison-exception-2.2": "Bison-exception-2.2",
     "classpath exception": "Classpath-exception-2.0",
     "classpath-exception-2.0": "Classpath-exception-2.0",
     "font exception": "Font-exception-2.0",
