@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimApprovalStatus;
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::dreamer_runner::{
-    DreamerConsolidationScope, DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore,
+    DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
 };
 

@@ -10,12 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::Effort;
 use crate::memory::MemoryResult;
 
-/// Call mode's deadline unless a vault sets its own. ARCH-0042
-/// #call-mode-budget holds call-mode recall at p95 ≤ 100 ms server-side at
-/// 10k records (≤ 150 ms at 100k), a starting bar the perf pass drives
-/// lower. It is the default of [`crate::VaultConfig::call_mode_deadline`],
-/// and a request's own `deadline_ms` overrides that.
-pub const DEFAULT_CALL_MODE_DEADLINE: Duration = Duration::from_millis(100);
+pub use crate::request_limits::DEFAULT_CALL_MODE_DEADLINE;
 
 /// Light recall's default deadline when the caller sets none (FIX 11572).
 pub(super) const LIGHT_RECALL_DEFAULT_DEADLINE_MS: u64 = 5_000;

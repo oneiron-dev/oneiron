@@ -28,11 +28,11 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::llm::{
-    CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
-};
 use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable, SideTableDbs};
 use crate::store::Store;
+use oneiron_model::llm::{
+    CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
+};
 
 /// The catalog row's format version.
 pub const SNAPSHOT_RECORD_SCHEMA: u32 = 1;
