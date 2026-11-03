@@ -376,10 +376,15 @@ impl Vault {
         else {
             return Ok(None);
         };
-        // Staging input is always the door-built contiguous set, one run; a
-        // joined segmented body already rides in pieces and is never staged.
-        let Some(inline) = recipients.single_run() else {
-            return Ok(None);
+        let joined: Vec<CustodyRecipientPermit>;
+        let inline: &[CustodyRecipientPermit] = match recipients.single_run() {
+            Some(run) => run,
+            // A rotate or bind that keeps a joined segmented set joins once
+            // for staging; the fold still reads the kept runs without a copy.
+            None => {
+                joined = recipients.iter().copied().collect();
+                &joined
+            }
         };
         let Some(run) = custody_permit_piece_len(self.limit_watch(), inline) else {
             return Ok(None);
