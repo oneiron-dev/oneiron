@@ -101,6 +101,11 @@ struct WorkflowSite {
 /// takes a new one).
 const RETIRED: SideTable<EntityId, RetiredWorkflow, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW_RETIRED);
+/// Whether a masked copy of a `BROWSER_WORKFLOW_RETIRED` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn browser_workflow_retired_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<RetiredWorkflow, Named>(bytes)
+}
 
 /// Whether only the caller whose run filed a program may retire it. A filed
 /// program is the vault's: any caller the library serves may run or refile
