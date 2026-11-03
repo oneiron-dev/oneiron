@@ -540,7 +540,10 @@ impl ScopedRead<'_> {
         let Some(granted) = self.actor_key.authority_scope() else {
             return Ok(false);
         };
-        if matches!(granted.worlds, oneiron_authority::federation::ScopeAxis::All) {
+        if matches!(
+            granted.worlds,
+            oneiron_authority::federation::ScopeAxis::All
+        ) {
             return Ok(false);
         }
         // A TASK and its authority facts, and an epoch SUMMARY, sit at their

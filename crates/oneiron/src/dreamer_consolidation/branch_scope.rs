@@ -4,8 +4,8 @@
 use super::partition::{ConsolidationPartitionPlan, encode_partition_payload};
 use super::support::invalid_consolidation;
 use crate::Result;
-use oneiron_model::llm::Scope;
 use crate::side_table::{self, LegacyJson, SideTable};
+use oneiron_model::llm::Scope;
 use rmpv::Value;
 
 /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry

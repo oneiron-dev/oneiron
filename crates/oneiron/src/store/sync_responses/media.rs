@@ -22,9 +22,9 @@ use serde::Serialize;
 
 use super::ResponseStamps;
 use crate::entity_id::EntityId;
+use crate::store::{ResponseCarriage, ResponseScan};
 use oneiron_model::llm::media::{MediaJobState, MediaPart, MediaRequest};
 use oneiron_model::llm::{FatalLlmError, LlmError};
-use crate::store::{ResponseCarriage, ResponseScan};
 
 const REQUEST: &str = "request";
 const ENDED: &str = "ended";

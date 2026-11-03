@@ -24,12 +24,12 @@ use crate::agent_dispatch::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
 use crate::learning::TypeRef;
-use oneiron_model::llm::ReasoningEffort;
-use crate::model_decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::model_decision::{DecisionRung, ProviderPin};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::{PatternSkillRef, SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
+use oneiron_model::llm::ReasoningEffort;
 
 pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
 

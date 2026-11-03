@@ -27,10 +27,10 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::model_step_context::DurableStepContext;
 use crate::model_step_error::DurableStepError;
-use oneiron_model::llm::LlmError;
 use crate::self_heal::{DiagnosticEvent, DiagnosticEventClass};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::LlmError;
 
 /// Each observation already counted, and the time it observed. Nightly scans
 /// capture the same content-addressed diagnostic again; it counts once.

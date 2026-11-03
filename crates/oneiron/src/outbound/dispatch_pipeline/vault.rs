@@ -19,7 +19,8 @@ impl Vault {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        let binding = crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
+        let binding =
+            crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
         let result = OutboundDispatchPipeline.dispatch_from_step(self, request, sink, binding)?;
         crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
         Ok(result)

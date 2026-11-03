@@ -53,13 +53,13 @@ fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use oneiron_model::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
 use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use crate::serialize::{SerializeConfig, serialize_pack};
+use oneiron_model::llm::BudgetLease;
 
 /// The S6 `MemoryPack` schema version.
 pub const MEMORY_PACK_VERSION: u32 = 1;
@@ -1184,4 +1184,67 @@ impl Memory<'_> {
             (None, room) => room,
         })
     }
+}
+
+use crate::memory::affect::QueryAffect;
+use crate::retrieval_depth::RecallTelemetry;
+
+/// `vault.recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
+///
+/// Every field but `query` is optional and defaults to the contract's default,
+/// so an omitting client and a spelling-everything client reach the same
+/// engine call.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecallRequest {
+    pub query: String,
+    /// One of the five effort levels, or `call`: call mode for live calls,
+    /// light effort under a hard deadline. Omitted means `medium`.
+    #[serde(default)]
+    pub effort: Option<crate::memory::RecallEffort>,
+    #[serde(default)]
+    pub scope: Option<crate::memory::RecallScope>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub format: Option<String>,
+    /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
+    /// Omitted, the window budget of `reader_agent_ref`'s memory profile,
+    /// else 4,000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
+    /// An agent definition the caller reads whose memory profile sizes the
+    /// rendering when `token_budget` is omitted. It grants no read, and one
+    /// the caller cannot read adds no budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_agent_ref: Option<String>,
+    /// Unix seconds the query's time words resolve against: `yesterday` is
+    /// the day before it. Omitted, they resolve against now.
+    #[serde(default)]
+    pub as_of: Option<u64>,
+    /// A hard deadline, in milliseconds from when the request arrives,
+    /// 1 to 60000: at it, recall answers with the best results ready, marked
+    /// `partial`. Omitted, recall runs to the end, except call mode, which
+    /// takes the vault's call-mode deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<u64>,
+    /// A media query (OF-370): bytes the host embeds into one declared space
+    /// through the `ai.embed` rung that space's id names, searched as that
+    /// space's list beside the query's. A host that serves no such rung
+    /// refuses the recall with `MODEL_UNAVAILABLE`; it never recalls without
+    /// the media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<crate::code_run::vault_read::ContextPackMediaQuery>,
+    /// The affect the query is asked in (OF-423), as the context pack takes
+    /// it: emotion congruence ranks a candidate by how near its own valence,
+    /// arousal and dominance sit. Omitted, recall ranks as before.
+    #[serde(
+        default,
+        alias = "queryAffect",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_affect: Option<QueryAffect>,
+    /// Local diagnostics only. Capture stays opt-in at vault configuration;
+    /// the request can add stage detail and the host's exact turn identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<RecallTelemetry>,
 }

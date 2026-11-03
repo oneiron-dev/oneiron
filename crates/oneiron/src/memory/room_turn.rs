@@ -106,32 +106,32 @@ impl<'v> RoomTurnHandle<'v> {
     /// [`Self::invoke`].
     pub fn recall_with_vector(
         &self,
-        input: crate::task_verb::sdk::RecallRequest,
+        input: crate::memory::RecallRequest,
         embed: impl FnOnce(&str) -> Option<Vec<f32>>,
     ) -> MemoryResult<MemoryPack> {
-        crate::task_verb::sdk::recall_with_vector(&self.memory, input, embed)
+        crate::task_verb::recall_door::recall_with_vector(&self.memory, input, embed)
     }
 
     /// [`Self::recall_with_vector`] whose deadline counts from the door's
-    /// arrival; see [`crate::task_verb::sdk::recall_at_door`].
+    /// arrival; see [`crate::task_verb::recall_door::recall_at_door`].
     pub fn recall_at_door(
         &self,
-        input: crate::task_verb::sdk::RecallRequest,
+        input: crate::memory::RecallRequest,
         embed: impl FnOnce(&str) -> Option<Vec<f32>>,
-        door: &crate::task_verb::sdk::RecallDoor<'_>,
+        door: &crate::task_verb::recall_door::RecallDoor<'_>,
     ) -> MemoryResult<MemoryPack> {
-        crate::task_verb::sdk::recall_at_door(&self.memory, input, embed, door)
+        crate::task_verb::recall_door::recall_at_door(&self.memory, input, embed, door)
     }
 
     /// [`Self::recall_at_door`] whose host may also embed the query into
-    /// declared spaces; see [`crate::task_verb::sdk::recall_at_door_seeded`].
+    /// declared spaces; see [`crate::task_verb::recall_door::recall_at_door_seeded`].
     pub fn recall_at_door_seeded(
         &self,
-        input: crate::task_verb::sdk::RecallRequest,
+        input: crate::memory::RecallRequest,
         embed: impl FnOnce(&str) -> MemoryResult<crate::retrieval_depth::RecallQueryVectors>,
-        door: &crate::task_verb::sdk::RecallDoor<'_>,
+        door: &crate::task_verb::recall_door::RecallDoor<'_>,
     ) -> MemoryResult<MemoryPack> {
-        crate::task_verb::sdk::recall_at_door_seeded(&self.memory, input, embed, door)
+        crate::task_verb::recall_door::recall_at_door_seeded(&self.memory, input, embed, door)
     }
 
     pub fn get_entity(

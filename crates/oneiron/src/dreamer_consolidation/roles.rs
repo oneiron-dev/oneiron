@@ -18,10 +18,9 @@ use super::thing_agent::ThingChildHost;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::model_binding::ModelRole;
+use crate::inference_context::{HostInferenceBinding, HostInferenceContext, admitted_as};
 use crate::llm::seat::PurposeEffort;
-use crate::inference_context::{ HostInferenceBinding, HostInferenceContext, admitted_as,
-};
+use crate::model_binding::ModelRole;
 use oneiron_model::llm::{
     ExtractionEgressPredicate, LlmBackend, LlmCapability, LlmRequest, ModelId,
     REASONING_BUDGET_PARAM, ReasoningEffort,

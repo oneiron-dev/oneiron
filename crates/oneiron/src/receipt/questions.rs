@@ -16,18 +16,22 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria, QuestionDefinitionInput,
-};
-use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
 use crate::llm::decision::TypedDecision;
+use crate::llm::decision::questions::{
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
+    QuestionDefinitionInput,
+};
+use crate::memory::{MemoryError, MemoryResult};
+use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
 use crate::model_decision::{DecisionQuestion, DecisionRung};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
+
+/// `ai.verdict`'s clock, in milliseconds, when the request names none.
+pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
 
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
 /// `ai.verdict` call's default.
-pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = crate::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
+pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = AI_VERDICT_DEADLINE_MS;
 
 /// `vault.graph.ask`'s input: one typed question over graph units, through
 /// the host's decision ladder, asked for the caller. Name the units, or a

@@ -32,14 +32,13 @@ use crate::EntityId;
 use crate::dreamer_runner::DreamerParkCause;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{ call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
-use oneiron_model::llm::LlmResponse;
 use crate::scope_summary::{
     ArcLineRef, ArcRange, ArcStepRef, MemberKind, ScopeSummaryPlan, SummaryLineSpan,
 };
+use oneiron_model::llm::LlmResponse;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A call writing a part's lines.

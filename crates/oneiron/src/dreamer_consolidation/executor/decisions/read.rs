@@ -17,17 +17,16 @@ use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::{
-    AskTo, DecisionWireLabels, GeneratedDecisions,
-    GeneratedRung, GeneratedStep, TypedDecision,
+    AskTo, DecisionWireLabels, GeneratedDecisions, GeneratedRung, GeneratedStep, TypedDecision,
 };
 use crate::model_decision::{
     DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
 };
-use oneiron_model::llm::{BudgetGuard, LlmRequest, LlmUsage};
 use crate::model_step_context::DurableStepContext;
 use crate::model_step_error::DurableStepResult;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::WriteActor;
+use oneiron_model::llm::{BudgetGuard, LlmRequest, LlmUsage};
 
 /// What a typed read decides with: the host's ladder, dial, bands and wording, the Dreamer
 /// actor it reads as, and the guard its steps spend on.

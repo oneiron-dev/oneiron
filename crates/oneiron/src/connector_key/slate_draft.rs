@@ -12,9 +12,8 @@ use super::slate::{
 };
 use super::slate_revision::SlateRevisionCause;
 use crate::error::{Error, Result};
+use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::CONNECTOR_SLATE_DRAFT;
-use crate::llm::decision::{ DecisionLadder,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };

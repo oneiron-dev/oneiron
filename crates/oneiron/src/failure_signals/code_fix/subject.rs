@@ -26,7 +26,7 @@ use crate::dreamer_runner::maintenance::code_fix::{
 use crate::failure_ladder::{BlockedReportRef, HealerCase};
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::blocked_reports::{RunWorlds, blocked_source_in};
-use crate::{ EntityId, Result, Vault};
+use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmRequest};
 
 /// One code-fix invocation's read of the real failure behind its source

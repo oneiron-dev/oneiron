@@ -30,8 +30,8 @@ use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text}
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
-use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 /// The payload key a conversation's declaration rides under.
 const CONVERSATION_DECLARATION_KEY: &str = "conversation_declaration";

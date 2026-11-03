@@ -23,10 +23,10 @@ use super::model::{EsignDocument, invalid};
 use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use oneiron_authority::federation::Scope;
 use crate::memory::Memory;
 use oneiron_contracts::memory::MemoryResult;
 use crate::{EntityId, Result, Vault};
+use oneiron_authority::federation::Scope;
 
 /// Where one e-sign call is judged.
 pub(super) enum EsignScope<'a> {

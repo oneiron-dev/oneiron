@@ -18,15 +18,8 @@ use crate::dreamer_wake::{
     WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::llm::{
-    call_as_step_checked,
-};
 use crate::inference_context::HostInferenceContext;
-use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
-    TierPrecedence,
-};
+use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::ports::EntityStoreRead;
@@ -37,6 +30,11 @@ use crate::scope_summary::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
+    TierPrecedence,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 

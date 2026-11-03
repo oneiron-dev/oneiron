@@ -8,6 +8,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod analyzer;
+pub mod config;
 pub mod distance;
 pub mod edge;
 pub mod entity_id;

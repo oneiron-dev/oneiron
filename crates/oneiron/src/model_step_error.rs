@@ -1,14 +1,13 @@
 //! Durable model-step failure and reply-check contracts.
 
-use oneiron_model::llm::{DreamerFailureDecision, FallbackError, LlmError, LlmResponse, LlmUsage};
 use crate::error::Error;
+use oneiron_model::llm::{DreamerFailureDecision, FallbackError, LlmError, LlmResponse, LlmUsage};
 
 pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 
 /// A caller's own check of a reply, run after the schema's when the request
 /// has one. The error is the reason, as a schema miss carries its errors.
-pub type ReplyCheck =
-    dyn Fn(&LlmResponse) -> std::result::Result<(), String> + Send + Sync;
+pub type ReplyCheck = dyn Fn(&LlmResponse) -> std::result::Result<(), String> + Send + Sync;
 
 /// Typed failure surface of the durable-step layer.
 #[derive(Debug, thiserror::Error)]
