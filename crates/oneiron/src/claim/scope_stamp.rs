@@ -181,23 +181,40 @@ pub(super) fn id_value(id: EntityId) -> Value {
 impl ClaimBody {
     /// The positively stamped record position used by the common Scope evaluator.
     pub fn record_scope(&self, verb_class: &str) -> Scope {
-        let sensitivity = match super::claim_sensitivity_band(self) {
-            Some(0) => SensitivityCeiling::AtMost(Sensitivity::Public),
-            Some(1) => SensitivityCeiling::AtMost(Sensitivity::Private),
-            Some(2) => SensitivityCeiling::AtMost(Sensitivity::Sensitive),
-            Some(3) => SensitivityCeiling::AtMost(Sensitivity::Restricted),
-            _ => SensitivityCeiling::Bottom,
-        };
-        Scope {
-            worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(
-                self.world.unwrap_or_else(base_world_id),
-            )])),
-            facets: ScopeAxis::Some(BTreeSet::from([ScopeId(self.scope_facet)])),
-            bands: ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_CLAIM])),
-            audience: ScopeAxis::Some(BTreeSet::from([ScopeId(self.scope_project)])),
-            verbs: ScopeAxis::Some(BTreeSet::from([verb_class.to_owned()])),
-            sensitivity,
-        }
+        record_scope_at(
+            self.world.unwrap_or_else(base_world_id),
+            self.scope_facet,
+            self.scope_project,
+            super::claim_sensitivity_band(self),
+            verb_class,
+        )
+    }
+}
+
+/// [`ClaimBody::record_scope`] from the stamps it reads: the claim's world
+/// (base reality as its id), its facet and project stamps, and its
+/// sensitivity band (`None` for an unreadable one).
+pub(crate) fn record_scope_at(
+    world: EntityId,
+    facet: EntityId,
+    project: EntityId,
+    band: Option<u8>,
+    verb_class: &str,
+) -> Scope {
+    let sensitivity = match band {
+        Some(0) => SensitivityCeiling::AtMost(Sensitivity::Public),
+        Some(1) => SensitivityCeiling::AtMost(Sensitivity::Private),
+        Some(2) => SensitivityCeiling::AtMost(Sensitivity::Sensitive),
+        Some(3) => SensitivityCeiling::AtMost(Sensitivity::Restricted),
+        _ => SensitivityCeiling::Bottom,
+    };
+    Scope {
+        worlds: ScopeAxis::Some(BTreeSet::from([ScopeId(world)])),
+        facets: ScopeAxis::Some(BTreeSet::from([ScopeId(facet)])),
+        bands: ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_CLAIM])),
+        audience: ScopeAxis::Some(BTreeSet::from([ScopeId(project)])),
+        verbs: ScopeAxis::Some(BTreeSet::from([verb_class.to_owned()])),
+        sensitivity,
     }
 }
 
