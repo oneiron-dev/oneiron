@@ -31,7 +31,7 @@ use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
@@ -124,7 +124,7 @@ pub enum SearchProbe {
         /// The declared space's id.
         space: String,
         /// The tower that encoded the query.
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         /// Query embedding, at the space's width.
         embedding: Vec<f32>,
         /// As for [`Self::Vector`].

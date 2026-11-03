@@ -23,7 +23,7 @@ use crate::agent_dispatch::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::model_decision::{DecisionRung, ProviderPin};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};

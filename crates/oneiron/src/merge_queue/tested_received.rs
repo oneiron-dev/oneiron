@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use super::{CodePushSourceLink, MergeQueue, QueueExportHold, QueueExportHoldReason};
-use crate::code_document::CodeDocumentFrontier;
+use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::code_revision::{CodePathRetirement, CodeRevision, CodeTreeInventory};
 use crate::error::Result;

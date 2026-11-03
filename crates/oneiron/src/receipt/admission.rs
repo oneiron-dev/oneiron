@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding_in_txn};
+use crate::memory::{Memory, verify_actor_binding_in_txn};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::work_line::LineObserver;
@@ -122,14 +123,14 @@ impl AdmissionTracker {
             if let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? {
                 if stored.fingerprint != fingerprint {
                     return Err(MemoryError::new(
-                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
                         "admission intent names a different call",
                         &[],
                     ));
                 }
                 if stored.active || stored.receipt.state.terminal() {
                     return Err(MemoryError::new(
-                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
                         "admission intent is already running or settled; read its status",
                         &[],
                     ));
@@ -187,7 +188,7 @@ impl AdmissionTracker {
             Ok(value) => AdmissionStatus::Completed {
                 result_digest: super::call_json_digest(value),
             },
-            Err((crate::memory::MEMORY_CODE_PENDING_ASK, reason)) => AdmissionStatus::Held {
+            Err((oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK, reason)) => AdmissionStatus::Held {
                 reason: Some(reason.to_owned()),
             },
             Err((code, reason)) => AdmissionStatus::Refused {

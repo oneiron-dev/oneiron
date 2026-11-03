@@ -1,6 +1,6 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
-use crate::agent_def::{AgentDefinition, AgentWakeCadence};
+use crate::{agent_def::AgentDefinition, store::agent_record::AgentWakeCadence};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -132,7 +132,7 @@ impl AgentWakePolicy {
         ordinal: u64,
         signals: AgentWakeSignals,
     ) -> bool {
-        if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off
+        if !definition.enabled || definition.dreaming_mode() == crate::store::agent_record::DreamingMode::Off
         {
             return false;
         }

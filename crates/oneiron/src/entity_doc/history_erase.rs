@@ -11,10 +11,7 @@ use super::{DocAuthorization, EntityDoc, PurgeReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::PendingAuthorityAct;
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
-    MemoryResult,
-};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::{EdgeActorClass, EntityId, Vault};
 

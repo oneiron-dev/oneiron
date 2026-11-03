@@ -18,7 +18,8 @@ use crate::error::{Error, RecordError, Result, StoreError};
 use crate::receipt::intent_id::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -444,7 +445,7 @@ pub(super) fn put_reference_refusal_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     facts: &ReferenceRefusalFacts,
-    reason: crate::memory::RefusalReason,
+    reason: crate::receipt::RefusalReason,
     at: u64,
 ) -> Result<()> {
     if vault.store.port_entity_record(txn, &id)?.is_some() {

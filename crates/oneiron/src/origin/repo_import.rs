@@ -21,8 +21,9 @@ use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::code_revision::{
     CodeImportAnchor, CodeImportManifest, CodeTreeInventory,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id};
-use crate::codebase::RepoRef;
+    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
+};
+use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};

@@ -9,16 +9,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchTarget, SpawnPlanReceipt,
-    decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
-};
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::agent_dispatch::AgentDispatchInput;
+use crate::agent_dispatch::AgentDispatchTarget;
+use crate::agent_dispatch::SpawnPlanReceipt;
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::agent_dispatch::load_team_type_tree_in_txn;
+use crate::agent_dispatch::team_pattern;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
 use crate::critic::review::{
     DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
 };
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;

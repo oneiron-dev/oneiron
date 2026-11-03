@@ -1,6 +1,6 @@
 //! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
 
-use crate::context_pack::FieldProfile;
+use crate::serialize::pack_format::FieldProfile;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
@@ -50,14 +50,14 @@ pub(super) fn fields_for_profile(
 
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::skill::SKILL_RECORD_BODY_KEYS,
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::write_envelope::skill_record::SKILL_RECORD_BODY_KEYS,
 
         // AGENT_DEF mirrors SKILL: identity-only Minimal, identity + summary in
         // Standard, and the full pinned body only at Full — the 16 KiB
         // `instructions` prompt must never surface in Minimal/Standard packs.
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_def::AGENT_DEF_BODY_KEYS,
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::store::agent_record::AGENT_DEF_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
@@ -118,13 +118,13 @@ pub(super) fn fields_for_profile(
             crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Standard) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_STANDARD
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_FULL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_FULL
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
             crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
@@ -136,13 +136,13 @@ pub(super) fn fields_for_profile(
             crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Standard) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_STANDARD
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_STANDARD
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Full) => {
-            crate::psych_profile::PSYCH_PROFILE_FIELDS_FULL
+            crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_FULL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
             crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL

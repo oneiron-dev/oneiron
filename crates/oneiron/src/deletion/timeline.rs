@@ -310,7 +310,7 @@ impl Vault {
             crate::scan_check::ScanCount::start(
                 &self.store,
                 &txn,
-                crate::scan_check::EngineScan::TimelineRecords,
+                crate::store::EngineScan::TimelineRecords,
                 anchor.as_bytes(),
             )?
         };
@@ -439,8 +439,9 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_values_for_id,
+                tombstone_values_for_id,
             };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
             let window_label = WindowAddress::new(&pending_key.window);
             let Some(doc) =
                 self.store
@@ -496,8 +497,9 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_values_for_id,
+                tombstone_values_for_id,
             };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
             let label = WindowAddress::new(&pending_key.window);
             let Some(doc) = self
                 .store
@@ -629,8 +631,9 @@ impl Store {
         #[cfg(feature = "sync")]
         {
             use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_map_contains_id,
+                tombstone_map_contains_id,
             };
+            use crate::store::loro_document::{doc_from_snapshot, import_doc};
             let window_label = WindowAddress::new(&pending_key.window);
 
             // The window doc is rebuilt from the rows THIS transaction sees

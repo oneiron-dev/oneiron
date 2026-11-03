@@ -150,7 +150,7 @@ impl CopyGenerations {
     #[cfg(feature = "sync")]
     pub(crate) fn carries_bundle(
         &self,
-        generation: &crate::world_keys::SealedBundleGeneration,
+        generation: &crate::bundle_generations::SealedBundleGeneration,
     ) -> bool {
         self.carries_bundle_of(crate::sync::residence::sealed_generation_hex(generation).as_bytes())
     }

@@ -337,7 +337,7 @@ fn pending_proposal(
             // would retry it on every pass and never draft again.
             if record.lifecycle_status != SkillLifecycle::Candidate
                 || record.approval_status != ClaimApprovalStatus::Proposed
-                || record.skill_id == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+                || record.skill_id == crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME
                 || crate::skill::resident_of(&record)? != resident
             {
                 continue;

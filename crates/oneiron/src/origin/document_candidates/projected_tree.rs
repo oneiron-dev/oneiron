@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use super::super::tree::OriginTreeFile;
-use crate::code_document::CodeFilePresence;
+use crate::store::code_document_values::CodeFilePresence;
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo};

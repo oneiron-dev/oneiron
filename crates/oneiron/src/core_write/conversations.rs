@@ -14,9 +14,10 @@ use super::shape::{
 };
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::conversation::ConversationBody;
+use crate::store::conversation_body::ConversationBody;
 use crate::edge::EdgeActorClass;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, WriteActor};
 

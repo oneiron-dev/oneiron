@@ -172,7 +172,7 @@ pub struct HostWriteOrigin {
     /// 1a), built by the dispatcher from the executor's own bridge position,
     /// never from the guest: a hold for consent alone binds a code consent
     /// wait to it.
-    code_consent: Option<crate::code_run::CodeConsentCallSite>,
+    code_consent: Option<crate::consent::code_wait_state::CodeConsentCallSite>,
     /// The hook pause a call the run makes again resumes (FIX 5526): the ask
     /// an earlier try of the same call in its durable run parked on, read
     /// from the run's own history, never from the guest. It names the pause
@@ -232,7 +232,7 @@ impl HostWriteOrigin {
 
     /// This origin with the call's place in its durable run, for a call a
     /// code consent wait may bind.
-    pub(crate) fn with_code_consent(mut self, site: crate::code_run::CodeConsentCallSite) -> Self {
+    pub(crate) fn with_code_consent(mut self, site: crate::consent::code_wait_state::CodeConsentCallSite) -> Self {
         self.code_consent = Some(site);
         self
     }

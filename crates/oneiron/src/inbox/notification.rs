@@ -198,7 +198,7 @@ pub fn decode_notification_body(raw: &[u8]) -> Result<NotificationBody> {
 
 /// The row id a producer's event lands under.
 pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         NOTIFICATION_ID_DOMAIN,
         &[source.producer.as_bytes(), source.event.as_bytes()],
     )
@@ -344,7 +344,7 @@ impl Vault {
             return Ok(None);
         };
         let (job_kind, origin) =
-            if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+            if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
                 let Ok(payload) =
                     crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
                 else {

@@ -263,7 +263,7 @@ pub struct MemoryItem {
     pub asset_ref: Option<String>,
     /// Raw per-kind evidence from each exact space, before fusion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub embedding_matches: Vec<crate::embed::EmbeddingMatchEvidence>,
+    pub embedding_matches: Vec<crate::store::embedding::EmbeddingMatchEvidence>,
     /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
@@ -642,7 +642,7 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
-        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        candidate_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
@@ -711,7 +711,7 @@ impl Memory<'_> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        candidate_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
@@ -1164,7 +1164,7 @@ impl Memory<'_> {
     fn recall_worlds(
         &self,
         scope: &RecallScope,
-    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
+    ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {
         self.room_met(self.selected_worlds(scope)?)
     }
 
@@ -1172,8 +1172,8 @@ impl Memory<'_> {
     /// they are now.
     fn room_met(
         &self,
-        requested: Option<crate::pipeline::WorldAuthoritySet>,
-    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
+        requested: Option<crate::claim::world_access::WorldAuthoritySet>,
+    ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {
         let room = match self.room_turn_now()? {
             Some(turn) => crate::context_board::scope_worlds(&turn.terms.get().worlds)?,
             None => None,

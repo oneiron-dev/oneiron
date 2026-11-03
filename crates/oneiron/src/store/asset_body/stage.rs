@@ -441,7 +441,7 @@ impl crate::Vault {
         learned_at: u64,
         staged: &StagedAssetBody,
         tier: crate::sync::client::ImportTier,
-        birth: Option<&crate::provenance::birth::RowBirth>,
+        birth: Option<&crate::store::row_birth::RowBirth>,
     ) -> Result<()> {
         let batch = self.batch_in().with_import_tier(tier);
         if let Staged::File(file) = &staged.body {

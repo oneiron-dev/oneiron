@@ -216,8 +216,8 @@ pub(crate) fn host_compact_as_owner(
     input: crate::runtime_hooks::host_doors::HostCompactRequest,
     backend: &dyn super::CompactionBackend,
     policy: &super::CompactionGatePolicy,
-) -> crate::memory::MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
-    use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
+) -> oneiron_contracts::memory::MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
+    use oneiron_contracts::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
     let vault = memory.vault();
     if input.token_ceiling == 0 {
         return Err(MemoryError::bad_request("token_ceiling must be positive"));
