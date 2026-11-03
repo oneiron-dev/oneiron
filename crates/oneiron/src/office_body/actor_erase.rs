@@ -10,6 +10,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::typed_body::names_no_actor;
+#[cfg(feature = "sync")]
+use std::collections::BTreeSet;
 
 impl ForkState {
     /// Makes the one who settled the fork no one when it is `actor`; whether
@@ -127,6 +129,8 @@ pub(crate) fn erase_proposal_actor_in_txn(
         }
     }
     let at = vault.now_recorded_at();
+    #[cfg(feature = "sync")]
+    let mut artifacts = BTreeSet::new();
     for (key, mut record, left) in proposals {
         for fork in left {
             MEMBERSHIP.delete(&vault.store, wtxn, &(key.0, fork))?;
@@ -137,7 +141,11 @@ pub(crate) fn erase_proposal_actor_in_txn(
             close_if_done(&mut record, at, None);
             PROPOSALS.put(&vault.store, wtxn, &key, &record)?;
         }
+        #[cfg(feature = "sync")]
+        artifacts.insert(key.0);
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, artifacts);
     Ok(())
 }
 

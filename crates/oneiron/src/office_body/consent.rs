@@ -249,9 +249,15 @@ impl Vault {
         request: &ProposalSettleRequest<'_>,
         actor: WriteActor,
     ) -> Result<OfficeBodyProposal> {
-        self.with_write_txn_grouped(|wtxn| {
-            settle_in_txn(self, wtxn, artifact, proposal, request, actor).map(|(record, _)| record)
-        })
+        let (record, landed) = self.with_write_txn_grouped(|wtxn| {
+            settle_in_txn(self, wtxn, artifact, proposal, request, actor)
+        })?;
+        let _ = &landed;
+        #[cfg(feature = "sync")]
+        if !landed.is_empty() {
+            self.notify_typed_body_document(*artifact);
+        }
+        Ok(record)
     }
 
     /// Record a holder ask on an unsettled proposal, once per ask group.
@@ -271,7 +277,10 @@ impl Vault {
             }
             record.asks.push(ask);
             record.ask_refused = None;
-            PROPOSALS.put(&self.store, wtxn, &key, &record)
+            PROPOSALS.put(&self.store, wtxn, &key, &record)?;
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, wtxn, BTreeSet::from([*artifact]));
+            Ok(())
         })
     }
 
@@ -303,7 +312,10 @@ impl Vault {
                 reason: reason.to_owned(),
                 at,
             });
-            PROPOSALS.put(&self.store, wtxn, &key, &record)
+            PROPOSALS.put(&self.store, wtxn, &key, &record)?;
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, wtxn, BTreeSet::from([*artifact]));
+            Ok(())
         })
     }
 }
@@ -359,7 +371,10 @@ pub(super) fn join_in_txn(
         wtxn,
         &(fork.entity, fork.fork),
         &record.header.proposal,
-    )
+    )?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, wtxn, BTreeSet::from([fork.entity]));
+    Ok(())
 }
 
 /// The proposal a DOCX or XLSX fork joined.
@@ -417,7 +432,10 @@ pub(super) fn let_go_in_txn(
         }
     }
     close_if_done(&mut record, at, None);
-    PROPOSALS.put(store, wtxn, &key, &record)
+    PROPOSALS.put(store, wtxn, &key, &record)?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, wtxn, BTreeSet::from([*artifact]));
+    Ok(())
 }
 
 /// Removes `artifact`'s proposals and memberships, with its office rows.
