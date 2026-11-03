@@ -5,7 +5,7 @@
 use super::proposals::{fork_hex, owner_submission};
 use super::*;
 use crate::critic::{CritiqueArtifact, CritiqueProvenance};
-use crate::repo_mutation::RepoMutationOperation;
+use crate::store::repo_mutation_record::RepoMutationOperation;
 use crate::repo_mutation::proposal::{RepoProposal, RepoProposalOperation};
 
 impl Memory<'_> {

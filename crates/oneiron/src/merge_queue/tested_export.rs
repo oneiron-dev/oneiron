@@ -14,7 +14,7 @@ use super::{
     QueueRevisionIntent, QueueSealTarget,
 };
 use crate::store::code_tree_blob::MODE_GITLINK;
-use crate::code_revision::{CodeCommitMetadata, QueuePromotionGap};
+use crate::{store::code_commit_metadata::CodeCommitMetadata, code_revision::QueuePromotionGap};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::repo_mutation::proposal::RepoProposal;

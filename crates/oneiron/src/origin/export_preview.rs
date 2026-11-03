@@ -29,9 +29,12 @@ use super::export_input::{ExportGap, ExportPromotion, export_message};
 use super::tree::OriginTreeFile;
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::code_tree_blob::MODE_GITLINK;
-use crate::code_revision::{
-    CodeImportManifest, CodeRevision, CodeTreeInventory, manifest_id,
-    materialize_code_revision_tree};
+use crate::{
+    store::code_import_manifest::CodeImportManifest,
+    code_revision::{CodeRevision, CodeTreeInventory},
+    store::code_import_manifest::manifest_id,
+    code_revision::materialize_code_revision_tree,
+};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};

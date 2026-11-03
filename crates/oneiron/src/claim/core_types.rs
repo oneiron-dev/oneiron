@@ -112,7 +112,7 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
     } else if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
         crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?;
-    } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
+    } else if body.predicate == crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE {
         crate::write_envelope::subject_record::validate_person_substrate_claim_structure(&body)?;
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::validate_imported_reliability(&body)?;

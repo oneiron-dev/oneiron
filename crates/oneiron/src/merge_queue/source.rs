@@ -16,9 +16,12 @@ use super::check_store::{CHECK_CONFIGS, CHECK_WORK, QueueCheckConfiguration, Que
 use super::source_types::{QUEUE_SOURCE_DIR, QUEUE_SOURCE_LEAF, ServedQueueSource};
 use super::storage::{BATCHES, QUEUE_STATE};
 use super::{MergeQueue, QueueCheckRequest, QueueDriverTarget};
-use crate::code_revision::{
-    CodeImportManifest, CodeTreeInventory, IMPORT_MANIFEST_PREDICATE,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
+use crate::{
+    store::code_import_manifest::CodeImportManifest,
+    code_revision::CodeTreeInventory,
+    store::code_import_manifest::IMPORT_MANIFEST_PREDICATE,
+    code_revision::import_snapshot_custody_in_txn,
+    store::code_import_manifest::{manifest_digest, manifest_id},
 };
 use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;

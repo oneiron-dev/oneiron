@@ -411,3 +411,11 @@ pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 
 pub mod dispatch_attempt_kind;
+
+pub mod checkout_lease;
+
+pub mod repo_mutation_record;
+
+pub mod code_commit_metadata;
+
+pub mod code_import_manifest;

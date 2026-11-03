@@ -19,9 +19,10 @@ use std::collections::BTreeMap;
 
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::code_tree_blob::MODE_GITLINK;
-use crate::code_revision::{
-    CodeImportAnchor, CodeImportManifest, CodeTreeInventory,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
+use crate::{
+    store::code_import_manifest::{CodeImportAnchor, CodeImportManifest},
+    code_revision::{CodeTreeInventory, import_snapshot_custody_in_txn},
+    store::code_import_manifest::{manifest_digest, manifest_id},
 };
 use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;

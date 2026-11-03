@@ -525,7 +525,7 @@ impl Vault {
         }
         let anchor = self
             .resolve_code_revision_import_anchor(revision.revision_id)?
-            .map(|manifest| crate::code_revision::manifest_id(&manifest.digest))
+            .map(|manifest| crate::store::code_import_manifest::manifest_id(&manifest.digest))
             .transpose()?;
         Ok(Ok(PushCandidateBase { revision, anchor }))
     }

@@ -5,9 +5,16 @@ use std::path::{Path, PathBuf};
 
 use super::argv::FrozenGitArgv;
 use super::{GIT_WIRE_CHECKOUT_ROOT_NAME, GitOid, GitWire, GitWireProcessEnv, GitWireRepo};
-use crate::checkout::lease::{
-    CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, CheckoutResult, CheckoutTeardownInspection,
-    GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
+use crate::{
+    store::checkout_lease::CheckoutError,
+    checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps},
+    store::checkout_lease::{
+        CheckoutResult,
+        CheckoutTeardownInspection,
+        GitOid as LeaseGitOid,
+        PushedHeadReceipt,
+        TeardownReceiptMatch,
+    },
 };
 use crate::store::code_snapshot::RepoRef;
 use crate::error::Error;
