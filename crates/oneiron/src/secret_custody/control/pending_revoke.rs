@@ -24,6 +24,7 @@ use super::{CustodyKeptHere, SecretCustodyWork};
 use crate::authority::{ActSurface, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
 
 /// How a portable secret's revoke reaches the owner's other machines when
@@ -52,6 +53,11 @@ const CUSTODY_REVOKE_PENDING_CARRY: CustodyRevokePendingCarry =
 /// custody record id.
 const PENDING: SideTable<EntityId, PendingRevoke, Named> =
     SideTable::new(&side_table::SECRET_CUSTODY_PENDING_REVOKE);
+
+/// The Gate content kind of a pending revoke's carry outcome.
+const REVOKE_CARRY_CONTENT_KIND: &str = "secret_custody_revoke_carry";
+/// The owner no longer lives in the vault, so their pending revoke is not carried.
+const REVOKE_CARRY_OWNER_NOT_LIVE_REASON: &str = "gate.secret.custody.revoke_carry.owner_not_live";
 
 /// One revoke this install has not carried yet. It holds no value and no
 /// proof.
@@ -243,10 +249,15 @@ impl Vault {
                 && !fold.custody_revoked(&id)
         });
         let live = crate::policy_model::is_live_vault_owner_in_txn(self, txn, &pending.owner)?;
-        let (Some(record), true) = (record, live) else {
+        let Some(record) = record else {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         };
+        if !live {
+            self.append_owner_not_live_receipt_in_txn(txn, id, &pending)?;
+            PENDING.delete(&self.store, txn, &id)?;
+            return Ok(false);
+        }
         let carried = self
             .carry_revoke_for_in_txn(txn, pending.owner, pending.surface, id, &record, pending.at)?
             .is_some();
@@ -254,5 +265,43 @@ impl Vault {
             PENDING.delete(&self.store, txn, &id)?;
         }
         Ok(carried)
+    }
+
+    /// Records that `pending` was not carried because its owner is no longer
+    /// live. The caller deletes the intent in the same transaction.
+    fn append_owner_not_live_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        pending: &PendingRevoke,
+    ) -> Result<()> {
+        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: "deny".into(),
+            reason_codes: vec![REVOKE_CARRY_OWNER_NOT_LIVE_REASON.into()],
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                REVOKE_CARRY_CONTENT_KIND,
+                vec![
+                    format!("record:{}", id.to_hex()),
+                    format!("owner:{}", pending.owner.to_hex()),
+                    format!("generation:{}", pending.generation),
+                ],
+            ),
+            actor_class: "human".into(),
+            actor_ref: Some(pending.owner.to_hex()),
+            content_kind: REVOKE_CARRY_CONTENT_KIND.into(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: id.as_bytes().to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &record)
     }
 }
