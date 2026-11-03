@@ -8,7 +8,8 @@ use crate::error::{Error, Result};
 use crate::pipeline::PipelineBuilder;
 use crate::pipeline::retrieval_policy::{
     RetrievalIntent, RetrievalPolicyAction, RetrievalPolicyChoices, RetrievalPolicyDecision,
-    RetrievalPolicyEnvelope, RetrievalPolicyTier, RetrievalPolicyTrace, choose_action,
+    RetrievalPolicyEnvelope, RetrievalPolicyEnvelopeExt, RetrievalPolicyTier, RetrievalPolicyTrace,
+    choose_action,
 };
 use crate::pipeline::support::{read_entity_metadata, resolve_sigma_secs};
 use crate::pipeline::trace::{merge_retrieval_diagnostics, telemetry_score_breakdown};

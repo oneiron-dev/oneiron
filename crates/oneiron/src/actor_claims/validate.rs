@@ -19,21 +19,7 @@ use super::rows::{
 // ---------------------------------------------------------------------------
 // Structural validator (the claim.rs predicate-aware branch)
 // ---------------------------------------------------------------------------
-/// Whether `predicate` is one of the §G.1 `actor.*` rows this module owns.
-///
-/// `actor.confidence_prior` is deliberately NOT here: it is
-/// [`crate::provider_confidence`]'s row, with its own structural validator, and
-/// it shares only the reserved namespace.
-#[must_use]
-pub fn is_actor_claim_predicate(predicate: &str) -> bool {
-    matches!(
-        predicate,
-        PREDICATE_ACTOR_LESSON
-            | PREDICATE_ACTOR_FAILURE_MODE
-            | PREDICATE_ACTOR_SCOPE_NOTE
-            | PREDICATE_ACTOR_SKILL_FIT
-    )
-}
+pub use crate::write_envelope::actor_predicate::is_actor_claim_predicate;
 /// Validates a stored `actor.*` body — the shape [`write_actor_claim`] writes.
 ///
 /// Runs on EVERY write door including sync replay, so it is the property that

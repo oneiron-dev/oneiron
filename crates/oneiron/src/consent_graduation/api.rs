@@ -9,7 +9,8 @@ use crate::edit_distance::graduation::{
     self, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow,
 };
 use crate::identity_topology::ProposalOutcome;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::MemoryResult;
 
 /// The exact operation kind × target class × skill/agent tuple.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
