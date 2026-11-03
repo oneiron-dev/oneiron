@@ -7,10 +7,12 @@
 //! ([`SealMemoryProvider`]). Each seal and each verification is one
 //! operation with a ledger of its own, opened before it parses anything. The
 //! ledger reserves at least [`RESERVE_STEP`] at a time and serves smaller
-//! admissions from what it has left. It never gives anything back while its
-//! operation runs: it holds the sum of every allocation the operation's
-//! decodes asked for, not only what is live, which is sound and
-//! conservative. Everything it reserved goes back when the operation ends.
+//! admissions from what it has left. What it reserved from the service stays
+//! held until the operation ends, but what a decode no longer holds goes back
+//! to spare room for a later admission to reuse: a replacement is admitted at
+//! its full size while the old buffer is still alive, and the old bytes are
+//! released only after the new allocation succeeds, so simultaneous peaks
+//! stay charged. Everything it reserved goes back when the operation ends.
 //!
 //! A refusal is typed: the machine's memory floor or a deadline, or a
 //! cancelled call or a service that cannot answer. It is never a count or a
@@ -241,10 +243,11 @@ impl SealResourceLimits {
     }
 }
 
-/// One operation's reservations: grown by every admission, never shrunk
-/// while the operation runs, and given back whole when the last of the
-/// operation's handles drops. It is lopdf's `DecodeAdmission` for every
-/// decode the operation runs.
+/// One operation's reservations: admissions take spare room or reserve more,
+/// released bytes return to spare room for a later admission, held service
+/// reservations and a kept refusal never shrink, and everything reserved goes
+/// back when the last of the operation's handles drops. It is lopdf's
+/// `DecodeAdmission` for every decode the operation runs.
 pub(crate) struct MemoryLedger {
     service: Arc<dyn SealMemory>,
     /// Where each finished decode's length goes.
@@ -254,7 +257,8 @@ pub(crate) struct MemoryLedger {
 
 #[derive(Default)]
 struct LedgerState {
-    /// Reserved, and not yet admitted to an allocation.
+    /// Reserved, and available to a later admission: what is left plus what
+    /// was released.
     spare: u64,
     /// What the service holds for each reservation.
     held: Vec<Box<dyn Send>>,
@@ -295,6 +299,15 @@ impl MemoryLedger {
         self.take(u64::try_from(bytes).unwrap_or(u64::MAX))
     }
 
+    /// Returns `bytes` admitted before, whose allocation was replaced or
+    /// freed, to spare room for a later admission to reuse. Held service
+    /// reservations and a kept refusal stay as they are: this never returns
+    /// host memory.
+    pub(crate) fn release(&self, bytes: u64) {
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(bytes);
+    }
+
     /// Whether memory refused the decode that failed with `err`, and how:
     /// the refusal this ledger kept (the service's own words, which lopdf's
     /// error cannot carry), else lopdf's. A refusal is never read as a
@@ -314,6 +327,10 @@ impl DecodeAdmission for MemoryLedger {
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError> {
         self.take(u64::try_from(bytes).unwrap_or(u64::MAX))
             .map_err(SealMemoryRefusal::to_decode)
+    }
+
+    fn release(&self, bytes: usize) {
+        MemoryLedger::release(self, u64::try_from(bytes).unwrap_or(u64::MAX));
     }
 
     fn decoded(&self, bytes: usize) {
