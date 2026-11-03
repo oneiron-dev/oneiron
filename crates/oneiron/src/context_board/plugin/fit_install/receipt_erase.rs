@@ -4,8 +4,10 @@
 //! install claim nor one of the skill reaches it by itself. This eraser runs
 //! in the erase's own transaction at both delete doors and takes the receipt
 //! whole: a receipt that only stopped authorizing would keep those names.
-//! A hub erase takes whole every receipt from that hub, and an actor erase
-//! scrubs only the receipt's actor leaf (FIX 11060).
+//! A hub erase takes whole every receipt from that hub (FIX 11060). An actor
+//! erase scrubs only the receipt's actor leaf from the erase-only actor sweep
+//! (`deletion::actor_fields`), never from this hook, which also runs on soft
+//! deletes that keep attribution (FIX 812, FIX 6640).
 use super::super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::{PREDICATE_SKILL_SECTION_FIT, map_entry};
 use crate::claim::ClaimBody;
@@ -16,10 +18,9 @@ use crate::store::Store;
 /// Erases every `skill.section_fit` receipt an erase of `id` covers: each
 /// receipt on `id` when it is a skill, each receipt naming `id` when it is a
 /// section install claim, and each receipt from `id` when it is a skill hub
-/// (FIX 11060; whole rows, so the install stops authorizing). A receipt whose
-/// actor leaf is `id` keeps its row and names no one there. Any other entity
-/// holds none. Registered in `deletion/derived_rows.rs`, so it runs before
-/// the record's body and edges go.
+/// (FIX 11060; whole rows, so the install stops authorizing). Any other
+/// entity holds none. Registered in `deletion/derived_rows.rs`, so it runs
+/// before the record's body and edges go, on soft deletes too.
 pub(crate) fn erase_section_fit_receipts_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -40,10 +41,6 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
     if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         receipts.extend(hub_receipts_in_txn(store, wtxn, id)?);
     }
-    let scrubbed: Vec<EntityId> = actor_receipts_in_txn(store, wtxn, id)?
-        .into_iter()
-        .filter(|receipt| !receipts.contains(receipt))
-        .collect();
     for receipt in receipts {
         let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, wtxn, &receipt)?;
         crate::batch::stage_cascade_tombstone_in_txn(store, wtxn, &receipt)?;
@@ -55,7 +52,22 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
             crate::hnsw::increment_vector_version(store, wtxn)?;
         }
     }
-    for receipt in scrubbed {
+    Ok(())
+}
+
+/// Scrubs the actor leaf of every `skill.section_fit` receipt naming `actor`
+/// (FIX 11060). Runs only from the erase-only actor sweep
+/// (`deletion::actor_fields::scrub_actor_fields_in_txn`, which the live erase,
+/// marker-only replay and checkpoint-restore sweeps all reach), so a soft
+/// delete keeps receipts' attribution while every hard path scrubs. Safe in
+/// either order with the hook's whole-delete above: a receipt gone already
+/// reads back absent and is left alone.
+pub(crate) fn scrub_section_fit_receipt_actors_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for receipt in actor_receipts_in_txn(store, wtxn, actor)? {
         scrub_receipt_actor_in_txn(store, wtxn, &receipt)?;
     }
     Ok(())
