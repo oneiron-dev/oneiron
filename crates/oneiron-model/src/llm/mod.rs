@@ -156,5 +156,6 @@ pub use self::session::{
 pub use self::scheduling::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
-    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+    SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
+    WorkPhysical, WorkPriority,
 };

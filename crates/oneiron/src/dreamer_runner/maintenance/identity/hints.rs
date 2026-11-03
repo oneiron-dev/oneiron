@@ -6,13 +6,13 @@
 //! another live mention gave stays. A read sums the contributions into one
 //! [`IdentityHint`]: every contribution for the Dreamer's own pass and the
 //! Linker, only those a reader admits for a caller (FIX 8711).
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::admission::Admit;
 use super::erase::{SourceAnchor, ask_anchor_in_txn, stands_in_txn};
-use super::{IdentityAsk, IdentityHint, context_terms};
+use super::{IdentityAsk, IdentityHint, context_terms, index};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
@@ -208,11 +208,10 @@ pub(super) fn put_hint_in_txn(
 ) -> Result<()> {
     let key = hint_key(ask, entity);
     let source = ask_anchor_in_txn(vault, txn, ask)?;
-    let mut stored = HINTS
-        .get(&vault.store, txn, &key)?
-        .unwrap_or_else(|| StoredIdentityHint {
-            sources: Vec::new(),
-        });
+    let old = HINTS.get(&vault.store, txn, &key)?;
+    let mut stored = old.clone().unwrap_or_else(|| StoredIdentityHint {
+        sources: Vec::new(),
+    });
     let contribution = IdentityHintSource {
         source,
         name: ask.name.clone(),
@@ -227,7 +226,10 @@ pub(super) fn put_hint_in_txn(
         Some(each) => *each = contribution,
         None => stored.sources.push(contribution),
     }
-    HINTS.put(&vault.store, txn, &key, &stored)
+    HINTS.put(&vault.store, txn, &key, &stored)?;
+    // None is a new row: its entity joins with the contribution's span. A
+    // same-span replace keeps its ids, an idempotent re-add (FIX 10376).
+    index::sync_hint_membership(&vault.store, txn, &key, old.as_ref(), Some(&stored))
 }
 
 /// `hint` without the contributions whose turn or message no longer stands
@@ -266,12 +268,19 @@ pub(super) fn erase_snapshot(hint: &mut Option<StoredIdentityHint>, id: &EntityI
 /// from every saved hint, and every hint saved for it as the entity named;
 /// a hint left with none goes.
 pub(super) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    for (key, mut stored) in HINTS.scan(store, txn)? {
+    for (_, key) in index::HINT_BY_SOURCE.scan_keys(store, txn, id.as_bytes())? {
+        // A stale membership row names no hint: an extra read, never a scrub.
+        let Some(mut stored) = HINTS.get(store, txn, &key)? else {
+            continue;
+        };
+        let old = index::hint_ids(&key, &stored);
         let changed = stored.erase_source(id);
         if key.2 == *id || stored.sources.is_empty() {
             HINTS.delete(store, txn, &key)?;
+            index::sync_hint_sets(store, txn, &key, &old, &BTreeSet::new())?;
         } else if changed {
             HINTS.put(store, txn, &key, &stored)?;
+            index::sync_hint_sets(store, txn, &key, &old, &index::hint_ids(&key, &stored))?;
         }
     }
     Ok(())
