@@ -88,8 +88,9 @@ pub enum SlotKind {
     /// a head and a tail slot, and each kit kind has its own pair: issuing
     /// one kind of kit replaces only that kind's piece. Each recovery-root kit
     /// drawn and not yet confirmed also has a pending pair of its own, named
-    /// by its kit id (FIX 11977, 12046). One slot more, named by the vault id
-    /// alone, names the install that keeps a data-key kit piece (FIX 12054).
+    /// by its kit id (FIX 11977, 12046). Two slots more, named by the vault id
+    /// alone, name the install that keeps a data-key kit piece (FIX 12054)
+    /// and the one that keeps a recovery-root kit piece (FIX 12055).
     KitPiece(KitPieceSlot),
 }
 
@@ -137,6 +138,12 @@ pub enum KitPieceSlot {
     /// so the vault id alone names it: a sealed vault's pages open before its
     /// machine id can be read.
     VaultKeyInstall,
+    /// The 16-byte machine id of the install whose slots keep the
+    /// recovery-root kit's piece, then zeros (FIX 12055): the twin of
+    /// [`Self::VaultKeyInstall`] for the world kit, filed the same way, so a
+    /// sealed vault's kept recovery-root piece is found before its pages
+    /// open too.
+    RecoveryRootInstall,
 }
 
 impl KitPieceSlot {
@@ -151,6 +158,7 @@ impl KitPieceSlot {
             Self::RecoveryRootHead => return Cow::Borrowed("kit-piece-recovery-root-head"),
             Self::RecoveryRootTail => return Cow::Borrowed("kit-piece-recovery-root-tail"),
             Self::VaultKeyInstall => return Cow::Borrowed("kit-piece-vault-key-install"),
+            Self::RecoveryRootInstall => return Cow::Borrowed("kit-piece-recovery-root-install"),
             Self::RecoveryRootPendingHead(kit) => (kit, "head"),
             Self::RecoveryRootPendingTail(kit) => (kit, "tail"),
         };
@@ -168,9 +176,10 @@ impl KitPieceSlot {
 ///
 /// `install` is the install's incarnation, the engine's machine id. A restore that
 /// makes a new machine gets a new id, so it never opens the slot of the install it
-/// was copied from, even on the same host with the same keystore. One slot is
-/// filed under the all-zero install, no machine's id:
-/// [`KitPieceSlot::VaultKeyInstall`], which the vault id alone names (FIX 12054).
+/// was copied from, even on the same host with the same keystore. Two slots
+/// are filed under the all-zero install, no machine's id:
+/// [`KitPieceSlot::VaultKeyInstall`] and [`KitPieceSlot::RecoveryRootInstall`],
+/// which the vault id alone names (FIX 12054, FIX 12055).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeystoreSlot {
     pub vault_id: [u8; 32],
