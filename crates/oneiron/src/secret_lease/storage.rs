@@ -488,7 +488,7 @@ pub(crate) fn erase_lease_actor_in_txn(
             super::grant::retire_lease_in_txn(&vault.store, wtxn, &lease.lease_id, now)?;
             lease.status = SecretLeaseStatus::Revoked;
         }
-        lease.binding_effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+        lease.binding_effector = reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);
         write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
     }
     Ok(())
@@ -506,7 +506,7 @@ pub(crate) fn erase_receipt_actor_in_txn(
     let effector = reveal_effector(&actor.to_hex());
     for (key, mut receipt) in SECRET_MATERIALIZATION_RECEIPT.scan(&vault.store, wtxn)? {
         if receipt.effector == effector {
-            receipt.effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+            receipt.effector = reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);
             SECRET_MATERIALIZATION_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
         }
     }

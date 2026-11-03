@@ -237,7 +237,7 @@ pub(super) fn dispatch_put_type(
         // A replica's that fails it is the peer's bytes, refused as a claim
         // body is (quarantined, the batch goes on), never stored to wedge
         // the model substrate.
-        crate::provenance::decode_model_entity_body(data)
+        crate::write_envelope::provenance::actor_substrate::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;

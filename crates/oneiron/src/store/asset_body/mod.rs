@@ -50,8 +50,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
+use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::provenance::body::{
-    BodyLocation, BodyRef, BodyState, OwnedBody, owned_body_in_txn, publish_body_in_txn,
+    owned_body_in_txn, publish_body_in_txn,
     release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;

@@ -4,7 +4,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWireCommitOutcome, GitWireRejection, GitWireRepo};
 use crate::origin::lfs::LfsOid;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::temporal::TimeRange;
 // ---------------------------------------------------------------------------
 // Pinned protocol constants

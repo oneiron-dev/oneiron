@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{ArtifactView, BlobArtifactBody, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::provenance::made_by::MadeBy;
+use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::temporal::TimeRange;
 
 /// A new artifact and the bytes of its first version.

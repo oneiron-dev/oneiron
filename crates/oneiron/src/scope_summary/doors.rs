@@ -20,8 +20,8 @@ use crate::conversation_dag::{
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
+use crate::store::row_birth::RowBirth;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,

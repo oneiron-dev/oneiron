@@ -8,10 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-// Invalid UTF-8 and a non-container MessagePack first byte prevent opaque
-// carriers from falling through a text serializer. Whole export uses the
-// credential-safe source facet, never these bytes as another escape channel.
-pub(super) const MAGIC: &[u8] = b"\xf5oneiron.receipt-archive.v1\0";
+pub(super) use crate::store::receipt_identity::MAGIC;
 /// The domain an archived source's id hashes its canonical bytes under.
 const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,9 +97,7 @@ impl ReceiptArchive {
         Ok(self.matches_body(body))
     }
 }
-pub(crate) fn is_receipt_archive_source(bytes: &[u8]) -> bool {
-    bytes.starts_with(MAGIC)
-}
+pub(crate) use crate::store::receipt_identity::is_receipt_archive_source;
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
     let Some(payload) = bytes.strip_prefix(MAGIC) else {
         return Ok(None);

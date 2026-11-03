@@ -7,7 +7,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, Raw, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};

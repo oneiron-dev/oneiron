@@ -353,7 +353,7 @@ impl Vault {
         // The stock Generated rows bind the commitment projector and, since
         // ARCH-0026's warm default, the Dreamer; the projector's is rebound.
         let projector = Value::from(
-            crate::commitment_schedule::commitment_projection_actor()?
+            crate::write_envelope::commitment_actor::commitment_projection_actor()?
                 .entity_ref()
                 .to_hex(),
         );

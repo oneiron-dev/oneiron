@@ -44,10 +44,10 @@ impl ClaimMaterialization {
         let prior = write.prior();
         let (id, occurred, learned_at, data, envelope) = write.into_parts();
         let body = crate::claim::validate_claim_body_and_decode(&data, true)?;
-        let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
+        let record = crate::write_envelope::provenance::codec::decode_edge_provenance_body(&body.value)?;
         let class =
-            crate::provenance::resolve_persisted_actor_class(&record, body.evidence.as_ref())?;
-        if body.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE
+            crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(&record, body.evidence.as_ref())?;
+        if body.predicate != crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE
             || envelope.actor() != WriteActor::new(record.actor_entity_ref, class)
             || body.source != Some(envelope.source()) && body.source.is_some()
             || body.approval != envelope.approval()
@@ -431,7 +431,7 @@ impl ClaimMaterialization {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
-        crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+        crate::write_envelope::provenance::actor_substrate::validate_actor_class(header.entity_type, actor.actor_class())
     }
 }
 

@@ -133,6 +133,9 @@ pub(crate) use claim_vad_owed::{
     owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
 };
 mod commitment_due;
+pub mod receipt_identity;
+pub mod body_descriptor;
+pub mod row_birth;
 mod credential_custody;
 mod deadline_jobs;
 mod diagnostics;

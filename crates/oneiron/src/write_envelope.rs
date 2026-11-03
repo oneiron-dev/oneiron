@@ -15,6 +15,11 @@ use crate::entity_id::EntityId;
 pub mod carry_forward;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod provenance;
+pub mod counterparty_fields;
+pub mod actor_predicate;
+pub mod commitment_actor;
+pub mod commitment_transition;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

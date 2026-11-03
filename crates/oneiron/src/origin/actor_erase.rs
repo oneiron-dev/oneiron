@@ -27,7 +27,7 @@ use crate::deletion::carrier_actor_merged;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitWireRepo;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 

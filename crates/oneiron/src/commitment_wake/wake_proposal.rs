@@ -147,18 +147,7 @@ pub fn commitment_wake_proposal_claim_id(attempt_id: AttemptId) -> EntityId {
     .unwrap_or_else(|_| unreachable!("a derived commitment wake proposal id is never reserved"))
 }
 
-/// The sentinel-safe raw-prefix rule for an id taken from a raw digest
-/// prefix: a prefix landing on a reserved id (roughly a 2^-120 event) is
-/// perturbed (`raw[0] ^= 1`, `raw[15] ^= 1`), no RFC-4122 bit rewritten.
-pub(crate) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).unwrap_or_else(|_| {
-            unreachable!("perturbed commitment wake proposal id is non-reserved")
-        })
-    })
-}
+pub(crate) use crate::entity_id::entity_id_from_digest_prefix;
 
 /// Wraps the ordinary consolidation executor with the commitment-wake arm.
 ///

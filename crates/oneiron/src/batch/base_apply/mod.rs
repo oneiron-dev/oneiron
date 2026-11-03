@@ -141,7 +141,7 @@ struct BatchApplyState {
     refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     birth_mask: Option<EntityId>,
     text_births: HashMap<EntityId, Vec<EntityId>>,
-    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     replicated_puts: BTreeSet<EntityId>,
     mutation_recorded_at: u64,

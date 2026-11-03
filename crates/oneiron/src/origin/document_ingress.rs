@@ -6,7 +6,7 @@ use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
 use crate::write_envelope::WriteActor;

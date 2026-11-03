@@ -31,7 +31,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_STAMP_TOKEN,
 };
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -49,15 +48,7 @@ const ACTOR_STAMP_TOKEN: SideTable<EntityId, EntityId, Raw> =
 /// Value-map key carrying the actor class on an `actor.stamp_token` claim.
 const STAMP_TOKEN_VALUE_KEY_CLASS: &str = "class";
 
-/// What a commit stamp names of its writer (FIX 10930): the opaque token in
-/// the actor's place, and the actor's class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActorStamp {
-    /// The id of the actor's `actor.stamp_token` claim.
-    pub token: EntityId,
-    /// The writing actor's class, which a stamp spells after its token.
-    pub class: EdgeActorClass,
-}
+pub use crate::write_envelope::provenance::ActorStamp;
 
 /// `actor`'s stamp token, in the writer's transaction: the cached one while
 /// its claim still names `actor`, else a fresh token claim and its cache row

@@ -12,8 +12,8 @@ use crate::write_envelope::claim_body::{
 use oneiron_contracts::claim::ClaimSource;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
+use crate::store::row_birth::RowBirth;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
     WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,

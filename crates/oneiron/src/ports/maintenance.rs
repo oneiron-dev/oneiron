@@ -96,13 +96,13 @@ pub(crate) trait EdgeStoreMaintenance: Transactions {
     fn port_edge_stamp_provenance(
         &self,
         txn: &mut Self::Write<'_>,
-        subject: &crate::provenance::EdgeRef,
+        subject: &crate::write_envelope::provenance::EdgeRef,
         flags: crate::edge::EdgeProvenanceFlags,
     ) -> Result<()>;
     fn port_edge_clear_provenance(
         &self,
         txn: &mut Self::Write<'_>,
-        subject: &crate::provenance::EdgeRef,
+        subject: &crate::write_envelope::provenance::EdgeRef,
     ) -> Result<bool>;
 }
 

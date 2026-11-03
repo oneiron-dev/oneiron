@@ -75,10 +75,7 @@ const MAX_CALL_RECEIPT_FIELD_BYTES: usize = 256;
 /// `actor_ref` is the connection's id, and no person is named.
 pub const CONNECTION_CALL_ACTOR_CLASS: &str = "connection";
 
-/// What an erased actor's call receipts state in place of who called: the
-/// actor, its class and the credential it presented (FIX 812). Engine call
-/// 10-18, behind this one constant.
-pub const ERASED_CALL_IDENTITY: &str = "erased";
+pub use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
 /// The wire a call arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

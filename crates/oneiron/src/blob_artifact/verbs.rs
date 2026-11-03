@@ -37,7 +37,7 @@ use crate::llm::decision::{
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };
-use crate::provenance::made_by::{MadeBy, MadeByTrigger};
+use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
 use crate::secret_custody::SecretSight;
 use crate::share_travel::{BornWith, TravelChoice, TravelKind};
