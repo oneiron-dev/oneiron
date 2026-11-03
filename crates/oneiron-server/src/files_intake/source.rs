@@ -248,7 +248,9 @@ pub(crate) fn rescan(
     let (links, _) = resolve_links(&notes, &standings, &earlier_titles);
     // Every present file's links as its text holds them now: the rescan
     // reconciles a superseded note's edges to them. Only a whole read
-    // resolves them; a read that skipped files leaves every file's alone.
+    // resolves them; a read that skipped files, or could not open a folder,
+    // leaves every file's alone (a partial walk's missing targets must not
+    // read as dropped edges).
     let present_links = resolve_present_links(&notes, &standings);
     let mut present_targets: HashMap<&str, Vec<String>> = HashMap::new();
     for link in &present_links {
@@ -257,7 +259,7 @@ pub(crate) fn rescan(
             .or_insert_with(Vec::new)
             .push(link.to.clone());
     }
-    let links_complete = skipped.is_empty();
+    let links_complete = skipped.is_empty() && unopened_dirs.is_empty();
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut titles = TitleCounts::default();
