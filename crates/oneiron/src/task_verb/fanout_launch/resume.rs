@@ -479,6 +479,16 @@ impl Memory<'_> {
             {
                 continue;
             }
+            // An erased launcher's width check has no one left to answer it
+            // (FIX 4698): history keeps the row; the board drops the stuck
+            // item.
+            if matches!(launch.actor, TaskActor::Erased)
+                && launch.dispatched_at.is_some()
+                && launch.check_row.is_some()
+                && launch.choice_receipt_ref.is_none()
+            {
+                continue;
+            }
             let receipt = self.listed_receipt(&launch);
             if receipt.paused.is_some()
                 || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())

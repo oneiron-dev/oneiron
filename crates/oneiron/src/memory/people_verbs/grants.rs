@@ -91,7 +91,7 @@ impl Memory<'_> {
         let requests = requests
             .into_iter()
             .filter_map(|request| {
-                let scope = crate::verbs::grant_requested_scope(&request.grant.scope)?;
+                let scope = super::grant_requested_scope(&request.grant.scope)?;
                 Some(GrantAskedRow {
                     request: request.id.to_hex(),
                     asker: request.grant.principal_ref.to_hex(),

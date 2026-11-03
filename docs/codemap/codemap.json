@@ -1870,16 +1870,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/analyzer.rs",
-     "purpose": "Multilingual analyzer subsystem",
-     "surface": {
-      "re-export": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -2692,7 +2682,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2703,6 +2693,26 @@
      "purpose": "Which agent dispatch rows carry an erased asker's ask (FIX 9181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/model_step.rs",
+     "purpose": "A public model step's failure text, out of its queue row (FIX 10460)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/project_brief.rs",
+     "purpose": "The source principal named in a project drafter's briefing (FIX 4979)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -7394,7 +7404,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -22534,7 +22544,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 66,
+      "fn": 69,
       "struct": 1
      }
     },
@@ -22754,7 +22764,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 5,
       "struct": 9
@@ -25480,16 +25490,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/distance.rs",
-     "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
@@ -25613,6 +25613,20 @@
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
       "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerExcludedConversations"
+     ],
+     "path": "src/dreamer_consolidation/excluded_conversations.rs",
+     "purpose": "Operator-set conversations that stay out of Dreamer consolidation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -25887,7 +25901,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 31,
-      "mod": 4,
+      "mod": 5,
       "re-export": 25
      }
     },
@@ -34126,26 +34140,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/error.rs",
-     "purpose": "The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind`",
-     "surface": {
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/extraction_eval.rs",
-     "purpose": "OF-360 extraction-quality evaluation",
-     "surface": {
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "BlockedReportRef",
       "FailureIssueEntry"
@@ -34595,7 +34589,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 5,
       "fn": 6,
       "struct": 6
@@ -36210,16 +36204,6 @@
       "enum": 1,
       "fn": 3,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/fusion.rs",
-     "purpose": "Score fusion kernels, defined in `oneiron-retrieval`",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -41936,9 +41920,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 20,
-      "mod": 200,
-      "re-export": 76
+      "crate-vis": 19,
+      "mod": 192,
+      "re-export": 84
      }
     },
     {
@@ -41951,16 +41935,6 @@
       "crate-vis": 2,
       "fn": 4,
       "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/limits.rs",
-     "purpose": "Traversal safety caps, defined in `oneiron-contracts`",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -44709,7 +44683,7 @@
      "path": "src/llm/step/submission_custody.rs",
      "purpose": "A public model-step submission's kept copies under body custody (FIX 9929)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -46784,7 +46758,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 27,
       "re-export": 63
      }
@@ -47129,6 +47103,7 @@
       "GrantAskedPage",
       "GrantAskedRequest",
       "GrantAskedRow",
+      "GrantRequestedScope",
       "MessagePersonReceipt",
       "MessagePersonRequest",
       "PeopleListRequest",
@@ -47139,8 +47114,8 @@
      "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
-      "enum": 1,
+      "crate-vis": 2,
+      "enum": 2,
       "fn": 3,
       "struct": 10
      }
@@ -47259,17 +47234,22 @@
      "surface": {
       "crate-vis": 5,
       "fn": 9,
+      "re-export": 1,
       "struct": 5
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "VaultReceiptsPage"
+     ],
      "path": "src/memory/reads/receipt_page.rs",
      "purpose": "`vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest…",
      "surface": {
-      "fn": 3
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -49567,16 +49547,6 @@
       "fn": 6,
       "struct": 10,
       "trait": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/msgpack_shape.rs",
-     "purpose": "A budget check of untrusted MessagePack before it is decoded",
-     "surface": {
-      "crate-vis": 3
      }
     },
     {
@@ -54615,17 +54585,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/panic_report.rs",
-     "purpose": "The content-free panic report a host installs before it opens a vault",
-     "surface": {
-      "const": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/persona_snapshot/codec.rs",
      "purpose": "Export-body msgpack codec, row-id and fingerprint validators, decode helpers",
      "surface": {
@@ -56786,17 +56745,6 @@
      "purpose": "The window deletion-row port: the rows a deletion leaves under a window address",
      "surface": {
       "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/posterior.rs",
-     "purpose": "Shared Beta posterior bandit seam",
-     "surface": {
-      "crate-vis": 1,
-      "re-export": 1
      }
     },
     {
@@ -60523,16 +60471,6 @@
      "path": "src/retrieval_depth/tests/repairs.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/retrieval_quality.rs",
-     "purpose": "Retrieval quality report vocabulary",
-     "surface": {
-      "re-export": 1
-     }
     },
     {
      "bucket": "s",
@@ -75389,7 +75327,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -75976,7 +75914,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "fn": 1,
       "mod": 5,
       "re-export": 30
@@ -76727,6 +76665,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_work_line.rs",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
      "surface": {
@@ -77382,22 +77330,6 @@
      "surface": {
       "crate-vis": 1,
       "fn": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ContextPackTokenizer",
-      "PackTokenizer"
-     ],
-     "path": "src/tokenizer.rs",
-     "purpose": "—",
-     "surface": {
-      "const": 2,
-      "enum": 1,
-      "fn": 3,
-      "trait": 1
      }
     },
     {
@@ -79553,15 +79485,15 @@
      "notable": [
       "GrantAnswer",
       "GrantAnswerRequest",
-      "GrantAnswered",
-      "GrantRequestedScope"
+      "GrantAnswered"
      ],
      "path": "src/verbs/grants.rs",
      "purpose": "`self.grants.answer` (FIX 1379): the general answer to an access request, by the vault's owner or by the…",
      "surface": {
       "crate-vis": 1,
-      "enum": 2,
+      "enum": 1,
       "fn": 1,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -80165,14 +80097,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "VaultReceiptsPage",
       "VaultReceiptsRequest"
      ],
      "path": "src/verbs/receipts_page.rs",
      "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, served at most…",
      "surface": {
-      "const": 1,
-      "struct": 2
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -82014,26 +81945,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LineCrossing",
-      "LineObserver",
-      "LinePermit",
-      "TaskWorkTurn",
-      "WaitTimedOut",
-      "WorkLine"
-     ],
-     "path": "src/work_line.rs",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
-     "surface": {
-      "const": 2,
-      "fn": 21,
-      "struct": 4,
-      "trait": 2
-     }
-    },
-    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -82171,7 +82082,7 @@
      "purpose": "A settled join of an erased party, as stored (FIX 4228): history only",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1
      }
     },
@@ -83212,7 +83123,7 @@
      "purpose": "A settled offer card of an erased agent or payer, as stored (FIX 4228): history only",
      "surface": {
       "const": 1,
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -84046,7 +83957,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultPageSeal"
@@ -84055,7 +83966,7 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 11,
       "re-export": 2,
       "struct": 1
@@ -84079,7 +83990,7 @@
      "path": "src/world_keys/page_seal/mirror_rewrite.rs",
      "purpose": "The page-seal mirror's rewrite at a sealed open and after a wrap change, kept off the disk when the mirror…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -85276,13 +85187,6 @@
      "layout": "file",
      "purpose": "AgentRunStatus contract shared by Context Board and run-tree viewers"
     },
-    "analyzer": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Multilingual analyzer subsystem"
-    },
     "anchored_annotation": {
      "files": 18,
      "impl_vault": true,
@@ -85298,7 +85202,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 62,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85710,15 +85614,8 @@
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
-    "distance": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
-    },
     "dreamer_consolidation": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85822,20 +85719,6 @@
      "layout": "file",
      "purpose": "Entity ids, world ids and the presentation-id grammar"
     },
-    "error": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind`"
-    },
-    "extraction_eval": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "OF-360 extraction-quality evaluation"
-    },
     "failure_ladder": {
      "files": 17,
      "impl_vault": true,
@@ -85870,13 +85753,6 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export"
-    },
-    "fusion": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
      "files": 172,
@@ -86032,13 +85908,6 @@
      "layout": "file",
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`"
     },
-    "limits": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
-    },
     "linear_sync": {
      "files": 16,
      "impl_vault": true,
@@ -86101,13 +85970,6 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
-    },
-    "msgpack_shape": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
      "files": 67,
@@ -86186,13 +86048,6 @@
      "layout": "file",
      "purpose": "Node-local OF-520 own-rate windows"
     },
-    "panic_report": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The content-free panic report a host installs before it opens a vault"
-    },
     "persona_snapshot": {
      "files": 9,
      "impl_vault": true,
@@ -86227,13 +86082,6 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Transaction-composable storage ports"
-    },
-    "posterior": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Shared Beta posterior bandit seam"
     },
     "ppr": {
      "files": 10,
@@ -86346,13 +86194,6 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ONE-207: the retrieval half of the effort dial"
-    },
-    "retrieval_quality": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Retrieval quality report vocabulary"
     },
     "run_tree": {
      "files": 11,
@@ -86606,6 +86447,13 @@
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
+    "task_work_line": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
+    },
     "team": {
      "files": 15,
      "impl_vault": false,
@@ -86661,13 +86509,6 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02)"
-    },
-    "tokenizer": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "—"
     },
     "training_pack": {
      "files": 11,
@@ -86753,13 +86594,6 @@
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
-    "work_line": {
-     "files": 1,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
-    },
     "workspace_roster": {
      "files": 125,
      "impl_vault": true,
@@ -86782,9 +86616,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 111,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5887,
+   "source_files": 5879,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87707,6 +87541,270 @@
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
    "source_files": 53,
    "test_files": 1
+  },
+  "oneiron-base": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/analyzer.rs",
+     "purpose": "Multilingual analyzer subsystem",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/distance.rs",
+     "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_id.rs",
+     "purpose": "Entity ids, world ids and the presentation-id grammar, defined in `oneiron-contracts`",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/error.rs",
+     "purpose": "The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind`",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/extraction_eval.rs",
+     "purpose": "OF-360 extraction-quality evaluation",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/fusion.rs",
+     "purpose": "Score fusion kernels, defined in `oneiron-retrieval`",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
+     "surface": {
+      "fn": 2,
+      "mod": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limits.rs",
+     "purpose": "Traversal safety caps, defined in `oneiron-contracts`",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OverBudget",
+      "ShapeBudget"
+     ],
+     "path": "src/msgpack_shape.rs",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/panic_report.rs",
+     "purpose": "The content-free panic report a host installs before it opens a vault",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/posterior.rs",
+     "purpose": "Shared Beta posterior bandit seam",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retrieval_quality.rs",
+     "purpose": "Retrieval quality report vocabulary",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContextPackTokenizer",
+      "PackTokenizer"
+     ],
+     "path": "src/tokenizer.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LineCrossing",
+      "LineObserver",
+      "LinePermit",
+      "TaskWorkTurn",
+      "WaitTimedOut",
+      "WorkLine"
+     ],
+     "path": "src/work_line.rs",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
+     "surface": {
+      "const": 2,
+      "fn": 19,
+      "struct": 4,
+      "trait": 2
+     }
+    }
+   ],
+   "modules": {
+    "analyzer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Multilingual analyzer subsystem"
+    },
+    "distance": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
+    },
+    "entity_id": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Entity ids, world ids and the presentation-id grammar, defined in `oneiron-contracts`"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind`"
+    },
+    "extraction_eval": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "OF-360 extraction-quality evaluation"
+    },
+    "fusion": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
+    },
+    "limits": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
+    },
+    "msgpack_shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded"
+    },
+    "panic_report": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The content-free panic report a host installs before it opens a vault"
+    },
+    "posterior": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Shared Beta posterior bandit seam"
+    },
+    "retrieval_quality": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Retrieval quality report vocabulary"
+    },
+    "tokenizer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "—"
+    },
+    "work_line": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
+   "source_files": 14,
+   "test_files": 0
   },
   "oneiron-bench": {
    "files": [
@@ -107580,7 +107678,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/tasks_response.rs",
@@ -108314,7 +108412,7 @@
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -120472,7 +120570,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182

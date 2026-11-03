@@ -88,6 +88,13 @@ impl ConsolidationExecutor<'_> {
             .now_ms
             .div_ceil(1_000)
             .saturating_add(input.policy.rung_retry_secs);
+        // As with a rung: excluded work parks before any source read.
+        if ctx.vault.dreamer_turn_excluded(&input.window.turn)? {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "conversation excluded from Dreamer passes".to_owned(),
+                cause: DreamerParkCause::Retry,
+            });
+        }
         let evidence = match sieve::window_read(ctx.vault, &input)? {
             WindowRead::Ready(evidence) => evidence,
             WindowRead::Superseded => {
@@ -265,7 +272,12 @@ impl ConsolidationExecutor<'_> {
                 ));
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+            // A failed call's paid usage has no terminal step: it is handed
+            // to the driver's settlement with the park (FIX 11554).
             Err(error) => {
+                if let DurableStepError::SpentLlm { usage, .. } = &error {
+                    charges.record_usage(usage);
+                }
                 return Ok(charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)));
             }
         };
