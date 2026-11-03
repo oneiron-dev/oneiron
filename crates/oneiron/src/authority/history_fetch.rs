@@ -521,7 +521,8 @@ fn verification_in_txn(
         .into_iter()
         .map(|(hash, (_, entry))| (hash, entry))
         .collect();
-    let adopted = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
+    let adopted =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
     let mut bound = rows_vault(rows.iter())
         .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
         .or(expected);
@@ -681,7 +682,7 @@ impl Vault {
     ) -> Result<AuthorityHistoryFetch> {
         let txn = self.store.env.read_txn()?;
         let Some(adopted) =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?
+            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
         else {
             return Ok(AuthorityHistoryFetch::closing(request, held));
         };

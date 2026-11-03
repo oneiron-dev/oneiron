@@ -34,7 +34,10 @@ use serde::{Deserialize, Serialize};
 use super::kernel::hex_lower;
 use crate::Vault;
 use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
-use crate::authority::{AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint, adopted_authority_checkpoint_in_txn};
+use crate::authority::{
+    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
+    cached_adopted_authority_checkpoint_in_txn,
+};
 use oneiron_authority::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind, authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -263,8 +266,8 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let issues = FoldIssues::of(&fold);
-        let adopted = adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
-        let mut covered = covered_after(adopted.as_ref(), query.after);
+        let adopted = cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
+        let mut covered = covered_after(adopted.as_deref(), query.after);
         let mut next_cold = covered.next().transpose()?;
         let mut stored =
             self.store

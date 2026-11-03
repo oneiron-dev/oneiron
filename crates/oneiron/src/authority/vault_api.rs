@@ -306,8 +306,10 @@ impl Vault {
                 return Ok(AuthorityEntryStatus::Stored(entry));
             }
         }
-        let adopted =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &rtxn)?;
+        let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(
+            &self.store,
+            &rtxn,
+        )?;
         Ok(match adopted {
             Some(adopted) if adopted.image().rows.contains_key(hash) => {
                 AuthorityEntryStatus::CoveredAttested {
