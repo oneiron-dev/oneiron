@@ -34,6 +34,7 @@ use oneiron_code_check::{
 use super::CHAT_ROLE;
 use super::browser_planner::{self, BrowserPlannerRuns};
 use super::compaction::{CodeModeCompaction, LiveAdmission};
+use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::embedder::EmbedderSlot;
@@ -109,6 +110,7 @@ pub(super) async fn bind(
         guard: guard.clone(),
         payer: None,
         planned: None,
+        lease: None,
         browser: Arc::clone(&browser),
     });
     // Each run's compaction seat reads the rung its step's call is admitted
@@ -127,16 +129,19 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
-        Arc::new(move |guard: BudgetGuard, payer: Option<PayerPerson>| {
-            Arc::new(CodeModeBackend {
-                vault: Arc::clone(&vault),
-                models: Arc::clone(&models),
-                guard,
-                payer,
-                planned: None,
-                browser: Arc::clone(&browser),
-            }) as Arc<dyn LlmBackend>
-        })
+        Arc::new(
+            move |guard: BudgetGuard, payer: Option<PayerPerson>, lease: Option<LiveLeaseState>| {
+                Arc::new(CodeModeBackend {
+                    vault: Arc::clone(&vault),
+                    models: Arc::clone(&models),
+                    guard,
+                    payer,
+                    planned: None,
+                    lease,
+                    browser: Arc::clone(&browser),
+                }) as Arc<dyn LlmBackend>
+            },
+        )
     };
     // FIX 2310: a planned child no seat binds runs its pick exactly where
     // this host routes it so (Engine C1/C2), else on the route it takes
@@ -151,13 +156,17 @@ pub(super) async fn bind(
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
         Arc::new(
-            move |guard: BudgetGuard, payer: Option<PayerPerson>, planned: &PlannedModel| {
+            move |guard: BudgetGuard,
+                  payer: Option<PayerPerson>,
+                  planned: &PlannedModel,
+                  lease: Option<LiveLeaseState>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
                     guard,
                     payer,
                     planned: Some(planned.clone()),
+                    lease,
                     browser: Arc::clone(&browser),
                 }) as Arc<dyn LlmBackend>
             },
@@ -369,6 +378,8 @@ struct CodeModeBackend {
     guard: BudgetGuard,
     /// Who funds each call when a room's root spend scope pays for the run.
     payer: Option<PayerPerson>,
+    /// The caller's shared lease state for per-rung spend looks (FIX 11749).
+    lease: Option<LiveLeaseState>,
     /// The planned child no seat binds whose calls these are (FIX 2310):
     /// pinned, each runs its pick alone; else the role's live route, and
     /// one another model answers is marked on its receipts.
@@ -474,19 +485,33 @@ impl CodeModeBackend {
                 .models
                 .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
                 .sourced(sources);
+            let live = self
+                .lease
+                .clone()
+                .map(|state| LiveLease::from_state(&self.vault, state));
+            let may_send = || {
+                if let Some(live) = &live {
+                    live.book_and_revise();
+                }
+                true
+            };
             let answered = if seat_bound {
-                call.ladder.generate_exact(&run, call.request, None).await
+                call.ladder
+                    .generate_exact_while(&run, call.request, None, &may_send)
+                    .await
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
                 let (response, ran) = call
                     .ladder
-                    .generate_served(&run, call.request, None)
+                    .generate_served_while(&run, call.request, None, &may_send)
                     .await?;
                 planned.answered(&run, ran);
                 Ok(response)
             } else {
-                call.ladder.generate(&run, call.request, None).await
+                call.ladder
+                    .generate_while(&run, call.request, None, &may_send)
+                    .await
             };
             if answered.is_ok() {
                 handoff.answered();

@@ -151,9 +151,6 @@ impl Child {
                 return ReaderRunEnd::Failed(fault.reason().to_owned());
             }
         };
-        let Some(backend) = self.provider.reader_backend(guard.clone(), payer) else {
-            return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
-        };
         // FIX 11458: under a child scope each call is admitted against what
         // the scope has left then, the spend of siblings drawing on the
         // parent room a soft hold shares included, never past the room the
@@ -163,9 +160,24 @@ impl Child {
             let limit = guard.read().limit_units;
             crate::ai_host::live_lease::LiveLease::new(vault, Some(scope), guard.clone(), limit, 0)
         });
-        let leased = live
-            .as_ref()
-            .map(|live| crate::mcp::LiveLeaseBackend::new(live, backend.as_ref()));
+        let scoped_backend = live.as_ref().and_then(|live| {
+            self.provider.reader_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                Some(live.state()),
+            )
+        });
+        let per_rung = scoped_backend.is_some();
+        let backend = scoped_backend.or_else(|| self.provider.reader_backend(guard.clone(), payer));
+        let Some(backend) = backend else {
+            return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
+        };
+        let leased = if per_rung {
+            None
+        } else {
+            live.as_ref()
+                .map(|live| crate::mcp::LiveLeaseBackend::new(live, backend.as_ref()))
+        };
         let backend: &dyn LlmBackend = match &leased {
             Some(leased) => leased,
             None => backend.as_ref(),
