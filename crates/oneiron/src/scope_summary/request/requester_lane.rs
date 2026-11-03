@@ -19,7 +19,7 @@ use super::{
 };
 use crate::Vault;
 use crate::claim::{ClaimReadStatus, FrozenReadLane, ScopedRead};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::error::Result;
 
 /// The declaration key a narrowed requester's frozen lane rides under.

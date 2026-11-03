@@ -111,7 +111,7 @@ impl OutboundDispatchPipeline {
 pub(super) fn artifact_publish_approval_digest(
     vault: &Vault,
     request: &ArtifactPublishVerbRequest,
-) -> Result<crate::consent::EffectDigest> {
+) -> Result<crate::write_envelope::EffectDigest> {
     validate_artifact_id(&request.artifact)?;
     vault
         .resolve_export_owner(&request.artifact, request.export)?

@@ -4,20 +4,22 @@ use super::codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body, invalid, scope_value,
 };
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    APPEND_ROW, AppendFailure, AppendRecord, ScopePath, ScopeSelector, actor_in_txn,
+    APPEND_ROW, AppendFailure, actor_in_txn,
     admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
     require_append_references_in_txn, require_type, resolve_in_txn,
 };
+use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError};
+use crate::memory::Memory;
+use oneiron_contracts::memory::MemoryError;
 use crate::store::row_birth::RowBirth;
 use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::registry::{
@@ -691,7 +693,7 @@ pub(super) fn land_in_txn(
             parent: head,
             reply_to: Some(*turn),
             quote: None,
-            address: crate::conversation_dag::AddressMode::Broadcast,
+            address: crate::store::conversation_record::AddressMode::Broadcast,
             recipients: vec![],
             advance: true,
             kind: ENTITY_TYPE_TURN,

@@ -405,7 +405,7 @@ impl ClaimMaterialization {
                 kind: crate::edge::EdgeKind::ClaimOf,
                 tgt: subject,
                 weight,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             });
         }
         for (facet, weight) in stamps {
@@ -414,7 +414,7 @@ impl ClaimMaterialization {
                 kind: crate::edge::EdgeKind::FacetOf,
                 tgt: facet,
                 weight,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             });
         }
         let transition = crate::batch::VerifiedClaimTransition::after_validated_succession(

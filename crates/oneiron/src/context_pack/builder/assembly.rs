@@ -6,7 +6,8 @@ use std::time::Instant;
 use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::{RetrievalWithTelemetry, WorldScope};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::pipeline::WorldScope;
 use crate::serialize::{SerializeConfig, serialize_pack_with_telemetry};
 
 use super::super::edge_walk::{EdgeWalkOptions, EdgeWalkResult, load_entity_edges, walk_edges};
@@ -70,9 +71,9 @@ impl<'a> ContextPackBuilder<'a> {
     /// The profile section, admitted and read in one snapshot.
     fn psych_profile_section(
         &self,
-        key: &crate::psych_profile::PsychProfileKey,
+        key: &crate::write_envelope::profile_snapshot::PsychProfileKey,
     ) -> Result<PsychProfilePackSection> {
-        let id = crate::psych_profile::psych_profile_entity_id(key);
+        let id = crate::write_envelope::profile_snapshot::psych_profile_entity_id(key);
         if let Some(reader) = self.l2_summary_reader {
             reader.persist_grant_clock()?;
         }

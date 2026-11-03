@@ -103,7 +103,7 @@ impl GraphAskRequest {
     /// one selection of distinct units, and the question itself. A ceiling
     /// of human asks the next authorised role (OF-506), never stops at big.
     pub fn validate(&self) -> MemoryResult<()> {
-        crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
+        crate::request_limits::check_deadline_ms(self.unit_deadline_ms)?;
         match (&self.select, self.units.is_empty()) {
             (Some(_), false) => {
                 return Err(MemoryError::bad_request_with(

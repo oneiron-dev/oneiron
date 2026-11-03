@@ -487,7 +487,7 @@ impl Memory<'_> {
     pub(super) fn lexical_hits(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
-        hits: ScopedReadResult<Vec<crate::pipeline::ScoredEntity>>,
+        hits: ScopedReadResult<Vec<oneiron_retrieval::pipeline::ScoredEntity>>,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
         short_ref: impl Fn(&EntityId) -> MemoryResult<Option<String>>,
     ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {

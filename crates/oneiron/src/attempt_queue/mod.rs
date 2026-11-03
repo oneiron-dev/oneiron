@@ -27,10 +27,13 @@ mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
+pub mod source_rows;
+pub mod skill_edit_cycle;
 mod result;
 mod settlement;
 mod telemetry;
 mod types;
+pub mod dispatch_payload;
 mod validate;
 #[cfg(test)]
 pub(crate) use validate::validate_lease_owner;
@@ -159,3 +162,5 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
         ))
     }
 }
+
+pub mod companion_task;

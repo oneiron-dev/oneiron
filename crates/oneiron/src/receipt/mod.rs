@@ -5,6 +5,8 @@
 //! keeps the lasting receipt every wire reply carries (OF-538). Admission
 //! observations keep named calls visible before their wire settlement.
 
+pub mod dispatch_identity;
+pub mod intent_id;
 pub mod admission;
 mod authority_audit;
 mod brief_share;
@@ -14,6 +16,7 @@ mod decision_asks;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
+pub mod task_type_ref;
 mod field_set;
 mod grant;
 mod guest_revoke;
@@ -27,6 +30,8 @@ mod projection;
 mod questions;
 mod record;
 mod reference_refusal;
+mod refusal_reason;
+pub use refusal_reason::RefusalReason;
 mod send_receipt_txn;
 mod served_form;
 mod session;

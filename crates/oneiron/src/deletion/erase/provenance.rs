@@ -121,7 +121,7 @@ impl Vault {
             return Ok(Vec::new());
         }
         ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
-        ppr::increment_graph_version(&self.store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         Ok(vec![subject.source, subject.target])
     }
 

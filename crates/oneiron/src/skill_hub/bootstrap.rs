@@ -215,7 +215,7 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
         // Coach's eval-authoring pass runs its skill as a procedure, and so
         // does the shipped skill improver.
         if name == "team-lead"
-            || name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+            || name == crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME
             || name == "eval-authoring"
             || name == "skill-optimize"
             || PATTERNS
@@ -231,7 +231,7 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
     let mut files = vec![HubFile::new("SKILL.md", markdown.as_bytes())];
     // The vault task-type tree lives in the team-shape skill (ARCH-0079): it
     // ships as the seeded tree, and receipts fork it from there.
-    if name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME {
+    if name == crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME {
         let tree =
             serde_json::to_vec_pretty(&crate::task_type::TaskTypeTree::seeded()).map_err(|_| {
                 Error::Artifact(ArtifactError::InvalidSkillBody(
@@ -239,7 +239,7 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
                 ))
             })?;
         files.push(HubFile::new(
-            crate::agent_dispatch::TASK_TYPE_TREE_FILE,
+            crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE,
             tree,
         ));
     }

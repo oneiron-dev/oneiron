@@ -1,6 +1,6 @@
 //! Batch op vocabulary and shared op constructors.
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::{EdgeKind, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Error;

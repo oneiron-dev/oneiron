@@ -86,3 +86,5 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+pub mod team_shape_catalog;

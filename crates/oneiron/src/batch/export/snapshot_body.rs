@@ -191,7 +191,7 @@ pub(super) fn asset_folded(vault: &Vault, rtxn: &RoTxn<'_>, body: &RowBody<'_>) 
         return Ok(false);
     };
     Ok(crate::store::receipt_identity::is_receipt_archive_source(body)
-        || crate::skill_hub::decode_source_carrier(body)?.is_some()
+        || crate::store::skill_source_carrier::decode_source_carrier(body)?.is_some()
         || !crate::agent_def::birth_source_exportable(&vault.store, rtxn, body)?)
 }
 

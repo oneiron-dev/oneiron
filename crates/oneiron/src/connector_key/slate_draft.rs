@@ -17,7 +17,7 @@ use crate::model_decision::catalogue::CONNECTOR_SLATE_DRAFT;
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
-use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};

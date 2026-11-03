@@ -440,7 +440,7 @@ fn retained_world_in_txn(
     Ok(store
         .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .and_then(|raw| String::from_utf8(raw).ok())
-        .and_then(crate::sync::types::WindowKey::try_new)
+        .and_then(crate::window_key::WindowKey::try_new)
         .and_then(|key| key.world()))
 }
 

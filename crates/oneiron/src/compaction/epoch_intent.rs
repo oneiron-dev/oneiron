@@ -168,7 +168,7 @@ pub(super) fn intent_ops(
         kind,
         tgt,
         weight: edge_weight(kind),
-        vad: crate::affect::Vad::NEUTRAL,
+        vad: oneiron_contracts::affect::Vad::NEUTRAL,
     };
     let mut ops = vec![
         BatchOp::Put {

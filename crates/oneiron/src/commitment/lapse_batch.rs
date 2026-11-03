@@ -332,7 +332,7 @@ fn supersede_with_successor_in_txn(
             tgt: predecessor,
             weight: crate::vault::SUPERSEDES_DEFAULT_WEIGHT,
             created_at: now,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
             provenance: None,
         },
     ];

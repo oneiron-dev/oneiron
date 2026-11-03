@@ -226,7 +226,7 @@ pub(crate) const ASSET_FILE_PLANE: bool = false;
 fn opaque_body(body: &[u8]) -> bool {
     crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
         && !crate::batch::secret_scan::is_container(body)
-        && crate::skill_hub::refinement_carrier_payload(body).is_none()
+        && crate::store::refinement_carrier::refinement_carrier_payload(body).is_none()
         && !leads_with_keyed_map(body)
 }
 
