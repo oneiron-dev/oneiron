@@ -78,7 +78,9 @@ pub use doors::{
 pub(crate) use doors::{agent_health_card_in_txn, agent_health_cards_in_txn};
 use doors::{forbidden, may_read, settle};
 pub use environment::HealthCauseSource;
-pub(crate) use erase::{erase_actor_sources_in_txn, erase_sources_in_txn};
+pub(crate) use erase::{
+    erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
+};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
