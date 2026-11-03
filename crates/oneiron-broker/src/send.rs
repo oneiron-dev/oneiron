@@ -146,12 +146,13 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, secret, writer, deadline)
+            .stream_to(call, checked, body, whole, secret, writer, deadline)
             .await;
     }
 
@@ -160,13 +161,16 @@ impl Sender {
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
+        whole: Option<Zeroizing<Vec<u8>>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) -> io::Result<()> {
         if call.shape == crate::Shape::OpenAiResponses {
-            return crate::responses::responses_to(call, checked, body, secret, writer, deadline)
-                .await;
+            return crate::responses::responses_to(
+                call, checked, body, whole, secret, writer, deadline,
+            )
+            .await;
         }
         let reached = match checked {
             Ok(url) => self.reach(call, url, body, secret, deadline).await,

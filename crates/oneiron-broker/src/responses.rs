@@ -13,32 +13,33 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
 use serde_json::Value as JsonValue;
 use tokio::io::AsyncWrite;
-use tokio::net::TcpStream;
+use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
 use crate::frame::{MAX_STREAM, STREAM_CHUNK, write_chunk, write_stream_end, write_stream_header};
-use crate::send::{answer, auth_value, push_wiped, reply_headers};
-use crate::strip::KeyWatch;
+use crate::send::{answer, auth_value, reply_headers};
+use crate::strip::strip;
 use crate::{CallHeader, Failure, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const PREVIOUS_NOT_FOUND: &str = "previous_response_not_found";
 const SOCKET_LIMIT: &str = "websocket_connection_limit_reached";
 
-type ProviderSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
 pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
     call: &CallHeader,
     checked: Result<Url, Refusal>,
     body: Zeroizing<Vec<u8>>,
+    whole: Option<Zeroizing<Vec<u8>>>,
     secret: &[u8],
     writer: &mut W,
     deadline: CallDeadline,
 ) -> io::Result<()> {
+    let Some(whole) = whole else {
+        return cut_before_header(writer, call, Failure::Send, deadline).await;
+    };
     let url = match checked {
         Ok(url) => url,
         Err(reason) => return answer(writer, call, Outcome::Refused { reason }, deadline).await,
@@ -47,7 +48,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
         Ok(auth) => auth,
         Err(reason) => return answer(writer, call, Outcome::Refused { reason }, deadline).await,
     };
-    let mut request = match url.as_str().into_client_request() {
+    let ws_url = url.as_str().replacen("https://", "wss://", 1);
+    let mut request = match ws_url.as_str().into_client_request() {
         Ok(request) => request,
         Err(_) => {
             return answer(
@@ -61,14 +63,21 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
             .await;
         }
     };
-    request
-        .headers_mut()
-        .insert(call.shape.auth_header().parse().unwrap(), auth);
+    request.headers_mut().insert(
+        call.shape
+            .auth_header()
+            .parse()
+            .expect("Responses auth header is a valid header name"),
+        auth,
+    );
     request.headers_mut().insert(
         reqwest::header::ACCEPT_ENCODING,
         reqwest::header::HeaderValue::from_static("identity"),
     );
     for (name, value) in &call.headers {
+        if name == "content-type" {
+            continue;
+        }
         let name = match name.parse() {
             Ok(name) => name,
             Err(_) => {
@@ -127,9 +136,28 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
             )
             .await;
         }
-        Ok(Err(_)) => return cut_before_header(writer, call, Failure::Send, deadline).await,
+        // No create frame ran, so a failed upgrade is safe to answer as chat.
+        Ok(Err(_)) => {
+            return answer(
+                writer,
+                call,
+                Outcome::Refused {
+                    reason: Refusal::Connect,
+                },
+                deadline,
+            )
+            .await;
+        }
         Err(_) => {
-            return cut_before_header(writer, call, Failure::Timeout, deadline).await;
+            return answer(
+                writer,
+                call,
+                Outcome::Refused {
+                    reason: Refusal::Connect,
+                },
+                deadline,
+            )
+            .await;
         }
     };
 
@@ -167,11 +195,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
     };
     within(deadline, write_stream_header(writer, &header)).await?;
 
-    let mut watch = KeyWatch::new(secret);
-    let mut cleared = Zeroizing::new(Vec::new());
     let mut received = 0_usize;
     let mut chained = chained;
-    let mut create = create;
     loop {
         let Some(left) = deadline.send_left() else {
             return cut_after_header(writer, Failure::Timeout, deadline).await;
@@ -189,20 +214,17 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                     Ok(event) => event,
                     Err(_) => return cut_after_header(writer, Failure::Send, deadline).await,
                 };
-                let code = event
-                    .get("error")
-                    .and_then(|error| error.get("code"))
-                    .and_then(JsonValue::as_str);
+                let code = (event.get("type").and_then(JsonValue::as_str) == Some("error"))
+                    .then(|| event.get("error")?.get("code")?.as_str())
+                    .flatten();
                 if code == Some(PREVIOUS_NOT_FOUND) && chained {
                     // The daemon sees this marker and forgets its stale row;
                     // it is not a terminal provider verdict for this turn.
                     if let Err(error) = pass_event(
                         writer,
                         deadline,
-                        &mut watch,
-                        &mut cleared,
+                        secret,
                         text.as_str().as_bytes(),
-                        false,
                         &mut received,
                     )
                     .await
@@ -215,10 +237,14 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                         return cut_after_header(writer, Failure::Send, deadline).await;
                     }
                     chained = false;
-                    if let Some(object) = create.as_object_mut() {
+                    let mut retry_create = match serde_json::from_slice::<JsonValue>(&whole) {
+                        Ok(create) => create,
+                        Err(_) => return cut_after_header(writer, Failure::Send, deadline).await,
+                    };
+                    if let Some(object) = retry_create.as_object_mut() {
                         object.remove("previous_response_id");
                     }
-                    let retry = match serde_json::to_string(&create) {
+                    let retry = match serde_json::to_string(&retry_create) {
                         Ok(retry) => retry,
                         Err(_) => return cut_after_header(writer, Failure::Send, deadline).await,
                     };
@@ -247,10 +273,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                 if let Err(error) = pass_event(
                     writer,
                     deadline,
-                    &mut watch,
-                    &mut cleared,
+                    secret,
                     text.as_str().as_bytes(),
-                    terminal,
                     &mut received,
                 )
                 .await
@@ -282,8 +306,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                     return cut_after_header(writer, Failure::Send, deadline).await;
                 }
             }
-            Message::Pong(_) | Message::Frame(_) => {}
-            Message::Binary(_) | Message::Close(_) => {
+            Message::Pong(_) | Message::Frame(_) | Message::Binary(_) => {}
+            Message::Close(_) => {
                 return cut_after_header(writer, Failure::Send, deadline).await;
             }
         }
@@ -315,6 +339,12 @@ async fn write_http_refusal<W: AsyncWrite + Unpin>(
     deadline: CallDeadline,
 ) -> io::Result<()> {
     let status = response.status().as_u16();
+    // A failed upgrade is not a socket, even if the HTTP status is 2xx.
+    let status = if (200..=299).contains(&status) {
+        502
+    } else {
+        status
+    };
     let headers = reply_headers(response.headers(), secret);
     let header = ReplyHeader {
         version: PROTOCOL_VERSION,
@@ -327,49 +357,30 @@ async fn write_http_refusal<W: AsyncWrite + Unpin>(
     if body.len() > MAX_STREAM {
         return cut_after_header(writer, Failure::ReplyTooLarge, deadline).await;
     }
-    let mut watch = KeyWatch::new(secret);
-    let mut cleared = Zeroizing::new(Vec::new());
     let mut received = 0_usize;
-    pass_event(
-        writer,
-        deadline,
-        &mut watch,
-        &mut cleared,
-        &body,
-        true,
-        &mut received,
-    )
-    .await?;
+    pass_event(writer, deadline, secret, &body, &mut received).await?;
     within(deadline, write_stream_end(writer, None)).await
 }
 
 async fn pass_event<W: AsyncWrite + Unpin>(
     writer: &mut W,
     deadline: CallDeadline,
-    watch: &mut KeyWatch,
-    cleared: &mut Zeroizing<Vec<u8>>,
+    secret: &[u8],
     event: &[u8],
-    last: bool,
     received: &mut usize,
 ) -> io::Result<()> {
     if received.saturating_add(event.len()) > MAX_STREAM {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     *received += event.len();
-    let passed = if last {
-        watch.finish()
-    } else {
-        watch.push(event)
-    };
-    push_wiped(cleared, &passed);
-    let mut sent = 0;
-    while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
-        let end = (sent + STREAM_CHUNK).min(cleared.len());
-        within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
-        sent = end;
+    // One WS text event is one daemon event. Per-event stripping cannot split
+    // or coalesce JSON, and a key cannot span the `}{` boundary of two events.
+    let passed = strip(secret, event);
+    if passed.len() > STREAM_CHUNK {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
-    if sent > 0 {
-        *cleared = Zeroizing::new(cleared[sent..].to_vec());
+    if !passed.is_empty() {
+        within(deadline, write_chunk(writer, &passed)).await?;
     }
     Ok(())
 }

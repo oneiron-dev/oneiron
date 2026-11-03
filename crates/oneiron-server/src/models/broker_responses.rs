@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures_util::{FutureExt, StreamExt};
+use futures_util::StreamExt;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
@@ -27,7 +27,7 @@ use oneiron_llm_openai::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::broker::{BrokerBackend, answered, broker_error, join, open_with_key};
+use super::broker::{BrokerBackend, answered, broker_error, join, open_with_whole};
 use super::http::is_cloud_node;
 use super::output_cap::OutputCap;
 use super::responses_socket::ResponsesContext;
@@ -113,7 +113,7 @@ impl BrokerResponses {
         turn: &OpenAiResponsesTurn,
         previous: Option<&str>,
         input: &[JsonValue],
-    ) -> LlmResult<(CallHeader, Vec<u8>)> {
+    ) -> LlmResult<(CallHeader, Vec<u8>, Vec<u8>)> {
         let create = turn.create_frame(previous, input);
         let whole = turn.create_frame(None, &turn.items);
         let body = serde_json::to_vec(&create).map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -125,20 +125,21 @@ impl BrokerResponses {
             .and_then(JsonValue::as_str)
             .ok_or(FatalLlmError::InvalidRequest)?
             .to_owned();
-        Ok((
-            CallHeader::new_with_digest_body(
-                call.to_owned(),
-                Shape::OpenAiResponses,
-                self.chat.origin().to_owned(),
-                join(self.chat.prefix(), "/v1/responses"),
-                headers.into_iter().collect(),
-                wire_model,
-                is_cloud_node(),
-                &body,
-                &digest_body,
-            ),
-            body,
-        ))
+        let header = CallHeader::new_with_digest_body(
+            call.to_owned(),
+            Shape::OpenAiResponses,
+            self.chat.origin().to_owned(),
+            join(self.chat.prefix(), "/v1/responses"),
+            headers.into_iter().collect(),
+            wire_model,
+            is_cloud_node(),
+            &body,
+            &digest_body,
+        );
+        header
+            .check(&body)
+            .map_err(|_| FatalLlmError::InvalidRequest)?;
+        Ok((header, body, digest_body))
     }
 
     fn chain_key(&self, digests: &[u64]) -> String {
@@ -235,13 +236,14 @@ impl BrokerResponses {
         let mut chain = self.resume(&turn).await;
         let (previous, input) = chain.plan(&turn.items);
         let chained = previous.is_some();
-        let (header, body) = self.header(lease.id(), &turn, previous, input)?;
-        let reply = match open_with_key(
+        let (header, body, whole) = self.header(lease.id(), &turn, previous, input)?;
+        let reply = match open_with_whole(
             self.chat.client(),
             self.chat.keys(),
             self.chat.secret(),
             &header,
             &body,
+            &whole,
         )
         .await
         {
@@ -284,12 +286,7 @@ impl BrokerResponses {
             match session.reply.next().await {
                 Ok(StreamPart::Chunk(chunk)) => {
                     let Ok(mut event) = serde_json::from_slice::<JsonValue>(&chunk) else {
-                        return Some((
-                            Err(OpenAiCompatTransportError::UnexpectedFrame(
-                                "Responses event was not JSON".to_owned(),
-                            )),
-                            Turn::Done,
-                        ));
+                        return Some((Err(OpenAiCompatTransportError::StreamCut), Turn::Done));
                     };
                     if responses_error_code(&event) == Some(RESPONSES_PREVIOUS_NOT_FOUND) && chained
                     {
@@ -334,7 +331,7 @@ impl BrokerResponses {
                 Ok(StreamPart::Cut(reason)) => {
                     return Some((Err(cut_error(reason)), Turn::Done));
                 }
-                Err(error) => {
+                Err(_) => {
                     return Some((Err(OpenAiCompatTransportError::StreamCut), Turn::Done));
                 }
             }
@@ -397,7 +394,10 @@ impl LlmBackend for BrokerResponses {
         let opened = async move {
             match self.run(lease, turn).await {
                 Ok(Some(stream)) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(stream))),
-                Ok(None) => self.chat.stream(request, lease),
+                Ok(None) if self.refused.load(Ordering::Relaxed) => {
+                    self.chat.stream(request, lease)
+                }
+                Ok(None) => Err(RetryableLlmError::StreamCut.into()),
                 Err(error) => Err(error),
             }
         };
@@ -416,6 +416,9 @@ impl SingleRouteBackend for BrokerResponses {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         if !self.carries(request) {
             return self.chat.preflight(request, stream);
+        }
+        if !stream {
+            self.chat.preflight(request, false)?;
         }
         self.turn(request, stream)?;
         if let Err(error) = self.chat.client().ready() {
@@ -436,7 +439,7 @@ impl SingleRouteBackend for BrokerResponses {
             return self.chat.request_digest(request, stream);
         }
         let turn = self.turn(request, stream)?;
-        let (header, _) = self.header("", &turn, None, &turn.items)?;
+        let (header, _, _) = self.header("", &turn, None, &turn.items)?;
         Ok(Some(header.digest))
     }
 

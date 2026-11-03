@@ -246,13 +246,6 @@ pub(super) fn broker_backend(
 }
 
 impl BrokerBackend {
-    pub(super) fn openai_config(&self) -> Option<&OpenAiCompatConfig> {
-        match &self.wire {
-            Wire::OpenAi(config) => Some(config),
-            Wire::Anthropic(_) => None,
-        }
-    }
-
     pub(super) fn origin(&self) -> &str {
         &self.origin
     }
@@ -447,6 +440,34 @@ pub(super) async fn open_with_key(
         })?;
     connection
         .open(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens one Responses call with its whole turn for a same-socket full retry.
+pub(super) async fn open_with_whole(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .open_with_whole(header, body, whole, key)
         .await
         .map_err(broker_error)
 }
