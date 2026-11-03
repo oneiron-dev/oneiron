@@ -1,5 +1,5 @@
 //! Runtime output parts and the in-progress generation envelope.
-use oneiron::{FinishReason, ImageContent, LlmResult, LlmUsage};
+use oneiron::{FinishReason, ImageContent, LlmResult, LlmUsage, ReasoningPartKind};
 use serde_json::Value as JsonValue;
 
 /// Runtime output part emitted by an already-loaded local model.
@@ -13,6 +13,8 @@ pub enum LocalOutputPart {
         part_id: Option<String>,
         text: String,
         signature: Option<String>,
+        reasoning_kind: ReasoningPartKind,
+        data: Option<String>,
     },
     ToolCall {
         part_id: Option<String>,

@@ -236,11 +236,18 @@ impl LlmEventBus {
                     text: String::new(),
                 },
             ),
-            LlmStreamEvent::ReasoningStart { part_id, signature } => self.insert(
+            LlmStreamEvent::ReasoningStart {
+                part_id,
+                signature,
+                reasoning_kind,
+                data,
+            } => self.insert(
                 part_id,
                 ContentPart::Reasoning {
                     text: String::new(),
                     signature: signature.clone(),
+                    reasoning_kind: *reasoning_kind,
+                    data: data.clone(),
                 },
             ),
             LlmStreamEvent::TextDelta { part_id, text }

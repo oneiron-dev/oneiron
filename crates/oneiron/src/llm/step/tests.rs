@@ -2782,6 +2782,8 @@ fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
             Box::new(Empty(ContentPart::Reasoning {
                 text: "".into(),
                 signature: None,
+                reasoning_kind: crate::ReasoningPartKind::Full,
+                data: None,
             })),
         )
         .unwrap();
@@ -2790,7 +2792,9 @@ fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
             "empty".into(),
             Box::new(Empty(ContentPart::Reasoning {
                 text: "".into(),
-                signature: None
+                signature: None,
+                reasoning_kind: crate::ReasoningPartKind::Full,
+                data: None,
             }))
         ),
         Err(FallbackError::Duplicate(_))
