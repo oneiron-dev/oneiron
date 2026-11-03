@@ -12,6 +12,7 @@ use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
 
+pub(crate) mod actor_tokens;
 pub mod carry_forward;
 pub mod channel_identity;
 pub mod identity_pair;
@@ -21,6 +22,30 @@ pub mod claim_predicate;
 pub mod cohort_claims;
 pub mod communication;
 pub(crate) mod communication_record;
+pub mod provenance;
+pub mod counterparty_fields;
+pub mod actor_predicate;
+pub mod commitment_actor;
+pub mod commitment_transition;
+pub mod world_access_predicates;
+pub mod skill_record;
+pub mod skill_source;
+pub mod task_body;
+pub mod profile_snapshot;
+pub mod voice_segment;
+pub mod affect_trigger;
+pub mod coping_outcome;
+pub mod claim_vad;
+pub mod vad_annotation;
+pub mod person_identity;
+pub mod companion_subject;
+pub mod companion_task_kind;
+pub mod learning_predicate;
+mod effect_digest;
+mod validation;
+
+pub use effect_digest::EffectDigest;
+pub(crate) use validation::validate_write_envelope;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

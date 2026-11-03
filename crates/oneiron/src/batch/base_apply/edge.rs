@@ -152,7 +152,7 @@ fn write_under_local_withdrawal(
     incoming: Option<crate::edge::EdgeProvenanceFlags>,
     write: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
 ) -> Result<()> {
-    let subject = crate::provenance::EdgeRef::new(src, kind, tgt);
+    let subject = crate::write_envelope::provenance::EdgeRef::new(src, kind, tgt);
     let check = crate::provenance::image_needs_cohort_check(store, wtxn, &subject, incoming)?;
     write(wtxn)?;
     if check {

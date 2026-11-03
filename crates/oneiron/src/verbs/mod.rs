@@ -1031,3 +1031,5 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
+
+pub mod voice_records;

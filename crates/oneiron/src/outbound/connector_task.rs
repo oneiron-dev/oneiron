@@ -15,7 +15,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
@@ -192,7 +192,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
-    schedule_context: &crate::memory::OutboundScheduleContext,
+    schedule_context: &crate::delivery_window::OutboundScheduleContext,
     continuation: &super::OutboundScheduleContinuation,
     calendar_invite: Option<&CalendarInvitePayload>,
     counterparty_ref: Option<&str>,
@@ -329,7 +329,7 @@ impl Vault {
         if !has_connector_send_subkind(body_bytes)? {
             return Ok(None);
         }
-        if crate::habit::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
+        if crate::write_envelope::task_body::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send must use the Task role",
             )));

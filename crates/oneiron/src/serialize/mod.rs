@@ -10,7 +10,12 @@ mod credential_nulling;
 mod value_json;
 pub(crate) use value_json::msgpack_value_projection;
 pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
+pub(crate) mod persona_export_fields;
 mod field_profile_table;
+pub mod context_entity;
+pub mod empty_context;
+pub mod pack_accounting;
+pub mod pack_format;
 pub mod outbound_grant_fields;
 pub(crate) mod grant_fields;
 mod group_labels;
@@ -45,6 +50,8 @@ pub use pack_entry::{
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};
 
 pub(crate) use oneiron_contracts::serialize::entity_ref;
+mod export_format;
+pub use export_format::{EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF};
 mod export_value;
 mod okf_bundle;
 mod vault_archive;
@@ -69,3 +76,5 @@ mod hub_source_archive;
 pub use hub_source_archive::ExportHubSource;
 
 mod export_actor_references;
+
+pub(crate) mod person_identity;

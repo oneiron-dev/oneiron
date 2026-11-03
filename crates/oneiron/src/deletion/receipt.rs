@@ -62,7 +62,7 @@ pub(crate) struct RedactionAuditReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) room_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) room_role: Option<crate::conversation::RoomRole>,
+    pub(crate) room_role: Option<crate::store::conversation_body::RoomRole>,
     /// When the erase completed overall, on its final row alone: its sweep,
     /// if it queued one, and every custody retirement it binds had finished
     /// (FIX 5844, C-ERASE-FINAL).
@@ -90,7 +90,7 @@ impl RedactionAuditReceipt {
 #[derive(Debug, Clone)]
 pub(crate) struct RedactionReceiptInput {
     pub actor_principal: Option<EntityId>,
-    pub room_authority: Option<(EntityId, crate::conversation::RoomRole)>,
+    pub room_authority: Option<(EntityId, crate::store::conversation_body::RoomRole)>,
     pub request_id: String,
     pub scope: RedactionScope,
     pub reason: DeleteReason,

@@ -92,7 +92,7 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
                 tgt: *old_id,
                 weight: crate::vault::SUPERSEDES_DEFAULT_WEIGHT,
                 created_at: now,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 provenance: None,
             },
         ],

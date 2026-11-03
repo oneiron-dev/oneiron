@@ -27,6 +27,7 @@ mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
+pub(crate) mod code_consent_host;
 mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
@@ -194,10 +195,10 @@ pub struct Vault {
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
-    pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
@@ -214,7 +215,7 @@ pub struct Vault {
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
     pub(crate) code_consent_host:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>>,
     /// The served host's check that a managed vault's attested owner is its
     /// live owner, which his queued work runs under (FIX 11090), installed
     /// once per open vault ([`Vault::install_managed_owner_check`]). In
@@ -239,7 +240,7 @@ pub struct Vault {
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
-        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
+        std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

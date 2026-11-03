@@ -232,8 +232,8 @@ impl Vault {
                 && grant.confers_at(now)
                 && matches!(
                     crate::authority::federation_grant_activation(&fold, &id),
-                    crate::authority::FederationGrantActivation::Unpacted
-                        | crate::authority::FederationGrantActivation::Active
+                    oneiron_authority::authority::FederationGrantActivation::Unpacted
+                        | oneiron_authority::authority::FederationGrantActivation::Active
                 )
                 && grant.authority_scope.admits(
                     "read",
@@ -273,7 +273,7 @@ impl Vault {
         // A hosted reader is never the owner verified at a door (OF-560): the
         // bytes it reads are masked. A body kept in its ASSET's file is masked
         // as it is read, never held whole beside its copy (FIX 6507).
-        let sight = crate::secret_custody::SecretSight::Masked;
+        let sight = crate::file_secret_marks::SecretSight::Masked;
         let (bytes, media_type, _stored_hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
                 let Some(snapshot) = target.snapshot else {
@@ -379,7 +379,7 @@ impl Vault {
             txn,
             bytes,
             Some(hash),
-            crate::secret_custody::SecretSight::Masked,
+            crate::file_secret_marks::SecretSight::Masked,
         )
     }
 }
