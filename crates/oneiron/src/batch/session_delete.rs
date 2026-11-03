@@ -56,9 +56,17 @@ pub(super) fn stage_session_delete(
     .collect::<Result<Vec<_>>>()?;
     for dependent in inbound_derived {
         if dependent != *id {
-            crate::ports::withdraw_from_lost_source_in_session_txn(view, wtxn, &dependent, id)?;
+            let write_view = view.write_snapshot()?;
+            crate::ports::withdraw_from_lost_source_in_session_txn(
+                &write_view,
+                wtxn,
+                &dependent,
+                id,
+            )?;
         }
     }
+    let write_view = view.write_snapshot()?;
+    let view = &write_view;
     // The DAG pin is withdrawn while the row and its memberships still read,
     // as base's delete withdraws it before its edges go.
     let memberships = EdgeStoreRead::port_edges(

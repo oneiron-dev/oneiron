@@ -302,7 +302,9 @@ pub(crate) fn withdraw_from_lost_source_in_session_txn(
         return Ok(());
     }
     mark_room_stale_in_txn(view, txn, summary)?;
-    if view.entities.stages_row(summary.as_bytes()) {
+    if view.entities.stages_row(summary.as_bytes())
+        && super::EntityStoreRead::port_entity_raw(view.read().base(), txn, summary)?.is_none()
+    {
         crate::batch::delete_short_id_rows_for_id(view, txn, summary)?;
         crate::vault::entity_revision::remove_entity_revisions(view, txn, summary)?;
     }

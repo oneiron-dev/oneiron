@@ -524,6 +524,13 @@ impl SessionStoreView<'_> {
         self.overlay.install_txn_segment()
     }
 
+    /// Captures every accessor at the current write-segment position.
+    /// Sequential writers use this when a later index mutation must read the
+    /// preceding mutation's overlay writes rather than the original snapshot.
+    pub(crate) fn write_snapshot(&self) -> Result<SessionStoreView<'_>> {
+        self.base.session_view(self.overlay.clone())
+    }
+
     /// Captures entity rows at the current write-segment position for admission.
     /// Earlier staged dependencies are visible, but future ops are not. The
     /// caller's logical read view keeps its original immutable snapshot.
