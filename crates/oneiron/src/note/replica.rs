@@ -27,7 +27,7 @@ pub(super) fn admit_pin_disclosure(
     let claim = vault
         .get_claim_in_txn(txn, &pin.claim)?
         .ok_or_else(|| invalid("citation claim missing"))?;
-    let identity = crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
+    let identity = oneiron_authority::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
         .ok_or_else(|| invalid("citation claim outside selector"))?;
     if !position.bands.contains(&identity) {
         return Err(invalid("citation claim outside selector"));

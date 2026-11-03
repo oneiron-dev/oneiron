@@ -26,7 +26,7 @@ use super::{RepoRunAnswer, RepoRunBinding, refusal_error, repo_target};
 use crate::EntityId;
 use crate::checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps};
 use crate::codebase::RepoRef;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::memory::origin_doors::OriginPublicationState;
 use crate::memory::{

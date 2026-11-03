@@ -96,11 +96,9 @@ pub struct WorldStaleStamp {
     pub stamped_at_secs: u64,
 }
 
-/// LMDB `sync_state` key prefix for per-world stale stamps.
-pub const FEDERATION_STALE_KEY_PREFIX: &str = "fedstale:";
-
-/// LMDB `sync_state` key prefix for pact-to-world registrations.
-pub const FEDERATION_WORLD_KEY_PREFIX: &str = "fedworld:";
+pub use crate::store::world_registration_keys::{
+    FEDERATION_STALE_KEY_PREFIX, FEDERATION_WORLD_KEY_PREFIX,
+};
 
 /// Encoded length of a [`WorldStaleStamp`].
 pub const WORLD_STALE_STAMP_LEN: usize = 18;
