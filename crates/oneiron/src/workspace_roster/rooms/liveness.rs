@@ -380,21 +380,26 @@ fn observe_fold_in(
 
 /// The public room read supplies its exact room id even for an empty history.
 /// `edits` are the audience edits among `turns` (FIX 6544): no thread's
-/// last message or last reply, here and in every fold below.
+/// last message or last reply, here and in every fold below. `held` are the
+/// ids among `turns` held back from the reader (FIX 5658): the same, so a
+/// bare place reads no activity explicitly rather than only through its time.
 pub(super) fn project_in_room(
     turns: &[RoomTurn],
+    held: &BTreeSet<String>,
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     fold: ThreadFold,
     room: EntityId,
 ) -> Result<RoomThreads> {
-    project_inner(turns, edits, tasks, fold, None, &room.to_hex())
+    project_inner(turns, held, edits, tasks, fold, None, &room.to_hex())
 }
 
 /// Direct-by-handle fold under `fold` ([`direct_thread_fold_in`]): no
-/// render cap and no unrelated thread rows built.
+/// render cap and no unrelated thread rows built. `held` are the ids among
+/// `turns` held back from the reader (FIX 5658): no activity, like `edits`.
 pub(super) fn project_target(
     turns: &[RoomTurn],
+    held: &BTreeSet<String>,
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     handle: EntityId,
@@ -402,6 +407,7 @@ pub(super) fn project_target(
 ) -> Result<Option<RoomThread>> {
     let projection = project_inner(
         turns,
+        held,
         edits,
         tasks,
         ThreadFold {
@@ -425,9 +431,11 @@ pub(super) fn project_target(
 /// Whether thread `handle` of `room` is live (ARCH-0006a:233): the
 /// direct-by-handle fold under `fold` ([`direct_thread_fold_in`]) lists it
 /// active or waiting, never quiet. `None` when the turns hold no such
-/// thread root.
+/// thread root. `held` are the ids among `turns` held back from the reader
+/// (FIX 5658): no activity, like `edits`.
 pub(super) fn thread_is_live(
     turns: &[RoomTurn],
+    held: &BTreeSet<String>,
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     room: EntityId,
@@ -436,6 +444,7 @@ pub(super) fn thread_is_live(
 ) -> Result<Option<bool>> {
     let projection = project_inner(
         turns,
+        held,
         edits,
         tasks,
         ThreadFold {
@@ -457,6 +466,7 @@ pub(super) fn thread_is_live(
 
 fn project_inner(
     turns: &[RoomTurn],
+    held: &BTreeSet<String>,
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     policy: ThreadFold,
@@ -493,12 +503,19 @@ fn project_inner(
             if !by_id.contains_key(&trunk) || trunk == id {
                 return Err(invalid());
             }
+            // FIX 5658: a held place reads no activity explicitly, not only
+            // through its zero time; the root still lists for topology.
+            let root_at = if held.contains(&turn.turn_id) {
+                0
+            } else {
+                turn.at
+            };
             roots.insert(
                 id,
                 RoomThread {
                     handle: id,
                     trunk,
-                    last_message_at: turn.at,
+                    last_message_at: root_at,
                     open_tasks: 0,
                     waits: Vec::new(),
                     wait_render_limit: policy.waits_per_thread,
@@ -521,7 +538,9 @@ fn project_inner(
         let Some(&root_id) = root_by_turn.get(&id) else {
             continue;
         };
-        if id == root_id || edits.contains(&id) {
+        // FIX 5658: a held place reads no activity explicitly; its zero time
+        // already contributed none, so the skip is byte-identical.
+        if id == root_id || edits.contains(&id) || held.contains(&turn.turn_id) {
             continue;
         }
         if let Some(root) = roots.get_mut(&root_id) {
