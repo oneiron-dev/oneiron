@@ -3,9 +3,9 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis};
 use crate::side_table::{self, Raw, SideTable};
 use crate::workspace_roster::OwnerProjectSigner;
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use std::collections::BTreeSet;
 
 const OWNER_PROJECT_SLIP_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
