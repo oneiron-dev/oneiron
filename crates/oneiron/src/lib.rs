@@ -14,7 +14,26 @@
 pub mod batch;
 pub mod config;
 pub mod deletion;
-pub mod edge;
+pub mod edge {
+    //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
+    //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
+    //! in `crate::edge_regeneration`.
+    pub use oneiron_base::edge::{
+        DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+        EdgeProvenanceFlags, EdgeValueLayout,
+    };
+    pub(crate) use oneiron_base::edge::{
+        EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+        EDGE_VALUE_STRUCTURAL_LEN, Regeneration, StrictEdgeRecord, decode_edge_value,
+        decode_edge_value_for_kind, edge_value_layout_for_kind, encode_edge_value,
+        parse_strict_edge_record, parse_strict_edge_record_key, reserved_regenerates,
+        validate_edge_weight, validate_public_edge_creation_kind, validate_public_edge_kind,
+    };
+    #[cfg(feature = "sync")]
+    pub(crate) use crate::edge_regeneration::regeneration_stored;
+    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
+}
+mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
 pub mod housekeeping;
