@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
-use super::anchor_text::{TextLimits, anchor_text, find_text, remap_span};
+use super::anchor_text::{TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span};
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
@@ -212,6 +212,107 @@ impl DocxReanchor {
     }
 }
 
+/// The HTML side of one sweep: both versions' visible blocks and their
+/// producer ids. Structural ids fall back to the ordinary text pairing.
+pub(super) struct HtmlReanchor {
+    before: Option<Paragraphs>,
+    after: Option<Paragraphs>,
+    shares_ids: bool,
+}
+
+impl HtmlReanchor {
+    pub(super) fn load(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        from: u64,
+        to: u64,
+        threads: &[AnnotationThread],
+    ) -> Result<Option<Self>> {
+        if !threads.iter().any(|thread| {
+            thread.anchor.version == from
+                && !thread.is_drifted()
+                && matches!(thread.anchor.locator, Locator::Html { .. })
+        }) {
+            return Ok(None);
+        }
+        let body = vault
+            .get_blob_artifact_in_txn(txn, artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        if !matches!(
+            UnitFormat::from_media_type(&body.media_type),
+            Some(UnitFormat::Html)
+        ) {
+            return Ok(None);
+        }
+        let read = |version| -> Result<Option<Paragraphs>> {
+            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
+                return Ok(None);
+            };
+            let blocks = html_blocks(&bytes)?.map(|blocks| {
+                Paragraphs::new(
+                    blocks
+                        .into_iter()
+                        .map(|block| DocxAnchorBlock {
+                            para_id: block.explicit.then_some(block.part_id.clone()),
+                            block_id: block.part_id,
+                            text: block.text,
+                        })
+                        .collect(),
+                )
+            });
+            Ok(blocks)
+        };
+        let (before, after) = (read(from)?, read(to)?);
+        let shares_ids = match (&before, &after) {
+            (Some(before), Some(after)) => before.ids.keys().any(|id| after.ids.contains_key(id)),
+            _ => false,
+        };
+        Ok(Some(Self {
+            before,
+            after,
+            shares_ids,
+        }))
+    }
+
+    pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
+        let Locator::Html {
+            part_id,
+            char_start,
+            char_end,
+        } = locator
+        else {
+            return ReanchorOutcome::Drifted;
+        };
+        let (Some(before), Some(after)) = (&self.before, &self.after) else {
+            return ReanchorOutcome::Drifted;
+        };
+        let Some(index) = before
+            .blocks
+            .iter()
+            .position(|block| block.block_id == *part_id)
+        else {
+            return ReanchorOutcome::Drifted;
+        };
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids) else {
+            return ReanchorOutcome::Drifted;
+        };
+        let new = &after.blocks[paired];
+        match remap_span(
+            &before.blocks[index].text,
+            &new.text,
+            *char_start,
+            *char_end,
+        )
+        .and_then(|(start, end)| Locator::html(new.block_id.clone(), start, end).ok())
+        {
+            Some(locator) => ReanchorOutcome::Mapped(locator),
+            None => ReanchorOutcome::Drifted,
+        }
+    }
+}
+
 fn pair_paragraph(
     before: &Paragraphs,
     after: &Paragraphs,
@@ -380,7 +481,11 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
+        let format = UnitFormat::from_media_type(&body.media_type).ok_or_else(|| {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "unsupported annotation media type",
+            ))
+        })?;
         let bytes = self
             .read_blob_artifact_version(artifact_id, head.version)?
             .ok_or(Error::EntityNotFound)?;

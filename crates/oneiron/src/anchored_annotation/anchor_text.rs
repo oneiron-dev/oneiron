@@ -7,7 +7,9 @@
 //! detached comment keeps a snapshot of its text, so a person can be offered
 //! the exact words when they return; nothing here reattaches on a guess.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use dom_query::{Document, NodeRef};
 
 use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_docedit::xlsx_body::read_xlsx_cells;
@@ -30,6 +32,56 @@ pub(super) struct TextLimits {
     pub(super) package: Limits,
     pub(super) docx: oneiron_docedit::ArchiveLimits,
 }
+
+/// Artifact text formats, with HTML beside the OOXML edit formats (FIX 7905).
+#[derive(Clone, Copy)]
+pub(super) enum UnitFormat {
+    Xlsx,
+    Docx,
+    Pptx,
+    Html,
+}
+
+impl UnitFormat {
+    pub(super) fn from_media_type(media_type: &str) -> Option<Self> {
+        if media_type
+            .split(';')
+            .next()
+            .is_some_and(|base| base.trim().eq_ignore_ascii_case("text/html"))
+        {
+            return Some(Self::Html);
+        }
+        match OfficeFormat::from_media_type(media_type).ok()? {
+            OfficeFormat::Xlsx => Some(Self::Xlsx),
+            OfficeFormat::Docx => Some(Self::Docx),
+            OfficeFormat::Pptx => Some(Self::Pptx),
+        }
+    }
+}
+
+/// Whole admitted version bytes, with no second HTML-specific cap (CALLS).
+const HTML_READ_WHOLE: bool = true;
+const HTML_BLOCK_TAGS: &[&str] = &[
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "blockquote",
+    "pre",
+    "td",
+    "th",
+    "figcaption",
+    "dt",
+    "dd",
+];
+const HTML_LEAF_CONTAINERS: &[&str] = &[
+    "div", "section", "article", "header", "footer", "main", "aside", "figure",
+];
+const HTML_IGNORED_SUBTREES: &[&str] = &["script", "style", "template", "noscript"];
 
 /// The text under `locator` in `bytes`, or `Ok(None)` when the spot cannot
 /// be read. A resource refusal is the engine's error (FIX 10587).
@@ -88,6 +140,23 @@ pub(super) fn anchor_text(
             }
             Ok(shape_text(shape))
         }
+        Locator::Html {
+            part_id,
+            char_start,
+            char_end,
+        } => {
+            let Some(blocks) = html_blocks(bytes)? else {
+                return Ok(None);
+            };
+            let mut matches = blocks.iter().filter(|block| &block.part_id == part_id);
+            let Some(block) = matches.next() else {
+                return Ok(None);
+            };
+            if matches.next().is_some() {
+                return Ok(None);
+            }
+            Ok(char_slice(&block.text, *char_start, *char_end))
+        }
         _ => Ok(None),
     }
 }
@@ -98,7 +167,7 @@ pub(super) fn anchor_text(
 /// refusal is the engine's error (FIX 10587).
 pub(super) fn find_text(
     bytes: &[u8],
-    format: OfficeFormat,
+    format: UnitFormat,
     text: &str,
     limits: &TextLimits,
 ) -> crate::Result<Vec<Locator>> {
@@ -106,8 +175,8 @@ pub(super) fn find_text(
         return Ok(Vec::new());
     }
     let mut found = match format {
-        OfficeFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
-        OfficeFormat::Docx => docx_blocks(bytes, limits)?
+        UnitFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
+        UnitFormat::Docx => docx_blocks(bytes, limits)?
             .map(|blocks| {
                 blocks
                     .iter()
@@ -119,7 +188,7 @@ pub(super) fn find_text(
                     .collect()
             })
             .unwrap_or_default(),
-        OfficeFormat::Pptx => deck_view(bytes, limits)?
+        UnitFormat::Pptx => deck_view(bytes, limits)?
             .map(|deck| {
                 deck.slides
                     .iter()
@@ -134,6 +203,18 @@ pub(super) fn find_text(
                                 Locator::pptx(u64::try_from(index).ok()? + 1, identity).ok()
                             })?
                         })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        UnitFormat::Html => html_blocks(bytes)?
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .flat_map(|block| {
+                        char_occurrences(&block.text, text).into_iter().filter_map(
+                            |(start, end)| Locator::html(block.part_id.clone(), start, end).ok(),
+                        )
                     })
                     .collect()
             })
@@ -211,6 +292,139 @@ pub(super) fn docx_blocks(
             .map(|block| (block.id.to_string(), block.text))
             .collect(),
     ))
+}
+
+/// Visible text blocks in an HTML document: stable part id and exact decoded
+/// text. Stored bytes never change; structural ids derive from the parse tree.
+pub(super) struct HtmlBlock {
+    pub(super) part_id: String,
+    pub(super) text: String,
+    /// A producer's explicit data-part-id, not a derived structural position.
+    pub(super) explicit: bool,
+}
+
+pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>> {
+    if !HTML_READ_WHOLE {
+        return Ok(None);
+    }
+    let Ok(html) = std::str::from_utf8(bytes) else {
+        return Ok(None);
+    };
+    let document = Document::from(html);
+    let root = document.root();
+    let body = {
+        let mut pending = vec![root];
+        let mut found = None;
+        while let Some(node) = pending.pop() {
+            if node.node_name().as_deref() == Some("body") {
+                found = Some(node);
+                break;
+            }
+            pending.extend(node.element_children());
+        }
+        found.unwrap_or(root)
+    };
+    let mut pending = body
+        .element_children()
+        .enumerate()
+        .map(|(index, node)| (node, vec![index]))
+        .collect::<Vec<_>>();
+    pending.reverse();
+    let mut blocks = Vec::new();
+    let mut used_ids = BTreeSet::new();
+    while let Some((node, path)) = pending.pop() {
+        if html_ignored(&node) {
+            continue;
+        }
+        if html_block_candidate(&node) {
+            let explicit = node
+                .attr("data-part-id")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty());
+            let (part_id, explicit) = match explicit {
+                Some(id) if used_ids.insert(id.clone()) => (id, true),
+                _ => {
+                    let ordinals = path
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    let tag = node.node_name().unwrap_or_else(|| "block".into());
+                    let structural = format!("{tag}/{ordinals}#{}", blocks.len());
+                    used_ids.insert(structural.clone());
+                    (structural, false)
+                }
+            };
+            blocks.push(HtmlBlock {
+                part_id,
+                text: html_text(node),
+                explicit,
+            });
+            continue;
+        }
+        let children = node
+            .element_children()
+            .enumerate()
+            .map(|(index, child)| {
+                let mut path = path.clone();
+                path.push(index);
+                (child, path)
+            })
+            .collect::<Vec<_>>();
+        pending.extend(children.into_iter().rev());
+    }
+    if blocks.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(blocks))
+}
+
+fn html_ignored(node: &NodeRef<'_>) -> bool {
+    node.node_name()
+        .is_some_and(|name| HTML_IGNORED_SUBTREES.contains(&name.as_ref()))
+}
+
+fn html_block_candidate(node: &NodeRef<'_>) -> bool {
+    let Some(name) = node.node_name() else {
+        return false;
+    };
+    if HTML_BLOCK_TAGS.contains(&name.as_ref()) {
+        return true;
+    }
+    if !HTML_LEAF_CONTAINERS.contains(&name.as_ref()) {
+        return false;
+    }
+    let mut pending = node.element_children().collect::<Vec<_>>();
+    while let Some(child) = pending.pop() {
+        if html_ignored(&child) {
+            continue;
+        }
+        if child.node_name().is_some_and(|name| {
+            HTML_BLOCK_TAGS.contains(&name.as_ref())
+                || HTML_LEAF_CONTAINERS.contains(&name.as_ref())
+        }) {
+            return true;
+        }
+        pending.extend(child.element_children());
+    }
+    false
+}
+
+fn html_text(node: NodeRef<'_>) -> String {
+    let mut out = String::new();
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        if html_ignored(&node) {
+            continue;
+        }
+        if node.is_text() {
+            out.push_str(&node.text());
+            continue;
+        }
+        let children = node.children_it(false).collect::<Vec<_>>();
+        pending.extend(children.into_iter().rev());
+    }
+    out
 }
 
 /// The deck's typed view. A resource refusal is the engine's error
@@ -423,11 +637,11 @@ fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> crate::Resul
 /// A resource refusal is the engine's error (FIX 10587), never `None`.
 pub(super) fn unit_texts(
     bytes: &[u8],
-    format: OfficeFormat,
+    format: UnitFormat,
     limits: &TextLimits,
 ) -> crate::Result<Option<Vec<(Locator, Option<String>)>>> {
     match format {
-        OfficeFormat::Docx => {
+        UnitFormat::Docx => {
             let Some(blocks) = docx_blocks(bytes, limits)? else {
                 return Ok(None);
             };
@@ -440,7 +654,7 @@ pub(super) fn unit_texts(
                 })
                 .collect())
         }
-        OfficeFormat::Xlsx => {
+        UnitFormat::Xlsx => {
             let book = match read_xlsx_cells(
                 bytes,
                 limits.package,
@@ -471,7 +685,7 @@ pub(super) fn unit_texts(
             }
             Ok(Some(units))
         }
-        OfficeFormat::Pptx => {
+        UnitFormat::Pptx => {
             let Some(deck) = deck_view(bytes, limits)? else {
                 return Ok(None);
             };
@@ -505,6 +719,24 @@ pub(super) fn unit_texts(
                 }
             }
             Ok(Some(units))
+        }
+        UnitFormat::Html => {
+            let Some(blocks) = html_blocks(bytes)? else {
+                return Ok(None);
+            };
+            Ok(blocks
+                .into_iter()
+                .map(|block| {
+                    let matches = blocks
+                        .iter()
+                        .filter(|candidate| candidate.part_id == block.part_id)
+                        .count();
+                    let end = block.text.chars().count() as u64;
+                    let locator = Locator::html(block.part_id.clone(), 0, end).ok()?;
+                    let quote = (matches == 1 && end > 0).then_some(block.text);
+                    Some((locator, quote))
+                })
+                .collect())
         }
     }
 }
