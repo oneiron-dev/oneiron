@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 6 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/replay.rs` | src | s | 1 enum · 3 fn | MediaReplayKey | A media call's replay key (FIX 465, FIX 2962): the name a repeat of one call shares with the first, so the… |
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
-| `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 5 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
+| `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 6 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 32 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
