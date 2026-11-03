@@ -14,6 +14,7 @@ pub mod context_entity;
 pub mod empty_context;
 pub mod pack_accounting;
 pub mod pack_format;
+pub(crate) mod grant_fields;
 mod group_labels;
 mod handles;
 mod item_budget;

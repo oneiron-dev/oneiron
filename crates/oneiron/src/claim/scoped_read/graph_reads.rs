@@ -440,7 +440,7 @@ impl ScopedRead<'_> {
         raw: &[u8],
     ) -> Result<bool> {
         use crate::federation::record_scope::{default_stamp, scope_for_blob};
-        use crate::federation::{Scope, ScopeAxis};
+        use oneiron_authority::federation::{Scope, ScopeAxis};
         // A read limited to facets names only a shell that still proves a
         // place inside them.
         if !self.facets_allow_in(txn, id, raw)? {
