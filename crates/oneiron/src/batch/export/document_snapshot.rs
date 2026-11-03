@@ -30,6 +30,9 @@ use crate::write_envelope::WriteActor;
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
     pub(crate) outputs: Vec<(crate::store::result_manifest::CodeRunRawOutput, Option<&'static str>)>,
+    /// Live result names that resolve to one of `outputs`, judged with it.
+    pub(crate) bindings: Vec<(crate::code_run::CodeRunResultBinding, Option<&'static str>)>,
+    pub(crate) determinism: Option<crate::code_run::CodeRunDeterminism>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
     pub(crate) receipts: Vec<(crate::store::reader_fold_receipt::ReaderFoldReceipt, Option<&'static str>)>,
@@ -611,6 +614,9 @@ impl Vault {
         let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
+            let replay = self.get_code_run_replay_record_in_txn(rtxn, &run_id)?;
+            let determinism = replay.as_ref().map(|record| record.determinism);
+            let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
                 let withheld =
@@ -629,6 +635,18 @@ impl Vault {
                 }
                 occurrences.push((output, withheld));
             }
+            // A binding travels only beside the output its handle names;
+            // a dangling name is not evidence of a result. Withholding the
+            // occurrence withholds the handle too, never the name or reason.
+            let bindings = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    occurrences
+                        .iter()
+                        .find(|(output, _)| output.handle == binding.handle)
+                        .map(|(_, withheld)| (binding, *withheld))
+                })
+                .collect();
             // Each receipt goes beside the manifest of the occurrence it
             // describes, judged as that occurrence is.
             let receipts = self
@@ -644,6 +662,8 @@ impl Vault {
             writer.run(ExportSnapshotRun {
                 run_id,
                 outputs: occurrences,
+                bindings,
+                determinism,
                 receipts,
             })?;
             runs.push(run_id);

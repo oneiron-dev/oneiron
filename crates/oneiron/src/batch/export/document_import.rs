@@ -362,8 +362,15 @@ impl Vault {
         super::agent_person_import::ensure_imported_agent_persons_in_txn(
             self, &mut wtxn, &archive,
         )?;
-        let (imported_results, withheld_results) =
-            put_run_results_in_txn(self, &mut wtxn, &mut archive, known, &mut cleanup.staged)?;
+        let (
+            imported_results,
+            withheld_results,
+            bindings_bound,
+            bindings_unresolved,
+            bindings_withheld,
+            records_rebuilt,
+            records_skipped,
+        ) = put_run_results_in_txn(self, &mut wtxn, &mut archive, known, &mut cleanup.staged)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
@@ -403,6 +410,11 @@ impl Vault {
             remapped_entities,
             imported_results,
             withheld_results,
+            bindings_bound,
+            bindings_unresolved,
+            bindings_withheld,
+            records_rebuilt,
+            records_skipped,
             restored_secrets,
             unchanged_secrets,
             skipped_revoked_secrets,
@@ -619,8 +631,13 @@ fn put_run_results_in_txn<R: Read + Seek>(
     archive: &mut IndexedArchive<'_, R>,
     known: crate::store::result_manifest::StagedSinks,
     staged: &mut Vec<[u8; 32]>,
-) -> Result<(usize, usize)> {
+) -> Result<(usize, usize, usize, usize, usize, usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
+    let (mut bindings_bound, mut bindings_unresolved, mut bindings_withheld) = (0, 0, 0);
+    let (mut records_rebuilt, mut records_skipped) = (0, 0);
+    // Manifests only: bodies are streamed above and never retained between
+    // occurrences. These outputs rebuild each run's replay record below.
+    let mut restored_outputs = BTreeMap::new();
     // The values custody knows, read in this writer and kept no longer
     // (KS-3): each body's sweep replaces them with their handles.
     let swept = crate::secret_custody::KnownValues::load_in_writer(&vault.store, wtxn)?
@@ -628,6 +645,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
+        let mut manifests = Vec::with_capacity(run.outputs.len());
         for output in &run.outputs {
             let Some(blake3) = &output.blake3 else {
                 withheld += 1;
@@ -673,7 +691,76 @@ fn put_run_results_in_txn<R: Read + Seek>(
             staged.push(finished.output.raw_blake3);
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
+            manifests.push(occurrence);
             imported += 1;
+        }
+        if !manifests.is_empty() {
+            restored_outputs.insert(run_id, manifests);
+        }
+    }
+    // The occurrences are in before their names, exactly as they are for the
+    // receipts below. Rebuild only the approved outputs + bindings record;
+    // bridge calls, checkpoints and other full-replay inputs stay unknown.
+    let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
+    while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
+        let run_id = parse_id(&run.run_id)?;
+        let outputs = restored_outputs
+            .get(&run_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let (bindings, unresolved, withheld_names) = rebind_run_results(outputs, &run.bindings)?;
+        bindings_bound += bindings.len();
+        bindings_unresolved += unresolved;
+        bindings_withheld += withheld_names;
+        let determinism = run
+            .determinism
+            .as_ref()
+            .map(|determinism| {
+                parse_digest(&determinism.rng_seed).map(|seed| {
+                    crate::code_run::CodeRunDeterminism::new(determinism.frozen_unix_ms, seed)
+                })
+            })
+            .transpose()?
+            // Zero is an explicit unknown here, not a claim that the run used
+            // these inputs; full replayability remains FIX 12543.
+            .unwrap_or(crate::code_run::CodeRunDeterminism::new(0, [0; 32]));
+        if outputs.is_empty() {
+            continue;
+        }
+        let mut record = crate::code_run::CodeRunReplayRecord::new(run_id, determinism);
+        record.outputs = outputs.to_vec();
+        record.bindings = bindings;
+        record.callable_rows = None;
+        let existing = {
+            let rtxn: &heed::RoTxn<'_> = wtxn;
+            vault.get_code_run_replay_record_in_txn(rtxn, &run_id)?
+        };
+        let same = existing.as_ref().is_some_and(|current| {
+            current.determinism == record.determinism
+                && current
+                    .outputs
+                    .iter()
+                    .map(|output| (&output.handle, output.complete))
+                    .eq(record
+                        .outputs
+                        .iter()
+                        .map(|output| (&output.handle, output.complete)))
+                && current
+                    .bindings
+                    .iter()
+                    .map(|binding| (&binding.name, &binding.handle))
+                    .eq(record
+                        .bindings
+                        .iter()
+                        .map(|binding| (&binding.name, &binding.handle)))
+        });
+        match existing {
+            None => {
+                vault.put_code_run_replay_record_in_txn(wtxn, &record)?;
+                records_rebuilt += 1;
+            }
+            Some(_) if same => records_skipped += 1,
+            Some(_) => return Err(invalid("run replay record collision")),
         }
     }
     // A receipt comes back with the occurrence it describes, and only whole:
@@ -716,7 +803,56 @@ fn put_run_results_in_txn<R: Read + Seek>(
             vault.put_code_run_reader_fold_in_txn(wtxn, &receipt)?;
         }
     }
-    Ok((imported, withheld))
+    Ok((
+        imported,
+        withheld,
+        bindings_bound,
+        bindings_unresolved,
+        bindings_withheld,
+        records_rebuilt,
+        records_skipped,
+    ))
+}
+
+/// Rebinds archived names to the outputs restored in this writer. A name or
+/// handle with the wrong shape is malformed archive data; a well-formed
+/// handle that none of the restored outputs names is merely unresolved.
+fn rebind_run_results(
+    outputs: &[crate::code_run::CodeRunRawOutput],
+    bindings: &[super::ExportRunBinding],
+) -> Result<(Vec<crate::code_run::CodeRunResultBinding>, usize, usize)> {
+    let mut bound = Vec::new();
+    let (mut unresolved, mut withheld) = (0, 0);
+    for binding in bindings {
+        if !crate::code_run::CodeRunResultBinding::is_valid_name(&binding.name) {
+            return Err(invalid("run result binding name"));
+        }
+        match (&binding.handle, &binding.withheld) {
+            (None, Some(_)) => withheld += 1,
+            (Some(handle), None) => {
+                let hex = handle
+                    .strip_prefix(crate::store::result_manifest::CODE_RUN_OUTPUT_HANDLE_PREFIX)
+                    .ok_or_else(|| invalid("run result binding handle"))?;
+                let digest = parse_digest(hex)?;
+                if crate::entity_id::bytes_to_hex_lower(&digest) != hex {
+                    return Err(invalid("run result binding handle"));
+                }
+                if let Some(output) = outputs
+                    .iter()
+                    .find(|output| output.handle == handle.as_str())
+                {
+                    bound.push(crate::code_run::CodeRunResultBinding::new(
+                        binding.name.clone(),
+                        output.handle.clone(),
+                    ));
+                } else {
+                    unresolved += 1;
+                }
+            }
+            _ => return Err(invalid("run result binding handle")),
+        }
+    }
+    Ok((bound, unresolved, withheld))
 }
 
 fn parse_digest(text: &str) -> Result<[u8; 32]> {
