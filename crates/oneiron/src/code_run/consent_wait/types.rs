@@ -11,7 +11,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 1;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 2;
 
 /// The three answers canon's confirm offers (DEC-0006): approve once (the
 /// default), approve and stop asking, deny (CALLS: outcome names).
@@ -199,6 +199,15 @@ pub struct CodeConsentBrowserAction {
     /// page origin, or a mailto:/tel: href's normalized scheme+recipient;
     /// none where it names none (a desktop's).
     pub audience: Option<String>,
+    /// The hold-time actor class byte (FIX 11908), decoded by
+    /// `EdgeActorClass::try_from_u8`: the engine stamps it at the hold from
+    /// its own caller, so a host-built action's value never stands.
+    #[serde(default)]
+    pub actor_class: u8,
+    /// The project the hold-time facts named (FIX 11908), stamped by the
+    /// engine at the hold like `actor_class`.
+    #[serde(default)]
+    pub project: Option<EntityId>,
     /// The tab in front when the act began.
     pub tab: String,
     /// The documents the row's live handle was read from; none for a row no
