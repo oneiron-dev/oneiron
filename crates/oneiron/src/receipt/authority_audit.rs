@@ -640,6 +640,19 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // The owner's mark that he imported an export secret supplement
+        // (FIX 12062): its holder the install his import committed on, its
+        // parent the request.
+        AuthorityOp::ExportSupplementImported(mark) => (
+            Other,
+            "export_supplement_imported",
+            OpFields {
+                detail: Some(OwnerWorkKind::ExportSecret.as_str().to_owned()),
+                holder_ref: Some(mark.carrier.to_hex()),
+                parent_ref: Some(hex_lower(&mark.request)),
+                ..OpFields::default()
+            },
+        ),
         // A custody request's permit piece (FIX 11866): its place among the
         // pieces of its set, value-free.
         AuthorityOp::CustodyPermitPiece(piece) => (
