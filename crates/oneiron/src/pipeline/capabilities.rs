@@ -10,7 +10,7 @@ use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
 
-use super::types::ScoredEntity;
+use super::types::{EntityMetadataCache, ScoredEntity};
 
 pub(super) const PER_KIND_CAPABILITY_LIMIT: usize = 5;
 /// Bounded semantic shortlist for the skill bandit, not a limit on Active skills.
@@ -40,11 +40,25 @@ pub(crate) fn capability_hit(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    let label = match header.entity_type {
+    Ok(capability_hit_with_raw(
+        id,
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    ))
+}
+
+/// [`capability_hit`] judged on a record the caller already fetched under
+/// this same transaction: its type byte and body stand in for the raw
+/// fetch and header parse.
+pub(super) fn capability_hit_with_raw(
+    id: EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Option<CapabilityHit> {
+    let label = match entity_type {
         ENTITY_TYPE_SKILL => {
             let Ok(skill) = crate::skill::decode_skill_record(body) else {
-                return Ok(None);
+                return None;
             };
             if !matches!(
                 skill.approval_status,
@@ -52,26 +66,34 @@ pub(crate) fn capability_hit(
                     | crate::claim::ClaimApprovalStatus::Approved
             ) || skill.lifecycle_status != crate::skill::SkillLifecycle::Active
             {
-                return Ok(None);
+                return None;
             }
             skill.skill_id
         }
         ENTITY_TYPE_AGENT_DEF => {
             let Ok(agent) = crate::agent_def::decode_agent_definition(body) else {
-                return Ok(None);
+                return None;
             };
             agent.agent_id
         }
-        _ => return Ok(None),
+        _ => return None,
     };
-    Ok(Some(CapabilityHit {
+    Some(CapabilityHit {
         id,
-        entity_type: header.entity_type,
+        entity_type,
         label,
-    }))
+    })
 }
 
-pub(super) fn partition_capabilities(
+/// Partition `scores` into memory rows (left in `scores`) and the
+/// capability candidates returned, routing on the run cache's measured
+/// type byte: a memory row's bytes are never re-fetched here, and a
+/// capability row is fetched once for its decode. A row the cache maps
+/// to `None` is silently dropped from both lists, as a row whose raw
+/// bytes were absent or unparseable was when this loop fetched them.
+/// Callers pass scores the post-blend filters already gated through the
+/// same cache, so every id hits it.
+pub(super) fn partition_capabilities_with_meta(
     scores: &mut Vec<ScoredEntity>,
     vault: &Vault,
     store: &StoreRead<'_>,
@@ -79,11 +101,19 @@ pub(super) fn partition_capabilities(
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     executor: Option<&str>,
     reliability: Option<&crate::skill_reliability::SkillReliabilityQuery>,
+    metadata: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
     let mut skill_ids = HashSet::new();
     for scored in std::mem::take(scores) {
+        let Some(meta) = metadata.get(store, txn, &scored.id)? else {
+            continue;
+        };
+        if !is_capability(meta.entity_type) {
+            memory.push(scored);
+            continue;
+        }
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
         else {
             continue;
@@ -91,11 +121,11 @@ pub(super) fn partition_capabilities(
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if !is_capability(header.entity_type) {
-            memory.push(scored);
-            continue;
-        }
-        if let Some(hit) = capability_hit(store, txn, scored.id)? {
+        if let Some(hit) = capability_hit_with_raw(
+            scored.id,
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        ) {
             if hit.entity_type == ENTITY_TYPE_SKILL {
                 skill_ids.insert(scored.id);
             }
