@@ -111,7 +111,7 @@ pub(super) fn scrub_local_only_carriers(
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         if crate::world_keys::pad_body_world(blob).is_some()
-            || crate::sync::types::authority_wrap_world(blob).is_some()
+            || crate::sync::types::authority_side_entry_world(blob).is_some()
         {
             key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
@@ -175,7 +175,7 @@ pub(super) fn scrub_local_only_carriers(
             Error::InvalidKey
         } else if crate::world_keys::pad_body_world(&blob).is_some() {
             Error::InvalidConfig("a key pad rides only its live world's own window".into())
-        } else if crate::sync::types::authority_wrap_world(&blob).is_some() {
+        } else if crate::sync::types::authority_side_entry_world(&blob).is_some() {
             Error::InvalidConfig("a key wrap rides only its world's own window".into())
         } else {
             crate::secret_custody::reject_secret_custody_byte()

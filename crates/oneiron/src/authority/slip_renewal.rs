@@ -24,8 +24,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use super::slip_vault::{random_slip_id, require_host};
 use super::*;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 /// K04, authority: the credential is not a live owner's own unattenuated,
 /// parentless human device credential. Each `RENEWAL_*` reason is public so

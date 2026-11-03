@@ -22,6 +22,7 @@ doctest = true
 # Lower engine crates split out of this one. This crate re-exports each moved
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
 # stretch (P6a).
@@ -50,6 +51,9 @@ qrcode = { version = "=0.14.1", default-features = false }
 wasmtime = { version = "=48.0.3", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "std", "wat"] }
 heed = { workspace = true }
 half = "2"
+# Persistent maps: a resumed authority fold shares its base with the next one
+# (FIX 12308). Already resolved transitively.
+im = "15.1"
 uuid = { workspace = true }
 # BASE deps (not sync-gated): receipts mint — and are attested — in base
 # paths, including the non-sync build (ONE-1140, OD-1/OD-2).
@@ -90,7 +94,6 @@ flate2 = "1"
 # OPC workbook/link and formula validation must parse XML namespaces and entities.
 quick-xml = "=0.42.0"
 gix = { version = "0.85.0", default-features = false, features = ["revision", "sha1"] }
-tiktoken-rs = "0.12.0"
 sha2 = "0.10"
 # OF-468: vetted seeded FastCDC; anonymous bounded staging spool.
 fastcdc = "=3.2.1"
@@ -226,6 +229,7 @@ microvm-firecracker = []
 microvm-dev = []
 sync = [
     "oneiron-contracts/sync",
+    "oneiron-base/sync",
     "tokio/net",
     "tokio/time",
     "tokio/rt",
@@ -247,6 +251,7 @@ test-hooks = ["oneiron-model/test-hooks"]
 # Also turns on the lower crates' test-only constructors this crate's tests use.
 test-support = [
     "oneiron-contracts/test-support",
+    "oneiron-base/test-support",
     "oneiron-model/test-support",
     "oneiron-keystore/test-keystore",
 ]

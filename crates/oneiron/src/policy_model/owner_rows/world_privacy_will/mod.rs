@@ -21,17 +21,29 @@
 //!   as his. Tightening stays any one holder. Any one live Owner turns it on;
 //!   turning it off while it is on takes every live Owner.
 //! - **A foreign world** follows its owning vault's settings (DEC-0005 fix
-//!   11): an agent here gets a typed refusal naming that rule.
+//!   11): an agent's change of one is an ask to that vault's holders,
+//!   carried over the Connect pact it arrived through ([`foreign`],
+//!   [`carry`], FIX 4702). With no live pact naming it, the agent gets a
+//!   typed refusal naming that rule.
 
 mod agent;
 mod answer;
+mod carry;
+mod foreign;
 mod record;
 mod sdk;
 mod unanimity;
 mod undo;
 
 pub use answer::WorldPrivacyAnswer;
-pub use record::{WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus};
+pub use carry::{
+    ForeignWorldPrivacyCarry, ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest,
+    ForeignWorldPrivacyLeg,
+};
+pub use record::{
+    ForeignWorldPrivacyLink, WorldPrivacyRequest, WorldPrivacyRequestKind,
+    WorldPrivacyRequestStatus,
+};
 pub use sdk::{WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput, WorldSealedInput};
 pub use unanimity::{WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome};
 
@@ -76,8 +88,8 @@ impl WorldPrivacyOutcome {
     }
 }
 
-/// An agent asked to change a world shared from another vault: its owning
-/// vault's holders decide (DEC-0005 fix 11). Nothing was written.
+/// A change of a world shared from another vault that its owning vault's
+/// holders decide (DEC-0005 fix 11): a holder here does not apply it.
 const FOREIGN_WORLD: &str =
     "this world follows its owning vault's settings; its holders there decide";
 /// The caller holds no settings right on this world.
@@ -178,12 +190,13 @@ impl Vault {
     /// own yes counted. An agent's tighten or equal change under its Grant
     /// applies as `by: Agent` and tells every holder, with the receipt and a
     /// one-tap undo; its widen opens an ask to the holders and applies
-    /// nothing. An agent's change to a foreign world is refused.
+    /// nothing. An agent's change to a foreign world asks its owning vault's
+    /// holders (FIX 4702).
     ///
     /// # Errors
     /// As [`Self::set_world_privacy_as`]; an authority refusal when the
     /// agent's Grant no longer names a tighten of this world; a foreign
-    /// world refusal for an agent.
+    /// world refusal for an agent when no live Connect names the world.
     pub fn set_world_privacy_by(
         &self,
         authority: &ActAuthority,
@@ -243,6 +256,8 @@ impl Vault {
                             needs,
                             yes,
                             grant_omitted: None,
+                            owned_by: None,
+                            asked_from: None,
                         },
                     )?;
                     return Ok(WorldPrivacyOutcome::Asked(request));
@@ -272,17 +287,6 @@ impl Vault {
             .map(|folded| folded.live_settings.values().cloned().collect())
             .unwrap_or_default())
     }
-}
-
-/// Refuses an agent's change to a world shared from another vault (DEC-0005
-/// fix 11): the received-foreign id range names such a world. The
-/// cross-vault ask to its owning vault's holders is not built (FIX-LIST
-/// "mesh PR1c foreign world ask").
-pub(super) fn refuse_foreign_world_for_agent(world: EntityId) -> Result<()> {
-    if crate::entity_id::is_foreign_world_id_range(world) {
-        return Err(foreign_world());
-    }
-    Ok(())
 }
 
 impl Vault {

@@ -360,7 +360,9 @@ pub(crate) async fn list_core_sub_sessions(
 /// Queues a declared summary for the Dreamer, which alone writes the body
 /// (ARCH-0006a). Refused up front when no Dreamer here writes summaries.
 /// The declaration keeps the caller's own lane, frozen (FIX 2194), so its
-/// landing checks a reply inside it.
+/// landing checks a reply inside it; a narrowed lane must read every source
+/// the summary plans (FIX 11829). A narrowed guest credential's lane has no
+/// frozen form: it is refused as the typed record-scope 403 (FIX 12059).
 fn declare_summary(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -375,7 +377,13 @@ fn declare_summary(
     let queued = server
         .vault
         .request_scope_summary_in_lane(request, purpose, &lane)
-        .map_err(|e| core_engine_error("summary declaration failed", e))?;
+        .map_err(|e| {
+            if oneiron::claim::FrozenReadLane::is_guest_lane_refusal(&e) {
+                ApiError::forbidden_scope("record-scope")
+            } else {
+                core_engine_error("summary declaration failed", e)
+            }
+        })?;
     server.ai.attempt_queued();
     Ok((StatusCode::ACCEPTED, Json(summary::queued_response(queued))))
 }
@@ -389,7 +397,11 @@ pub(crate) async fn mint_core_scope_summary(
     Path(conversation_id): Path<String>,
     payload: Result<Json<DagSummaryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    // A narrowed credential declares inside its own lane, which the
+    // declaration keeps frozen (FIX 11829); a channel caveat still fails
+    // closed.
+    auth.require_lane_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
     let scope = req.scope.parse(conversation)?;
@@ -538,7 +550,9 @@ pub(crate) async fn summarize_thread(
     Path((conversation_id, record)): Path<(String, String)>,
     payload: Result<Json<DagThreadSummaryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    // As `mint_core_scope_summary`: inside the caller's own lane (FIX 11829).
+    auth.require_lane_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     let req = json_payload(payload)?;

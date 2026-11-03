@@ -12,11 +12,12 @@ use super::slate::{
 };
 use super::slate_revision::SlateRevisionCause;
 use crate::error::{Error, Result};
-use crate::llm::decision::catalogue::CONNECTOR_SLATE_DRAFT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::CONNECTOR_SLATE_DRAFT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
-use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};

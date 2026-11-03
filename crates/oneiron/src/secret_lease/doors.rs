@@ -16,7 +16,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use zeroize::Zeroizing;
 
 use crate::vault::Vault;
@@ -77,7 +77,7 @@ impl Vault {
     ) -> Result<DoorInjectionReceipt> {
         let wtxn = self.store.env.write_txn()?;
         let rec =
-            crate::secret_custody::read_secret_custody_admission_in_txn(&self.store, &wtxn, id)?
+            crate::secret_record::read_secret_custody_admission_in_txn(&self.store, &wtxn, id)?
                 .ok_or_else(|| {
                     Error::Secret(SecretError::SecretRefNotFound { name: id.to_hex() })
                 })?;
@@ -107,7 +107,7 @@ impl Vault {
         &self,
         wtxn: heed::RwTxn<'_>,
         id: &EntityId,
-        rec: &crate::secret_custody::SecretCustodyAdmission,
+        rec: &crate::secret_record::SecretCustodyAdmission,
         secret_ref: &str,
         effector: &str,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -129,7 +129,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
-        rec: &crate::secret_custody::SecretCustodyAdmission,
+        rec: &crate::secret_record::SecretCustodyAdmission,
         effector: &str,
     ) -> Result<(u32, Zeroizing<Vec<u8>>)> {
         let floor = SecretCustodyFloor::resolve(&self.store, txn)?;

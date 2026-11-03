@@ -20,8 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::KeyCustody;
 use super::files::{LocalCustody, read_whole, replace_file, write_once};
-use super::identity::CustodyKind;
-use super::log::{LogEntry, log_corrupt, open_frame};
+use super::log::log_corrupt;
 use super::platform;
 use crate::error::Result;
 
@@ -142,7 +141,7 @@ impl LocalCustody<'_> {
     ) -> Result<ImageHolder> {
         let dir = self.images_dir()?;
         let mut token = [0u8; 16];
-        crate::world_keys::os_fill(&mut token)?;
+        crate::key_material::os_fill(&mut token)?;
         let name = super::protocol::hex(&token);
         let instances: Vec<[u8; 16]> = instances.iter().copied().collect();
         if !write_once(&dir, &name, &encode(&[0; 32], &instances))? {
@@ -203,21 +202,10 @@ impl LocalCustody<'_> {
     /// Custody faults, and a log that does not open.
     pub(crate) fn minted_body_instances(&self) -> Result<BTreeSet<[u8; 16]>> {
         let journal = self.journal()?;
-        let mut minted = BTreeSet::new();
         let Some(control) = journal.control()? else {
-            return Ok(minted);
+            return Ok(BTreeSet::new());
         };
-        let at = journal.position()?;
-        for seq in control.base_seq().saturating_add(1)..=at.seq {
-            let frame = journal.frame(seq)?.ok_or_else(log_corrupt)?;
-            if let (_, LogEntry::Mint(id)) = open_frame(&control, &frame)?
-                && id.kind() == CustodyKind::BodyInstance
-                && let Some(instance) = id.subject().item().get(..16)
-            {
-                minted.insert(instance.try_into().map_err(|_| log_corrupt())?);
-            }
-        }
-        Ok(minted)
+        journal.minted_body_instances_cached(&control, &journal.position()?)
     }
 
     /// Releases the local holder of the kept copy `copy` names (its

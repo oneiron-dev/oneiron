@@ -2,8 +2,9 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{OrgAdminPolicy, Scope};
+use crate::federation::OrgAdminPolicy;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use oneiron_authority::federation::Scope;
 use serde::{Deserialize, Serialize};
 
 /// One outstanding single-use pairing/enrollment link. Key: hex64 (keyed hash of the code).

@@ -32,6 +32,7 @@ mod call_labels;
 pub mod confession;
 mod conflict;
 pub(crate) mod evidence;
+pub mod excluded_conversations;
 mod executor;
 mod extracted_people;
 mod failure_rules;
