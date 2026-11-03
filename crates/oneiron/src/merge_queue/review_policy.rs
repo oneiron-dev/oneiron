@@ -91,6 +91,11 @@ pub struct QueueReviewPolicy {
 /// The singleton policy row. Key: ().
 const MERGE_QUEUE_REVIEW_POLICY: SideTable<(), QueueReviewPolicy, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_REVIEW_POLICY);
+/// Whether a masked copy of a `MERGE_QUEUE_REVIEW_POLICY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_review_policy_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<QueueReviewPolicy, Named>(bytes)
+}
 
 /// A set policy, with the digest of the catalog a vote under it judges.
 #[derive(Debug, Clone, PartialEq, Eq)]
