@@ -2,9 +2,9 @@
 
 use super::people::{PeopleView, PersonKind, PersonRow};
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
-use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 use crate::{EntityId, Result};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 #[cfg(test)]
 mod tests;

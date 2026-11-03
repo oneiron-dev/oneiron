@@ -12,8 +12,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use oneiron_contracts::claim::ClaimSource;
 use crate::entity_id::EntityId;
+use oneiron_contracts::claim::ClaimSource;
 
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the

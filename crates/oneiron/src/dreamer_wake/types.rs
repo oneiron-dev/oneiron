@@ -14,11 +14,11 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::BudgetGuard;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
+use oneiron_model::llm::BudgetGuard;
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
@@ -72,7 +72,7 @@ pub struct RunWakePass {
     pub now: u64,
     /// Exact caller attenuation for this wake. It is prepared once at the
     /// root, never inferred from a decorated executor's optional metadata.
-    pub host_scope: Option<crate::llm::Scope>,
+    pub host_scope: Option<oneiron_model::llm::Scope>,
 }
 
 /// Why the pass stopped.

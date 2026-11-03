@@ -49,7 +49,7 @@ impl<'v> RoomTurnHandle<'v> {
     }
 
     /// The Scope this turn reads inside now.
-    pub fn scope(&self) -> MemoryResult<crate::federation::Scope> {
+    pub fn scope(&self) -> MemoryResult<oneiron_authority::federation::Scope> {
         self.memory.room_read_scope(self.room())
     }
 
@@ -95,7 +95,7 @@ impl<'v> RoomTurnHandle<'v> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        lease: Option<&crate::llm::BudgetLease>,
+        lease: Option<&oneiron_model::llm::BudgetLease>,
     ) -> MemoryResult<MemoryPack> {
         self.memory
             .recall(query, effort, scope, limit, format, lease)

@@ -18,6 +18,9 @@ pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
     //! in `crate::edge_regeneration`.
+    #[cfg(feature = "sync")]
+    pub(crate) use crate::edge_regeneration::regeneration_stored;
+    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
     pub use oneiron_base::edge::{
         DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
         EdgeProvenanceFlags, EdgeValueLayout,
@@ -29,9 +32,6 @@ pub mod edge {
         parse_strict_edge_record, parse_strict_edge_record_key, reserved_regenerates,
         validate_edge_weight, validate_public_edge_creation_kind, validate_public_edge_kind,
     };
-    #[cfg(feature = "sync")]
-    pub(crate) use crate::edge_regeneration::regeneration_stored;
-    pub(crate) use crate::edge_regeneration::{regeneration_pair, regeneration_source};
 }
 mod edge_regeneration;
 pub mod entity_id;
@@ -82,8 +82,16 @@ pub mod entity_doc;
 pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
-pub mod live_rows;
+pub use oneiron_base::live_rows;
+pub mod claim_check;
+pub mod inference_context;
 pub mod llm;
+pub mod model_binding;
+pub mod model_decision;
+pub mod model_step_context;
+pub(crate) mod model_step_effect;
+pub mod model_step_error;
+pub mod model_step_record;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -91,7 +99,11 @@ pub mod prompt;
 pub mod query_expansion;
 pub mod reaction;
 pub mod rerank;
+pub mod research_budget;
 pub mod retrieval_depth;
+pub mod run_budget;
+pub mod teacher_probe_policy;
+mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
 pub mod saved_query;
 pub mod serialize;

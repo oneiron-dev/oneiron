@@ -1,9 +1,9 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
 use super::model::*;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -428,8 +428,10 @@ pub(crate) fn reject_event_delete(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
         && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && let Ok(body) =
-            crate::write_envelope::claim_body::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+        && let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )
         && body.predicate.starts_with("esign.")
     {
         return Err(Error::InvalidClaimBody("esign events are append-only"));
