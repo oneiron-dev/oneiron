@@ -16,7 +16,7 @@ use super::{
     QueueDriveHoldReason, QueueDriverTarget, QueueStageOverlap,
 };
 use crate::EntityId;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::contract_oracle::invalid;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
