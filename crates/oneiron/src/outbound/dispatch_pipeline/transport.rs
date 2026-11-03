@@ -123,6 +123,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                         kind:
                             crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
                         code: None,
+                        secret: None,
                     },
                 )
             }
@@ -183,6 +184,7 @@ fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
         crate::outbound_intent_ledger::OutboundSendFailure {
             kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
             code: None,
+            secret: None,
         },
     )
 }
