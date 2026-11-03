@@ -44,12 +44,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AGENT_DEF_BODY_KEYS;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
-use crate::agent_dispatch::AGENT_DISPATCH_INPUT_KEYS;
-use crate::agent_dispatch::agent_dispatch_actor;
-use crate::agent_dispatch::decode_agent_dispatch_input;
-use crate::agent_dispatch::record_dispatch_input;
+use crate::agent_dispatch::{
+    AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
+};
 use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
 use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use crate::dispatch_byoa::{

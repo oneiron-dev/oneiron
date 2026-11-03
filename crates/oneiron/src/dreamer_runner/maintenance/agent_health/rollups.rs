@@ -37,8 +37,9 @@ use crate::limit_ask::EngineLimit;
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
 use crate::run_budget::LeaseUnit;
-use crate::self_heal::{
-    AgentHealthSignal, DiagnosticEventClass, ENTITY_TYPE_DIAGNOSTIC, decode_diagnostic_event_body,
+use crate::self_heal::ENTITY_TYPE_DIAGNOSTIC;
+use crate::store::diagnostic_record::{
+    AgentHealthSignal, DiagnosticEventClass, decode_diagnostic_event_body,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};

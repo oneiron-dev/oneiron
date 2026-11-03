@@ -29,7 +29,7 @@ impl BatchBuilder<'_> {
         mut self,
         id: &EntityId,
         vector: &[f32],
-        provenance: crate::embed::EmbeddingProvenance,
+        provenance: crate::store::embedding::EmbeddingProvenance,
     ) -> Self {
         capture_invalid_vector_component(&mut self.validation_error, vector);
         self.ops.push(BatchOp::Vector {

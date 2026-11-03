@@ -359,7 +359,7 @@ fn open_cycle_in_txn(
     close_open_cycle_in_txn(vault, txn, agent, now)?;
     let dreams = match vault.read_agent_definition_in_txn(txn, &agent) {
         Ok(definition) if definition.enabled => {
-            Some(definition.dreaming_mode() != crate::agent_def::DreamingMode::Off)
+            Some(definition.dreaming_mode() != crate::store::agent_record::DreamingMode::Off)
         }
         Ok(_) | Err(Error::EntityNotFound) => None,
         Err(error) => return Err(error),

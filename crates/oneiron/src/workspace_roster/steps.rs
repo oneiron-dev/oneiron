@@ -324,7 +324,7 @@ pub(super) fn birth_companion(
     // A companion gets her own dreaming by default; an authored setting wins.
     definition
         .dreaming
-        .get_or_insert(crate::agent_def::DreamingMode::Own);
+        .get_or_insert(crate::store::agent_record::DreamingMode::Own);
     definition.display_name = Some(companion.display_name.clone());
     ensure_agent_definition(vault, intent, &companion.actor_ref, &definition, writer)?;
 

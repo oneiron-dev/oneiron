@@ -57,7 +57,7 @@ pub(super) fn fields_for_profile(
         // `instructions` prompt must never surface in Minimal/Standard packs.
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_def::AGENT_DEF_BODY_KEYS,
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::store::agent_record::AGENT_DEF_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],

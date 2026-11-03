@@ -120,7 +120,7 @@ pub(crate) fn admission_order(record: &AttemptRecord) -> Option<(u64, [u8; 16])>
 /// for a bounded trace history). No content-side cleanup proposes such a row,
 /// and no scan of another kind reads one.
 pub(crate) fn owner_retained_kind(kind: &str) -> bool {
-    kind == crate::tagging::TAGGING_MARKER_KIND
+    kind == crate::config::tagging::TAGGING_MARKER_KIND
 }
 
 /// The first byte of every owner-retained row's id: those rows sit at the

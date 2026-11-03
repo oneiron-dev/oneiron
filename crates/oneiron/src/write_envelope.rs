@@ -12,6 +12,7 @@ use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
 
+pub(crate) mod actor_tokens;
 pub mod carry_forward;
 pub mod channel_identity;
 pub mod identity_pair;
