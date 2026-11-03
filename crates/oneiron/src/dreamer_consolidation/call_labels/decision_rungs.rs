@@ -7,7 +7,8 @@
 //! receipts stay canonical.
 
 use crate::Result;
-use crate::llm::decision::{ DecisionCall, DecisionLadder, DecisionPack, DecisionProvider, DecisionWireLabels,
+use crate::llm::decision::{
+    DecisionCall, DecisionLadder, DecisionPack, DecisionProvider, DecisionWireLabels,
 };
 use crate::model_decision::HostRuleRef;
 use crate::model_decision::{

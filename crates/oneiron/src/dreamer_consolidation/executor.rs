@@ -46,18 +46,16 @@ use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dre
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{ call_as_step,
-};
 use crate::inference_context::HostInferenceContext;
-use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
-    TierPrecedence,
-};
+use crate::llm::call_as_step;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 // ---------------------------------------------------------------------------
 // Phase 3 executor — bucket attempts over the step layer

@@ -26,18 +26,16 @@ use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::decision::{AskTo,};
-use crate::model_decision::{DecisionQuestion, EvidenceVersion};
+use crate::llm::call_as_step_checked;
+use crate::llm::decision::AskTo;
 use crate::model_binding::ModelRole;
-use crate::llm::{
-    call_as_step_checked,
-};
+use crate::model_decision::{DecisionQuestion, EvidenceVersion};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
 };
-use crate::model_step_context::{DurableStepContext, StepOutcome};
-use crate::model_step_error::{DurableStepError, DurableStepResult};
 
 /// A port's work: a future on the caller's own async path.
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;

@@ -1,8 +1,8 @@
 //! Transactional per-principal/grant observations, independent of connections.
 
 use super::{FederationPeer, corrupt, peer_health::PeerHealth};
-use oneiron_model::llm::normalized_burst_inputs;
 use crate::{Result, Vault};
+use oneiron_model::llm::normalized_burst_inputs;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Serialize, Deserialize)]

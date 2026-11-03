@@ -10,8 +10,7 @@ use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::settle::decision_pages::{json_len, split_pages};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::BoundedAutoChecker;
-use crate::llm::decision::{ AskRole, AskTo, DecisionAsk, HeldLadder, TypedDecision,
-};
+use crate::llm::decision::{AskRole, AskTo, DecisionAsk, HeldLadder, TypedDecision};
 use crate::model_decision::AnswerActor;
 use crate::model_decision::{
     AskAct, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung,

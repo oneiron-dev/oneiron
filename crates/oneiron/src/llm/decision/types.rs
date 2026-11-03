@@ -205,8 +205,11 @@ pub struct TypedDecision {
     pub human_ask: Option<HumanAskReason>,
 }
 
-pub use crate::model_decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung, DecisionTime, EvidenceVersion, HumanAskReason, ImageBox, ImagePoint, PairedReading, PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StateCut, StopCause
-};
-pub(crate) use crate::model_decision::paired_valid;
 pub(super) use crate::model_decision::invalid;
+pub(crate) use crate::model_decision::paired_valid;
+pub use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
+    DecisionQuestionInput, DecisionRung, DecisionTime, EvidenceVersion, HumanAskReason, ImageBox,
+    ImagePoint, PairedReading, PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause,
+    StateCut, StopCause,
+};

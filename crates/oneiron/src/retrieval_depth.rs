@@ -30,7 +30,6 @@
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_model::llm::BudgetLease;
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
 use crate::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
@@ -39,6 +38,7 @@ use crate::rerank::RerankCandidate;
 use crate::retrieval_quality::{RetrievalDiagnostics, RetrievalQualityReport};
 use crate::store::RetrievalSignal;
 use crate::vault::Vault;
+use oneiron_model::llm::BudgetLease;
 
 mod accumulation;
 mod controls;

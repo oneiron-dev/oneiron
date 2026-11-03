@@ -19,10 +19,9 @@
 use super::ceremony::sign;
 use super::ledger::state_in;
 use super::model::*;
-use crate::model_decision::catalogue;
-use crate::llm::decision::{ AskRole, DecisionAsk,
-};
+use crate::llm::decision::{AskRole, DecisionAsk};
 use crate::model_decision::AnswerActor;
+use crate::model_decision::catalogue;
 use crate::model_decision::{AnswerContract, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};

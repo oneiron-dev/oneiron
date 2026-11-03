@@ -444,9 +444,11 @@ fn names_checker(store: &crate::store::Store) -> Result<bool> {
     Ok(named)
 }
 
+pub(crate) use crate::claim_check::truncate_on_char_boundary;
+pub(super) use crate::claim_check::{
+    AUTO_CHECK_HOLD_REASON_MAX_BYTES, AUTO_CHECK_MAX_HOLD_REASONS,
+};
 pub use crate::claim_check::{
-    AUTO_CHECKER_DEADLINE_MS, AUTO_CHECK_VALUE_PREVIEW_BYTES, AutoCheckCandidate,
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckNotes, AutoCheckOutcome, AutoCheckSignals,
 };
-pub(super) use crate::claim_check::{AUTO_CHECK_HOLD_REASON_MAX_BYTES, AUTO_CHECK_MAX_HOLD_REASONS};
-pub(crate) use crate::claim_check::truncate_on_char_boundary;

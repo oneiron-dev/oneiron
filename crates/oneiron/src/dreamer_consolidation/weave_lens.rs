@@ -22,19 +22,17 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::model_binding::ModelRole;
-use crate::llm::{
-    call_as_step,
-};
 use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
+use crate::{Vault, WriteActor};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
-use crate::model_step_context::{DurableStepContext, StepOutcome};
-use crate::model_step_error::DurableStepError;
-use crate::{Vault, WriteActor};
 use std::collections::BTreeMap;
 
 /// Why a weave lens render parks on a host that lends no Dreamer model.

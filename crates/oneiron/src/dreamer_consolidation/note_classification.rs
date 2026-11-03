@@ -11,8 +11,8 @@ use super::executor::extraction::{ExtractedPerson, ExtractionReply, contract_rep
 use super::extracted_people::MintNamespace;
 use super::neighbourhood::Neighbourhood;
 use super::roles::RoleCall;
-use oneiron_model::llm::{LlmRequest, LlmResponse};
 use crate::{EntityId, Result};
+use oneiron_model::llm::{LlmRequest, LlmResponse};
 
 /// How a sealed scratchpad's review asks for its `keep` lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

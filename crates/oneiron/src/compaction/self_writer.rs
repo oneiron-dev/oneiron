@@ -33,9 +33,9 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_model::llm::SelfCompactionSource;
 use crate::provenance::birth::RowBirth;
 use crate::vault::Vault;
+use oneiron_model::llm::SelfCompactionSource;
 
 /// Why a flight could not be written as its agent. The flight keeps its raw
 /// window for the turn: it is never handed to the Dreamer or to the plain

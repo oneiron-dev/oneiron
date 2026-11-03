@@ -55,9 +55,8 @@ use crate::failure_signals::{
     InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
+use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::CODE_FIX_JUDGMENT;
-use crate::llm::decision::{ DecisionLadder,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };

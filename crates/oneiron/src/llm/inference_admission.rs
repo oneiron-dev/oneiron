@@ -3,8 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CallPurpose, LlmRequest, ModelId, ModelLocality,
-    ValidatedPurposeDefaults, defaults,
+    CallPurpose, LlmRequest, ModelId, ModelLocality, ValidatedPurposeDefaults, defaults,
     manifest::{self, ModelManifest, ModelRole, ModelSlot},
     registry::{self, ModelRegistryRow, ModelWireFormat},
 };

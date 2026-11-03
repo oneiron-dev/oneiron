@@ -18,10 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use crate::llm::decision::{DecisionCall, DecisionLadder, DecisionProvider};
 use crate::model_decision::catalogue::QuestionFamily;
-use crate::llm::decision::{ DecisionCall,
-    DecisionLadder, DecisionProvider,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionRung,
     ProviderDecision, ProviderPin, Reversibility, cut_text, fit_state,

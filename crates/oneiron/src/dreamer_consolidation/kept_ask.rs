@@ -7,8 +7,7 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::llm::decision::{ AskAnswer, AskRole, AskTo, DecisionAsk,
-};
+use crate::llm::decision::{AskAnswer, AskRole, AskTo, DecisionAsk};
 use crate::model_decision::AnswerActor;
 use crate::model_decision::HostRuleRef;
 use crate::model_decision::{AskAct, DecisionAnswer, HolderKind, RoleRank};

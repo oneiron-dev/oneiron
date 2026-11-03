@@ -2,22 +2,22 @@
 
 mod answer_actor;
 pub use answer_actor::AnswerActor;
-pub(crate) mod codec;
 pub mod catalogue;
-pub mod questions;
+pub(crate) mod codec;
 mod policy;
 mod provider;
+pub mod questions;
 mod roles;
 mod slides_policy;
 mod state;
 mod types;
 
 pub use policy::*;
-pub use provider::{
-    MAX_DECISION_STATE_BYTES, MAX_SCORE_LEVEL_BYTES, SCORE_LEVELS_FIELD,
-    PairedAnswer, ProviderCapability, ProviderDecision, level_score, score_levels_in,
-};
 pub(crate) use provider::validate_pin;
+pub use provider::{
+    MAX_DECISION_STATE_BYTES, MAX_SCORE_LEVEL_BYTES, PairedAnswer, ProviderCapability,
+    ProviderDecision, SCORE_LEVELS_FIELD, level_score, score_levels_in,
+};
 pub use roles::*;
 pub use slides_policy::*;
 pub use state::{cut_text, fit_reserve_state, fit_state};

@@ -23,8 +23,7 @@ use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consoli
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::decision::{ AskRole, AskTo, DecisionAsk, HumanDecisionRequest,
-};
+use crate::llm::decision::{AskRole, AskTo, DecisionAsk, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, HolderKind,
     HumanAskReason, ProviderPin,

@@ -45,15 +45,15 @@ use crate::dreamer_runner::{
     DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::decision::{AskTo,};
+use crate::llm::decision::AskTo;
 use crate::model_decision::{DecisionRung, EvidenceVersion, HumanAskReason};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
+use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, LlmRequest, ModelTierRef, ResponseFormat, Scope,
     TierPrecedence,
 };
-use crate::model_step_context::DurableStepContext;
-use crate::model_step_error::DurableStepError;
-use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
 
 use pairs::AppliedSameAs;
 use pairs::{Anchored, NightlyLinkQuestion, NightlyLinkVerdict, anchored, link_calls};
