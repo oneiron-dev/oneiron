@@ -767,7 +767,6 @@ impl GmailDelegatedAdapter {
             scopes: grant.scopes.clone(),
             placement_policy: PlacementPolicy::default(),
         });
-        adapter.require_send_grant()?;
         adapter.require_active_row_matches_adapter(vault, &sender_ref)?;
         Ok(adapter)
     }

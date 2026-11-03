@@ -250,8 +250,16 @@ impl CampaignChannelSender {
         let Ok(message_ref) = message.content_ref() else {
             return self.invalid();
         };
+        let Ok(Some(sender_facts)) = self.vault.channel_identity_facts(&keys.sender_ref) else {
+            return self.invalid();
+        };
         let execution = {
-            let Ok(mut sink) = StalwartSendSink::new(client, &message) else {
+            let Ok(mut sink) = StalwartSendSink::new(
+                client,
+                &message,
+                keys.sender_ref,
+                &sender_facts.address_or_handle,
+            ) else {
                 return self.invalid();
             };
             let mut draft = OutboundIntentDraft::new(
