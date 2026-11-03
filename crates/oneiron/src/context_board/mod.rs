@@ -85,6 +85,7 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
@@ -92,7 +93,6 @@ pub use stream::{
     PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
     SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
-pub(crate) use stream::task_for_announcement;
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
