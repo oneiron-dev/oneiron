@@ -519,37 +519,46 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 /// the head still decodes to a result naming one (FIX 10902). The body goes
 /// through this same erasure, so its own hold keeps it, logged, like the
 /// result's. A version the body read cannot parse names no body. A hold on
-/// the head bytes' ASSET keeps the whole artifact instead (FIX 12532), and
-/// the torn body stages its hard-delete marker and propagation tombstone in
-/// the same transaction (REVIEW-4385 P1), so replicas cannot restore it.
+/// any version's ASSET keeps the whole artifact instead (FIX 12532), and a
+/// torn body stages its hard-delete marker and propagation tombstone in the
+/// same transaction (REVIEW-4385 P1), so replicas cannot restore it. Returns
+/// whether the tear ran; a hold-kept body stages nothing (REVIEW-4385 P1).
 fn erase_connector_reply_result_artifact_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     artifact: &EntityId,
-) -> Result<()> {
+) -> Result<bool> {
+    let raw = EntityStoreRead::port_entity_raw(store, txn, artifact)?;
+    if raw
+        .as_deref()
+        .and_then(crate::batch::EntityMetadataHeader::parse)
+        .map(|header| header.entity_type)
+        != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT)
     {
-        let stored = EntityStoreRead::port_entity_raw(store, txn, artifact)?
-            .as_deref()
-            .and_then(crate::batch::EntityMetadataHeader::parse)
-            .map(|header| header.entity_type);
-        if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
-            return Ok(());
+        return Ok(false);
+    }
+    // A hold on any version's ASSET keeps the whole artifact (FIX 12532):
+    // the tear below would otherwise refuse on the held ASSET and fail the
+    // erase, rolling back the source hard erase with it (REVIEW-4385 P1).
+    // Every hash the chain and the replicated claims hold is checked before
+    // anything mutates.
+    let raw = raw.unwrap_or_default();
+    for content_hash in
+        crate::blob_artifact::held_content_hashes_in_txn(store, txn, artifact, &raw)?
+    {
+        let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&content_hash)?;
+        if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
+            tracing::warn!(
+                artifact = %artifact.to_hex(),
+                "connector reply erase: a legal hold keeps the job's result bytes"
+            );
+            return Ok(false);
         }
     }
     let mut body_artifact = None;
     if let Some(head) = crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
     {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash)?;
-        // A hold on the head bytes' ASSET keeps the whole artifact (FIX
-        // 12532): the tear below would otherwise refuse on the held ASSET
-        // and fail the erase.
-        if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
-            tracing::warn!(
-                artifact = %artifact.to_hex(),
-                "connector reply erase: a legal hold keeps the job's result bytes"
-            );
-            return Ok(());
-        }
         if let Some(row) = EntityStoreRead::port_entity_record(store, txn, &asset)? {
             if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(&row.body).as_bytes() != &head.content_hash
@@ -576,7 +585,7 @@ fn erase_connector_reply_result_artifact_in_txn(
             artifact = %artifact.to_hex(),
             "connector reply erase: a legal hold keeps the job's result"
         );
-        return Ok(());
+        return Ok(false);
     }
     crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
         store, txn, artifact, true,
@@ -599,8 +608,11 @@ fn erase_connector_reply_result_artifact_in_txn(
             .as_deref()
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .map(|header| header.learned_at);
-        erase_connector_reply_result_artifact_in_txn(store, txn, &body)?;
-        if let Some(learned_at) = body_learned_at {
+        // A hold keeps the body: its marker and tombstone stage only on
+        // the outcome that actually tore it (REVIEW-4385 P1), never on the
+        // hold that promised the bytes stay.
+        let erased = erase_connector_reply_result_artifact_in_txn(store, txn, &body)?;
+        if erased && let Some(learned_at) = body_learned_at {
             let value = crate::deletion::TombstoneValueV2 {
                 reason: crate::deletion::TombstoneReason::UserHardDelete,
                 deleted_at: crate::ports::recorded_at_in_txn(store, txn)?,
@@ -611,7 +623,7 @@ fn erase_connector_reply_result_artifact_in_txn(
             )?;
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// The dedupe and run key of one agent's reply job for one event.
