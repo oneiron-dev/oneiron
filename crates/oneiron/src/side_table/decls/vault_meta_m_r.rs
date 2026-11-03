@@ -133,8 +133,8 @@ side_tables! {
     OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named
         => crate::office_body::erase_oracle_actor_in_txn;
     /// An office proposal: its header (opener, run root, opened at), member forks with each one's
-    /// verdict and answer, and its settlement. Key: id16 (artifact) + id16 (proposal).
-    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named
+    /// verdict and answer, and its settlement. Key: id16 (proposal); the header's artifact is its home.
+    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v2:" Named
         => crate::office_body::erase_proposal_actor_in_txn;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
@@ -599,6 +599,10 @@ side_tables! {
     /// whether the owner re-entered its pieces (OF-173). Never a piece, point, tag, passphrase
     /// or seed. Key: hex(kit id).
     RECOVERY_KIT: VaultMeta b"recovery_kit:v1:" Named;
+    /// One drawn world kit whose pending row never committed and whose pending piece a
+    /// best-effort delete could not remove, named until a settle sweeps the piece
+    /// (FIX 12202). Key: hex(kit id); the row holds the kit id.
+    RECOVERY_KIT_UNLISTED_SWEEP: VaultMeta b"recovery_kit_unlisted_sweep:v1:" Named;
     /// Rebuildable projection row: the head set a merged/split identity shell currently resolves to.
     /// Key: id16 (shell id).
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;

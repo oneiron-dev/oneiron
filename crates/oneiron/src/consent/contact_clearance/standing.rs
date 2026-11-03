@@ -181,11 +181,19 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         contacts: &BTreeSet<EntityId>,
     ) -> Result<Vec<OnceContactDisclosure>> {
-        let mut deliverable = Vec::new();
-        for (proposal_ref, proposal) in self.settled_contact_disclosure_offers_in_txn(
+        let settled = match self.settled_contact_disclosure_offers_for_contacts_in_txn(
             txn,
             ContactDisclosureOutcome::Once.as_str(),
+            contacts,
         )? {
+            Some(offers) => offers,
+            None => self.settled_contact_disclosure_offers_in_txn(
+                txn,
+                ContactDisclosureOutcome::Once.as_str(),
+            )?,
+        };
+        let mut deliverable = Vec::new();
+        for (proposal_ref, proposal) in settled {
             let contact = &proposal.offer.contact_ref;
             if !contacts.contains(contact) {
                 continue;
