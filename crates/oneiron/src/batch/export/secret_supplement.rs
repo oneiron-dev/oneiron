@@ -20,10 +20,12 @@ use zeroize::Zeroizing;
 
 use super::document_import::parse_id;
 use crate::Vault;
-use crate::authority::{ActSurface, OpenedSecretSupplement, SecretSupplementImport};
+use crate::authority::{OpenedSecretSupplement, SecretSupplementImport};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::secret_custody::{ArchiveSameId, archive_same_custody_in_txn};
+use crate::secret_custody::archive_same_custody_in_txn;
+use crate::secret_record::ArchiveSameId;
+use oneiron_authority::authority::ActSurface;
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("secret supplement import: {reason}"))
@@ -54,7 +56,7 @@ impl Vault {
                 .decode(body)
                 .map_err(|_| invalid("its body is not base64"))?,
         );
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        let mut record = crate::secret_record::decode_secret_custody_body(&body)?;
         if record.metadata() != row.metadata {
             zeroize::Zeroize::zeroize(&mut record.value_bytes);
             return Err(invalid("its body disagrees with its metadata"));

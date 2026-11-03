@@ -60,6 +60,9 @@ mod types;
 mod window_pads;
 
 pub use self::base::SyncClient;
+pub use self::connect::{
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
+};
 pub use self::federated::ImportTier;
 pub(crate) use self::leaf_keys::send_leaf_key_requests;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;

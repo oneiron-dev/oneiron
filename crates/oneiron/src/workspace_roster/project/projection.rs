@@ -185,7 +185,7 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
     Ok(())
 }
 
-fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
+fn slice_refs(slice: &oneiron_model::llm::Scope, ids: &mut Vec<EntityId>) {
     ids.extend(
         [slice.world, slice.facet, slice.project]
             .into_iter()
@@ -193,7 +193,7 @@ fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
             .chain(slice.relationship.iter().flatten().copied()),
     );
     for resource in slice.readable.iter().chain(&slice.writable) {
-        if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {
+        if let oneiron_model::llm::ScopeResource::DocumentVersion { document, .. } = resource {
             ids.push(*document);
         }
     }
@@ -384,7 +384,7 @@ pub(crate) fn reconcile_project_rooms(
                     kind: crate::edge::EdgeKind::BelongsTo,
                     tgt: EntityId::from_hex(parent).map_err(|_| invalid())?,
                     weight: HUB_MEMBERSHIP_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 });
             }
         }
