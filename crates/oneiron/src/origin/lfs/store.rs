@@ -4,7 +4,7 @@ use super::{
     LfsAdmission, LfsAssetClass, LfsOid, LfsPathPolicy, LfsPointerIntent, VAULT_LFS_OID_LEN,
 };
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};

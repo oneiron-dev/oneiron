@@ -106,6 +106,8 @@ impl EngineNativeExecutor<'_> {
         bridge_start: usize,
         bridge_calls: Vec<CodeRunBridgeCall>,
         captured: Vec<CodeRunRawOutput>,
+        bound: Vec<CodeRunResultBinding>,
+        receipts: Vec<ReaderFoldReceipt>,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -126,6 +128,24 @@ impl EngineNativeExecutor<'_> {
             completed_steps,
             bridge_start,
         );
+        // The names the failed step bound join the record with their
+        // bodies, as on the success path (FIX 833), and are hashed into
+        // its checkpoint below; the fold receipts its stores computed land
+        // in the same commit, beside the bindings they describe.
+        let bindings: Vec<_> = bound
+            .iter()
+            .map(|binding| (binding.name.clone(), binding.handle.clone()))
+            .collect();
+        for binding in bound {
+            match record
+                .bindings
+                .iter_mut()
+                .find(|held| held.name == binding.name)
+            {
+                Some(held) => *held = binding,
+                None => record.bindings.push(binding),
+            }
+        }
         record_text_output(
             &self.storage,
             record,
@@ -136,6 +156,8 @@ impl EngineNativeExecutor<'_> {
         if let Some(status) = &terminal_status {
             record_terminal_output(&self.storage, record, completed_steps, status)?;
         }
+        let mut digests = StepResultDigests::of(&observation, false);
+        digests.bindings = bindings;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -148,7 +170,7 @@ impl EngineNativeExecutor<'_> {
                     .transpiled()
                     .map(TranspiledSource::identity)
                     .as_ref(),
-                &StepResultDigests::of(&observation, false),
+                &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
             )?,
@@ -165,7 +187,7 @@ impl EngineNativeExecutor<'_> {
                 record,
                 expected_generation,
                 healed.then_some(&config.model),
-                &[],
+                &receipts,
                 parked.as_ref(),
             )?;
         // The run parks on the step's wait; a reply already delivered

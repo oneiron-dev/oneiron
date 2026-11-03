@@ -5,9 +5,10 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
+use crate::store::setting_seed::ATTRIBUTION_UNCLEAR_FLOOR;
 use crate::learning_setting::{
-    ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_in_scope_sourced_in_txn,
+    setting_value, setting_value_in_scope_sourced_in_txn,
 };
 use crate::limit_ask::EngineLimit;
 
