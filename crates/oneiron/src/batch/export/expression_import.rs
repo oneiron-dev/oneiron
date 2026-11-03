@@ -10,12 +10,12 @@ use super::archive_index::{
 use super::document_import::parse_id;
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
 use crate::claim::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
-use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
 use crate::{EntityId, Vault};
 
 /// A history key's tail: learned-at and id.
@@ -28,7 +28,11 @@ pub(super) fn is_expression(row: &ExportEntity) -> bool {
             .to_bytes()
             .ok()
             .and_then(|bytes| decode_claim_body(&bytes, false).ok())
-            .is_some_and(|body| crate::write_envelope::claim_predicate::is_expression_preference_predicate(&body.predicate))
+            .is_some_and(|body| {
+                crate::write_envelope::claim_predicate::is_expression_preference_predicate(
+                    &body.predicate,
+                )
+            })
 }
 
 /// One expression row as its history holds it.
