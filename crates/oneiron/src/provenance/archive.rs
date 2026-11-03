@@ -2,6 +2,7 @@
 use super::writes::EdgeProvenanceWrite;
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::edge::{EdgeValueLayout, edge_value_layout_for_kind};
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 
@@ -99,7 +100,13 @@ impl Vault {
             })
             .map(|(_, value)| value.clone())
             .ok_or_else(|| invalid("archive evidence scope missing"))?;
-        self.write_edge_provenance_in_txn(
+        // A validated archived structural wrapper restores through the
+        // structural-aware inlet (blind-review P1c, REVIEW-4389): it was
+        // authored through the structural door, so ordinary writes keep
+        // their static-kind rejection while this restore replays its own.
+        let allow_structural =
+            edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural;
+        self.restore_edge_provenance_in_txn(
             txn,
             EdgeProvenanceWrite {
                 claim_id: id,
@@ -111,6 +118,7 @@ impl Vault {
                 imported_evidence: Some(scope),
                 generated_evidence: None,
             },
+            allow_structural,
         )?;
         if body.lifecycle == ClaimLifecycleStatus::Retracted {
             self.retract_edge_provenance_in_txn(

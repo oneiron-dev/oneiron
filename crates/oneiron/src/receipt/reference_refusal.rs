@@ -39,7 +39,7 @@ use super::{ERASED_CALL_IDENTITY, ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::RefusalReason;
+use crate::receipt::RefusalReason;
 use crate::write_envelope::WriteActor;
 
 const OUTCOME_REFUSED: &str = "refused";

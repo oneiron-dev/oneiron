@@ -487,7 +487,10 @@ pub enum CtlResponse {
     /// FIX 5187), and `artifact_internal_host_revision` that of the internal
     /// authority its artifact origin answers on
     /// ([`ARTIFACT_INTERNAL_HOST_REVISION`](crate::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION),
-    /// FIX 6716). `slim_recovery_revision` is that of the supervisor SLIM
+    /// FIX 6716). `preview_origin_revision` is that of the lease-labelled
+    /// live preview origin codec
+    /// ([`PREVIEW_ORIGIN_REVISION`](crate::artifact_origin::PREVIEW_ORIGIN_REVISION),
+    /// FIX 1115). `slim_recovery_revision` is that of the supervisor SLIM
     /// recovery surface
     /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
     /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`.
@@ -530,6 +533,12 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         artifact_internal_host_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        preview_origin_revision: Option<u32>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",

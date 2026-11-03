@@ -12,11 +12,15 @@ use super::apply::{ShapeApplyItem, ShapeApplyReceipt, ShapeItemState};
 use super::invalid;
 use super::plan::ShapePlanItem;
 use crate::Vault;
+use crate::store::attempt_result::AttemptResultRef;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, AttemptPlacement, AttemptQueue, AttemptResultRef,
-    AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+    AttemptId, AttemptPlacement, AttemptQueue,
+    AttemptState, ClaimOutcome, CompleteAttempt, EnqueueOutcome,
     InterveneAttempt, SetAttemptResult,
 };
+use crate::store::attempt_inputs::AttemptInterventionKind;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::ports::JobQueue;

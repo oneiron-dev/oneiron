@@ -357,7 +357,7 @@ impl Vault {
             // The edge bytes changed without an edge BatchOp in this txn, so
             // the graph version is bumped explicitly (apply_ops does it for
             // edge ops).
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
         Ok(())
     }
@@ -498,6 +498,21 @@ impl Vault {
         write: EdgeProvenanceWrite<'_>,
     ) -> Result<()> {
         self.write_edge_provenance_inner(wtxn, write, false)
+    }
+
+    /// Owning restore inlet for validated archive records (blind-review P1c,
+    /// REVIEW-4389): `allow_structural` is true only for an archived wrapper
+    /// whose subject is structural — it was authored through the structural
+    /// door, so its restore replays that same path. Every ordinary write
+    /// keeps the static-kind rejection via
+    /// [`Self::write_edge_provenance_in_txn`].
+    pub(crate) fn restore_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+    ) -> Result<()> {
+        self.write_edge_provenance_inner(wtxn, write, allow_structural)
     }
 
     /// FIX 7755: [`Self::write_edge_provenance_in_txn`] with an explicit
@@ -823,7 +838,7 @@ impl Vault {
                 kind: EdgeKind::ClaimOf,
                 tgt: subject.source,
                 weight: CLAIM_OF_DEFAULT_WEIGHT,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             },
         ];
         let mut bindings = vec![binding];
@@ -932,6 +947,6 @@ impl Vault {
         ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
         // The stamp moves edge bytes outside any edge write's own bump, as in
         // RETRACT.
-        ppr::increment_graph_version(&self.store, wtxn)
+        crate::store::graph_version::increment_graph_version(&self.store, wtxn)
     }
 }

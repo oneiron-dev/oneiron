@@ -22,7 +22,7 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::genui::{CONSENT_ACTION_APPROVE_ONCE, ConsentConfirmOutcome};
-use crate::llm::decision::{AnswerContract, DecisionAnswer};
+use crate::model_decision::{AnswerContract, DecisionAnswer};
 
 use super::connector_call::PENDING_CALLS;
 use super::connector_elicitation_asks::{

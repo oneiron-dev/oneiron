@@ -14,9 +14,9 @@
 //! bundle keeps today's explicit review and owner enqueue.
 
 use super::{BatchState, MergeQueue, QueueReviewRequirement, queue_review_requirement_in_txn};
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::error::Result;
-use crate::repo_mutation::proposal::{RepoProposal, RepoProposalStatus};
+use crate::{repo_mutation::proposal::RepoProposal, store::repo_proposal_record::RepoProposalStatus};
 use crate::{EntityId, Vault};
 
 /// Whether `row` is still the open, unbound received bundle of `candidate`,

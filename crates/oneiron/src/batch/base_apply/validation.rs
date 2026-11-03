@@ -91,7 +91,7 @@ pub(super) fn validate_put_type(
         && allow_reserved_predicate
         && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
-        return Err(crate::secret_custody::reject_secret_custody_byte());
+        return Err(crate::secret_record::reject_secret_custody_byte());
     }
     if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
         store.validate_pack_handle_in_txn(wtxn, entity_type)?;

@@ -15,8 +15,8 @@ use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationDecisions;
 use super::provenance::KeptDecision;
 use crate::dreamer_wake::{SieveRung, SpanKind};
-use crate::llm::decision::catalogue::{SIEVE_CONFIDENCE, SIEVE_ENTITY, SIEVE_KIND, SIEVE_NOVELTY};
-use crate::llm::decision::{AnswerContract, DecisionAnswer, DecisionQuestion};
+use crate::model_decision::catalogue::{SIEVE_CONFIDENCE, SIEVE_ENTITY, SIEVE_KIND, SIEVE_NOVELTY};
+use crate::model_decision::{AnswerContract, DecisionAnswer, DecisionQuestion};
 use crate::{EntityId, Result};
 
 /// The entity answer that names no candidate: a reading with no entity.
