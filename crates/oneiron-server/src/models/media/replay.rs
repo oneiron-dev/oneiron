@@ -198,7 +198,16 @@ impl MediaRuntime {
                 replay_until_s: Some(until),
                 ..
             })) if until > now_s() => Some(Ok(response)),
-            _ => None,
+            kept => {
+                // A kept answer that no longer answers has expired: let it
+                // go as it is seen, not only at the next boot (FIX 11464).
+                // An erased row never lands here; it answered above, and
+                // its boot reclaim is unchanged.
+                if kept.is_some() {
+                    reclaim_replay(store, &id);
+                }
+                None
+            }
         }
     }
 
