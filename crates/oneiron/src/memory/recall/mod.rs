@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod call_mode;
+mod conversation;
 mod home;
 mod hyde_host;
 mod items;
@@ -19,6 +20,7 @@ mod stale;
 pub use stale::MemoryStaleStamp;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
+pub(crate) use self::conversation::conversation_candidate_admits;
 pub use self::home::{
     HOME_RECALL_MERGE_ORDER, HomeRecallCaller, HomeRecallMergeOrder, RecallResidence,
     RecallResidenceHit, RecallResidenceSource,
@@ -144,6 +146,13 @@ pub struct RecallScope {
     /// Project audience ids. Empty requests add no narrowing to the credential.
     #[serde(default)]
     pub project_refs: Vec<String>,
+    /// Conversation entity refs. Empty adds no narrowing; with `person_ref`,
+    /// only conversations selected by both axes remain.
+    #[serde(default)]
+    pub conversation_refs: Vec<String>,
+    /// PERSON entity ref; selects conversations where they authored at least
+    /// one live MESSAGE, never conversations that merely mention them.
+    pub person_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
     /// Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset
@@ -789,7 +798,16 @@ impl Memory<'_> {
                         return Ok(false);
                     }
                 }
-                gate.admits_in(txn, &plan_policy, &plan_filter, id)
+                if !gate.admits_in(txn, &plan_policy, &plan_filter, id)? {
+                    return Ok(false);
+                }
+                crate::memory::conversation_candidate_admits(
+                    self.vault,
+                    store,
+                    txn,
+                    id,
+                    &selection.conversations,
+                )
             };
 
         // A door that stops waiting at the deadline answers then with the

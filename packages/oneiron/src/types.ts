@@ -234,6 +234,10 @@ export type RecallScope = {
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
   kinds?: string[]
+  /** Conversation entity refs. Empty adds no narrowing; with `personRef`, only conversations selected by both axes remain. */
+  conversationRefs?: string[]
+  /** PERSON entity ref; selects conversations where they authored at least one live MESSAGE, never conversations that merely mention them. */
+  personRef?: string
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
