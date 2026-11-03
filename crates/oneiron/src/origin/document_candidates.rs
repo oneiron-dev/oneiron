@@ -25,7 +25,7 @@ use super::document_candidate_types::{
 };
 use super::document_ingress::{CODE_OPERATIONS, ProvenanceRefKey};
 use super::publication::OriginPublicationStatus;
-use crate::code_revision::{CodeRevision, CodeRevisionFork};
+use crate::store::code_revision_record::{CodeRevision, CodeRevisionFork};
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};

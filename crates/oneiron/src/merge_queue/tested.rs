@@ -22,9 +22,9 @@ use super::{
 };
 use crate::EntityId;
 use crate::store::code_document_values::CodeDocumentFrontier;
-use crate::{
-    code_revision::{CodeRevision, CodeTreeInventory},
-    store::code_revision_identity::queue_provenance_id,
+use crate::store::{
+    code_revision_record::{CodeRevision, CodeTreeInventory},
+    code_revision_identity::queue_provenance_id,
 };
 use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
@@ -592,3 +592,5 @@ impl MergeQueue<'_> {
         )
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

@@ -35,17 +35,7 @@ fn invalid(reason: &'static str) -> Error {
 
 pub use crate::store::code_import_manifest::CodeImportAnchor;
 
-/// One retired path of a tested queue revision: the exact predecessor it
-/// removed, its document if it had one, and the reviewed operation and
-/// review that retired it. No producer is admitted before G4 PR2.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CodePathRetirement {
-    pub previous: CodeTreeBlob,
-    pub document: Option<CodeDocumentFrontier>,
-    pub operation_receipt: EntityId,
-    pub review_ref: EntityId,
-}
+pub use crate::store::code_revision_record::CodePathRetirement;
 
 /// The owner's explicit promotion request over one exact manifest: its
 /// digest, the exact checked Baseline revision, the review catalog the

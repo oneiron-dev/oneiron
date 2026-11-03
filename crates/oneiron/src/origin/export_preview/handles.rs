@@ -14,7 +14,7 @@ use super::PinnedLeaf;
 use super::types::{CodeExportByteHandle, CodeExportFileBytes, CodeExportPreview, CodeExportSide};
 use crate::EntityId;
 use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::code_revision::{ CodeTreeInventory};
+use crate::store::code_revision_record::{ CodeTreeInventory};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 

@@ -429,3 +429,5 @@ pub mod code_revision_identity;
 pub mod recovery_kit;
 
 pub mod code_promotion_gap;
+
+pub mod code_revision_record;

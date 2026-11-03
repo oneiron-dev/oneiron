@@ -12,7 +12,7 @@ use super::{Held, MODE_GITLINK};
 use crate::EntityId;
 use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
 use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::code_revision::{CodeRevision, CodeTreeInventory};
+use crate::store::code_revision_record::{CodeRevision, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::repo_mutation::received_file_operation;
@@ -160,3 +160,5 @@ pub(super) fn validate_received_operation(
         && before.map_or(empty, |blob| blob.content_hash) == operation.before_hash
         && after.map_or(empty, |blob| blob.content_hash) == operation.after_hash
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

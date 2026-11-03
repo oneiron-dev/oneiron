@@ -16,7 +16,7 @@ use super::workbench_types::{
 };
 use super::{Memory, MemoryResult};
 use crate::EntityId;
-use crate::{store::code_import_manifest::CodeImportManifest, code_revision::CodeRevision};
+use crate::store::{code_import_manifest::CodeImportManifest, code_revision_record::CodeRevision};
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;

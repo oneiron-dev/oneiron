@@ -17,9 +17,11 @@ use super::source_types::{QUEUE_SOURCE_DIR, QUEUE_SOURCE_LEAF, ServedQueueSource
 use super::storage::{BATCHES, QUEUE_STATE};
 use super::{MergeQueue, QueueCheckRequest, QueueDriverTarget};
 use crate::{
-    store::code_import_manifest::CodeImportManifest,
-    code_revision::CodeTreeInventory,
-    store::code_import_manifest::IMPORT_MANIFEST_PREDICATE,
+    store::{
+        code_import_manifest::CodeImportManifest,
+        code_revision_record::CodeTreeInventory,
+        code_import_manifest::IMPORT_MANIFEST_PREDICATE,
+    },
     code_revision::import_snapshot_custody_in_txn,
     store::code_import_manifest::{manifest_digest, manifest_id},
 };

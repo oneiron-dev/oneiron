@@ -20,8 +20,11 @@ use std::collections::BTreeMap;
 use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::{
-    store::code_import_manifest::{CodeImportAnchor, CodeImportManifest},
-    code_revision::{CodeTreeInventory, import_snapshot_custody_in_txn},
+    store::{
+        code_import_manifest::{CodeImportAnchor, CodeImportManifest},
+        code_revision_record::CodeTreeInventory,
+    },
+    code_revision::import_snapshot_custody_in_txn,
     store::code_import_manifest::{manifest_digest, manifest_id},
 };
 use crate::store::code_snapshot::RepoRef;
@@ -330,3 +333,5 @@ impl Vault {
         })
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;
