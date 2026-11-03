@@ -195,8 +195,9 @@ pub struct CodeConsentBrowserAction {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
-    /// The counterparty the act's send reported (FIX 11907): the origin
-    /// of the page it acted on; none where it names none (a desktop's).
+    /// The counterparty the act's send reported (FIX 11907, 12395): the
+    /// page origin, or a mailto:/tel: href's normalized scheme+recipient;
+    /// none where it names none (a desktop's).
     pub audience: Option<String>,
     /// The tab in front when the act began.
     pub tab: String,
