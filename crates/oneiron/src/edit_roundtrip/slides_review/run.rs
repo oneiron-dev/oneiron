@@ -180,11 +180,6 @@ pub fn review_slides(
                 });
                 continue;
             }
-            // A decision reads an image whole or not at all: none is scaled to fit.
-            if unit.image.len() > MAX_DECISION_IMAGE_BYTES {
-                refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
-                continue;
-            }
             // A render's pixel size, which a located answer maps onto the slide.
             let (medium, rendered) = match &unit.image {
                 SlideReviewImage::Rendered(bytes) => {
@@ -246,7 +241,9 @@ pub fn review_slides(
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            if text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
+            // State size is no ladder refusal (Rule 5): the exact bytes still pin the
+            // evidence hash, while the vault's editable policy governs the unit's text.
+            if text.len() > limits.max_text_bytes {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }

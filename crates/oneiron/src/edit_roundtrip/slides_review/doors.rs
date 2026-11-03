@@ -67,8 +67,16 @@ impl Vault {
             ceiling: route.ceiling,
             band: request.dial.band,
         };
+        // The verb's default limits are a placeholder, not a second shipped ceiling:
+        // the vault row may widen them (FIX 9911). A distinct request value still
+        // narrows the stored policy and can never widen it.
+        let limits = if request.limits == SlideReviewLimits::default() {
+            vault_limits
+        } else {
+            vault_limits.restrict(request.limits)
+        };
         let effective = SlideReviewRequest {
-            limits: vault_limits.restrict(request.limits),
+            limits,
             dial: owner_dial.narrow(request.dial)?,
             ..*request
         };
