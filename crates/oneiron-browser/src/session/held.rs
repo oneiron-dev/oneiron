@@ -62,8 +62,9 @@ pub struct HeldPress {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
-    /// The counterparty the act's send reported (FIX 11907): the origin
-    /// of the page it acted on; none where it names none (a desktop's).
+    /// The counterparty the act's send reported (FIX 11907, 12395): a
+    /// mailto:/tel: link's href recipient, else the origin of the page it
+    /// acted on; none where it names none (a desktop's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<String>,
     /// The tab in front when the act began.
