@@ -15,7 +15,7 @@ use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
-use crate::inference_snapshot::WrappedSnapshotKey;
+use crate::store::snapshot_key::WrappedSnapshotKey;
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodySecret, CustodySubject, EntryState, RetireCause,

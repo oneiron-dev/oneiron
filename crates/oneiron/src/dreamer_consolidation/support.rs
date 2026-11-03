@@ -31,10 +31,7 @@ pub const DREAMER_GAP_SCAN_ATTEMPT_TYPE: &str = "dreamer.reflection.gap_scan";
 /// gap scan, not a new queue kind and not a new wake mechanism. The pass rides
 /// the landed SessionEnd wake, whose `input` names the ended sitting.
 pub const DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE: &str = "dreamer.edit_distance.substitution_mine";
-/// `DreamerAttemptPayload.attempt_type` for a declared scope summary: a
-/// caller named the scope, and the Dreamer writes the body (ARCH-0006a).
-/// A payload discriminator on the Micro consolidation queue.
-pub const DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE: &str = "dreamer.scope_summary";
+pub use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 /// `DreamerAttemptPayload.attempt_type` for one person's PEOPLE `about`
 /// lines (ARCH-0067): one line per sensitivity band, from that band's facts.
 /// A payload discriminator on the Micro consolidation queue.

@@ -16,17 +16,22 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+use crate::llm::decision::TypedDecision;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
-    OutcomeLabel, QuestionCriteria, QuestionDefinitionInput,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
+    QuestionDefinitionInput,
 };
-use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
+use crate::model_decision::{DecisionQuestion, DecisionRung};
+
+/// `ai.verdict`'s clock, in milliseconds, when the request names none.
+pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
 
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
 /// `ai.verdict` call's default.
-pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = crate::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
+pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = AI_VERDICT_DEADLINE_MS;
 
 /// `vault.graph.ask`'s input: one typed question over graph units, through
 /// the host's decision ladder, asked for the caller. Name the units, or a
@@ -98,7 +103,7 @@ impl GraphAskRequest {
     /// one selection of distinct units, and the question itself. A ceiling
     /// of human asks the next authorised role (OF-506), never stops at big.
     pub fn validate(&self) -> MemoryResult<()> {
-        crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
+        crate::request_limits::check_deadline_ms(self.unit_deadline_ms)?;
         match (&self.select, self.units.is_empty()) {
             (Some(_), false) => {
                 return Err(MemoryError::bad_request_with(
@@ -358,7 +363,7 @@ pub struct QuestionBackfillRequest {
     /// sources its answer is shown, in place of the unit's neighbours
     /// (FIX 2383). Absent or empty: the default neighbourhood recipe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joins: Vec<crate::llm::decision::questions::GraphQuestionInput>,
+    pub joins: Vec<crate::model_decision::questions::GraphQuestionInput>,
 }
 
 /// `vault.questions.read`'s input: one of the caller's standing questions,

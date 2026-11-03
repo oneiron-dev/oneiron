@@ -14,9 +14,8 @@ use super::{
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::maintenance::coach::{
-    COACH_EVAL_AUTHORING_FACET, COACH_HOST_QUEUE_KIND,
-};
+use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;
+use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };

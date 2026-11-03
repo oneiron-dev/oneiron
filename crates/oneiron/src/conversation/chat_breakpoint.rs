@@ -28,7 +28,8 @@ use crate::registry::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::{EntityId, LlmRequest, Result, Vault, WriteActor};
+use crate::{EntityId, Result, Vault, WriteActor};
+use oneiron_model::llm::LlmRequest;
 
 /// Breakpoints. Key: id16(conversation) + id16(message) + id16(generation).
 const BREAKPOINTS: SideTable<(EntityId, EntityId, EntityId), ChatBreakpoint, Named> =

@@ -87,7 +87,7 @@ impl Vault {
         if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter {
             let shape_recipe = PackRuntimeRecipe {
                 adapter: adapter.clone(),
-                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_id: crate::store::sandbox_contract::SANDBOX_JS_COMPONENT_NAME.to_owned(),
                 runtime_hash: String::new(),
             };
             super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
@@ -433,7 +433,7 @@ impl Vault {
             crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
                 self,
                 txn,
-                &crate::saved_query::PackMove {
+                &crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
                     pack: &source.manifest.name,
                     from_version: &from_version,
                     to_version: &source.manifest.version,
@@ -655,7 +655,7 @@ impl Vault {
                     .adapter
                     .clone()
                     .ok_or_else(|| invalid("missing adapter"))?,
-                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
+                runtime_id: crate::store::sandbox_contract::SANDBOX_JS_COMPONENT_NAME.to_owned(),
                 runtime_hash: String::new(),
             };
             super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
