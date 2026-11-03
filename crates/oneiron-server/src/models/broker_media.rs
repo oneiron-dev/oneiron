@@ -28,7 +28,7 @@ use oneiron_llm_openai::{
 };
 
 use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join};
-use super::http::charge_read;
+use super::http::{charge_read, is_cloud_node};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -184,6 +184,7 @@ impl BrokerMedia {
             path,
             headers,
             wire_model,
+            is_cloud_node(),
             &body,
         );
         header.check(&body).map_err(|_| invalid())?;

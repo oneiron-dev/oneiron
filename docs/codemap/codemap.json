@@ -10729,7 +10729,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CalendarRemoteObjectRow",
@@ -21133,13 +21133,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/widen/contact_verdict_index.rs",
+     "purpose": "The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "WidenKind",
       "WidenProposal"
      ],
-     "path": "src/consent/widen.rs",
+     "path": "src/consent/widen/mod.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
       "const": 1,
@@ -23545,6 +23555,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/identity_index.rs",
+     "purpose": "The identity-value index over live `counterparty_contact.identity_ref` heads (FIX 1855): the disclosure…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23562,7 +23582,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
      }
     },
@@ -23573,7 +23593,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -28250,7 +28270,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 36,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 11,
       "re-export": 1,
       "trait": 1
@@ -28286,7 +28306,7 @@
      "path": "src/dreamer_runner/maintenance/coach/think_threshold.rs",
      "purpose": "Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "trait": 1
      }
@@ -49428,7 +49448,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BriefCitationView",
@@ -50575,6 +50595,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/author_token/carrier.rs",
+     "purpose": "Byte-bound DOCX revision-author carriers over the existing export rows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -50926,7 +50956,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DocxBlockView",
@@ -53693,7 +53723,7 @@
      "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
      "surface": {
       "crate-vis": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -85256,7 +85286,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85333,7 +85363,7 @@
      "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85795,9 +85825,9 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Live office body records and Vault doors"
     },
@@ -86453,9 +86483,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 110,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5858,
+   "source_files": 5861,
    "test_files": 902
   },
   "oneiron-android": {
@@ -109410,7 +109440,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 34
      }
     },
     {
@@ -115169,7 +115199,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -115614,7 +115644,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -116175,7 +116205,7 @@
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
       "crate-vis": 9,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },

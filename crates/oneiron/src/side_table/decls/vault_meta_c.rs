@@ -192,7 +192,8 @@ side_tables! {
     COACH_ISSUES_REDRIVE: VaultMeta b"coach:issues_redrive:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
-    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
+    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
@@ -205,7 +206,8 @@ side_tables! {
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
-    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named;
+    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's think-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
@@ -454,6 +456,10 @@ side_tables! {
     /// Owner-reason rule behind a derived standing grant. Key: string (grant ref) ":" id16 (rule
     /// decision id).
     CONSENT_OWNER_REASON_RULE: VaultMeta b"consent.owner_reason.v1:" Named;
+    /// Settled contact-disclosure offers by (contact, verdict). Key: id16 + verdict byte + hex64.
+    CONSENT_WIDEN_CONTACT_VERDICT_INDEX: VaultMeta b"consent.widen.contact_verdict.v1:" Raw;
+    /// Completeness flag of the contact-verdict index above (u64 version). Key: ().
+    CONSENT_WIDEN_CONTACT_VERDICT_STATE: VaultMeta b"consent.widen.contact_verdict_state.v1" Raw;
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson;
     /// Marker for a ruled conflict packet. Key: bytes32.
@@ -537,6 +543,10 @@ side_tables! {
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).
     COOPERATIVE_DELETION_SUCCESSION: VaultMeta b"cooperative_deletion:succession:v1:" Named;
+    /// Contacts by live `identity_ref` head, to its head claim. Key: id16(identity) + id16(contact).
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX: VaultMeta b"counterparty.contact.identity.v1:" Raw;
+    /// Completeness flag of the identity index above (u64 version). Key: ().
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX_STATE: VaultMeta b"counterparty.contact.identity_state.v1" Raw;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;
