@@ -499,6 +499,15 @@ pub struct MediaEmbeddingInput<'a> {
     pub source_rows: Option<&'a [EntityId]>,
 }
 
+impl MediaEmbeddingInput<'_> {
+    /// Every row the input's bytes came from, or its own id when unknown.
+    #[must_use]
+    pub fn source_rows(&self) -> &[EntityId] {
+        self.source_rows
+            .unwrap_or(std::slice::from_ref(&self.entity_id))
+    }
+}
+
 /// One document's answer from a media model: its vector with the device and runtime that
 /// computed it, stored beside the vector outside the space identity (FIX 7796), or why the
 /// model refused that document by its content.
@@ -536,9 +545,13 @@ pub trait MediaEmbedder: Send + Sync {
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
+        release: &(dyn Fn(&[EntityId]) -> Result<()> + Sync),
     ) -> Result<Vec<MediaOutcome>> {
-        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        let rows: Vec<EntityId> = inputs
+            .iter()
+            .flat_map(MediaEmbeddingInput::source_rows)
+            .copied()
+            .collect();
         release(&rows)?;
         self.embed_each(inputs)
     }
