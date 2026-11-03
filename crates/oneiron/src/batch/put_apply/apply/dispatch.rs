@@ -216,7 +216,7 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::validate_comm_record_body_bytes(data)?;
+        crate::write_envelope::communication_record::validate_comm_record_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_DIAGNOSTIC {
         crate::self_heal::validate_diagnostic_event_admission(&fixed.id, fixed.occurred, data)?;
         crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
@@ -231,7 +231,7 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
-        crate::comm::decode_claim_class_descriptor(data)?;
+        crate::store::claim_descriptors::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {
         // SCAN C046: a MODEL body is the engine's pinned shape on every door.
         // A replica's that fails it is the peer's bytes, refused as a claim

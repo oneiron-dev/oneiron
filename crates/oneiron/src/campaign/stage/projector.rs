@@ -264,9 +264,7 @@ pub(super) fn elapsed(now: u64, then: u64) -> u64 {
     now.saturating_sub(then)
 }
 
-pub(super) fn invalid(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
-}
+pub(super) use crate::write_envelope::cohort_claims::ladder::invalid;
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,47 @@
+//! Dispatch compliance rule, lawful-basis, verdict and amendment vocabulary.
+
+pub mod amendment;
+pub mod consent;
+pub mod contracts;
+pub mod evaluate;
+pub mod rules;
+
+pub use self::rules::CAMPAIGN_COMPLIANCE_PACK_ID;
+pub use self::rules::CAMPAIGN_COMPLIANCE_SEED_JSON;
+pub use self::rules::PREDICATE_CRM_COMPLIANCE_EVIDENCE;
+pub use self::rules::PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE;
+pub use self::rules::PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION;
+pub use self::rules::PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS;
+pub use self::rules::PREDICATE_CRM_COMPLIANCE_CONSENT;
+pub use self::rules::ComplianceRuleKind;
+pub use self::rules::B2bExemption;
+pub use self::rules::ComplianceSource;
+pub use self::rules::ComplianceRuleRow;
+pub use self::rules::UnknownJurisdictionDefault;
+pub use self::rules::ComplianceExemptionEvidence;
+pub use self::rules::ConditionalExemptionEvidence;
+pub use self::rules::CompliancePack;
+pub use self::consent::ConsentRequirement;
+pub use self::consent::ConsentBranch;
+pub use self::consent::ConsentFact;
+pub use self::consent::HydratedConsentFacts;
+pub use self::evaluate::HydratedListProvenance;
+pub use self::evaluate::HydratedJpPublicationFacts;
+pub use self::evaluate::DispatchComplianceFacts;
+pub use self::evaluate::ComplianceBlockReason;
+pub use self::evaluate::ComplianceVerdict;
+pub use self::evaluate::evaluate_dispatch_compliance;
+pub(crate) use self::evaluate::ComplianceBinding;
+pub use self::amendment::ComplianceAmendmentClass;
+pub use self::amendment::ComplianceAmendmentOutcome;
+pub use self::contracts::ComplianceAmendRequest;
+pub use self::contracts::ComplianceApprovalRequest;
+pub use self::contracts::ComplianceRowVerification;
+pub use self::contracts::ComplianceVerifyRequest;
+pub use self::contracts::ComplianceResultRequest;
+pub use self::contracts::ComplianceOperation;
+pub use self::contracts::ComplianceDisposition;
+pub use self::contracts::ComplianceOwnerStamp;
+pub use self::contracts::ComplianceReceipt;
+pub use self::contracts::CompliancePendingProposal;
+pub use self::contracts::ComplianceResult;

@@ -8,7 +8,7 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
-use crate::campaign::send_hygiene::ListUnsubscribeTarget;
+use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};

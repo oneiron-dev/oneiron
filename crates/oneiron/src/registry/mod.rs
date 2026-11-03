@@ -4,6 +4,7 @@
 //! stays in this crate.
 
 pub mod pack_byte_map;
+pub mod pack_namespaces;
 
 pub use oneiron_contracts::registry::{
     ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of,

@@ -323,10 +323,8 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
-};
+pub use crate::write_envelope::communication::{PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope};
+pub use crate::comm::{mint_send_override, send_override_for_send};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,

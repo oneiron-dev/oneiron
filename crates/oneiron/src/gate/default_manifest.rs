@@ -384,7 +384,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
+                        Value::from(crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (

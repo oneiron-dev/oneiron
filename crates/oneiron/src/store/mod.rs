@@ -124,6 +124,7 @@ mod asset_body;
 mod backup_change;
 #[cfg(unix)]
 mod body_envelope;
+pub mod claim_descriptors;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;

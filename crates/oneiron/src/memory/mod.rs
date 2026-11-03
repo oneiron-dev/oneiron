@@ -63,6 +63,8 @@ pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
+pub mod campaign_records;
+pub mod query_records;
 mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;

@@ -33,6 +33,7 @@ mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
+pub mod dispatch_compliance;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
