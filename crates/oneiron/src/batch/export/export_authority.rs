@@ -2,7 +2,9 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::authority::{AuthorityEntryHash, AuthorityFold, AuthorityVaultId};
+use oneiron_contracts::authority::{AuthorityEntryHash};
+use crate::authority::{AuthorityFold};
+use oneiron_authority::authority::{AuthorityVaultId};
 use crate::error::{Error, Result};
 
 use super::export_manifest::ExportManifest;

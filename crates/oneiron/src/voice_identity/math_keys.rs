@@ -5,20 +5,13 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-pub(super) fn invalid_voice(reason: &str) -> Error {
-    Error::InvalidConfig(reason.to_owned())
-}
+pub(super) use crate::verbs::voice_records::consent::invalid_voice;
 
 pub(super) fn corrupt_voice_row() -> Error {
     Error::CorruptedIndex("voice identity record")
 }
 
-pub(super) fn require_non_empty(value: &str, what: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(invalid_voice(&format!("{what} must be non-empty")));
-    }
-    Ok(())
-}
+pub(super) use crate::verbs::voice_records::consent::require_non_empty;
 
 /// Longest session or speaker key, the attendee ask's own bound.
 const MAX_SESSION_KEY_BYTES: usize = 128;

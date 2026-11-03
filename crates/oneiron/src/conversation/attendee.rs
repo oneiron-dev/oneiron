@@ -313,7 +313,7 @@ impl Memory<'_> {
     pub fn voice_speakers_entered(
         &self,
         container: EntityId,
-        roster: &crate::voice_identity::VoiceSessionRosterV1,
+        roster: &crate::conversation::voice_roster::VoiceSessionRosterV1,
         trigger_turn: Option<EntityId>,
         candidates: &[EntityId],
         until: u64,

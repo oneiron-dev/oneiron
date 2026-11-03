@@ -43,7 +43,7 @@ use crate::authority::{
     principal_standing_or_lapse_in_txn,
 };
 use crate::edge::EdgeActorClass;
-use crate::memory::MemoryResult;
+use oneiron_contracts::memory::MemoryResult;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::{EntityId, Result, Vault};
 
