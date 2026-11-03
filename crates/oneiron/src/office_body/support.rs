@@ -270,3 +270,33 @@ pub(crate) fn fork_waits(proposal: &EntityId, refused: Option<&str>) -> Error {
         proposal.to_hex()
     ))
 }
+
+/// A live edit that waits on its owner ask `ask` (FIX 596): the editor
+/// retries the same call once the owner answers.
+pub(crate) fn live_edit_waits(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "the live edit by {} on artifact {} waits on owner ask {}; no standing entity.office.edit grant covers it yet",
+        editor.to_hex(),
+        artifact.to_hex(),
+        ask.to_hex(),
+    ))
+}
+
+/// A live edit whose owner ask `ask` was accepted while its coverage still
+/// holds (FIX 596): the editor retries the same call carrying the ops
+/// again, which now lands; nothing was applied.
+pub(crate) fn live_edit_granted(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "owner ask {} accepted live edits by {} on artifact {}; retry the same edit, which now lands",
+        ask.to_hex(),
+        editor.to_hex(),
+        artifact.to_hex(),
+    ))
+}
+
+/// The typed refusal of a live edit the owner declined or let lapse
+/// (FIX 596): rejection or lapse alone refuses; pending and admission
+/// failure wait instead.
+pub(crate) fn live_edit_refused(reason: &str) -> Error {
+    Error::Refused(reason.to_owned())
+}
