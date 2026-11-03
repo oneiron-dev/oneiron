@@ -472,6 +472,17 @@ impl Vault {
         }
         Ok(None)
     }
+
+    /// This vault's last committed write transaction, as a generation: it
+    /// moves on every commit anywhere in the store, so a verdict judged
+    /// under one generation (a release hold among them) is exactly that
+    /// generation's verdict, and any later write — a world setting, a
+    /// machine's removal, a row moving worlds — moves it (FIX 11166).
+    /// It only reads.
+    #[must_use]
+    pub fn write_generation(&self) -> usize {
+        self.store.env.info().last_txn_id
+    }
 }
 
 /// Why a withheld world keeps `row`: the owner's choice for the first
