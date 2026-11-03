@@ -107,7 +107,7 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
-mod off_record_rooms;
+pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
 // FIX 922: the kit door to the sealed cloud bundle.
