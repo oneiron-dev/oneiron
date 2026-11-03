@@ -753,8 +753,18 @@ pub(super) fn ensure_companion_profile_grant(
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let existing =
-                crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // An erased history is not the expected live grant (FIX 4981):
+            // the id stays bound to something else.
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let existing = match crate::access_grant::decode_access_grant_body(body) {
+                Ok(existing) => existing,
+                Err(_) if crate::access_grant::decode_erased_share_body(body).is_ok() => {
+                    return Err(invalid(
+                        "profile_grant_ref is already bound to a different access grant",
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             if existing != expected {
                 return Err(invalid(
                     "profile_grant_ref is already bound to a different access grant",
