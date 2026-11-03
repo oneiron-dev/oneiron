@@ -107,6 +107,7 @@ impl EngineNativeExecutor<'_> {
         bridge_calls: Vec<CodeRunBridgeCall>,
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
+        receipts: Vec<ReaderFoldReceipt>,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -129,7 +130,8 @@ impl EngineNativeExecutor<'_> {
         );
         // The names the failed step bound join the record with their
         // bodies, as on the success path (FIX 833), and are hashed into
-        // its checkpoint below.
+        // its checkpoint below; the fold receipts its stores computed land
+        // in the same commit, beside the bindings they describe.
         let bindings: Vec<_> = bound
             .iter()
             .map(|binding| (binding.name.clone(), binding.handle.clone()))
@@ -185,7 +187,7 @@ impl EngineNativeExecutor<'_> {
                 record,
                 expected_generation,
                 healed.then_some(&config.model),
-                &[],
+                &receipts,
                 parked.as_ref(),
             )?;
         // The run parks on the step's wait; a reply already delivered
