@@ -273,7 +273,7 @@ fn replace_retained(
     kept: &[u8],
     root_key: String,
 ) -> RekeyConfirmed {
-    let Ok(slot_secret) = <[u8; 32]>::try_from(kept) else {
+    let Ok(slot_secret) = <[u8; 32]>::try_from(kept).map(Zeroizing::new) else {
         return RekeyConfirmed::SlotCannotHold {
             root_key,
             steps: copy::REKEY_STEPS_SERVER_CONFIG,
@@ -281,7 +281,7 @@ fn replace_retained(
     };
     match state
         .vault
-        .replace_retained_host_root_secret(owner, shown, &slot_secret)
+        .replace_retained_host_root_secret(owner, shown, &*slot_secret)
     {
         Ok(RetainedHostRootReplace::Replaced(validated)) => match reread(state, &validated) {
             Ok(root_key) => RekeyConfirmed::Rekeyed {
@@ -315,7 +315,7 @@ fn validate(
         Err(error) => error.to_string(),
     };
     if let Some(bytes) = parse_hex32(secret)
-        && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &bytes)
+        && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &*bytes)
     {
         return Ok((validated, Zeroizing::new(bytes.to_vec())));
     }
@@ -400,7 +400,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// 64 hex characters as the 32 bytes they spell; anything else is `None`.
-fn parse_hex32(text: &str) -> Option<[u8; 32]> {
+fn parse_hex32(text: &str) -> Option<Zeroizing<[u8; 32]>> {
     let text = text.as_bytes();
     if text.len() != 64 {
         return None;
@@ -409,7 +409,7 @@ fn parse_hex32(text: &str) -> Option<[u8; 32]> {
     for (byte, pair) in bytes.iter_mut().zip(text.chunks_exact(2)) {
         *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
-    Some(bytes)
+    Some(Zeroizing::new(bytes))
 }
 
 const fn nibble(digit: u8) -> Option<u8> {
