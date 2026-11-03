@@ -12,7 +12,7 @@ use super::validate::validate_manifest_for_proposal;
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::skill_hub::{HubPin, HubRef};
+use crate::write_envelope::skill_source::{HubPin, HubRef};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;

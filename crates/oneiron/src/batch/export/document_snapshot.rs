@@ -52,7 +52,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
@@ -97,7 +97,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -158,7 +158,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_OKF;
+        let format = crate::serialize::EXPORT_TARGET_OKF;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -387,7 +387,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }

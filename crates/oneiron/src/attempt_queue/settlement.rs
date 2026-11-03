@@ -74,7 +74,7 @@ impl AttemptQueue<'_> {
         let record = self
             .get_in_write_txn(wtxn, input.id)?
             .ok_or_else(|| invalid_transition("fail", "missing"))?;
-        if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+        if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND
             && crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_ok_and(
                 |payload| {
                     payload.attempt_type == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE

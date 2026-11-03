@@ -39,6 +39,7 @@ pub use oneiron_base::error;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
+pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
@@ -57,11 +58,15 @@ pub mod registry {
     #[cfg(test)]
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
+pub use oneiron_base::request_limits;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
 pub mod slim;
+pub mod heap_drop;
+#[cfg(feature = "sync")]
+pub mod window_key;
 pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;
@@ -82,8 +87,16 @@ pub mod entity_doc;
 pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
-pub mod live_rows;
+pub use oneiron_base::live_rows;
+pub mod claim_check;
+pub mod inference_context;
 pub mod llm;
+pub mod model_binding;
+pub mod model_decision;
+pub mod model_step_context;
+pub(crate) mod model_step_effect;
+pub mod model_step_error;
+pub mod model_step_record;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -91,7 +104,11 @@ pub mod prompt;
 pub mod query_expansion;
 pub mod reaction;
 pub mod rerank;
+pub mod research_budget;
 pub mod retrieval_depth;
+pub mod run_budget;
+pub mod teacher_probe_policy;
+mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
 pub mod saved_query;
 pub mod serialize;
@@ -158,6 +175,9 @@ pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
+pub mod connect_delivery;
+pub mod guest_document_share;
+pub mod verb_catalog;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
@@ -284,7 +304,7 @@ pub mod voice_segment;
 // module-qualified (`oneiron::<module>::Name`); nothing was removed from the
 // module tree.
 pub use crate::access_grant::AccessGrant;
-pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
 pub use crate::agent_def::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
     MemoryProfile,
@@ -379,10 +399,11 @@ pub use crate::compaction::{
     EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
-pub use crate::companion::{
-    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome,
+pub use crate::write_envelope::companion_subject::{
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind,
 };
+pub use crate::write_envelope::companion_task_kind::CompanionTaskKind;
+pub use crate::attempt_queue::companion_task::EnqueueCompanionTaskOutcome;
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
@@ -526,7 +547,7 @@ pub use crate::provider_confidence::{
     clear_provider_confidence_indexes, provider_confidence_index_presence,
     set_provider_confidence_index_raw,
 };
-pub use crate::psych_profile::{
+pub use crate::write_envelope::profile_snapshot::{
     PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };
 pub use crate::repo_mutation::{

@@ -21,16 +21,9 @@ use crate::outbound_intent_ledger::{
 };
 use crate::ports::TombstoneStore;
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Exact effect binding. The full frozen bytes, not a connector-local field list,
-/// are the only replay identity. Receipt id/time are separate per-try evidence.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FrozenDispatchIdentity {
-    pub(crate) attempt_ref: String,
-    pub(crate) payload: Vec<u8>,
-}
+pub(crate) use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
 
 pub(super) struct PreparedOutboundDispatch {
     pub(super) request: OutboundDispatchRequest,
@@ -43,7 +36,7 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
     /// The owner whose approval the effect carries; admission rechecks it.
     pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
-    pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
+    pub(super) step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
     /// A second actor the mutation speaks for, admitted beside the primary
@@ -55,7 +48,7 @@ impl PreparedOutboundDispatch {
         vault: &Vault,
         mut request: OutboundDispatchRequest,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
-        step_binding: Option<crate::llm::StepEffectBinding>,
+        step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     ) -> Result<Self, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
         if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, &request)? {
@@ -265,7 +258,7 @@ impl PreparedOutboundDispatch {
             hygiene_headers,
             dreamer_step: self
                 .step_binding
-                .map(crate::llm::StepEffectBinding::frozen_value),
+                .map(crate::model_step_effect::StepEffectBinding::frozen_value),
             calendar_invite: request.calendar_invite.as_ref(),
             space_posting: self.space_posting.as_ref(),
             actor_class: &request.actor.actor_class,

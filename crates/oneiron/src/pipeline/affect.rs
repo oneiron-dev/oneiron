@@ -24,7 +24,8 @@ use std::collections::HashMap;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::affect::{VAD_ANNOTATION_CLAIM_PREDICATE, Vad};
+use crate::write_envelope::vad_annotation::VAD_ANNOTATION_CLAIM_PREDICATE;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimRetrievability, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -75,7 +76,7 @@ pub(super) fn stored_claim_vad(
         else {
             continue;
         };
-        if body.predicate != crate::affect::CLAIM_VAD_REAPPRAISAL_PREDICATE
+        if body.predicate != crate::write_envelope::claim_vad::CLAIM_VAD_REAPPRAISAL_PREDICATE
             || body.subject != ClaimSubject::Entity(*claim_id)
             || body.lifecycle != ClaimLifecycleStatus::Active
         {
@@ -103,7 +104,7 @@ pub(super) fn stored_candidate_vad(
     if entity_type != ENTITY_TYPE_TURN && entity_type != ENTITY_TYPE_MESSAGE {
         return Ok(None);
     }
-    let claim_id = crate::affect::vad_annotation_claim_id(entity_type, id)?;
+    let claim_id = crate::write_envelope::vad_annotation::vad_annotation_claim_id(entity_type, id)?;
     let Some(raw) = store
         .port_entity_record(rtxn, &claim_id)?
         .map(|row| row.encode())

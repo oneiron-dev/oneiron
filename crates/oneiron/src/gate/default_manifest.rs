@@ -147,8 +147,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
-            Value::from(crate::failure_signals::policy::POLICY_KEY),
-            crate::failure_signals::policy::default_row(),
+            Value::from(crate::gate::failure_signal_policy::POLICY_KEY),
+            crate::gate::failure_signal_policy::default_row(),
         ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -185,7 +185,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),
@@ -285,7 +285,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from("goal_limits"),
-            crate::workspace_roster::GoalLimits::default().encode(),
+            crate::policy_model::goal_limits::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -468,7 +468,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                        Value::from(crate::write_envelope::voice_segment::PREDICATE_VOICE_SEGMENT),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -846,7 +846,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from(POLICY_SLIDE_REVIEW_KEY),
-            crate::llm::decision::SlideReviewPolicy::default_rows(),
+            crate::model_decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
         (
@@ -1167,7 +1167,7 @@ fn teacher_probe_default_entry() -> (Value, Value) {
         Value::Map(vec![
             (
                 Value::from("probe_id"),
-                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+                Value::from(crate::teacher_probe_policy::TEACHER_PROBE_ID),
             ),
             (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
             (Value::from("holders"), Value::Array(Vec::new())),
@@ -1266,8 +1266,8 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
 }
 
 fn federation_grant_default_rows() -> Value {
-    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
     use crate::federation::FederationGrantRole as Role;
+    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
     use oneiron_authority::federation::{Scope, ScopeAxis};
     let scope = |verbs: &[&str]| {
         let mut scope = Scope::top();
@@ -1361,7 +1361,7 @@ fn compilation_route(
 /// The vault-wide search policy ships as data, not a Rust threshold or
 /// hard-coded stagnation branch. The manifest resolver composes edits by scope.
 fn default_experiment_selection_rows() -> Value {
-    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+    let rows: Vec<crate::gate::experiment_selection_policy::SelectionPolicyRow> =
         serde_json::from_str(include_str!(
             "../autoreason_campaign/selection_defaults.json"
         ))

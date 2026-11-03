@@ -10,9 +10,8 @@ use crate::federation::{
 };
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD};
 use crate::sync::{SyncSelector, SyncSelectorWorld, WindowKey, WindowManager};
-use crate::task_verb::sdk::{
-    GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest,
-};
+use crate::authority::{GuestDocumentContext, GuestDocumentEnvelope};
+pub use crate::guest_document_share::GuestDocumentShareRequest;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{Error, Result, Vault};
 

@@ -110,6 +110,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
 mod report;
@@ -121,9 +122,13 @@ mod search_hybrid;
 mod search_temporal;
 mod search_vector;
 mod session_reads;
+pub use session_reads::{CreateNoteRequest, EntityRequest, HydrateRequest, QueryBm25Request};
+mod secret_sight;
 mod session_writes;
 mod shape_card_doors;
 mod shape_doors;
+pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
+pub use shape_doors::DescribeRequest;
 mod signal_extraction;
 mod structural;
 mod subscriptions;
@@ -390,3 +395,9 @@ pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+
+pub mod voice_actor;
+pub mod state_index;
+
+#[cfg(feature = "sync")]
+pub(crate) mod resolved_recall_scope;

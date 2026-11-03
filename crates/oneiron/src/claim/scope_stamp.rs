@@ -2,8 +2,7 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::store::Store;
@@ -12,6 +11,7 @@ use crate::{
     EntityId, TimeRange,
     error::{Error, Result},
 };
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use rmpv::Value;
 use std::collections::BTreeSet;
 #[cfg(test)]

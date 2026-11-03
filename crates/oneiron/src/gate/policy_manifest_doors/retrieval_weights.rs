@@ -39,7 +39,7 @@ impl RetrievalWeights {
         }
         .validate()?;
         crate::config::validate_ppr_vad_alpha(self.vad)?;
-        crate::config::validate_ppr_community(&crate::config::PprCommunityConfig {
+        crate::config::validate_ppr_community(&crate::config::community_graph::PprCommunityConfig {
             beta: self.community,
             ..Default::default()
         })

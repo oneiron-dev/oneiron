@@ -9,7 +9,8 @@ use crate::error::{Error, Result};
 use crate::store::retrieval_values::RetrievalWithTelemetry;
 use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use std::time::Instant;
@@ -410,7 +411,7 @@ impl Vault {
     pub fn alias_short_id_to_vault(
         &self,
         legacy_id: &str,
-        vault_id: crate::authority::AuthorityVaultId,
+        vault_id: oneiron_authority::authority::AuthorityVaultId,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.store.insert_short_id_alias(

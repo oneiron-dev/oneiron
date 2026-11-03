@@ -63,7 +63,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
-pub use self::raw_writes::RawEntityPut;
+pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
@@ -240,7 +240,7 @@ pub struct Vault {
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
-        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
+        std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

@@ -14,26 +14,10 @@ use crate::error::RecordError;
 /// Current AccessGrant body schema version.
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 4;
 
-/// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 10] = [
-    "schema_version",
-    "principal_ref",
-    "scope",
-    "capability",
-    "status",
-    "created_at",
-    "revoked_at",
-    "expires_at",
-    "authority_scope",
-    "companion_bounds",
-];
-
-pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
-
-pub(crate) const ACCESS_GRANT_FIELDS_STANDARD: &[&str] =
-    &["principal_ref", "scope", "capability", "status"];
-
-pub(crate) const ACCESS_GRANT_FIELDS_FULL: &[&str] = &ACCESS_GRANT_BODY_KEYS;
+pub use crate::serialize::access_grant_fields::ACCESS_GRANT_BODY_KEYS;
+pub(crate) use crate::serialize::access_grant_fields::{
+    ACCESS_GRANT_FIELDS_FULL, ACCESS_GRANT_FIELDS_MINIMAL, ACCESS_GRANT_FIELDS_STANDARD,
+};
 
 pub(super) const KEY_SCHEMA_VERSION: &str = ACCESS_GRANT_BODY_KEYS[0];
 
@@ -234,10 +218,9 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     };
     let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
-            entries,
-            "authority_scope",
-        )?)
+        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(
+            required_value(entries, "authority_scope")?,
+        )
         .map_err(|_| invalid_grant())?,
         scope,
         capability,

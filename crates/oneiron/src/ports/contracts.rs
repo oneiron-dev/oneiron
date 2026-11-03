@@ -1,9 +1,11 @@
 //! The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions.
 use super::{ChangeLogRecord, EdgeDirection, EntityRecord, SourceSpan};
 use crate::attempt_queue::{
-    ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
+    ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
     FailAttempt, FailOutcome,
 };
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;

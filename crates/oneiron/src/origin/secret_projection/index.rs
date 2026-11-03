@@ -31,7 +31,7 @@ use heed::RoTxn;
 use super::types::REPO_OPAQUE_FILE_BYTES;
 use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};

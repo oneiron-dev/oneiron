@@ -299,8 +299,9 @@ impl Vault {
         }
         crate::consent::ActorBound::new(principal)?;
         let mut scope = oneiron_authority::federation::Scope::top();
-        scope.verbs =
-            oneiron_authority::federation::ScopeAxis::Some(["read".to_owned(), "propose".to_owned()].into());
+        scope.verbs = oneiron_authority::federation::ScopeAxis::Some(
+            ["read".to_owned(), "propose".to_owned()].into(),
+        );
         let grant = Value::Map(vec![
             (ACTOR_REF_KEY.into(), principal.into()),
             (

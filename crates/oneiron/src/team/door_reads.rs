@@ -21,7 +21,8 @@ use crate::critic::review::{
     DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
 };
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;

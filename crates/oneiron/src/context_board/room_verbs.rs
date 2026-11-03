@@ -2,10 +2,10 @@
 
 use super::room::{RoomPresence, room_clearance, room_worlds};
 use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
-use oneiron_authority::federation::Scope;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 mod ceiling;
 mod live_audience;
@@ -366,7 +366,7 @@ fn room_members_in(
         .port_entity_record(txn, &room)?
         .filter(|record| record.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
         .is_some_and(|record| {
-            crate::conversation::ConversationBody::from_bytes(&record.body).is_ok()
+            crate::store::conversation_body::ConversationBody::from_bytes(&record.body).is_ok()
         });
     if !conversation {
         return Ok(None);

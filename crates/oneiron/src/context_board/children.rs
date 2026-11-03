@@ -304,7 +304,7 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
 /// The AGENT_DEF actor an agent-dispatch attempt runs as; `None` for any
 /// other attempt, or one whose payload does not decode.
 pub(crate) fn dispatched_actor(record: &AttemptRecord) -> Option<EntityId> {
-    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+    if record.kind != crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }
     let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;

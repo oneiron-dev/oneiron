@@ -26,7 +26,7 @@ use crate::agent_dispatch::agent_dispatch_actor;
 use crate::agent_dispatch::decode_agent_dispatch_input;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::llm::OpenTrapWait;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 
 mod apply;
 mod ask;
@@ -43,6 +43,7 @@ mod environment;
 mod erase;
 mod loaded;
 mod moves;
+pub mod steer;
 mod outcomes;
 mod pipeline;
 mod policy;

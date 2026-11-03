@@ -160,7 +160,7 @@ impl ScopedRead<'_> {
         )],
         limit: usize,
         requested: Option<&RetrievalFilter>,
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
@@ -406,9 +406,9 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested.min(crate::memory::caps::MAX_SEARCH_LIMIT));
+            return Ok(requested.min(crate::request_limits::MAX_SEARCH_LIMIT));
         }
-        Ok(crate::memory::caps::narrowed_candidate_window(requested))
+        Ok(crate::request_limits::narrowed_candidate_window(requested))
     }
 
     pub fn filter_scored_entities(

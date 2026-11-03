@@ -146,7 +146,7 @@ fn dispatch_charge_in_txn(
     let Some(record) = AttemptQueue::new(vault).get_in_txn(txn, attempt)? else {
         return Ok(None);
     };
-    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+    if record.kind != crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(None);
     }
     let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload) else {

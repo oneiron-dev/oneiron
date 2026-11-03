@@ -18,8 +18,9 @@ use crate::dreamer_wake::sieve::{self, RungInput};
 use crate::dreamer_wake::{
     DreamerAttemptExecution, SieveRung, SieveSpan, SpanOrigin, WakeAttemptContext,
 };
-use crate::llm::decision::HumanAskReason;
-use crate::llm::{DurableStepContext, DurableStepError};
+use crate::model_decision::HumanAskReason;
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result};
 
 impl ConsolidationExecutor<'_> {

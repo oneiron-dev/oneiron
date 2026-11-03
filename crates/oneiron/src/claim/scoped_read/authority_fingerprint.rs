@@ -24,7 +24,8 @@ use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
 
 use super::{RoomTurnCeiling, ScopedReadActorKey};
-use crate::authority::{HostActionGuard, PeerMachine, VerifiedSlip};
+use crate::authority::{HostActionGuard, VerifiedSlip};
+use crate::machine_destination::{PeerMachine};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::consent::AuthenticatedOwner;
@@ -38,6 +39,7 @@ use crate::registry::{
 };
 use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 impl ScopedReadActorKey {
     /// The canonical fingerprint of the live read authority behind this key,
@@ -184,7 +186,8 @@ fn fold_principal_reach(
                 continue;
             }
             let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
+            if body.predicate
+                == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                 && claim_surfaceable(&body)
                 && body
                     .value

@@ -22,10 +22,10 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::AttemptId;
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord, CommitmentStatus};
 use crate::consent::AuthenticatedOwner;
-use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
+use crate::config::context_spec::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::OutboundScheduleContext;
+use crate::delivery_window::OutboundScheduleContext;
 use crate::side_table::{self, Named, SideTable};
 
 use super::wake_event::{CommitmentWakeEvent, CommitmentWakePhase, validate_wake_string};

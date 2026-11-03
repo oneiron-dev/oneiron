@@ -32,7 +32,7 @@ use crate::authority::ActAuthority;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::owner_read_page_limit;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One agent's free-time policy.

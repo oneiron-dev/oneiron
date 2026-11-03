@@ -19,7 +19,7 @@ use crate::agent_dispatch::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 
