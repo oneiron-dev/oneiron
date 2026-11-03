@@ -355,8 +355,7 @@ pub enum SlideUnitRefusalReason {
     TargetChanged,
     /// The writer cannot verify the shape's slide-space position.
     UnresolvedGeometry,
-    /// The unit's text or image exceeds the evidence budget; nothing is
-    /// trimmed or scaled to fit.
+    /// The unit's text exceeds the evidence budget; nothing is trimmed to fit.
     EvidenceBudget,
     /// The rendered image is not PNG or JPEG whose header gives its size.
     UnreadableImage,
