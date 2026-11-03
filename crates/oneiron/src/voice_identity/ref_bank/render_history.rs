@@ -63,7 +63,9 @@ impl SideKey for RenderEventKey {
     }
 }
 
-pub use crate::verbs::voice_records::{VoiceRenderEventReceipt, VoiceRenderConsentWrite, VoiceRenderEventView, VoiceDroppedTargetView};
+pub use crate::verbs::voice_records::{
+    VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
+};
 
 /// The voice's current render decision, granted or withdrawn.
 pub(super) fn read_render_consent(

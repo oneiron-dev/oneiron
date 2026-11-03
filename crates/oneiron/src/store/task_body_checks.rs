@@ -1,8 +1,8 @@
 //! Lenient raw TASK terminal and deadline checks used at storage admission.
 
-use std::io::Cursor;
-use rmpv::Value;
 use crate::error::{Error, RecordError, Result};
+use rmpv::Value;
+use std::io::Cursor;
 
 /// Refuses a TASK body that is born already expired, at the PUBLIC raw doors.
 ///
@@ -133,4 +133,3 @@ pub(crate) fn task_body_optional<'a>(
         value => Some(value),
     })
 }
-

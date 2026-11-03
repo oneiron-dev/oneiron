@@ -1,7 +1,11 @@
 //! Voice-segment claim vocabulary is defined in the core write envelope.
 
-pub use crate::write_envelope::voice_segment::{PREDICATE_VOICE_SEGMENT, VOICE_SEGMENT_VALUE_KEYS, AEC_MODE_BYPASSED_HEADPHONES, AEC_MODE_BYPASSED_OTHER, AEC_MODE_ACTIVE, AEC_MODE_UNAVAILABLE, VOICE_SEGMENT_AEC_MODES, is_voice_segment_claim_predicate};
 pub(crate) use crate::write_envelope::voice_segment::validate_voice_segment_claim_structure;
+pub use crate::write_envelope::voice_segment::{
+    AEC_MODE_ACTIVE, AEC_MODE_BYPASSED_HEADPHONES, AEC_MODE_BYPASSED_OTHER, AEC_MODE_UNAVAILABLE,
+    PREDICATE_VOICE_SEGMENT, VOICE_SEGMENT_AEC_MODES, VOICE_SEGMENT_VALUE_KEYS,
+    is_voice_segment_claim_predicate,
+};
 
 #[cfg(test)]
 mod tests {

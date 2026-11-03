@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use super::{Dispatched, Member};
 use crate::agent_dispatch::{AgentDispatcher, SpendScope};
-use crate::workspace_roster::spend_scope::SpendState;
 use crate::attempt_queue::AttemptRecord;
 use crate::run_budget::LeaseUnit;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::{Result, Vault};
 
 /// One member's spend.

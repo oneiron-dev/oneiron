@@ -24,11 +24,11 @@ use super::scope::tree_admitted_in;
 use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::secret_custody::SecretSight;
+use crate::{EntityId, Error};
 use oneiron_authority::share_travel::BornWith;
 use oneiron_authority::share_travel::BornWithField;
 use oneiron_authority::share_travel::TravelChoice;
 use oneiron_authority::share_travel::TravelKind;
-use crate::{EntityId, Error};
 
 /// The schema a lens pack file names.
 pub const LENS_PACK_SCHEMA: &str = "oneiron.lens_pack.v1";

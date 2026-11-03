@@ -31,7 +31,11 @@ use crate::error::{Error, Result};
 use crate::llm::ModelLocality;
 use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 
-pub use crate::verbs::voice_records::{VoiceIdentityView, VoicePackSummary, VoiceClipSummary, VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetRender, VoiceReferenceFenceView, VoiceTargetInspection, VoiceBankInspection, VoiceBankView};
+pub use crate::verbs::voice_records::{
+    VoiceBankInspection, VoiceBankView, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
+    VoiceReferenceFenceView, VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
+    VoiceTargetRender,
+};
 
 /// One banked `pack` without its audio or transcripts, with the intake rows
 /// it went past under the owner's current rows.

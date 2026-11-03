@@ -1,7 +1,7 @@
 //! Context-pack item and token accounting values.
 
-use std::collections::BTreeSet;
 use crate::entity_id::EntityId;
+use std::collections::BTreeSet;
 
 /// The critical claims a pack run found among its admitted candidates, and
 /// those its budgets left out (FIX 9760). Engine-internal: the ids never

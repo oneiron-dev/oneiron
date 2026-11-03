@@ -182,7 +182,10 @@ impl Vault {
     pub(crate) fn capture_tier1_consent_queue(
         &self,
         ids: &[EntityId],
-        witness: Option<(crate::store::diagnostic_record::DiagnosticEvent, VerifiedSourceSet)>,
+        witness: Option<(
+            crate::store::diagnostic_record::DiagnosticEvent,
+            VerifiedSourceSet,
+        )>,
     ) -> Result<()> {
         if !self.config.failure_signals.exports() {
             return Ok(());

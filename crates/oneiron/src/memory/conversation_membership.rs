@@ -1,6 +1,6 @@
 //! The time window a conversation membership admits.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MembershipWindow {

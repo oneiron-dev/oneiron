@@ -38,7 +38,7 @@ fn invalid(reason: &'static str) -> Error {
 }
 
 pub(crate) use crate::store::code_revision_identity::{
-    queue_aggregation_session, queue_revision_id, queue_provenance_id,
+    queue_aggregation_session, queue_provenance_id, queue_revision_id,
 };
 
 /// The aggregation SESSION's body: derived queue bookkeeping, named as such.

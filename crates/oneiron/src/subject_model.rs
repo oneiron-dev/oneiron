@@ -62,7 +62,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 pub use crate::write_envelope::subject_record::{
-    SUBJECT_MODEL_SCHEMA_VERSION, SubjectKind, ActorSubjectAnchor,
+    ActorSubjectAnchor, SUBJECT_MODEL_SCHEMA_VERSION, SubjectKind,
 };
 
 impl Vault {

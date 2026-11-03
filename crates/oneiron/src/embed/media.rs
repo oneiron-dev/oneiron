@@ -43,7 +43,9 @@ const TEXT_DOCUMENT_TYPES: [u8; 4] = [
     ENTITY_TYPE_ASSET,
 ];
 
-pub use crate::store::embedding::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
+pub use crate::store::embedding::{
+    MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome,
+};
 
 /// One stored document a scan read: an ASSET's media, or a record's text.
 pub(super) struct PendingMedia {

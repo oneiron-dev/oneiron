@@ -31,7 +31,6 @@ use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
@@ -39,10 +38,13 @@ use crate::retrieval_quality::{RetrievalDiagnostics, RetrievalQualityReport};
 use crate::store::RetrievalSignal;
 use crate::vault::Vault;
 use oneiron_model::llm::BudgetLease;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod accumulation;
 mod controls;
-pub use controls::{RecallExecution, RecallMediaSeed, RecallQueryVectors, RecallTelemetry, RetrievalDeadline};
+pub use controls::{
+    RecallExecution, RecallMediaSeed, RecallQueryVectors, RecallTelemetry, RetrievalDeadline,
+};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use controls::{SlowRetrievalStage, still_deadline_clock_for_test};
 mod session_scope;

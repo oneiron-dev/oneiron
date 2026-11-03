@@ -13,10 +13,10 @@ use crate::store::GateDecisionId;
 /// The binding row's schema version.
 pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 2;
 
+pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
     CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState,
 };
-pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 
 /// The instrument a code run's caller was admitted on, kept with its wait:
 /// a reference and its witness, never a secret, and no authority on its

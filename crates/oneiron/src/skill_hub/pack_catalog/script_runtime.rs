@@ -23,11 +23,13 @@ use crate::{
     surface_event::SurfaceEventAdmission,
 };
 use crate::{
-    store::sandbox_credential::SandboxCredentialHandle,
-    code_sandbox::microvm::{CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter},
-    store::{sandbox_contract::SandboxGuestTier, sandbox_path::SandboxMountTable},
+    code_sandbox::microvm::{
+        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
+    },
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
+    store::sandbox_credential::SandboxCredentialHandle,
+    store::{sandbox_contract::SandboxGuestTier, sandbox_path::SandboxMountTable},
     surface_event::InboundSurfaceEventInput,
 };
 

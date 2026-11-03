@@ -31,8 +31,11 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::model_step_record::CallerSettledStep;
-use crate::{run_tree::RunTreeAdapter, attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus}};
 use crate::{EdgeActorClass, Vault};
+use crate::{
+    attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus},
+    run_tree::RunTreeAdapter,
+};
 
 use super::run::{
     RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, actor_gone_in_txn,

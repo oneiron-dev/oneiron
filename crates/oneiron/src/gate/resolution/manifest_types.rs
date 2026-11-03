@@ -86,8 +86,8 @@ impl CommOptOutPosture {
 }
 
 pub(crate) use crate::store::{
-    GateRetentionContext, GateRetentionPrecedence, GateRetentionScope,
-    GateRetentionOverrideCeiling, GateRetentionRow, GateDecisionRetentionPolicy,
+    GateDecisionRetentionPolicy, GateRetentionContext, GateRetentionOverrideCeiling,
+    GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
 };
 
 /// Policy-authored fold order for holder class-carry rows. Every holder is

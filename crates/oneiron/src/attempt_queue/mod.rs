@@ -12,32 +12,32 @@
 //! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
 //! counters and span emission.
 
-pub mod maintenance_predicate;
 mod annotation_hold;
-pub mod turn_action_kind;
 mod borrowed_lease;
+pub mod browser_admission;
 mod budget_hold;
 mod cancel;
 mod completion;
-pub mod run_signal;
+pub mod dispatch_payload;
 mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
 mod index;
+pub mod maintenance_predicate;
 mod observe;
-pub mod browser_admission;
 mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
-pub mod source_rows;
-pub mod skill_edit_cycle;
 mod result;
+pub mod run_signal;
 mod settlement;
+pub mod skill_edit_cycle;
+pub mod source_rows;
 mod telemetry;
+pub mod turn_action_kind;
 mod types;
-pub mod dispatch_payload;
 mod validate;
 #[cfg(test)]
 pub(crate) use validate::validate_lease_owner;

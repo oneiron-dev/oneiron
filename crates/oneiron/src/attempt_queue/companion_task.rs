@@ -1,9 +1,11 @@
 //! Companion task payload and durable queue result values.
 
-use crate::write_envelope::companion_subject::{CompanionScope, CompanionSubject, CompanionTaskKey};
-use crate::write_envelope::companion_task_kind::CompanionTaskKind;
-use crate::error::Result;
 use super::{AttemptId, AttemptRecord};
+use crate::error::Result;
+use crate::write_envelope::companion_subject::{
+    CompanionScope, CompanionSubject, CompanionTaskKey,
+};
+use crate::write_envelope::companion_task_kind::CompanionTaskKind;
 
 /// Typed payload stored on durable companion task attempt rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
