@@ -821,7 +821,7 @@ impl<'a> ContextPackBuilder<'a> {
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
-            budget: self.token_budget,
+            budget: self.effective_token_budget(),
             allocation: self.token_allocation,
             include_stats: self.include_stats,
             merge_neighbors: self.merge_neighbors,
