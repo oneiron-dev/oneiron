@@ -10,10 +10,9 @@
 use rmpv::Value;
 
 use super::*;
-use crate::affect::{
-    AFFECT_TRIGGER_PREDICATE,
-    coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
-    validate_affect_trigger_claim_structure,
+use crate::write_envelope::{
+    affect_trigger::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure},
+    coping_outcome::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
 };
 use crate::context_pack::FieldProfile;
 use crate::error::{Error, Result};
@@ -144,8 +143,8 @@ pub(crate) fn validate_claim_body_and_decode(
         // would silently adopt every future booking predicate. The lifecycle
         // heads are validated here too, so none breaks a read (FIX 5994).
         crate::booking::validate_booking_family_claim(&body)?;
-    } else if crate::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
-        crate::voice_segment::validate_voice_segment_claim_structure(&body)?;
+    } else if crate::write_envelope::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
+        crate::write_envelope::voice_segment::validate_voice_segment_claim_structure(&body)?;
     } else if crate::reaction::is_reaction_claim_predicate(&body.predicate) {
         crate::reaction::validate_reaction_claim_structure(&body)?;
     }

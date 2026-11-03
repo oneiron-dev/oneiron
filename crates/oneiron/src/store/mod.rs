@@ -102,6 +102,9 @@
 
 /// Backend-neutral storage contracts and injectable time sources.
 /// Implementations compose in a caller-owned transaction; they never commit it.
+mod extraction_work;
+pub use extraction_work::ExtractionWork;
+
 pub mod ports {
     pub use crate::ports::{
         BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
@@ -123,6 +126,14 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod conversation_body;
+pub mod conversation_record;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_document;
+pub mod retained_memory;
+#[cfg(feature = "sync")]
+pub(crate) mod window_rows;
+
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
@@ -184,6 +195,10 @@ mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_content_index;
+pub mod skill_package;
+pub(crate) mod skill_source_carrier;
+pub(crate) mod refinement_carrier;
 mod structural_kind_registry;
 mod sync_responses;
 mod training_link;

@@ -59,14 +59,7 @@ pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
 /// second slot.
 pub const PROVENANCE_OPTIMIZE_CYCLE_KEY: &str = "cycle";
 
-/// The label prefix [`proven_cycle`] names a RUN-proven cycle with.
-///
-/// Pinned here because two modules have to agree on it: this one BUILDS the
-/// label, and the attempt queue's run-id validator
-/// (`crate::attempt_queue::validate`) sizes its own bound by subtracting this
-/// prefix from [`SKILL_EDIT_CYCLE_MAX_BYTES`]. Spelling it twice is how a run
-/// id the queue accepted became a cycle label nobody could name.
-pub(crate) const SKILL_EDIT_CYCLE_RUN_PREFIX: &str = "run:";
+pub(crate) use crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_RUN_PREFIX;
 
 /// Version prefix of a drafted revision.
 const OPTIMIZE_VERSION_PREFIX: &str = "opt-";

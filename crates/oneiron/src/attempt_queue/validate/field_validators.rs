@@ -27,8 +27,8 @@ pub(in crate::attempt_queue) const MAX_FAILURE_REASON_LEN: usize = 2048;
 /// was a run whose every drafted proposal died at the gate, after the author
 /// had already been paid for it.
 pub(in crate::attempt_queue) const MAX_RUN_ID_LEN: usize =
-    crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES
-        - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
+    crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_MAX_BYTES
+        - crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 
 /// Same bound as a resume point's artifact reference: both name one durable
 /// artifact, so one over-long reference must not be admissible on one door and

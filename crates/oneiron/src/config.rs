@@ -362,7 +362,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
-            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            call_mode_deadline: crate::request_limits::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
@@ -396,7 +396,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
-            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            call_mode_deadline: crate::request_limits::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.

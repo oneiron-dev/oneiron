@@ -27,6 +27,8 @@ mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
+pub mod source_rows;
+pub mod skill_edit_cycle;
 mod result;
 mod settlement;
 mod telemetry;
@@ -159,3 +161,5 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
         ))
     }
 }
+
+pub mod companion_task;

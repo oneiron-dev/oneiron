@@ -446,7 +446,8 @@ fn matching_recovery_tombstone_in_txn(
     #[cfg(feature = "sync")]
     {
         use crate::ports::WindowAddress;
-        use crate::sync::loro_support::{doc_from_snapshot, import_doc, tombstone_values_for_id};
+        use crate::sync::loro_support::{tombstone_values_for_id};
+        use crate::store::loro_document::{doc_from_snapshot, import_doc};
         for row in store.port_window_doc_rows_raw(txn, |label, snapshot| {
             doc_from_snapshot(snapshot).map(|doc| (label.as_str().to_owned(), doc))
         })? {

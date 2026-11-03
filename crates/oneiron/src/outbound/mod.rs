@@ -20,6 +20,8 @@ mod recovery_suggestions;
 mod reply_content;
 mod reply_job;
 mod retry_audit;
+mod schedule_contract;
+pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod served_sink;
 mod window_door;
 
