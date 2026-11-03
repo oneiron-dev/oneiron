@@ -105,8 +105,7 @@ impl GrantTravelAct<'_> {
             GRANT_TRAVEL_CLEAR_REASON
         } else {
             GRANT_TRAVEL_SET_REASON
-        ,
-};
+        };
         let mut record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
@@ -128,8 +127,7 @@ impl GrantTravelAct<'_> {
             read_frontier_hash: self.frontier,
             context: Default::default(),
             redacted_at: None,
-        ,
-};
+        };
         vault
             .store
             .append_fresh_gate_decision_in_txn(txn, &mut record)

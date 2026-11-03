@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{CompactionWindowMessage, SwapPlan};
 use crate::store::verb_invocation::InvocationId;
 use crate::error::VerbHookStop;
-use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre};
+use crate::runtime_hooks::{ VerbCall, VerbDomain, VerbHookPre};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EntityId, Vault};
 
@@ -79,8 +79,7 @@ impl Vault {
             domain: VerbDomain::Write,
             // A host's own call reads as its actor.
             reader: None,
-        ,
-};
+        };
         let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
         let check = |rewritten: &Value| added_pins(&args, rewritten, &contains, fits).map(|_| ());
         match self.pre_verb_hooks(call, args.clone(), &check) {
@@ -98,8 +97,7 @@ impl Vault {
                     return CompactHooks {
                         pre: None,
                         pending: Some(stop),
-                    ,
-};
+                    };
                 }
                 tracing::warn!(%stop, "host.compact pre-hooks stopped; the pass keeps its own pins");
                 CompactHooks::default()
@@ -120,8 +118,7 @@ impl Vault {
     pub fn post_compact_hooks(&self, hooks: CompactHooks, plan: &SwapPlan, first: u64, last: u64) {
         let Some(pre) = hooks.pre else {
             return;
-        ,
-};
+        };
         let result = json!({
             "epoch": plan.epoch,
             "summary": plan.summary_id.to_hex(),

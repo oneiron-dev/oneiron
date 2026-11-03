@@ -31,8 +31,7 @@ impl AtWriteFloor {
     pub fn is_in(error: &Error) -> bool {
         let Error::Io(io) = error else {
             return false;
-        ,
-};
+        };
         matches!(io.get_ref(), Some(inner) if inner.is::<Self>())
     }
 }

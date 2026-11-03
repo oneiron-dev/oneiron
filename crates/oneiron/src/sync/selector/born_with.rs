@@ -25,8 +25,10 @@ use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
 use crate::provenance::birth::row_birth_in_txn;
 use crate::provenance::made_by::{MadeBy, MadeByInputRole};
-use oneiron_authority::share_travel::{BornWith, BornWithField, TravelChoice};
-use crate::share_travel::{GrantTravel};
+use oneiron_authority::share_travel::BornWith;
+use oneiron_authority::share_travel::BornWithField;
+use oneiron_authority::share_travel::TravelChoice;
+use crate::share_travel::{ GrantTravel};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
@@ -76,8 +78,7 @@ fn carried_rows(doc: &LoroDoc) -> Vec<(EntityId, u8)> {
     map_for_each_value_bytes(&doc.get_map("entities"), |key, blob| {
         let Some(header) = blob.and_then(EntityMetadataHeader::parse) else {
             return;
-        ,
-};
+        };
         if let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key) {
             rows.push((id, header.entity_type));
         }
@@ -188,8 +189,7 @@ fn readable_births(
         let Some(birth) = birth else {
             readable.push(None);
             continue;
-        ,
-};
+        };
         let mut made_by = birth.made_by;
         let mut omitted = false;
         if prompted {

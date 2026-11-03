@@ -1,7 +1,8 @@
 //! Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils verb, decision and output, and the resolver with its ScopedRead constructor.
 
 use crate::claim::ScopedRead;
-use crate::store::sandbox_import::{SandboxImportClass, SandboxLinkedImport};
+use crate::store::sandbox_import::SandboxImportClass;
+use crate::store::sandbox_import::SandboxLinkedImport;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::store::RetrievalRunId;
 

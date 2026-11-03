@@ -121,8 +121,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                     )
                 } else {
                     empty_page(&normalized, self.options.mount)
-                ,
-};
+                };
                 Ok(page.with_read_receipt(body.receipt))
             }
             ["entities", entity, "claims"] => {
@@ -186,8 +185,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 } else {
                     let id = parse_entity_id(world)?;
                     format!("world_ref:{}\n", id.to_hex()).into_bytes()
-                ,
-};
+                };
                 Ok(GraphFsFileRead {
                     value: Some(GraphFsFile {
                         path: normalized,
@@ -212,15 +210,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         }
         let [component] = components.as_slice() else {
             return Ok(None);
-        ,
-};
+        };
         let Some(claim_hex) = component
             .strip_prefix("[[claim:")
             .and_then(|rest| rest.strip_suffix("]]"))
         else {
             return Ok(None);
-        ,
-};
+        };
         let claim_id = parse_entity_id(claim_hex)?;
         if self
             .scoped_read
@@ -248,8 +244,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .map(|row| row.encode())
         else {
             return Ok(None);
-        ,
-};
+        };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
@@ -272,8 +267,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 value: None,
                 receipt,
             });
-        ,
-};
+        };
         let mut bytes = Vec::new();
         bytes.extend_from_slice(GRAPH_FS_PROJECTION_VERSION.as_bytes());
         bytes.extend_from_slice(b"\nkind\tclaim\nmount\t");
@@ -419,8 +413,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
-        ,
-};
+        };
         for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
@@ -431,8 +424,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let cursor = TemporalCursor {
                 learned_at: time.timestamp,
                 id: time.id,
-            ,
-};
+            };
             last_scanned = Some(cursor);
             if !sealed_is_absent(
                 self.scoped_read
@@ -470,8 +462,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
-        ,
-};
+        };
         for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
@@ -482,8 +473,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let temporal = TemporalCursor {
                 learned_at: time.timestamp,
                 id: time.id,
-            ,
-};
+            };
             last_scanned = Some(temporal);
             if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
                 &rtxn,
@@ -585,14 +575,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let query = crate::ports::TimelineQuery {
             after: from.after.map(TemporalCursor::port_position),
             ..Default::default()
-        ,
-};
+        };
         // Resumes after `after`, with its day listed or not.
         let resume = |after: Option<TemporalCursor>, listed: Option<u64>| DayPosition {
             after,
             day_listed: after.is_some_and(|after| Some(day_of(after)) == listed),
-        ,
-};
+        };
         for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= max_scan_rows {
                 // Sealed: the last scanned row may be one the walk passed over.
@@ -603,8 +591,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let temporal = TemporalCursor {
                 learned_at: time.timestamp,
                 id: time.id,
-            ,
-};
+            };
             let scanned_before = last_scanned.replace(temporal);
             if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
                 &rtxn,
@@ -653,8 +640,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             end: Bound::Excluded(end),
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
-        ,
-};
+        };
         for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
@@ -665,8 +651,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let temporal = TemporalCursor {
                 learned_at: time.timestamp,
                 id: time.id,
-            ,
-};
+            };
             last_scanned = Some(temporal);
             if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
                 &rtxn,

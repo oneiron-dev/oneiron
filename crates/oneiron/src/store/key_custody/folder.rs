@@ -98,8 +98,7 @@ impl FolderTarget {
                 .collect::<std::io::Result<_>>()?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(err) => return Err(err.into()),
-        ,
-};
+        };
         names.sort();
         let mut inventory = blake3::Hasher::new();
         let mut heads = 0_u64;
@@ -144,8 +143,7 @@ impl CustodyTarget for FolderTarget {
         let dir = match self.open_lineage(lineage) {
             Ok(dir) => dir,
             Err(error) => return Ok(unreachable(&error)),
-        ,
-};
+        };
         // One pass at a time reads the head held here, checks this batch
         // extends it and switches it in: a slower pass sealed at an older
         // position never renames its head over a newer one (FIX 6394). The
@@ -318,8 +316,7 @@ fn sweep(dir: &Path, switched: Option<&CustodyPosition>) -> Result<(u64, Vec<std
         let name = entry.file_name();
         let Some(text) = name.to_str() else {
             continue;
-        ,
-};
+        };
         let stage = text.starts_with(STAGE_PREFIX);
         if !stage && !(text.starts_with(".t") && text.ends_with(".pending")) {
             continue;

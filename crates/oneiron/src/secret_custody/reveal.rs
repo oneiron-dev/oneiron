@@ -417,8 +417,7 @@ impl RevealRow {
         let mut part = |field: &[u8]| {
             hasher.update(&(field.len() as u64).to_be_bytes());
             hasher.update(field);
-        ,
-};
+        };
         for field in fields {
             part(field);
         }
@@ -460,8 +459,7 @@ impl RevealRow {
                 self.handle
             ),
             None => format!("Revealing {} sends its value", self.handle),
-        ,
-};
+        };
         Some(disclosure_line(&what, connection, self.provider.as_deref()))
     }
 

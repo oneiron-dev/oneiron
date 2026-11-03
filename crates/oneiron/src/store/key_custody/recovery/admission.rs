@@ -8,7 +8,9 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::store::restore_admission::{Rejected, RestoreAdmissionReason as R, because};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 use super::super::anchor::verified_position;
 use super::super::body_history::HistoryRows;
@@ -317,8 +319,7 @@ pub(crate) fn admit_recovery(
                 R::CustodyOwnerKeyRequired,
                 unopened::owner_key_required(count, &opened.unopened),
             )
-        ,
-};
+        };
         return Err(Rejected::new(reason, refused(message)));
     }
     Ok(admitted)

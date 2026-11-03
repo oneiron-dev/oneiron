@@ -236,8 +236,7 @@ pub(super) fn encode_admitted_record(
         ] = parts
         else {
             return None;
-        ,
-};
+        };
         let mut members = members.clone();
         for (name, value) in authored {
             if let Some((_, member)) = members.iter_mut().find(|(held, _)| held == name) {
@@ -471,8 +470,7 @@ pub(crate) fn rebuild_checkpoint_indexes(
                 continue;
             }
             Err(error) => return Err(error),
-        ,
-};
+        };
         if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
             store
                 .attempt_ready

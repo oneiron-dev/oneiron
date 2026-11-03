@@ -17,7 +17,8 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::store::restore_admission::{Rejected, RestoreAdmissionReason};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason;
 use crate::store::Store;
 
 use super::files::{read_whole, write_once};
@@ -92,8 +93,7 @@ impl Journal {
             Ok(entries) => entries,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(err) => return Err(err.into()),
-        ,
-};
+        };
         let mut names = Vec::new();
         for entry in entries {
             if let Some(name) = entry?.file_name().to_str()
@@ -141,14 +141,12 @@ impl Store {
                 RestoreAdmissionReason::RetirementAuthorityInvalid,
                 Error::InvalidConfig(reason.to_owned()),
             )
-        ,
-};
+        };
         let Some(custody) = self.core.key_custody.local() else {
             return Err(authority(
                 "the restored vault binds no key custody to retire its recipients in",
             ));
-        ,
-};
+        };
         let _custody = self.core.key_custody.write_guard()?;
         let journal = custody.journal()?;
         journal.reconcile()?;
@@ -168,8 +166,7 @@ impl Store {
                     journal.record_obligation_named(&name, &at)?;
                     at.seq
                 }
-            ,
-};
+            };
             seqs.push(seq);
         }
         Ok(seqs)

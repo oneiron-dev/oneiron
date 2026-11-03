@@ -179,8 +179,7 @@ impl Rejected {
             RestoreAdmissionReason::CodecInvalid
         } else {
             by_kind(&error)
-        ,
-};
+        };
         Self::new(reason, error)
     }
 

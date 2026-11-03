@@ -117,8 +117,7 @@ impl CodeTreeInventory {
                     name
                 } else {
                     format!("{prefix}/{name}")
-                ,
-};
+                };
                 if entry.mode == MODE_TREE {
                     pending.push((path, entry.oid));
                 } else if out
@@ -304,8 +303,7 @@ fn render_files(
         let file = OriginTreeFile {
             mode,
             content: vault.code_document_at(frontier)?.into_bytes(),
-        ,
-};
+        };
         if files.insert(frontier.path.clone(), file).is_some() {
             return Err(Error::InvariantViolation(
                 "tested revision duplicates a file path",
@@ -329,8 +327,7 @@ fn render_files(
         let file = OriginTreeFile {
             mode: blob.mode,
             content,
-        ,
-};
+        };
         if files.insert(path.clone(), file).is_some() {
             return Err(Error::InvariantViolation(
                 "tested revision duplicates a file path",

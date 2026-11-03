@@ -144,8 +144,7 @@ impl Vault {
         let at = TimeRange {
             start: now,
             end: now,
-        ,
-};
+        };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         let counted = after

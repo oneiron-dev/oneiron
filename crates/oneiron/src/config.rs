@@ -633,8 +633,7 @@ impl Bm25RankProfile {
         let mut config = Bm25Config {
             formula: self.formula,
             ..Bm25Config::default()
-        ,
-};
+        };
 
         for &(channel, weight) in &self.weight_overrides {
             let slot = scored_slot(channel, "weight.reserved_channel")?;
@@ -755,8 +754,7 @@ impl VaultConfig {
                 crate::store::checkpoint_host_recipient::HostHoldsSealing::To(Box::new(recipient))
             }
             None => crate::store::checkpoint_host_recipient::HostHoldsSealing::RecipientMissing,
-        ,
-};
+        };
         self
     }
 }

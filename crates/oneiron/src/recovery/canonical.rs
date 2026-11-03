@@ -116,8 +116,7 @@ impl CanonicalSnapshot {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
             refused: None,
-        ,
-};
+        };
         // Room for the envelope header, sealed once the payload is written.
         std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
         rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;

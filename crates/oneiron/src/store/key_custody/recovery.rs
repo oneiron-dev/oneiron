@@ -33,7 +33,9 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
-use crate::store::restore_admission::{Rejected, RestoreAdmissionReason as R, because};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 use crate::store::Store;
 
 use self::admission::{AdmittedCustody, admit_recovery};
@@ -109,8 +111,7 @@ impl Store {
     pub(crate) fn custody_log_mark(&self) -> Result<(u64, u64)> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok((0, 0));
-        ,
-};
+        };
         let position = custody.journal()?.position()?;
         Ok((position.epoch.get(), position.seq))
     }
@@ -136,8 +137,7 @@ impl Store {
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
-        ,
-};
+        };
         let position = custody.journal()?.position()?;
         let census = custody.census()?;
         if position.seq == 0 && census.is_empty() {
@@ -277,8 +277,7 @@ impl AdmittedCustody {
         let taken = CustodyPosition {
             epoch: control.epoch,
             ..self.position
-        ,
-};
+        };
         Ok((taken, control))
     }
 }
@@ -504,8 +503,7 @@ pub(crate) fn route_custody(
         let reason = match error {
             Error::Io(_) | Error::Storage(_) => R::StorageIo,
             _ => R::CustodyLandingFailed,
-        ,
-};
+        };
         Rejected::new(reason, error)
     };
     // The restored vault opens at its canonical root: its parent resolved,

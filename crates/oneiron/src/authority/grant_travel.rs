@@ -27,8 +27,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
-use oneiron_authority::share_travel::{BornWithField, TravelChoice};
-use crate::share_travel::{GrantTravel};
+use oneiron_authority::share_travel::BornWithField;
+use oneiron_authority::share_travel::TravelChoice;
+use crate::share_travel::{ GrantTravel};
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::world_strength::{FrontierEdit, WorldFrontier};
@@ -219,8 +220,7 @@ fn grant_meet(standing: &Standing<'_>, frontier: &GrantFrontier) -> BTreeSet<Bor
                 .or_else(|| frontier.live.get(replaced))
             else {
                 continue;
-            ,
-};
+            };
             meet.retain(|field| prior.settings.fields.contains(field));
             if !counts_here(standing, replaced, prior) {
                 pending.push(prior.as_ref());
@@ -255,8 +255,7 @@ pub(super) fn folded_grants(
                     .map(|edit| edit.settings.at)
                     .max()
                     .unwrap_or(0),
-            ,
-};
+            };
             (*grant, folded)
         })
         .collect()

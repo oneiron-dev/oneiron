@@ -248,8 +248,7 @@ impl Memory<'_> {
             let principal = match &self.read_proof {
                 Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
                 None => Some(self.actor),
-            ,
-};
+            };
             self.vault
                 .off_record_session_is_anonymous_for(session, principal)
         })
@@ -264,8 +263,7 @@ impl Memory<'_> {
         let principal = match &self.read_proof {
             Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
             None => Some(self.actor),
-        ,
-};
+        };
         Some((session, principal))
     }
 
@@ -340,14 +338,12 @@ impl Memory<'_> {
         use crate::runtime_hooks::verb::{
             VerbAskCredential, VerbAskCredentialRef, VerbAskCredentialSource,
             VerbAskCredentialWitness, VerbAskDoor,
-        ,
-};
+        };
         let door = self.credential_door.as_ref()?;
         let room = match door {
             VerbAskDoor::Facade { room } => *room,
             VerbAskDoor::Mcp { .. } | VerbAskDoor::McpOwner { .. } => None,
-        ,
-};
+        };
         let rebuilt = self.credential
             && self.room_turn.as_ref().map(|turn| turn.room) == room
             && self
@@ -373,14 +369,12 @@ impl Memory<'_> {
                 }
                 VerbAskCredentialWitness::AttestedOwner { holder }
             }
-        ,
-};
+        };
         let reference = VerbAskCredentialRef {
             instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
-        ,
-};
+        };
         Some(VerbAskCredential::new(reference, witness))
     }
 
@@ -400,8 +394,7 @@ impl Memory<'_> {
         {
             Some(VerbAskCredentialSource::AttestedOwner { holder }) => Some(*holder),
             _ => None,
-        ,
-};
+        };
         let holder = named.or(self.attested_owner)?;
         (self.credential
             && self.invocation_slip.is_none()

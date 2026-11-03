@@ -325,8 +325,7 @@ impl Vault {
             Ok(pre) => pre,
             Err(VerbHookStop::Completed { result, .. }) => return Ok(Ok(result)),
             Err(stop) => return Ok(Err(stop)),
-        ,
-};
+        };
         let result = run(pre.args.clone())?;
         Ok(self.post_verb_hooks(pre, result)?)
     }

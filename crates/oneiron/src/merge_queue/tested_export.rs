@@ -62,8 +62,7 @@ impl MergeQueue<'_> {
                         QueueExportHoldReason::AuthorUnavailable,
                         "no checked-init approver was recorded",
                     );
-                ,
-};
+                };
                 (author, format!("Checked baseline {}", intent.commit))
             }
             QueueSealTarget::Landed { batch } => {
@@ -72,19 +71,16 @@ impl MergeQueue<'_> {
                         QueueExportHoldReason::AuthorUnavailable,
                         "the batch landed no source",
                     );
-                ,
-};
+                };
                 let Some(author) = last.actor.id() else {
                     return held(
                         QueueExportHoldReason::AuthorErased,
                         "the last landed proposal's actor was erased",
                     );
-                ,
-};
+                };
                 (author, format!("Queue batch {batch}"))
             }
-        ,
-};
+        };
         if self.vault.get_entity_type(&author)?.is_none() {
             return held(
                 QueueExportHoldReason::AuthorUnavailable,
@@ -111,16 +107,14 @@ impl MergeQueue<'_> {
                     "no checked configuration drives this queue",
                 );
             }
-        ,
-};
+        };
         let green = self.queue()?.pointers.green;
         let Some(id) = self.sealed_at_commit(&config, &green)? else {
             return held(
                 QueueExportHoldReason::SealPending,
                 format!("the green {green} has no sealed tested revision yet"),
             );
-        ,
-};
+        };
         let revision = self
             .vault
             .get_code_revision(&id)?
@@ -154,8 +148,7 @@ impl MergeQueue<'_> {
                 QueueExportHoldReason::AuthorUnavailable,
                 "the tested revision has no canonical author",
             );
-        ,
-};
+        };
         if self.vault.get_entity_type(&metadata.author)?.is_none() {
             return held(
                 QueueExportHoldReason::AuthorErased,

@@ -14,17 +14,7 @@ use super::RunTreeAdapter;
 mod intent;
 pub(crate) use intent::SignalIntent;
 
-pub use crate::attempt_queue::run_signal::{
-    RunSignalInput,
-    RunSignalKind,
-    RunSignalState,
-    RunBranchSignal,
-    RunAskAnswerKind,
-    RunAskAnswer,
-    RunAskQuestion,
-    RunAsk,
-    RunAskState,
-};
+pub use crate::attempt_queue::run_signal::{RunSignalInput, RunSignalKind, RunSignalState, RunBranchSignal, RunAskAnswerKind, RunAskAnswer, RunAskQuestion, RunAsk, RunAskState};
 use crate::attempt_queue::run_signal::{field, validate_questions};
 
 /// A run ask's rows, as `tasks.ask` measures its own: its recipients (one
@@ -95,8 +85,7 @@ impl RunTreeAdapter<'_> {
             handle: handle.into(),
             questions,
             answers: Vec::new(),
-        ,
-};
+        };
         record.asks.push(ask.clone());
         self.save(&mut txn, &mut record)?;
         txn.commit()?;
@@ -218,8 +207,7 @@ impl RunTreeAdapter<'_> {
             actor: input.actor,
             kind: input.kind,
             state: RunSignalState::Pending,
-        ,
-};
+        };
         record.signals.push(signal.clone());
         self.save(txn, &mut record)?;
         // The receipt as the side-row wall stored it, which a retry replays.
@@ -251,8 +239,7 @@ impl RunTreeAdapter<'_> {
     ) {
         let Some(fingerprint) = intent::fingerprint_in(self.vault, txn, bytes) else {
             return;
-        ,
-};
+        };
         let mut kept = record.clone();
         kept.signal_intents.push(SignalIntent {
             key: key.to_owned(),
@@ -283,8 +270,7 @@ impl RunTreeAdapter<'_> {
     ) -> Result<Option<RunAskState>> {
         let Some(record) = self.queue.get(branch)? else {
             return Ok(None);
-        ,
-};
+        };
         if record.run_id.as_deref() != Some(run_id) {
             return Ok(None);
         }
@@ -310,8 +296,7 @@ impl RunTreeAdapter<'_> {
     ) -> Result<Option<Vec<RunBranchSignal>>> {
         let Some(record) = self.queue.get(branch)? else {
             return Ok(None);
-        ,
-};
+        };
         Ok((record.run_id.as_deref() == Some(run_id)).then_some(record.signals))
     }
 
@@ -375,8 +360,7 @@ impl RunTreeAdapter<'_> {
                         | CancelRequestOutcome::AlreadySettled(_),
                     ) => RunSignalState::RefusedCancelUnavailable,
                     Err(error) => return Err(error),
-                ,
-};
+                };
                 cancel_results.push((signal.key.clone(), state));
             }
         }

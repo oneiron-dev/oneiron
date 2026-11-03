@@ -358,8 +358,7 @@ impl ConversationFlight<'_> {
                 self.driver.abandon();
                 ConversationFlightOutcome::Refused(refusal.detail)
             }
-        ,
-};
+        };
         backend.end_flight();
         outcome
     }
@@ -394,8 +393,7 @@ fn run_pass(
                 let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
                 return (Pass::Refused(refusal), spent);
             }
-        ,
-};
+        };
         if let Some(execution) = execution.as_mut() {
             calls.append(&mut execution.calls);
         }

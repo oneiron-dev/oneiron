@@ -173,8 +173,7 @@ impl Vault {
     pub fn blob_artifact_view(&self, id: &EntityId) -> Result<Option<ArtifactView>> {
         let Some(body) = self.get_blob_artifact(id)? else {
             return Ok(None);
-        ,
-};
+        };
         let versions = self.blob_artifact_versions(id)?;
         Ok(Some(ArtifactView {
             artifact_id: *id,
@@ -203,8 +202,7 @@ impl Vault {
         }
         let Some(body) = self.get_blob_artifact(id)? else {
             return Ok(None);
-        ,
-};
+        };
         Ok(Some(ArtifactView {
             artifact_id: *id,
             kind: ArtifactKind::of_media_type(&body.media_type),
@@ -227,8 +225,7 @@ impl Vault {
     ) -> Result<Option<ArtifactExport>> {
         let Some(mut file) = self.export_blob_artifact_raw(id, version)? else {
             return Ok(None);
-        ,
-};
+        };
         file.bytes = self.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
         file.content_hash = *blake3::hash(&file.bytes).as_bytes();
         Ok(Some(file))
@@ -272,12 +269,10 @@ impl Vault {
                 Some(head) => head.version,
                 None => return Ok(None),
             },
-        ,
-};
+        };
         let Some(record) = self.blob_artifact_version_metadata_in_txn(txn, id, version)? else {
             return Ok(None);
-        ,
-};
+        };
         let bytes = read(&record)?;
         Ok(Some(ArtifactExport {
             artifact_id: *id,

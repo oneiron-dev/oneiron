@@ -237,8 +237,7 @@ impl ArtifactHostOrderHolds {
     fn names(&self, vault_id: &[u8; 32], snapshot: &[u8; 32], member: &HostHoldsMember) -> bool {
         let Ok(sealed) = SealedHostHolds::from_bytes(&member.0) else {
             return false;
-        ,
-};
+        };
         let binding = sealed.binding();
         binding.engine_vault_id == *vault_id
             && binding.snapshot == *snapshot

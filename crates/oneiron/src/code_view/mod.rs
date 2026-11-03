@@ -201,8 +201,7 @@ impl<'a> CodeViewSet<'a> {
                     name
                 } else {
                     format!("{directory}/{name}")
-                ,
-};
+                };
                 relative(&path)?;
                 if action
                     .declared_outputs()

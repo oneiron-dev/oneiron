@@ -129,8 +129,7 @@ pub(super) fn prepare_push_candidate_documents(
             Some(received_file_operation(proposal, source_operation)?)
         } else {
             None
-        ,
-};
+        };
         files.push((
             ResolvedCandidateFile {
                 source_operation,

@@ -230,8 +230,7 @@ impl Vault {
     ) -> SessionHookKey {
         let Some((session, principal)) = binding else {
             return SessionHookKey::Process;
-        ,
-};
+        };
         let session = session.trim();
         let registry = &self.store.off_record_sessions;
         let key = principal

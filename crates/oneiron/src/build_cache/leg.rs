@@ -224,8 +224,7 @@ impl BuildCache<'_> {
         let (cached, hit) = match self.put(action, candidate)? {
             BuildCachePutOutcome::Stored(value) => (value, false),
             BuildCachePutOutcome::Existing(value) => (value, true),
-        ,
-};
+        };
         Ok(leg(cached, class, hit))
     }
 }

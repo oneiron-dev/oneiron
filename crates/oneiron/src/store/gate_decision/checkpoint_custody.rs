@@ -28,7 +28,8 @@ use heed::types::Bytes;
 use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
-use crate::store::restore_admission::{Rejected, RestoreAdmissionReason as R};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
     self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
@@ -436,8 +437,7 @@ pub(crate) fn preflight_absent_custody_rows(
                     continue;
                 }
                 None => return Err(Rejected::new(R::CustodyLineageMismatch, corrupt())),
-            ,
-};
+            };
             let needed = orcb::claim_subject(custody, &claim)?.at(generation);
             match plan.require_rejected(&needed) {
                 Ok(Requirement::Retired) => erased.push((id, claim)),
@@ -614,8 +614,7 @@ impl Store {
     ) -> Result<Option<ForkedCustodyDir>> {
         let Some(source) = custody.plan.source() else {
             return Ok(None);
-        ,
-};
+        };
         let binding = source.fork_to(root.to_path_buf());
         let forked = LocalCustody::at(source).fork(&binding, &custody.plan)?;
         if let Err(err) = key_custody::put_binding_in_txn(self, wtxn, &binding) {

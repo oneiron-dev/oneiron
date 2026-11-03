@@ -10,8 +10,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::store::verb_invocation::InvocationId;
 use crate::runtime_hooks::{
-    BudgetHit, HOST_BUDGET_HIT, VerbCall, VerbDomain, VerbHookPre,
-};
+    BudgetHit, HOST_BUDGET_HIT, VerbCall, VerbDomain, VerbHookPre};
 use crate::skill_hub::pack_catalog::HookActorClass;
 
 /// The host verb a wake pass runs under.
@@ -40,8 +39,7 @@ impl DreamerWakeDriver<'_> {
         let rows = {
             let txn = self.vault.store.env.read_txn()?;
             AttemptQueue::new(self.vault).kind_working_rows_in_txn(&txn, kind)?
-        ,
-};
+        };
         let queued: Vec<Value> = rows
             .into_iter()
             .filter(|attempt| !attempt.state.is_terminal())
@@ -66,8 +64,7 @@ impl DreamerWakeDriver<'_> {
                 &[self.budget_id.as_bytes(), verb.as_bytes()].concat(),
                 input.now,
             )
-        ,
-};
+        };
         let hit = pass(HOST_BUDGET_HIT);
         let call = VerbCall {
             verb: HOST_WAKE.to_owned(),
@@ -81,8 +78,7 @@ impl DreamerWakeDriver<'_> {
             domain: VerbDomain::Write,
             // A host's own call reads as its actor.
             reader: None,
-        ,
-};
+        };
         // A Rewrite may only add material, each text re-gated (FIX 8722).
         let vault = self.vault;
         let check = |rewritten: &Value| super::rewrite::admit_wake_rewrite(vault, &args, rewritten);
@@ -131,8 +127,7 @@ impl DreamerWakeDriver<'_> {
         }
         let Some(pre) = hooks.pre else {
             return;
-        ,
-};
+        };
         let result = json!({
             "admitted": report.admitted,
             "completed": report.completed,
@@ -177,16 +172,14 @@ impl DreamerWakeDriver<'_> {
                     }
                 },
             ),
-        ,
-};
+        };
         let actor = match crate::dreamer_runner::authority::dreamer_actor_id() {
             Ok(actor) => actor,
             Err(error) => {
                 tracing::warn!(?error, "host.budget.hit has no Dreamer actor");
                 return;
             }
-        ,
-};
+        };
         self.vault.budget_hit_hooks(BudgetHit {
             seat: &self.budget_id,
             policy,

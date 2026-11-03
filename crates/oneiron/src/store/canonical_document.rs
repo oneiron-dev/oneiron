@@ -170,8 +170,7 @@ impl CanonicalEntityDocumentHistory {
                     }
                     texts[parent].chars().collect()
                 }
-            ,
-};
+            };
             let prefix = version.prefix as usize;
             let suffix = version.suffix as usize;
             if prefix

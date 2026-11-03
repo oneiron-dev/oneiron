@@ -14,16 +14,14 @@ use super::side_keys::HexPair;
 use super::{EntityDoc, ForkStatus, SettleVerb, storage};
 use crate::error::{ArtifactError, Error};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
-use crate::store::canonical_document::{
-    CanonicalDocumentFork,
-    CanonicalDocumentPin,
-    CanonicalDocumentPurge,
-    CanonicalDocumentReceipt,
-    CanonicalEntityDocument,
-    CanonicalEntityDocumentHistory,
-    CanonicalForkStatus,
-    CanonicalSettleVerb,
-};
+use crate::store::canonical_document::CanonicalDocumentFork;
+use crate::store::canonical_document::CanonicalDocumentPin;
+use crate::store::canonical_document::CanonicalDocumentPurge;
+use crate::store::canonical_document::CanonicalDocumentReceipt;
+use crate::store::canonical_document::CanonicalEntityDocument;
+use crate::store::canonical_document::CanonicalEntityDocumentHistory;
+use crate::store::canonical_document::CanonicalForkStatus;
+use crate::store::canonical_document::CanonicalSettleVerb;
 use crate::side_table::HexId;
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
@@ -209,8 +207,7 @@ fn history(
             Some(versions.require(doc, &record.base)?)
         } else {
             versions.find(doc, &decode_frontier(&record.base)?)
-        ,
-};
+        };
         let output = if pending {
             let bytes = ENTITY_DOC_FORK_SNAPSHOT
                 .get(store, txn, &record.fork)?
@@ -219,8 +216,7 @@ fn history(
             Some((fork.text(), fork.metadata_bytes()?))
         } else {
             None
-        ,
-};
+        };
         let bundle = super::forks::read_bundle(store, txn, &EntityId::from_hex(&record.proposal)?)?;
         let index = bundle
             .forks
@@ -540,8 +536,7 @@ fn replay(
                 );
             }
             doc.doc.vv_to_frontiers(&vv)
-        ,
-};
+        };
         let branch = doc
             .doc
             .fork_at(&base)
@@ -688,8 +683,7 @@ fn bind_rows(
         let base = match fork.base {
             Some(index) => frontier(index)?,
             None => Frontiers::default().encode(),
-        ,
-};
+        };
         let record = ForkRecord {
             fork: hex(fork.fork)?,
             proposal: hex(fork.proposal)?,
@@ -712,8 +706,7 @@ fn bind_rows(
                 .map(hex)
                 .collect::<Result<_>>()?,
             keep: fork.keep.clone(),
-        ,
-};
+        };
         ENTITY_DOC_FORK.put(store, txn, &record.fork, &record)?;
         if let Some(output) = &fork.output {
             // The output diverges from the replayed base in its own ops, so

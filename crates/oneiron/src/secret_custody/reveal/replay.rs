@@ -130,12 +130,10 @@ impl Vault {
                     handle: row.handle.clone(),
                     class: row.class()?,
                     effector: format!("model:{}", asker.connection()),
-                ,
-};
+                };
                 crate::secret_lease::reread_reveal_lease_in_txn(self, txn, &authority, &lease)?
             }
-        ,
-};
+        };
         Ok(SecretRevealWait {
             decision: if value.is_some() {
                 SecretRevealDecision::Granted

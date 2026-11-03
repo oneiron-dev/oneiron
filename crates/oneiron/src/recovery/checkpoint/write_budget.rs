@@ -108,8 +108,7 @@ impl<'b> RestoreRoom<'b> {
             RestoreWriteEstimate::of(image, lengths, config, PageLayout::for_new_env()).total()
         } else {
             0
-        ,
-};
+        };
         Self {
             budget,
             bodies,
