@@ -4227,6 +4227,7 @@ class CampaignProgramOutboundSpec(TypedDict):
     verb: str
     payload: str
     idempotency_supported: bool
+    subject: NotRequired[str | None]
 class CampaignProgramStepSpec(TypedDict):
     step_ref: str
     channel: str
