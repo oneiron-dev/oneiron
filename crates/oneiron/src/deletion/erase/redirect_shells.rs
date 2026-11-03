@@ -87,7 +87,7 @@ impl Vault {
             }
         }
         if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+            crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
         }
         // Each shell takes the actor scrub its head's erase runs, so no side
         // row stamped with a shell's id keeps it (FIX 6709). The head's own

@@ -4,8 +4,10 @@
 //! improvement that moves a dial is judged on the dial the reviewer would
 //! run, and one that only rewords the rule is judged as rewording.
 
+use crate::skill::health_review::AGENT_HEALTH_REVIEW_SKILL_ID;
+use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::dreamer_runner::maintenance::agent_health::{
-    AGENT_HEALTH_REVIEW_SKILL_ID, REVIEWER_POLICY_FILE, reviewer_policy_seeds,
+    reviewer_policy_seeds,
 };
 use crate::skill::SkillRecord;
 use crate::{EntityId, Vault};

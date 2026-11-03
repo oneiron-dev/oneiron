@@ -10,7 +10,7 @@ use super::manifest::{
 use super::validate::{provenance_matches_record, validate_manifest_for_admission};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
-use crate::skill::SkillLifecycle;
+use crate::write_envelope::skill_record::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackSection;
 use crate::vault::Vault;
 use std::collections::{BTreeMap, BTreeSet};
