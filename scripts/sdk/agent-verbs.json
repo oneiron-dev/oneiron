@@ -17515,6 +17515,7 @@
       "refs": [
         "/artifact_ref",
         "/proposal_ref",
+        "/reviewed/*/artifact_ref",
         "/reviewed/*/fork_ref"
       ],
       "input": "crate::office_body::OfficeBodyProposalSettleRequest",
@@ -17524,7 +17525,8 @@
       "admission": {
         "unrestricted_record_scope": true,
         "readable": [
-          "artifact_ref"
+          "artifact_ref",
+          "reviewed[*].artifact_ref"
         ]
       },
       "section": false,
