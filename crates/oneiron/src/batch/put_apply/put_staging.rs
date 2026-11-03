@@ -47,7 +47,12 @@ pub(in crate::batch) fn stage_entity_body_row(
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
-    crate::ingest::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
+    crate::store::identity_hints::reindex_identity_hints(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
     payload.0.push(entity_type);
@@ -193,10 +198,10 @@ pub(super) fn stage_skill_index_rows(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    previous: Option<&crate::skill::SkillRecord>,
-    record: &crate::skill::SkillRecord,
+    previous: Option<&crate::write_envelope::skill_record::SkillRecord>,
+    record: &crate::write_envelope::skill_record::SkillRecord,
 ) -> Result<()> {
-    crate::skill_hub::maintain_skill_content_hash_index_for_put(
+    crate::store::skill_content_index::maintain_skill_content_hash_index_for_put(
         store,
         wtxn,
         id,
@@ -213,10 +218,10 @@ pub(super) fn stage_claim_projection_indexes(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    body: &crate::claim::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
-    if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+    if crate::write_envelope::thread_claim::is_thread_claim_predicate(&body.predicate) {
         super::index_thread_claim_subject(store, wtxn, id, body, learned_at)?;
     }
     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
@@ -424,7 +429,7 @@ pub(super) fn stage_claim_projection(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
-    body: Option<&crate::claim::ClaimBody>,
+    body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
     if let Some(body) = body {
@@ -514,7 +519,7 @@ pub(super) fn validate_scope_carriers(
 pub(super) struct ProposedClaimObservation<'a> {
     pub(super) id: EntityId,
     pub(super) replicated: bool,
-    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) body: Option<&'a crate::write_envelope::claim_body::ClaimBody>,
     pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
     pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(super) body_changed: bool,
@@ -534,13 +539,16 @@ pub(super) fn stage_local_proposal_observation(
         body_changed,
     } = observation;
     if !replicated
-        && let Some(body) =
-            body.filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+        && let Some(body) = body
+            .filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = envelope
     {
         // The stored claim's scope, never a caller-selected policy position.
         let scope = crate::gate::policy_values::PolicyEvaluationScope {
-            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(
+                body.world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(body.scope_project),
             ..Default::default()
         };

@@ -6,37 +6,9 @@ use crate::claim::decode_claim_body;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::live_entity_row_in_txn;
 
-pub(crate) fn is_subject_model_predicate(predicate: &str) -> bool {
-    matches!(
-        predicate,
-        PREDICATE_ACTOR_SUBJECT_REF | PREDICATE_PERSON_SUBSTRATE
-    )
-}
-
-/// Archive data is demoted, not re-authored as a local observation. The owning
-/// readers ignore Proposed and Rejected rows, including their retained history.
-pub(crate) fn imported_subject_body(body: &ClaimBody) -> Result<ClaimBody> {
-    if !is_subject_model_predicate(&body.predicate)
-        || body.world.is_some()
-        || body.rel.is_some()
-        || body.scope.is_some()
-    {
-        return Err(invalid(
-            "archive subject fact must be an unscoped base fact",
-        ));
-    }
-    if body.predicate == PREDICATE_ACTOR_SUBJECT_REF {
-        validate_actor_subject_claim_structure(body)?;
-    } else {
-        validate_person_substrate_claim_structure(body)?;
-    }
-    let mut body = body.clone();
-    body.source = Some(ClaimSource::Imported);
-    if body.approval != ClaimApprovalStatus::Rejected {
-        body.approval = ClaimApprovalStatus::Proposed;
-    }
-    Ok(body)
-}
+pub(crate) use crate::write_envelope::subject_record::{
+    imported_subject_body, invalid, is_subject_model_predicate,
+};
 
 /// A host-authenticated owner reviews this exact proposal and supersession set.
 /// Fields are private: foreign archive bytes cannot construct an approval token.
@@ -208,7 +180,4 @@ fn digest(bytes: &[u8]) -> [u8; 32] {
 }
 fn hex_digest(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-fn invalid(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
 }

@@ -8,7 +8,8 @@ use heed::RwTxn;
 use super::FoundFile;
 use crate::error::Result;
 use crate::ports::ShortIdStoreRead;
-use crate::secret_custody::{FoundNote, note_found_keys_in_txn};
+use crate::secret_custody::note_found_keys_in_txn;
+use crate::secret_record::FoundNote;
 use crate::store::Store;
 
 /// Records each key `files` marks that custody already holds, in the write's

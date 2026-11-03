@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::CustodyTier;
+use crate::secret_record::CustodyTier;
 
 use crate::vault::Vault;
 

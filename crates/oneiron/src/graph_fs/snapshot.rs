@@ -7,9 +7,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{PointRead, ScopedRead};
-use crate::codebase::{read_asset_blob_sighted_in_txn, snapshot_asset_entity_id};
+use crate::codebase::read_asset_blob_sighted_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
@@ -273,9 +274,9 @@ impl GraphFsResolver<'_, '_> {
                             txn,
                             &file.content_hash,
                             if owner {
-                                crate::secret_custody::SecretSight::Owner
+                                crate::file_secret_marks::SecretSight::Owner
                             } else {
-                                crate::secret_custody::SecretSight::Masked
+                                crate::file_secret_marks::SecretSight::Masked
                             },
                         )?,
                     },

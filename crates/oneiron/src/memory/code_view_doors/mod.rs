@@ -9,7 +9,6 @@ use crate::build_cache::{
     BuildAction, BuildCache, BuildCacheError, BuildInputRoot, BuildPlatform, CachedActionResult,
     DeclaredOutputPath, ExtraInputDigest, FrozenBuildCommand,
 };
-use crate::code_revision::{CodeRevision, read_code_revision_blobs};
 use crate::code_view::{CodeViewSet, ViewReceipt};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::consent::AuthenticatedOwner;
@@ -19,6 +18,7 @@ use crate::git_wire::GitWire;
 use crate::memory::repo_secret_reads::project_repo_file;
 use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::{EdgeActorClass, EntityId};
+use crate::{code_revision::read_code_revision_blobs, store::code_revision_record::CodeRevision};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
