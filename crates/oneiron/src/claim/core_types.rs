@@ -7,6 +7,8 @@
 //! validators in `predicate_validators.rs` / `lexical_query_hint.rs` and to
 //! the domain modules that own their own claim shapes.
 
+use rmpv::Value;
+
 use super::*;
 use crate::affect::{
     AFFECT_TRIGGER_PREDICATE,
@@ -18,7 +20,18 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::temporal::TimeRange;
 
-pub use crate::write_envelope::claim_body::*;
+pub use crate::write_envelope::claim_body::{
+    CLAIM_BODY_KEYS, ClaimBody, ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef,
+    RelationshipScope, SessionClaimBundle, SessionClaimBundleClaim, decode_claim_body,
+    meet_relationship_scopes, relationship_scope_includes, relationship_scope_of,
+    relationship_scope_transcript,
+};
+pub(crate) use crate::write_envelope::claim_body::{
+    CLAIM_FIELDS_FULL, CLAIM_FIELDS_MINIMAL, CLAIM_FIELDS_STANDARD, EDGE_REF_LEN,
+    EVIDENCE_REFS_KEY, KEY_CONF, KEY_SAL, KEY_SCOPE, KEY_SESSION, KEY_WORLD,
+    SessionClaimBundleMember, decode_relationship_scope, encode_claim_body,
+    encode_relationship_scope, public_evidence_refs, public_evidence_value,
+};
 
 /// The CLAIM fields `profile` reads: the same lists the serializer
 /// projects, so a host projection cannot drift from them (FIX 11037).
