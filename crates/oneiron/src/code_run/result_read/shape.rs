@@ -4,7 +4,7 @@
 //! whole nonblank lines, so the card and `query` cannot disagree; the
 //! sniff stays uncharged.
 
-use super::query::split_fields;
+use super::query::split_fields_open;
 use super::{READ_PIECE_BYTES, ResultBody};
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -85,11 +85,12 @@ pub(super) fn shape(head: &[u8], kind: CodeRunOutputKind, whole: bool) -> Value 
         return json!({"format": "json", "top": top_word(&value), "partial": false});
     }
     for (format, delimiter) in [("tsv", b'\t'), ("csv", b',')] {
-        if let [first, second] = lines.as_slice() {
-            let columns = split_fields(first, delimiter);
-            if columns.len() > 1 && split_fields(second, delimiter).len() == columns.len() {
-                return json!({"format": format, "columns": columns});
-            }
+        let rows = first_table_rows(text, whole, delimiter);
+        if let [columns, second] = rows.as_slice()
+            && columns.len() > 1
+            && second.len() == columns.len()
+        {
+            return json!({"format": format, "columns": columns});
         }
     }
     json!({"format": "text"})
@@ -113,6 +114,37 @@ fn first_lines(text: &str, whole: bool) -> Vec<&str> {
         }
     }
     lines
+}
+
+/// The first two logical rows of a delimited table: quoted newlines join
+/// their physical lines, and only a row's final CR is discarded. A partial
+/// physical line at a non-whole head never counts as a row.
+fn first_table_rows(text: &str, whole: bool, delimiter: u8) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut logical = String::new();
+    let mut segments = text.split('\n').peekable();
+    while let Some(segment) = segments.next() {
+        if segments.peek().is_none() && !whole {
+            break;
+        }
+        if logical.is_empty() && segment.trim().is_empty() {
+            continue;
+        }
+        logical.push_str(segment);
+        if split_fields_open(&logical, delimiter).1 {
+            logical.push('\n');
+            continue;
+        }
+        if logical.ends_with('\r') {
+            logical.pop();
+        }
+        rows.push(split_fields_open(&logical, delimiter).0);
+        if rows.len() == 2 {
+            break;
+        }
+        logical.clear();
+    }
+    rows
 }
 
 fn top_word(value: &Value) -> &'static str {

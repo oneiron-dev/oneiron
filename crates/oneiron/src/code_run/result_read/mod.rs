@@ -121,6 +121,17 @@ pub(crate) trait ResultBody {
     fn line_index(&self) -> Option<Vec<u64>>;
     /// Where the window starts in the whole body.
     fn base(&self) -> u64;
+    /// Notes the scan-bound search credit issued for this window: the exact
+    /// emitted (`offset`, `line`, `credit`) (FIX 1189 discount, #4311 P1-B).
+    /// A run's body records it on its storage's vault; any other body keeps
+    /// the no-op default and its resumes take no discount.
+    fn note_search_credit(&self, _offset: u64, _line: u64, _credit: u64) {}
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// this window: the full tuple must match, else the resume takes no
+    /// discount. Only a run's body attests; the default denies.
+    fn valid_search_credit(&self, _offset: u64, _line: u64, _credit: u64) -> bool {
+        false
+    }
 }
 
 /// One result body of a run, read by range through the run's storage.
@@ -168,6 +179,16 @@ impl ResultBody for RunBody<'_, '_> {
 
     fn base(&self) -> u64 {
         self.base
+    }
+
+    fn note_search_credit(&self, offset: u64, line: u64, credit: u64) {
+        self.storage
+            .note_search_credit(self.output, self.base, self.len, offset, line, credit);
+    }
+
+    fn valid_search_credit(&self, offset: u64, line: u64, credit: u64) -> bool {
+        self.storage
+            .valid_search_credit(self.output, self.base, self.len, offset, line, credit)
     }
 }
 

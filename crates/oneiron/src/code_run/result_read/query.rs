@@ -132,7 +132,7 @@ pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
 }
 
 /// [`split_fields`] with whether the line ends inside an open quoted field.
-fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool) {
+pub(super) fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool) {
     let delimiter = char::from(delimiter);
     let mut fields = Vec::new();
     let mut field = String::new();

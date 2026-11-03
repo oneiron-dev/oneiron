@@ -119,12 +119,17 @@ pub(super) fn search(
         offset: begin,
         lfs: input.cursor.as_ref().map_or(0, |cursor| cursor.line),
     };
-    let credit = input
-        .cursor
-        .as_ref()
-        .and_then(|cursor| cursor.credit)
-        .unwrap_or(0)
-        .min(WINDOW + BEHIND);
+    // FIX 1189 discount, engine-issued only (#4311 P1-B): a caller-supplied
+    // credit grants extra scan bytes only when it exactly replays the tuple
+    // this vault issued for this window; any other value scans at its own
+    // bound. Credit attests bytes already read, not matches, so the check is
+    // pattern-independent by design.
+    let credit = match input.cursor.as_ref().and_then(|cursor| cursor.credit) {
+        Some(claimed) if body.valid_search_credit(begin, line.lfs, claimed) => {
+            claimed.min(WINDOW + BEHIND)
+        }
+        _ => 0,
+    };
     let mut scan = Scan::with_credit(bounds.scan_bytes(), credit);
     let mut a = begin;
     let mut hay_start = a.saturating_sub(BEHIND);
@@ -236,6 +241,7 @@ pub(super) fn search(
             reply["scanned"] = json!([begin, next.offset]);
             reply["next"] = json!({"offset": next.offset, "line": next.lfs});
             if limited {
+                body.note_search_credit(next.offset, next.lfs, stop_credit);
                 reply["next"]["credit"] = json!(stop_credit);
                 reply["limit"] = scan_limit();
             }

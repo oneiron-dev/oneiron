@@ -853,6 +853,63 @@ impl<'a> ExecutorStorage<'a> {
             Self::Session(binding) => binding.session.result_share(),
         }
     }
+
+    /// Notes the scan-bound search credit issued for `output`'s window
+    /// (`base`, `len`): the exact emitted (`offset`, `line`, `credit`)
+    /// (FIX 1189 discount, #4311 P1-B). A canonical run's vault keeps it;
+    /// a session-bound run's keeps it on its session's vault.
+    pub(crate) fn note_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        match self {
+            Self::Canonical(vault) => {
+                vault.note_search_credit(output.raw_blake3, base, len, offset, line, credit);
+            }
+            Self::Session(binding) => {
+                binding.session.note_search_credit(
+                    output.raw_blake3,
+                    base,
+                    len,
+                    offset,
+                    line,
+                    credit,
+                );
+            }
+        }
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// `output`'s window (`base`, `len`): the full tuple must match, else
+    /// the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        output: &CodeRunRawOutput,
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        match self {
+            Self::Canonical(vault) => {
+                vault.valid_search_credit(output.raw_blake3, base, len, offset, line, credit)
+            }
+            Self::Session(binding) => binding.session.valid_search_credit(
+                output.raw_blake3,
+                base,
+                len,
+                offset,
+                line,
+                credit,
+            ),
+        }
+    }
 }
 
 /// A facet stamp puts its source in front of every reader narrowed to the
