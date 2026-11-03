@@ -7,8 +7,14 @@
 //! reads and the owed orphan-body collect still have an open vault. Nothing
 //! here is durable: restarts rebuild the registry from explicit host config,
 //! left-ness is re-derived from each env's own receipt, and the owed collect
-//! is the engine's own row. No second sync subsystem: leave checks run on
-//! the engine's [`SyncConnection`], housekeeping runs on the engine's pass.
+//! is the engine's own row. No second sync subsystem: leave checks and lane
+//! runs both go through the engine's [`SyncConnection`], housekeeping runs
+//! on the engine's pass.
+//!
+//! Each active lane runs: its own reconnecting `run_observed` loop under a
+//! host admission, paused across reap freezes on managed vaults exactly as
+//! device sync pauses. An ordinary run end — disconnect, stop, error — is
+//! never a leave; only the leave check's confirmed receipt detaches.
 //!
 //! Integration (the lead wires these; this module only defines them):
 //! open at each serve startup from the configured entries, run
@@ -85,12 +91,16 @@ impl SharedEnvSpec {
 /// The membership a leave check names: the shared vault id and the member.
 type SharedEnvKey = (u64, String);
 
-/// One env's sync lane: the retained connection the leave checks run on.
-/// The connection holds the env's own manager (and through it the
-/// materializer) alive, so dropping the lane frees all three. Never run
-/// here: no steady loop, no renewal, no residence registration.
+/// One env's sync lane: the retained connection the leave checks run on,
+/// the stop that ends its run, and the run task itself. The connection
+/// holds the env's own manager (and through it the materializer) alive, so
+/// dropping the lane frees all three. No renewal, no residence
+/// registration: the run only syncs and ends.
 struct ActiveLane {
     connection: Arc<SyncConnection>,
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+    vault_id: u64,
 }
 
 struct SharedEnvEntry {
@@ -104,6 +114,15 @@ struct SharedEnvEntry {
     /// The last unix second a leave check ran clean (`None` answered).
     /// Failures leave the stamp alone, so they retry on the next round.
     last_leave_check: u64,
+}
+
+/// One opened env before its run starts: the vault, its leave state read,
+/// and (while unleft) the constructed lane connection.
+struct OpenedEnv {
+    key: SharedEnvKey,
+    path: PathBuf,
+    vault: Arc<Vault>,
+    lane: Option<Arc<SyncConnection>>,
 }
 
 #[derive(Default)]
@@ -127,38 +146,65 @@ impl SharedEnvRegistry {
         Self::default()
     }
 
-    /// Opens every configured env and returns the registry holding them. A
-    /// bad env (an unopenable dir, an unreadable leave state, an unreadable
-    /// lane slip, an unbuildable lane) logs one line and is skipped; serve
-    /// runs on without it. A repeated membership keeps its first entry.
+    /// Opens every configured env, runs each unleft lane, and returns the
+    /// registry holding them. A malformed entry and a bad env (a missing
+    /// dir, an unreadable leave state, an unreadable lane slip, an
+    /// unbuildable lane, a refused first admission, a non-loopback `ws://`
+    /// home) each log one line and are skipped; serve runs on without
+    /// them. A repeated membership keeps its first entry.
     ///
     /// `vault_config` is the same engine config the served vault opened
     /// with (dimensions, map size, embedding space, seal); each env vault
-    /// opens with a clone of it. `lease_vault_id` is the host's numeric
-    /// lease scope, the same id the served vault's materializer carries.
-    /// Blocking opens run off the async worker.
+    /// opens with a clone of it, existing roots only (a mistyped path
+    /// refuses, it never mints a vault). `lease_vault_id` is the host's
+    /// numeric lease scope, the same id the served vault's materializer
+    /// carries. `admission` admits each env's first lane run, held through
+    /// the whole run. `freeze` pauses lane runs for reap: `None` on
+    /// plain/embedded (one run each), `Some` on managed (runs pause and
+    /// resume with fresh admissions). Blocking opens run off the async
+    /// worker.
     pub(crate) async fn open_all(
-        specs: Vec<SharedEnvSpec>,
+        entries: Vec<crate::config::SharedEnvConfig>,
         vault_config: &oneiron::VaultConfig,
         lease_vault_id: u64,
+        admission: crate::server::HousekeepingAdmission,
+        freeze: Option<crate::device_sync::ReapFreeze>,
     ) -> Self {
         let registry = Self::empty();
-        for spec in specs {
-            registry.insert(&spec, vault_config, lease_vault_id).await;
+        for entry in entries {
+            registry
+                .insert(
+                    &entry,
+                    vault_config,
+                    lease_vault_id,
+                    admission.clone(),
+                    freeze.clone(),
+                )
+                .await;
         }
         registry
     }
 
-    /// Opens one env and inserts it: the singular open behind [`Self::open_all`],
-    /// and the seam the future join flow calls once it has enrolled a new
-    /// membership. Failures and repeated memberships log and leave the
-    /// registry as it was.
+    /// Opens one configured entry, runs its lane unless it has left, and
+    /// inserts it: the singular open behind [`Self::open_all`], and the seam
+    /// the future join flow calls once it has enrolled a new membership. A
+    /// malformed entry, failures, refused admissions, and repeated
+    /// memberships log and leave the registry as it was.
     pub(crate) async fn insert(
         &self,
-        spec: &SharedEnvSpec,
+        entry: &crate::config::SharedEnvConfig,
         vault_config: &oneiron::VaultConfig,
         lease_vault_id: u64,
+        admission: crate::server::HousekeepingAdmission,
+        freeze: Option<crate::device_sync::ReapFreeze>,
     ) {
+        let spec = match SharedEnvSpec::from_config(entry) {
+            Ok(spec) => spec,
+            Err(error) => {
+                tracing::warn!("shared env skipped: {error:#}");
+                return;
+            }
+        };
         let present = self
             .lock()
             .contains_key(&(spec.vault_id, spec.member.clone()));
@@ -170,14 +216,51 @@ impl SharedEnvRegistry {
             );
             return;
         }
-        let spec = spec.clone();
+        let Some(first) = admission() else {
+            tracing::warn!(
+                vault_id = spec.vault_id,
+                "shared env skipped: its first run is not admitted"
+            );
+            return;
+        };
         let vault_config = vault_config.clone();
         let opened =
             tokio::task::spawn_blocking(move || open_one(&spec, &vault_config, lease_vault_id))
                 .await;
         match opened {
-            Ok(Ok((key, entry))) => {
-                self.lock().insert(key, entry);
+            Ok(Ok(env)) => {
+                let lane = match env.lane {
+                    Some(connection) => {
+                        let (stop, stop_rx) = tokio::sync::oneshot::channel();
+                        let task = tokio::spawn(run_lane(
+                            Arc::clone(&connection),
+                            stop_rx,
+                            freeze,
+                            first,
+                            env.key.0,
+                        ));
+                        Some(ActiveLane {
+                            connection,
+                            stop,
+                            task,
+                            vault_id: env.key.0,
+                        })
+                    }
+                    None => {
+                        // Already left: no run to hold the admission.
+                        drop(first);
+                        None
+                    }
+                };
+                self.lock().insert(
+                    env.key,
+                    SharedEnvEntry {
+                        path: env.path,
+                        vault: env.vault,
+                        lane,
+                        last_leave_check: 0,
+                    },
+                );
             }
             Ok(Err(reason)) => tracing::warn!("shared env skipped: {reason}"),
             Err(error) => tracing::warn!("shared env skipped: its open task failed: {error}"),
@@ -258,12 +341,10 @@ impl SharedEnvRegistry {
         checks
     }
 
-    /// Stops the registry at shutdown: every lane first, so each connection
-    /// detaches before any vault handle drops (the FIX 5772 order), then
-    /// every vault handle. Async so the call site reads beside
-    /// `DeviceSyncHost::stop().await`; the lanes were never run, so dropping
-    /// them is the whole shutdown and nothing is awaited.
-    #[allow(clippy::unused_async, reason = "async by call-site contract")]
+    /// Stops the registry at shutdown: each lane's stop is sent, each run
+    /// task awaited, and only then the vault handles dropped (the FIX 5772
+    /// order: connections detach before the mesh closes and before any
+    /// handle drops).
     pub(crate) async fn stop(&self) {
         let lanes: Vec<ActiveLane> = {
             let mut envs = self.lock();
@@ -271,7 +352,15 @@ impl SharedEnvRegistry {
                 .filter_map(|entry| entry.lane.take())
                 .collect()
         };
-        drop(lanes);
+        for lane in &lanes {
+            let _ = lane.stop.send(());
+        }
+        for lane in lanes {
+            let vault_id = lane.vault_id;
+            if let Err(error) = lane.task.await {
+                tracing::warn!(vault_id = vault_id, %error, "shared env lane task");
+            }
+        }
         let envs = std::mem::take(&mut *self.lock());
         drop(envs);
     }
@@ -312,14 +401,17 @@ impl SharedEnvRegistry {
     }
 
     /// Drops one env's lane and keeps its vault handle: the host-side
-    /// detach a confirmed leave runs. Left-ness from then on is the env's
-    /// own durable receipt, read through `has_left`.
+    /// detach a confirmed leave runs. The run task ends on its own once the
+    /// loop sees the stop (the leave already quiesced it); its handle is
+    /// dropped, not awaited. Left-ness from then on is the env's own
+    /// durable receipt, read through `has_left`.
     fn detach_lane(&self, key: &SharedEnvKey) {
         let mut envs = self.lock();
         let Some(entry) = envs.get_mut(key) else {
             return;
         };
-        if entry.lane.take().is_some() {
+        if let Some(lane) = entry.lane.take() {
+            let _ = lane.stop.send(());
             tracing::debug!(
                 vault_id = key.0,
                 path = %entry.path.display(),
@@ -344,21 +436,149 @@ impl SharedEnvRegistry {
     }
 }
 
+/// Drives one env's lane until `stop`: the connection's own reconnecting
+/// run, paused across reap freezes like device sync's. `first` is admitted
+/// before the first run and held until it ends; each run past a thaw takes
+/// a fresh admission from the freeze, and a stop while paused ends the task
+/// there. An ordinary end — disconnect, stop, error — is never a leave:
+/// only the leave check's confirmed receipt detaches, and this task only
+/// ends.
+async fn run_lane(
+    connection: Arc<SyncConnection>,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+    mut freeze: Option<crate::device_sync::ReapFreeze>,
+    first: Box<dyn Send>,
+    vault_id: u64,
+) {
+    // Dropped only once the run it admits has ended; none while paused.
+    let mut _admitted: Option<Box<dyn Send>> = Some(first);
+    // How one run ended short of its own end.
+    enum End {
+        Stop,
+        Done(Result<(), String>),
+        Pause,
+    }
+    loop {
+        let (end, ended) = tokio::sync::oneshot::channel();
+        let run = connection.run_observed(ended, lane_observer(vault_id));
+        tokio::pin!(run);
+        let end = match freeze.as_mut() {
+            Some(freeze) => tokio::select! {
+                biased;
+                _ = &mut stop => End::Stop,
+                ran = &mut run => End::Done(ran.map_err(|error| error.to_string())),
+                () = freeze.frozen() => End::Pause,
+            },
+            None => tokio::select! {
+                biased;
+                _ = &mut stop => End::Stop,
+                ran = &mut run => End::Done(ran.map_err(|error| error.to_string())),
+            },
+        };
+        match end {
+            End::Stop => {
+                let _ = end.send(());
+                match run.await {
+                    Ok(()) => tracing::debug!(vault_id = vault_id, "shared env lane stopped"),
+                    Err(error) => {
+                        tracing::warn!(vault_id = vault_id, %error, "shared env lane stopped")
+                    }
+                }
+                return;
+            }
+            End::Done(ran) => {
+                match ran {
+                    Ok(()) => tracing::debug!(vault_id = vault_id, "shared env lane run ended"),
+                    Err(error) => {
+                        tracing::warn!(vault_id = vault_id, %error, "shared env lane run ended")
+                    }
+                }
+                return;
+            }
+            End::Pause => {
+                let _ = end.send(());
+                if let Err(error) = run.await {
+                    tracing::warn!(
+                        vault_id = vault_id,
+                        %error,
+                        "shared env lane run ended at the reap pause"
+                    );
+                }
+                _admitted = None;
+                tracing::info!(
+                    vault_id = vault_id,
+                    "shared env lane paused: the vault is frozen for reap"
+                );
+                let freeze = freeze.as_mut().expect("paused only with a freeze");
+                let Some(admitted) = freeze.resumed(&mut stop).await else {
+                    tracing::info!(vault_id = vault_id, "shared env lane stopped");
+                    return;
+                };
+                _admitted = Some(admitted);
+                tracing::info!(
+                    vault_id = vault_id,
+                    "shared env lane resumes: the vault thawed"
+                );
+            }
+        }
+    }
+}
+
+/// One lane's event observer: errors to the log, statuses to debug, the
+/// rest ignored. A sync error here is never a leave.
+fn lane_observer(vault_id: u64) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
+    move |event| match event {
+        oneiron::sync::SyncEvent::StatusChanged(status) => {
+            tracing::debug!(vault_id = vault_id, ?status, "shared env lane");
+        }
+        oneiron::sync::SyncEvent::Error(error) => {
+            tracing::warn!(vault_id = vault_id, %error, "shared env lane");
+        }
+        _ => {}
+    }
+}
+
+/// The direct-dial rule device sync dials by, applied before an env's
+/// lane is built: `wss`, or `ws` to a loopback host. The leave check POSTs
+/// the lane slip to the http(s) twin of this URL, so a `ws://` shared home
+/// off this machine would send the slip over cleartext. `Err` skips the
+/// env.
+fn direct_home_url(home_url: &str, vault_id: u64) -> Result<(), String> {
+    let uri: axum::http::Uri = home_url
+        .parse()
+        .map_err(|_| format!("shared env {vault_id} home_url is not a URL"))?;
+    let loopback = uri.host().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    if uri.scheme_str() == Some("wss") || loopback {
+        Ok(())
+    } else {
+        Err(format!(
+            "shared env {vault_id} home_url must be wss:// (or ws:// to a loopback host)"
+        ))
+    }
+}
+
 /// Opens one validated spec: the vault, its leave state, and (while
-/// unleft) its lane. `Err` is one log line for the caller; it names the
-/// path and the vault id, never the member, the slip, or the credential.
+/// unleft) its constructed lane connection. The caller starts the run.
+/// The vault opens existing-only, and the home URL passes the direct-dial
+/// rule first. `Err` is one log line for the caller; it names the path and
+/// the vault id, never the member, the slip, or the credential.
 fn open_one(
     spec: &SharedEnvSpec,
     vault_config: &oneiron::VaultConfig,
     lease_vault_id: u64,
-) -> Result<(SharedEnvKey, SharedEnvEntry), String> {
+) -> Result<OpenedEnv, String> {
     let vault_id = spec.vault_id;
+    direct_home_url(&spec.home_url, vault_id)?;
     let key: SharedEnvKey = (vault_id, spec.member.clone());
-    let vault = oneiron::Vault::open_owned(&spec.path, vault_config.clone())
+    let vault = oneiron::Vault::open_existing(&spec.path, vault_config.clone())
         .map_err(|error| format!("open {path}: {error:#}", path = spec.path.display()))?;
     let vault = Arc::new(vault);
-    // The canonical dir, for diagnostics; the open created it when it was
-    // missing, so this reads back what the open holds.
+    // The canonical dir, for diagnostics; the open refuses a missing root,
+    // so this reads back what the open holds.
     let path = spec
         .path
         .canonicalize()
@@ -383,28 +603,25 @@ fn open_one(
             "shared env open"
         );
     }
-    Ok((
+    Ok(OpenedEnv {
         key,
-        SharedEnvEntry {
-            path,
-            vault,
-            lane,
-            last_leave_check: 0,
-        },
-    ))
+        path,
+        vault,
+        lane,
+    })
 }
 
-/// One env's lane: its own materializer and manager over its own vault
-/// (mirroring `server/core/construction.rs`), and the retained connection
-/// the leave checks run on. Its credential binds the transport and the
-/// NOTE session alike, as the device lane's does. A failure past the
-/// attach needs no cleanup: the vault holds only a `Weak` manager, and
-/// the vault handle drops with this error.
+/// One env's lane connection: its own materializer and manager over its own
+/// vault (mirroring `server/core/construction.rs`), and the retained
+/// connection the run and the leave checks drive. Its credential binds the
+/// transport and the NOTE session alike, as the device lane's does. A
+/// failure past the attach needs no cleanup: the vault holds only a `Weak`
+/// manager, and the vault handle drops with this error.
 fn open_lane(
     vault: Arc<Vault>,
     spec: &SharedEnvSpec,
     lease_vault_id: u64,
-) -> Result<ActiveLane, String> {
+) -> Result<Arc<SyncConnection>, String> {
     let vault_id = spec.vault_id;
     let manager = Arc::new(WindowManager::new(
         vault,
@@ -438,9 +655,7 @@ fn open_lane(
         },
     )
     .map_err(|error| format!("lane of shared env {vault_id} unbuildable: {error:#}"))?;
-    Ok(ActiveLane {
-        connection: Arc::new(connection),
-    })
+    Ok(Arc::new(connection))
 }
 
 /// The check's failure, as a static kind only: a refusal's own fixed
