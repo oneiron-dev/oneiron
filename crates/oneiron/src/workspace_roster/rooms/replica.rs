@@ -238,9 +238,12 @@ impl RoomSideRow {
                 !handle.is_empty() && handle.len() <= 256 && !handle.contains('\0')
             }
             Self::Claim { claim } => {
+                // REVIEW-4366 round 3: a claim of an actor this vault
+                // erased names no one here, as a carried turn's actor does.
                 named(&claim.room_id).is_some()
                     && named(&claim.turn_id).is_some()
-                    && named(&claim.actor).is_some()
+                    && (named(&claim.actor).is_some()
+                        || claim.actor == crate::receipt::ERASED_CALL_IDENTITY)
             }
             Self::Join { receipt } => {
                 join_ref(&receipt.request).is_ok_and(|filed| filed == receipt.join_ref)
