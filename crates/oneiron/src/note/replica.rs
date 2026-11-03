@@ -11,7 +11,8 @@ use super::{NotePin, NoteSpanResolution};
 use crate::side_table::HexId;
 use crate::note::frame_envelope::NoteStateEnvelope;
 use crate::store::document_frame_tags::document_sub_tags;
-use crate::sync::{SyncSelector, SyncSelectorWorld};
+use crate::sync::SyncSelector;
+use crate::claim::selector_world::SyncSelectorWorld;
 use crate::{EntityId, FederationGrantScope, Result, Vault};
 
 pub(super) fn admit_pin_disclosure(
