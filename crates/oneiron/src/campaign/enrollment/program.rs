@@ -292,7 +292,7 @@ pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
 /// Longest accepted email subject, in bytes (FIX 11641): the Gmail
 /// `Subject:` room inside RFC 5322's line limit. The stalwart 998-byte cap
 /// accepts it too, so one bound serves both email halves.
-pub const CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES: usize = 600;
+pub(super) const CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES: usize = 600;
 
 /// The authored half of a campaign program, stored beside its binding by the
 /// checked doors ([`create_campaign_program`] and its siblings).
