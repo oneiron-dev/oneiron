@@ -16,7 +16,9 @@ mod people;
 pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
-pub(crate) use people::{ensure_agent_person, ensure_agent_person_in_txn};
+pub(crate) use people::{
+    ensure_agent_person, ensure_agent_person_in_txn, ensure_seeded_agent_person_in_txn,
+};
 mod inbox;
 pub use inbox::assemble_inbox_section;
 mod observations;
@@ -83,6 +85,7 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,

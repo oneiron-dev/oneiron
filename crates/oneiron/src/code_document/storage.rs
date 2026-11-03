@@ -193,7 +193,6 @@ impl Vault {
             return Err(invalid());
         }
         let rtxn = self.store.env.read_txn()?;
-        let lookup = path_key(repo, path);
         if let Some(id) = CODE_DOCUMENT_PATH.get(&self.store, &rtxn, &path_hash(repo, path))? {
             let row = load_head(&self.store, &rtxn, &id)?.ok_or_else(invalid)?;
             if row.state.frontier.repo != repo || row.state.frontier.path != path {
@@ -212,7 +211,7 @@ impl Vault {
         // Every not-yet-born session uses identical genesis operations. Peer 0
         // is reserved for this immutable seed, never an editing session.
         let generation = path_generation(&self.store, &rtxn, repo, path)?;
-        let document_id = hash(&[lookup.as_slice(), &generation.to_be_bytes()].concat());
+        let document_id = code_document_genesis_id(repo, path, generation);
         let doc = LoroDoc::new();
         doc.set_peer_id(0).map_err(|_| invalid())?;
         doc.get_map("meta")
@@ -552,6 +551,35 @@ pub(crate) fn verify_frontier_in_txn(
 fn generation_key(repo: &str, path: &str) -> [u8; 32] {
     hash(&path_key(repo, path))
 }
+/// The id of the document a file at `path` of `repo` is born as at
+/// `generation`: what every not-yet-born session of it mints, so a file
+/// nobody has edited still names the document its first op will birth.
+pub(crate) fn code_document_genesis_id(repo: &str, path: &str, generation: u64) -> [u8; 32] {
+    hash(&[path_key(repo, path).as_slice(), &generation.to_be_bytes()].concat())
+}
+
+/// The document a file at `path` of `repo` is, read in `txn` (ARCH-0050,
+/// FIX 7809): the one living at that path, or the one the path's current
+/// generation births. A rename keeps it; a removal and a recreation do not.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn code_document_identity_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    repo: &str,
+    path: &str,
+) -> Result<[u8; 32]> {
+    if let Some(id) = CODE_DOCUMENT_PATH.get(store, txn, &path_hash(repo, path))? {
+        return Ok(id);
+    }
+    Ok(code_document_genesis_id(
+        repo,
+        path,
+        path_generation(store, txn, repo, path)?,
+    ))
+}
+
 fn path_generation(store: &Store, txn: &RoTxn<'_>, repo: &str, path: &str) -> Result<u64> {
     Ok(CODE_DOCUMENT_GENERATION
         .get(store, txn, &generation_key(repo, path))?

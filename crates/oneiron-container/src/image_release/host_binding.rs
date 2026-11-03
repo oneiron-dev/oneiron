@@ -33,8 +33,8 @@
 
 use super::{
     Blake3Digest, HostCapabilities, IMAGE_RELEASE_ENVELOPE_FILE, IMAGE_RELEASE_FILE,
-    IMAGE_SIGNATURE_POLICY, ImageReleaseObservation, ObservedArtifacts, ReleaseDocuments,
-    ReleaseSignatureVerifier, observe_release,
+    IMAGE_SIGNATURE_POLICY, ImageReleaseObservation, ManifestObservation, ObservedArtifacts,
+    ReleaseDocuments, ReleaseSignatureVerifier, observe_release,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -98,7 +98,8 @@ pub fn observe_bound_release(
     observed: &ObservedArtifacts,
     verifier: &dyn ReleaseSignatureVerifier,
 ) -> ImageReleaseObservation {
-    match binding(selected) {
+    let image_digest = selected.key();
+    let observation = match binding(selected) {
         Binding::Unbound => observe_release(None, observed, &HostCapabilities::default(), verifier),
         Binding::Unavailable(reason) => {
             ImageReleaseObservation::documents_unavailable(reason, IMAGE_SIGNATURE_POLICY)
@@ -112,7 +113,22 @@ pub fn observe_bound_release(
             &probe_host(),
             verifier,
         ),
-    }
+    };
+    let manifest_state = match &observation.manifest {
+        ManifestObservation::Absent => "absent",
+        ManifestObservation::Unavailable { .. } => "unavailable",
+        ManifestObservation::Parsed { .. } => "parsed",
+        ManifestObservation::Malformed { .. } => "malformed",
+    };
+    let facts: Vec<&str> = observation.facts.iter().map(|fact| fact.as_str()).collect();
+    tracing::info!(
+        ?image_digest,
+        manifest_state,
+        ?facts,
+        admitted = observation.admitted,
+        "image release observed"
+    );
+    observation
 }
 
 /// Reads the map at launch. A reason names the document and the error,

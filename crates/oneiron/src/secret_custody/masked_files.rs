@@ -17,11 +17,13 @@
 //! (`batch::secret_scan::container`); in a text member a key reads as its
 //! custody handle, `[secret sc12]` (FIX 7944). A container the write door
 //! kept no keys in is still read whole before a masked reader gets it, the
-//! bytes no reader shows included (FIX 2470): one that holds a key no mark
-//! places is refused. A sealed one, which no reader here reads whole
-//! (encrypted, malformed, past the byte floor), is stored as it is (owner
-//! ruling C2): the owner and a granted agent read its bytes
-//! (`reveal::file`), and a masked reader gets
+//! bytes no reader shows included (FIX 2470). One whose only key sits in
+//! those bytes is served its copy rebuilt without them, as a marked file's
+//! copy is, once the scan reads that copy clean (FIX 11553, 12268); one that
+//! holds a key no mark places elsewhere is refused. A sealed one, which no
+//! reader here reads whole (encrypted, malformed, past the byte floor), is
+//! stored as it is (owner ruling C2): the owner and a granted agent read its
+//! bytes (`reveal::file`), and a masked reader gets
 //! [`SecretError::SealedFileWithheld`], never the raw bytes. A file a masked
 //! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
 //! scan's reason (FIX 2475).
@@ -85,8 +87,12 @@ pub(crate) enum MemberStep {
     Tar { entry: u32 },
     /// An xz file's decompressed payload (FIX 2471).
     Xz,
-    /// A PDF stream, by its object's id.
+    /// A PDF stream other than an object stream, by its object's id (FIX
+    /// 11550): a page content stream and the like.
     PdfStream { object: u32, generation: u16 },
+    /// A PDF object stream's decoded bytes, by its object's id (FIX 11550):
+    /// its header names each object by byte offset.
+    PdfObjectStream { object: u32, generation: u16 },
     /// A PDF object's text strings, each decoded, in the object's order
     /// (FIX 2469), by the object's id.
     PdfStrings { object: u32, generation: u16 },
@@ -286,44 +292,74 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
-/// the bytes no reader shows read clean to the write door. A masked copy is
-/// read by the write door's rules before it is served (FIX 2480); a file
-/// this reader cannot be served masked is
+/// the bytes no reader shows read clean to the write door; a container whose
+/// only key sits in those bytes is served its copy rebuilt at its root
+/// without them, once that copy reads clean (FIX 11553, 12268). A masked
+/// copy is read by the write door's rules before it is served (FIX 2480); a
+/// file this reader cannot be served masked is
 /// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it computed
+/// from, or checked against, these exact bytes: the mark is read by it and
+/// the bytes are not hashed again (speed). `None` hashes them here. The
+/// walks over an unmarked container and a marked file's rebuild take it
+/// for the root file's entry (FIX 12270).
 pub(crate) fn sighted_bytes_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
     use crate::batch::secret_scan;
     if sight != SecretSight::Masked {
         return Ok(bytes);
     }
-    let Some(file) = masked_file_in_txn(store, txn, blake3::hash(&bytes).as_bytes())? else {
+    let hash = match digest {
+        Some(digest) => {
+            debug_assert!(
+                blake3::hash(&bytes).as_bytes() == digest,
+                "a caller's digest names other bytes"
+            );
+            *digest
+        }
+        None => *blake3::hash(&bytes).as_bytes(),
+    };
+    let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
+        // Bytes that lead as no container are none to the walk, so none is
+        // sealed and none holds a member: they are served as they are, read
+        // once (speed).
+        if !secret_scan::is_container(&bytes) {
+            return Ok(bytes);
+        }
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
-        if secret_scan::is_sealed(&bytes) {
+        if secret_scan::is_sealed(&bytes, digest) {
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::is_container(&bytes) && secret_scan::write_tree_hit(&bytes).is_some() {
-            // A hidden-only key is served the rebuilt copy, hidden bytes
-            // dropped (FIX 11553).
-            let copy =
-                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
-            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
-                return Err(masked_copy_withheld(reason));
-            }
-            return Ok(copy);
+        let Some(reason) = secret_scan::write_tree_hit(&bytes, digest) else {
+            return Ok(bytes);
+        };
+        // A key only in the bytes no reader shows is gone from the copy
+        // rebuilt at the root, which leaves them out as a marked file's copy
+        // does: that copy is served once the write door's scan reads it
+        // clean. A key in what a reader shows, or in a member container's
+        // own hidden bytes, stays in it, and the file is refused (FIX 11553,
+        // 12268).
+        let Some(copy) = secret_scan::root_rebuilt_copy(&bytes) else {
+            return Err(masked_copy_withheld(reason));
+        };
+        if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+            return Err(masked_copy_withheld(reason));
         }
-        return Ok(bytes);
+        return Ok(copy);
     };
     let handles = file.place_handles(store, txn)?;
-    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles)?;
-    if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles, digest)?;
+    if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
@@ -355,7 +391,7 @@ impl Vault {
     /// [`SecretSight`]).
     pub fn sighted_asset_bytes(&self, bytes: Vec<u8>, sight: SecretSight) -> Result<Vec<u8>> {
         let rtxn = self.store.env.read_txn()?;
-        sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight)
+        sighted_bytes_in_txn(&self.store, &rtxn, bytes, None, sight)
     }
 
     /// [`Vault::export_blob_artifact`] for a reader at a serving door. The
@@ -470,7 +506,7 @@ impl Vault {
                 .map(Some);
         }
         self.read_blob_artifact_version_in_txn(txn, artifact_id, version)?
-            .map(|bytes| sighted_bytes_in_txn(&self.store, txn, bytes, sight))
+            .map(|bytes| sighted_bytes_in_txn(&self.store, txn, bytes, None, sight))
             .transpose()
     }
 }
