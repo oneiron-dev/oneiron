@@ -533,7 +533,7 @@ impl RuntimeMediaEmbedder {
         part: MediaPart,
         release: Option<(
             &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
-            oneiron::EntityId,
+            &[oneiron::EntityId],
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let modality = part.modality();
@@ -569,17 +569,17 @@ impl RuntimeMediaEmbedder {
         name_width: bool,
         release: Option<(
             &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
-            oneiron::EntityId,
+            &[oneiron::EntityId],
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         if let Some((release, row)) = release {
-            release(&[row])?;
+            release(row)?;
         }
         let request = self.admit(part, name_width)?;
         let media = self.ai.model_runtime().media();
         let response = if let Some((release, row)) = release {
             let dispatch_release = || -> oneiron::LlmResult<()> {
-                release(&[row]).map_err(|error| {
+                release(row).map_err(|error| {
                     oneiron::RetryableLlmError::not_sent("media_release", error.to_string()).into()
                 })
             };
@@ -737,7 +737,10 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     ) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
-            .map(|input| self.embed_outcome(input, Some((release, input.entity_id))))
+            .map(|input| {
+                release(input.source_rows())?;
+                self.embed_outcome(input, Some((release, input.source_rows())))
+            })
             .collect()
     }
 }
@@ -751,7 +754,7 @@ impl RuntimeMediaEmbedder {
         input: &MediaEmbeddingInput<'_>,
         release: Option<(
             &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
-            oneiron::EntityId,
+            &[oneiron::EntityId],
         )>,
     ) -> oneiron::Result<MediaOutcome> {
         match self.embed_input(input, release) {
@@ -768,7 +771,7 @@ impl RuntimeMediaEmbedder {
         input: &MediaEmbeddingInput<'_>,
         release: Option<(
             &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
-            oneiron::EntityId,
+            &[oneiron::EntityId],
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let runtime = self

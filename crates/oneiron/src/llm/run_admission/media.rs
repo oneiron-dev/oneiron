@@ -12,7 +12,7 @@ use super::super::media::{
 };
 use super::super::{
     BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, DispatchRelease,
-    FatalLlmError, InferenceCallReceipt, LlmResult, LlmUsage, ModelId,
+    FatalLlmError, InferenceCallReceipt, LlmError, LlmResult, LlmUsage, ModelId,
 };
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
@@ -138,6 +138,15 @@ impl MediaGate {
             .inner
             .run_progress_released(request, lease, release)
             .await;
+        let refused_before_send = answer.as_ref().err().is_some_and(|stopped| {
+            matches!(
+                &stopped.error,
+                LlmError::Retryable(retry) if retry.is_not_sent_stage("media_release")
+            )
+        }) && lease.physical_attempts() == 0;
+        if refused_before_send {
+            opened.dispatch = None;
+        }
         let served = answer.as_ref().ok().and_then(served_model);
         opened.finish(served, answer.is_ok());
         answer

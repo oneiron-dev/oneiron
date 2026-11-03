@@ -52,7 +52,7 @@ pub(super) fn send_released<'a>(
     Box::pin(async move {
         release().map_err(HttpReleaseError::Release)?;
         let started = Instant::now();
-        let _attempt = lease.begin_inference_observation();
+        lease.begin_physical_attempt();
         let error = match request.send().await {
             Ok(response) => return Ok(response),
             Err(error) => error,
@@ -65,7 +65,7 @@ pub(super) fn send_released<'a>(
             "a request that never reached its provider goes once more on a fresh connection"
         );
         release().map_err(HttpReleaseError::Release)?;
-        let _attempt = lease.begin_inference_observation();
+        lease.begin_physical_attempt();
         let (_, request) = again.build_split();
         let request = request.map_err(|error| HttpReleaseError::Transport(error.into()))?;
         fresh

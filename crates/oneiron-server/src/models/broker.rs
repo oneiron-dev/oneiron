@@ -404,7 +404,7 @@ pub(super) async fn call_with_key_released(
         release()?;
     }
     if let Some(lease) = lease {
-        let _attempt = lease.begin_inference_observation();
+        lease.begin_physical_attempt();
     }
     connection
         .call(header, body, key)

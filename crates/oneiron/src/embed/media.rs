@@ -106,11 +106,17 @@ impl<'a> MediaEgressGate<'a> {
         txn: &heed::RoTxn<'_>,
         document: &PendingMedia,
     ) -> Result<bool> {
-        if self.egress.decide_media(&document.input()) != EgressDecision::Allow {
+        let input = document.input();
+        if self.egress.decide_media(&input) != EgressDecision::Allow {
             return Ok(false);
         }
         Ok(self.flagged.is_empty()
-            || !crate::settings::device_local_keeps_among(store, txn, &self.flagged, &document.id)?)
+            || !crate::settings::device_local_keeps_among(
+                store,
+                txn,
+                &self.flagged,
+                input.source_rows(),
+            )?)
     }
 }
 
@@ -409,7 +415,7 @@ impl Vault {
         if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
-        self.media_rows_may_leave(None, &[input.entity_id])
+        self.media_rows_may_leave(None, input.source_rows())
     }
 
     /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,

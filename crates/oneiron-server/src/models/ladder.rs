@@ -1736,7 +1736,7 @@ impl OfferLadder {
                 Ok(Some(MediaAnswer::Done(response)))
             }
             Err(stopped) if release_refused(&stopped.error) && stopped.progress.is_empty() => {
-                if permit.lease().inference_observations().is_empty() {
+                if permit.lease().physical_attempts() == 0 {
                     if let Err(denied) = permit.settle_unsent() {
                         tracing::error!(%denied, "an unsent media call's settlement was refused");
                     }
