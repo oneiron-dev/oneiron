@@ -27,7 +27,7 @@ use super::store_keys::{
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
-use crate::provenance::made_by::MadeBy;
+use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // The version chain's reads: the head, the tree, one version's metadata
@@ -576,9 +576,9 @@ impl Vault {
                 &self.store,
                 wtxn,
                 artifact_id,
-                &crate::provenance::birth::RowBirth {
+                &crate::store::row_birth::RowBirth {
                     made_by: record.made_by.clone(),
-                    content_hash: crate::provenance::birth::RowBirth::content_hash_of(&[
+                    content_hash: crate::store::row_birth::RowBirth::content_hash_of(&[
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),

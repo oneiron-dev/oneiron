@@ -5,7 +5,7 @@ use crate::edge::{
     EdgeProvenanceFlags,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::provenance::EdgeRef;
+use crate::write_envelope::provenance::EdgeRef;
 use crate::store::Store;
 use heed::RwTxn;
 impl EdgeStoreMaintenance for Store {

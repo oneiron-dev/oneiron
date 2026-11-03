@@ -118,13 +118,13 @@ pub(super) fn fields_for_profile(
             crate::serialize::access_grant_fields::ACCESS_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Standard) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_STANDARD
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
-            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_FULL
+            crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_FULL
         }
         (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
             crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
