@@ -18,6 +18,9 @@ pub struct ResolvedRecallSelection {
     pub worlds: Option<ResolvedRecallWorlds>,
     /// The project audiences read, sorted and unique; empty reads every one.
     pub project_ids: Vec<EntityId>,
+    /// The explicit/PERSON-authored conversations read, sorted and unique;
+    /// `None` adds no narrowing, and an empty set reads none.
+    pub conversation_ids: Option<Vec<EntityId>>,
     /// The facet a strict facet narrowing keeps.
     pub facet: Option<EntityId>,
     /// The registry kinds returned, sorted and unique; `None` is recall's
@@ -60,6 +63,13 @@ pub fn recall_scope_transcript(scope: Option<&ResolvedRecallSelection>) -> Vec<u
         }
     }
     ids(&mut out, &scope.project_ids);
+    match &scope.conversation_ids {
+        None => out.push(0),
+        Some(conversations) => {
+            out.push(1);
+            ids(&mut out, conversations);
+        }
+    }
     match &scope.facet {
         None => out.push(0),
         Some(facet) => {
