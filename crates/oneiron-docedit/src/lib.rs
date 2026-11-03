@@ -15,6 +15,7 @@
 //! a typed transaction and refuses bytes that fail the Word package linker.
 //! `PROVENANCE.md` records the fork, licenses and local changes.
 
+pub(crate) mod a1;
 pub mod contract;
 pub mod deck;
 pub mod design_plan;

@@ -1096,58 +1096,61 @@ fn number_end(bytes: &[u8], start: usize) -> usize {
     end
 }
 
-fn fixed(text: &str) -> (bool, &str) {
-    match text.strip_prefix('$') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    }
-}
-
 /// `$AB` or `C`: one to three letters naming a sheet column.
+/// Case-insensitive (R5); over-long letters already fail the grid bound.
 fn column(text: &str) -> Option<Part> {
-    let (fixed, letters) = fixed(text);
-    if letters.is_empty() || letters.len() > 3 || !letters.bytes().all(|b| b.is_ascii_alphabetic())
-    {
-        return None;
+    match crate::a1::parse_line_side(text)? {
+        crate::a1::LineSide::Col { col, fixed } => {
+            let value = i64::from(col);
+            (value <= MAX_COLUMN).then_some(Part { fixed, value })
+        }
+        crate::a1::LineSide::Row { .. } => None,
     }
-    let value = letters.bytes().fold(0_i64, |value, b| {
-        value * 26 + i64::from(b.to_ascii_uppercase() - b'A' + 1)
-    });
-    (value <= MAX_COLUMN).then_some(Part { fixed, value })
 }
 
-/// `$12` or `7`: a sheet row.
+/// `$12` or `7`: a sheet row. Leading zeros accepted, as before; more
+/// than seven digits refused, as before (a zero-padded 8-digit row would
+/// otherwise pass the grid bound).
 fn row(text: &str) -> Option<Part> {
-    let (fixed, digits) = fixed(text);
-    if digits.is_empty() || digits.len() > 7 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
         return None;
     }
-    let value: i64 = digits.parse().ok()?;
-    (1..=MAX_ROW)
-        .contains(&value)
-        .then_some(Part { fixed, value })
+    match crate::a1::parse_line_side(text)? {
+        crate::a1::LineSide::Row { row, fixed } => {
+            let value = i64::from(row);
+            (1..=MAX_ROW)
+                .contains(&value)
+                .then_some(Part { fixed, value })
+        }
+        crate::a1::LineSide::Col { .. } => None,
+    }
 }
 
-/// `$B$12`, `B$12`, `$B12` or `B12`.
+/// `$B$12`, `B$12`, `$B12` or `B12`. Case-insensitive (R5).
 fn cell(text: &str) -> Option<(Part, Part)> {
-    let split = text
-        .char_indices()
-        .skip(1)
-        .find(|&(_, ch)| ch == '$' || ch.is_ascii_digit())?
-        .0;
-    Some((column(&text[..split])?, row(&text[split..])?))
+    if text.bytes().filter(|b| b.is_ascii_digit()).count() > 7 {
+        return None;
+    }
+    let parsed = crate::a1::parse_cell(text)?;
+    let (col, row) = (i64::from(parsed.col), i64::from(parsed.row));
+    (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((
+        Part {
+            fixed: parsed.col_fixed,
+            value: col,
+        },
+        Part {
+            fixed: parsed.row_fixed,
+            value: row,
+        },
+    ))
 }
 
 fn number(value: i64) -> String {
     value.to_string()
 }
 
-fn letters(mut col: i64) -> String {
-    let mut out = Vec::new();
-    while col > 0 {
-        out.push(b'A' + ((col - 1) % 26) as u8);
-        col = (col - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
+/// The shared core's letters at this tokenizer's `i64` boundary: renders
+/// only see grid-checked values, so the `0` fallback is unreachable.
+fn letters(col: i64) -> String {
+    crate::a1::col_letters(u32::try_from(col).unwrap_or(0))
 }
