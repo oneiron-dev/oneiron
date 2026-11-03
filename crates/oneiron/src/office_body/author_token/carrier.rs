@@ -296,7 +296,7 @@ fn merge_export_author_facts(
     })
 }
 
-/// Two copies with the same storage identity and token. Every field except/// Two copies with the same storage identity and token. Every field except
+/// Two copies with the same storage identity and token. Every field except
 /// actor and its display author is fixed; actor identity merges erased-wins,
 /// and one live actor may not carry two display authors.
 fn merge_carrier_facts(

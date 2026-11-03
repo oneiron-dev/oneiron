@@ -379,12 +379,10 @@ impl Vault {
                             deletes.push(DocxChange::Delete {
                                 block: native_id(&native, block)?,
                             });
-                        } else if surviving.contains(block.as_str()) {
-                            return Err(Error::InvariantViolation(
-                                "a projected new paragraph was deleted",
-                            ));
                         }
-                        // Else never inserted: nothing to delete.
+                        // Else a new id: still live (spurious, since changes()
+                        // emits Deletes for every prior new) or never inserted
+                        // (a ghost): nothing to delete.
                     }
                 }
             }
@@ -503,6 +501,21 @@ impl Vault {
                     }
                     total += built.len();
                     authors.push(OfficeBodyExportAuthor { actor, token });
+                }
+            }
+            if built.is_empty() {
+                // A new-paragraph move leaves no ops but changes order. The
+                // package must still match this group's body order.
+                let mut expected = Vec::with_capacity(state.blocks.len());
+                for block in &state.blocks {
+                    let id = block.id.as_str();
+                    if !block.imported && !surviving.contains(id) {
+                        continue;
+                    }
+                    expected.push(native_id(&native, id)?);
+                }
+                if session.accepted_id_order() != expected {
+                    return Err(invalid("the sequential projection diverged from the body"));
                 }
             }
             previous = state;
