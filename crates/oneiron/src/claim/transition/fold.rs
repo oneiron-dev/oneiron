@@ -224,7 +224,7 @@ impl ClaimTransitionProjection {
                 // The MACHINE author's own Approve is the Gate's deferred Auto
                 // grant of its proposal; any other actor's is an approval.
                 let own_grant = event.actor_class == crate::edge::EdgeActorClass::System
-                    && crate::memory::claim_author(&self.birth) == Some(event.actor);
+                    && crate::claim::claim_author(&self.birth) == Some(event.actor);
                 let status = if own_grant { Auto } else { Approved };
                 // An owner's Approve over Auto replaces the grant it saw.
                 self.end_held_grants();

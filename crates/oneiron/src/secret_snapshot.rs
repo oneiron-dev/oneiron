@@ -7,7 +7,7 @@ use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::secret_scan;
-use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
+use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::error::{CodeError, Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::read_secret_custody_meta_in_txn;

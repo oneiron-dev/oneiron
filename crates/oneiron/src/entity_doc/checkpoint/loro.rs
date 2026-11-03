@@ -23,7 +23,7 @@ use super::super::forks::ForkStatus;
 use super::{hex_id, message_receipts};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::loro::{
     self as shared, LoroActorCodec, OpenedRow, SHALLOW, Split, SplitRow, SplitValue,
 };

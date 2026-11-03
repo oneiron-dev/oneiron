@@ -342,7 +342,7 @@ pub enum SyncEvent {
     FederationDeferred {
         window_key: String,
         request_id: [u8; 32],
-        inputs: crate::llm::NormalizedBurstInputs,
+        inputs: oneiron_model::llm::NormalizedBurstInputs,
     },
     /// An authority catch-up round imported rows: what they decide here (this
     /// machine's own profile among them) may read differently now. It does not

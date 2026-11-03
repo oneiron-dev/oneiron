@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
 use crate::gate::PolicyApprovalCeiling;
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;

@@ -14,8 +14,8 @@ use crate::claim::{ClaimSource, claim_surfaceable};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use crate::error::Result;
-use crate::llm::decision::catalogue::CONFLICT_SETTLE;
-use crate::llm::decision::{AnswerContract, DecisionQuestion};
+use crate::model_decision::catalogue::CONFLICT_SETTLE;
+use crate::model_decision::{AnswerContract, DecisionQuestion};
 use crate::{EntityId, Vault};
 
 /// One stored member or retained alternative as a settlement ask shows it:
