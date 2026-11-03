@@ -16,6 +16,11 @@ use super::InvocationId;
 /// Each verb run's saved copy, by run key.
 pub(in crate::runtime_hooks) const VERB_RUNS: SideTable<RunKey, HookVerbRunRecord, Named> =
     SideTable::new(&side_table::HOOKS_VERB_RUN);
+/// Whether a masked copy of a `HOOKS_VERB_RUN` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_verb_run_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookVerbRunRecord, Named>(bytes)
+}
 
 /// One verb hook run: its hook, its call, what its body saw and read, and
 /// what it returned.

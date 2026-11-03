@@ -7,6 +7,8 @@
 //! D"). A deck reads, edits and forks through these rows too; its review,
 //! merge, export and gate are `vault.artifacts.body.deck.*` (`pptx::verbs`).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -18,6 +20,7 @@ use super::{
     XlsxStyle, XlsxTable,
 };
 use crate::batch::secret_scan::{LiftedKeys, mask_unplaced_json};
+use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -133,8 +136,8 @@ pub struct OfficeBodyEditRequest {
 }
 
 /// `vault.artifacts.body.fork.open`: a fork of the live body for machine work.
-/// A DOCX or XLSX fork joins `proposal_ref`, an unsettled proposal on the
-/// same artifact; absent, it opens its own under the fork's id.
+/// A DOCX or XLSX fork joins `proposal_ref`, an unsettled proposal by id;
+/// absent, it opens its own under the fork's id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyForkOpenRequest {
@@ -186,7 +189,11 @@ pub struct OfficeBodyProposalRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyReviewedFork {
+    /// The member artifact this fork edits.
+    pub artifact_ref: String,
     pub fork_ref: String,
+    /// The live head on that artifact that its diff read.
+    pub reviewed_head: Vec<u8>,
     /// The fork's diff's `fork_head`.
     pub reviewed_fork: Vec<u8>,
 }
@@ -201,8 +208,6 @@ pub struct OfficeBodyProposalSettleRequest {
     pub verdict: SettleVerdict,
     #[serde(default)]
     pub scope: Option<ApproveScope>,
-    /// The live head every reviewed diff was read at.
-    pub reviewed_head: Vec<u8>,
     pub reviewed: Vec<OfficeBodyReviewedFork>,
     #[serde(default)]
     pub reason: Option<String>,
@@ -496,6 +501,56 @@ impl Memory<'_> {
         self.lifted_view(view, || self.vault().typed_body_lifted_keys(artifact))
     }
 
+    /// A proposal as this reader sees it through its home artifact. A
+    /// single-artifact proposal takes exactly the ordinary body-view path.
+    /// For a mixed bundle, unreadable members and their artifact's asks go;
+    /// each remaining member uses its own artifact's lifted keys, and the
+    /// rest uses the union of the home's and shown artifacts' keys.
+    fn office_proposal_view(
+        &self,
+        home: &EntityId,
+        proposal: OfficeBodyProposal,
+    ) -> MemoryResult<OfficeBodyProposal> {
+        if proposal
+            .members
+            .iter()
+            .all(|member| member.artifact == *home)
+        {
+            return self.lifted_body_view(home, proposal);
+        }
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let mut visible = BTreeSet::new();
+        for member in &proposal.members {
+            if lane.is_entity_readable(&member.artifact)? {
+                visible.insert(member.artifact);
+            }
+        }
+        let members: Vec<_> = proposal
+            .members
+            .iter()
+            .filter(|member| visible.contains(&member.artifact))
+            .cloned()
+            .collect();
+        let mut projected = proposal;
+        projected.members.clear();
+        projected.asks.retain(|ask| visible.contains(&ask.artifact));
+        projected
+            .ask_refused
+            .retain(|refusal| visible.contains(&refusal.artifact));
+        let mut rest_artifacts = visible;
+        rest_artifacts.insert(*home);
+        for artifact in rest_artifacts {
+            projected = self.lifted_body_view(&artifact, projected)?;
+        }
+        let mut masked = Vec::with_capacity(members.len());
+        for member in members {
+            let artifact = member.artifact;
+            masked.push(self.lifted_body_view(&artifact, member)?);
+        }
+        projected.members = masked;
+        Ok(projected)
+    }
+
     /// `ops` for `artifact`'s body with each handle of a key the body's
     /// lifted texts hold back as its value: a writer that kept a handle it
     /// read writes the value again, one that deleted it removed the secret
@@ -573,6 +628,18 @@ impl Memory<'_> {
             .map(|reference| self.body_ref(reference))
             .transpose()?;
         let actor = self.body_actor();
+        if let Some(proposal) = proposal.as_ref() {
+            let named = self
+                .vault()
+                .office_body_proposal(proposal)?
+                .ok_or_else(|| MemoryError::not_found("no such proposal"))?;
+            if !self
+                .read_lane(ClaimReadStatus::Recorded)?
+                .is_entity_readable(&named.header.artifact)?
+            {
+                return Err(MemoryError::not_found("no such proposal"));
+            }
+        }
         self.vault().try_with_write_txn_grouped(|wtxn| {
             let origin = crate::task_verb::office_fork_origin_in_txn(self, wtxn)?;
             Ok(self.vault().open_office_body_fork_in_txn(
@@ -641,7 +708,7 @@ impl Memory<'_> {
         )? {
             Ok(diff) => diff,
             Err(proposal) => {
-                let refused = self.ask_office_holders(&artifact, &proposal);
+                let refused = self.ask_office_holders(&proposal);
                 return Err(super::fork_waits(&proposal, refused.as_deref()).into());
             }
         };
@@ -657,9 +724,10 @@ impl Memory<'_> {
         let proposal = self.body_ref(&input.proposal_ref)?;
         let proposal = self
             .vault()
-            .office_body_proposal(&artifact, &proposal)?
+            .office_body_proposal(&proposal)?
+            .filter(|record| record.header.artifact == artifact)
             .ok_or_else(|| MemoryError::not_found("no such proposal on the artifact"))?;
-        self.lifted_body_view(&artifact, proposal)
+        self.office_proposal_view(&artifact, proposal)
     }
 
     /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
@@ -681,15 +749,22 @@ impl Memory<'_> {
             .iter()
             .map(|pin| {
                 Ok(ReviewedFork {
+                    artifact: self.body_ref(&pin.artifact_ref)?,
                     fork: self.body_ref(&pin.fork_ref)?,
+                    head: pin.reviewed_head.clone(),
                     fork_head: pin.reviewed_fork.clone(),
                 })
             })
             .collect::<MemoryResult<Vec<_>>>()?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        for pin in &reviewed {
+            if pin.artifact != artifact && !lane.is_entity_readable(&pin.artifact)? {
+                return Err(MemoryError::not_found("no such reviewed artifact"));
+            }
+        }
         let request = ProposalSettleRequest {
             verdict: input.verdict,
             scope: input.scope.clone(),
-            head: &input.reviewed_head,
             reviewed: &reviewed,
             reason: input.reason.as_deref(),
         };
@@ -700,12 +775,15 @@ impl Memory<'_> {
             self.body_actor(),
         )?;
         if input.verdict == SettleVerdict::Accept && settled.settlement.is_none() {
-            self.ask_office_holders(&artifact, &proposal);
-            if let Some(asked) = self.vault().office_body_proposal(&artifact, &proposal)? {
+            self.ask_office_holders(&proposal);
+            if let Some(asked) = self.vault().office_body_proposal(&proposal)? {
+                if asked.header.artifact != artifact {
+                    return Err(MemoryError::not_found("no such proposal on the artifact"));
+                }
                 settled = asked;
             }
         }
-        self.lifted_body_view(&artifact, settled)
+        self.office_proposal_view(&artifact, settled)
     }
 
     /// `vault.artifacts.body.fork.discard`: the discarded fork's record.
