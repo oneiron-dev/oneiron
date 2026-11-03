@@ -269,7 +269,20 @@ impl AttemptQueue<'_> {
                 ERR_FANOUT_HOLD_ACTOR_RESERVED,
             )));
         }
-        self.apply_intervention_in_txn(wtxn, input)
+        let now = input.now;
+        let outcome = self.apply_intervention_in_txn(wtxn, input)?;
+        // FIX 900: a cancelled child settles its spend lease in the same
+        // write (OF-532), as `kill_spawn` does; idempotent, unmetered no-op.
+        if outcome.effect == AttemptInterventionEffect::Cancelled
+            && let Some(vault) = self.vault
+        {
+            crate::agent_dispatch::AgentDispatcher::new(vault).settle_child_in_txn(
+                wtxn,
+                &outcome.record.id,
+                now,
+            )?;
+        }
+        Ok(outcome)
     }
 
     /// [`Self::intervene_in_txn`] for any actor, the annotation hold's

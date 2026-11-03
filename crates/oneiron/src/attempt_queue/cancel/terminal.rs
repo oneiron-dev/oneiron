@@ -268,6 +268,12 @@ impl AttemptQueue<'_> {
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
+        // FIX 900: a force-cancelled child settles its spend lease in the
+        // same write (OF-532); idempotent, a no-op when unmetered.
+        if let Some(vault) = self.vault {
+            crate::agent_dispatch::AgentDispatcher::new(vault)
+                .settle_child_in_txn(wtxn, &record.id, input.now)?;
+        }
         Ok(ForceCancelOutcome::Cancelled(record))
     }
 
