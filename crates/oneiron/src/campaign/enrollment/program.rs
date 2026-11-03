@@ -211,10 +211,10 @@ pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
 /// accepts it too, so one bound serves both email halves.
 pub(super) const CAMPAIGN_PROGRAM_EMAIL_SUBJECT_MAX_BYTES: usize = 600;
 
-pub use crate::memory::campaign_records::program_definition::CampaignProgramDefinition;
-pub use crate::memory::campaign_records::program_definition::CampaignProgramStepDraft;
-pub use crate::memory::campaign_records::program_definition::CampaignProgramDraft;
 pub use crate::memory::campaign_records::program_definition::AuthoredCampaignProgram;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramDefinition;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramDraft;
+pub use crate::memory::campaign_records::program_definition::CampaignProgramStepDraft;
 
 /// Creates an authored campaign program under a campaign the principal owns.
 ///

@@ -17,7 +17,9 @@ use crate::{EntityId, TimeRange, Vault};
 const STATE_COMPOSITE_PRODUCER: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::AFFECT_STATE_COMPOSITE_PRODUCER);
 
-pub use crate::memory::state_index::{GOAL_VELOCITY, ENGAGEMENT, COMPOSITE_INDEX, StateIndexEvidence, ModeGateInputs, StateIndex};
+pub use crate::memory::state_index::{
+    COMPOSITE_INDEX, ENGAGEMENT, GOAL_VELOCITY, ModeGateInputs, StateIndex, StateIndexEvidence,
+};
 
 impl Vault {
     /// Blend the mean VAD trajectory, goal velocity and engagement with equal weight.

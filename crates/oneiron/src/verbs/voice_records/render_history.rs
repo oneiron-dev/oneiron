@@ -1,8 +1,8 @@
 //! Render-decision receipts and metadata-only history views.
 
-use serde::{Deserialize, Serialize};
 use super::model::{VoiceRenderConsent, VoiceTargetRecord};
 use super::views::{VoiceRenderConsentView, VoiceTargetCloneView};
+use serde::{Deserialize, Serialize};
 
 /// One recorded render decision, as the bank keeps it: the decision with its
 /// revision and sequence, and each target pointer it dropped from the bank.
