@@ -7,7 +7,7 @@ use super::store::hash_frozen_payload;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::{EffectorBudgetRowId, ScopedCapabilityProvenance};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
+use crate::error::{Error, SecretError};
 
 /// Current schema version for device-local outbound intent rows.
 ///
@@ -476,11 +476,88 @@ pub enum OutboundFailureKind {
     EndpointChanged,
 }
 
+/// Which typed secret refusal stopped a connector send at its credential
+/// door (FIX 11565): the send-side mirror of the table operation's typed
+/// refusal (FIX 4491), small and `Copy` like [`OutboundFailureKind`]. The
+/// spellings settle into a settled call's reasons, so they are wire-stable
+/// once shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SecretSendRefusalKind {
+    GrantStale,
+    GrantSpent,
+    GrantTargetMismatch,
+    LeaseNotActive,
+    LeaseNotFound,
+    BindingDenied,
+    TierDenied,
+    DoorPolicyRefused,
+    CustodyNotActive,
+    RefNotFound,
+    LeafUnreadable,
+    /// Any other typed secret refusal, including variants added later:
+    /// still a typed refusal, never a transport failure.
+    Refused,
+}
+
+impl SecretSendRefusalKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GrantStale => "secret_grant_stale",
+            Self::GrantSpent => "secret_grant_spent",
+            Self::GrantTargetMismatch => "secret_grant_target_mismatch",
+            Self::LeaseNotActive => "secret_lease_not_active",
+            Self::LeaseNotFound => "secret_lease_not_found",
+            Self::BindingDenied => "secret_binding_denied",
+            Self::TierDenied => "secret_tier_denied",
+            Self::DoorPolicyRefused => "secret_door_policy_refused",
+            Self::CustodyNotActive => "secret_custody_not_active",
+            Self::RefNotFound => "secret_ref_not_found",
+            Self::LeafUnreadable => "credential_leaf_unreadable",
+            Self::Refused => "secret_refused",
+        }
+    }
+}
+
+/// The typed secret refusal that stopped a send, carried beside the
+/// failure's kind and code (FIX 11565), as `provider_wait` rides its
+/// settlement: in memory only, never a ledger column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SecretSendRefusal {
+    pub kind: SecretSendRefusalKind,
+}
+
+impl SecretSendRefusal {
+    /// The refusal a typed secret error names. Every `SecretError` maps:
+    /// an unlisted or future variant keeps the generic typed refusal.
+    pub fn from_secret_error(error: &SecretError) -> Self {
+        let kind = match error {
+            SecretError::SecretGrantStale { .. } => SecretSendRefusalKind::GrantStale,
+            SecretError::SecretGrantSpent { .. } => SecretSendRefusalKind::GrantSpent,
+            SecretError::SecretGrantTargetMismatch { .. } => {
+                SecretSendRefusalKind::GrantTargetMismatch
+            }
+            SecretError::SecretLeaseNotActive { .. } => SecretSendRefusalKind::LeaseNotActive,
+            SecretError::SecretLeaseNotFound { .. } => SecretSendRefusalKind::LeaseNotFound,
+            SecretError::SecretBindingDenied { .. } => SecretSendRefusalKind::BindingDenied,
+            SecretError::SecretTierDenied { .. } => SecretSendRefusalKind::TierDenied,
+            SecretError::SecretDoorPolicyRefused { .. } => SecretSendRefusalKind::DoorPolicyRefused,
+            SecretError::SecretCustodyNotActive { .. } => SecretSendRefusalKind::CustodyNotActive,
+            SecretError::SecretRefNotFound { .. } => SecretSendRefusalKind::RefNotFound,
+            SecretError::CredentialLeafUnreadable { .. } => SecretSendRefusalKind::LeafUnreadable,
+            _ => SecretSendRefusalKind::Refused,
+        };
+        Self { kind }
+    }
+}
+
 /// Definite non-delivery result with no raw body, URL, or provider text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutboundSendFailure {
     pub kind: OutboundFailureKind,
     pub code: Option<u16>,
+    /// The typed secret refusal that stopped the send at its credential
+    /// door, when one did (FIX 11565).
+    pub secret: Option<SecretSendRefusal>,
 }
 
 /// Transport result for a frozen outbound call.
