@@ -46,12 +46,13 @@ use super::bundle_validation::{agent_omission_reason, provenance_subject_key};
 use super::{
     AgentBundleOmission, ArchiveRecordFile, ArchiveRecordKind, ArchiveSideRow,
     BundleOmissionReason, ExportBundleOmission, ExportEdge, ExportEntity, ExportImportRefusal,
-    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
+    ExportRowBirth, VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::agent_def::KnowledgeFormat;
 use crate::claim::{ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::WithheldKey;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBodyFile;
 use crate::skill::SkillRecord;
@@ -279,18 +280,37 @@ pub(crate) fn project_stored_archive(
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
+    // Blind-review P1: one fresh key for every surviving birth this
+    // projection writes. A kept birth naming a dropped row must leave that
+    // ref as a handle, never a raw id, as a fresh export of the kept set
+    // masks it (the transfer and the erase cut share this path).
+    let mut birth_key: Option<WithheldKey> = None;
     let mut bodies = Vec::with_capacity(members.len());
     for (record, rows) in manifest.records.iter_mut().zip(members) {
         let mut body = Vec::new();
         let mut count = 0_u64;
         for (line, fate) in rows {
+            let birth_row = matches!(fate, RowFate::Keep);
             let stays = match fate {
                 RowFate::Keep => true,
                 RowFate::Drop => false,
                 RowFate::ByFiles(files) => files.iter().any(|file| referenced.contains(file)),
             };
             if stays {
-                body.extend_from_slice(&line);
+                if record.kind == ArchiveRecordKind::RowBirth && birth_row {
+                    let key = birth_key.get_or_insert_with(WithheldKey::for_export);
+                    let carried: ExportRowBirth =
+                        serde_json::from_slice(&line).map_err(|_| invalid())?;
+                    let birth = carried.birth.masked(|row| kept.contains(row), key);
+                    let line = serde_json::to_vec(&ExportRowBirth {
+                        id: carried.id,
+                        birth,
+                    })
+                    .map_err(|_| invalid())?;
+                    body.extend_from_slice(&line);
+                } else {
+                    body.extend_from_slice(&line);
+                }
                 body.push(b'\n');
                 count += 1;
             }

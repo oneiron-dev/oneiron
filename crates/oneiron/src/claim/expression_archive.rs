@@ -137,7 +137,14 @@ impl ExpressionPreferenceArchive {
         // selected close. A link whose closed row stands Active (a
         // reciprocal pair, a never-applied edge) restores branching/cyclic
         // history the edge import would then whitelist, so refuse it here.
-        if !links.iter().all(|link| closes.contains(link)) {
+        // Blind-review P1: a link whose closer stands Retracted is a
+        // retained historical edge whose effect the retraction undid, so it
+        // takes no standing effect and is exempt. Cycles and standing
+        // closes still validate on the effective set above and below.
+        if !links.iter().all(|link| {
+            closes.contains(link)
+                || by_id[&link.0].body.lifecycle == ClaimLifecycleStatus::Retracted
+        }) {
             return Err(invalid("supersession link takes no archived effect"));
         }
         // A closer must still be active when its close lands, so a row
