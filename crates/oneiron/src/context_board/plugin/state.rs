@@ -30,6 +30,11 @@ const BLOCK_PAGE_KIND: &str = "context_board.plugin_blocks";
 /// admitted section names sharing a prefix can never collide.
 const PLUGIN_BLOCK: SideTable<BlockKey, BoardBlockRecord, LegacyJson> =
     SideTable::new(&side_table::CONTEXT_BOARD_PLUGIN_BLOCK);
+/// Whether a masked copy of a `CONTEXT_BOARD_PLUGIN_BLOCK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn context_board_plugin_block_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BoardBlockRecord, LegacyJson>(bytes)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BlockKey {
