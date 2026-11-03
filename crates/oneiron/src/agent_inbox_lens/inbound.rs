@@ -5,7 +5,7 @@ use crate::surface_event::{
     SURFACE_EVENT_ATTEMPT_KIND, SurfaceCounterpartyStamp, SurfaceEventAction,
     decode_surface_event_attempt_payload,
 };
-use crate::thread_passport::canonical_message_id;
+use crate::write_envelope::thread_claim::canonical_message_id;
 
 impl Vault {
     pub(super) fn inbound_inbox_items(

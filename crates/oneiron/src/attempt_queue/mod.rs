@@ -24,6 +24,7 @@ mod executor;
 mod fanout_hold;
 mod index;
 mod observe;
+pub mod browser_admission;
 mod payload_erase;
 mod payload_rebind;
 mod ports;

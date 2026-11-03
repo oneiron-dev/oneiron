@@ -20,7 +20,7 @@ use crate::delivery_window::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
-use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
+use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
