@@ -36,8 +36,8 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    LocatedDecision, ModelDecisionProvider, RoutineOutcome, RoutineTrail, cut_text, fit_state,
-    routine_choice,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
+    cut_text, fit_state_with_budget, routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
@@ -336,9 +336,6 @@ fn answer_verdict(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| internal())?;
     let caller_state = request.state.clone().unwrap_or(Value::Null);
-    // One verdict over every evidence ref: a state its fit cannot bring under
-    // the ladder's fit target goes whole at its deepest cut (Rule 5).
-    let (state, cut_at) = verdict_state(&caller_state, &views);
     let images = match (&request.image, held) {
         (Some(handle), Some(held)) => vec![kept(reader, handle, readable(held)?)],
         (Some(handle), None) if handle.starts_with(HELD_PREFIX) => {
@@ -385,6 +382,16 @@ fn answer_verdict(
     dial.first = ladder
         .first_taking(&question, dial, &images)
         .ok_or_else(|| no_rung(&question.contract, !images.is_empty()))?;
+    // Fit for the provider that actually takes the question, when it knows a
+    // truthful serialized-byte budget; every current provider keeps the old
+    // fallback (L06-A 11:41, FIX 11126).
+    let state_budget = ladder
+        .provider(dial.first)
+        .and_then(|provider| provider.state_budget_bytes())
+        .unwrap_or(MAX_DECISION_STATE_BYTES);
+    // One verdict over every evidence ref: a state its fit cannot bring under
+    // the budget goes whole at its deepest cut (Rule 5).
+    let (state, cut_at) = verdict_state(&caller_state, &views, state_budget);
     let failed = |error: oneiron::Error| {
         MemoryError::bad_request_with(
             format!("ai.verdict: {error}"),
@@ -473,14 +480,20 @@ fn answer_verdict(
 }
 
 /// The ladder's state for a verdict, fitted by the engine's own cut step
-/// ([`fit_state`], FIX 1124): the caller's `state` whole, and each evidence
-/// view by its ref and kind, whole, beside its body with every text in it
-/// cut to the same bytes ([`cut_text`]), halving until the whole fits. A cut
+/// ([`fit_state_with_budget`], FIX 1124) to the selected provider's byte
+/// budget, or the existing default when it offers none (FIX 11126): the
+/// caller's `state` whole, and each evidence view by its ref and kind, whole,
+/// beside its body with every text in it cut to the same bytes ([`cut_text`]),
+/// halving until the whole fits. A cut
 /// state says where (`cut_at_bytes`) and each cut view says it is (`cut`),
 /// so a provider knows it reads a cut text; beside it, the cut. A state the
 /// rest does not let fit comes back over the bound at its deepest cut, and
 /// the ladder reads it whole.
-fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u64>) {
+fn verdict_state(
+    caller_state: &Value,
+    views: &[EntityView],
+    budget: usize,
+) -> (Value, Option<u64>) {
     let longest = views
         .iter()
         .filter_map(|view| view.body.as_ref())
@@ -488,7 +501,7 @@ fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u
         .max()
         .unwrap_or(0);
     let chosen = std::cell::Cell::new(None);
-    let state = fit_state(longest, |cut| {
+    let state = fit_state_with_budget(longest, budget, |cut| {
         chosen.set(cut);
         let evidence = views
             .iter()
