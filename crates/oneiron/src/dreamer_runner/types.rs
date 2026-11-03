@@ -695,7 +695,7 @@ impl DreamerParkCause {
     /// for a failure only an owner act clears (the wake driver's owner-act
     /// check names them); and a Retry, resumed after its delay, for any other.
     #[must_use]
-    pub fn of_llm(error: &crate::llm::LlmError) -> Self {
+    pub fn of_llm(error: &oneiron_model::llm::LlmError) -> Self {
         if error.is_provider_unavailable() {
             Self::ProviderUnavailable
         } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
@@ -710,9 +710,9 @@ impl DreamerParkCause {
     /// A fallback for an outage parks as one, so the offer's recovery
     /// resumes it.
     #[must_use]
-    pub fn of_response(response: &crate::llm::LlmResponse) -> Self {
-        crate::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
-            Self::of_llm(&crate::llm::LlmError::Fatal(source))
+    pub fn of_response(response: &oneiron_model::llm::LlmResponse) -> Self {
+        oneiron_model::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
+            Self::of_llm(&oneiron_model::llm::LlmError::Fatal(source))
         })
     }
 
@@ -723,8 +723,8 @@ impl DreamerParkCause {
     /// the wake driver's owner-act checks name); and a Retry, resumed after
     /// its delay, for any other.
     #[must_use]
-    pub fn of_step(error: &crate::llm::DurableStepError) -> Self {
-        use crate::llm::DurableStepError;
+    pub fn of_step(error: &crate::model_step_error::DurableStepError) -> Self {
+        use crate::model_step_error::DurableStepError;
         match error {
             DurableStepError::Llm(source)
             | DurableStepError::ClassifiedLlm { source, .. }

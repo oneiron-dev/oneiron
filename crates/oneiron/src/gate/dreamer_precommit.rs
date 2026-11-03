@@ -39,8 +39,8 @@ pub(super) const DREAMER_DEGENERATE_VALUE_PREFIXES: [&str; 8] = [
 /// cannot silently desync this exemption table from the writers.
 pub(super) const DREAMER_RUNTIME_RECORD_PREDICATES: [&str; 3] = [
     crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_PREDICATE,
-    crate::llm::DREAMER_STEP_PREDICATE,
-    crate::llm::DREAMER_TRAP_PREDICATE,
+    crate::model_step_record::DREAMER_STEP_PREDICATE,
+    crate::model_step_record::DREAMER_TRAP_PREDICATE,
 ];
 
 /// The claim-shaped axes the pre-commit checks read. Borrowed from the

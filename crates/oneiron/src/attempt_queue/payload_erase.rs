@@ -61,10 +61,10 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use oneiron_authority::federation::RepoAccessRefusal;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};
@@ -719,7 +719,7 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;
     }
-    if record.kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND {
+    if record.kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND {
         // Its reason copies the step's failure text; an erased owner's
         // copy becomes the marker, as the pass leaves it (FIX 10460).
         model_step::scrub_erased_failure_reason_in_txn(store, txn, record);

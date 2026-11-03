@@ -7,8 +7,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::SharedVaultWrite;
-use oneiron_authority::federation::Scope;
 use crate::write_envelope::WriteActor;
+use oneiron_authority::federation::Scope;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The semantic change to one content owner; indexes and receipts follow its

@@ -4,7 +4,7 @@ use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
-use crate::llm::{
+use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
 };
@@ -505,7 +505,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(crate) connector_class_precedence: ConnectorClassPrecedence,
-    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(super) slide_review_policy: crate::model_decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
         Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }

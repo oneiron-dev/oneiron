@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use super::retention::Ledger;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::llm::VaultRef;
+use oneiron_model::llm::VaultRef;
 
 pub use crate::store::snapshot_lock_result::LOCK_RELEASE_MARGIN;
 
