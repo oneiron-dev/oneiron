@@ -173,8 +173,9 @@ pub(super) fn resolved_successor(
         return Err(invalid("proposal already consumed"));
     }
     // A critic erasure committing between the first read and this writer must not
-    // ride into the successor as erased refs again: refuse on any critique change.
-    if original.critiques != row.critiques {
+    // ride into the successor as erased refs again: the successor clones both
+    // critique collections, so refuse when either changed.
+    if original.critiques != row.critiques || original.policy_critiques != row.policy_critiques {
         return Err(invalid(
             "proposal critiques changed while resolving handles; submit a fresh proposal",
         ));
