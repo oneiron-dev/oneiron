@@ -39,6 +39,7 @@ pub use critical_confirm::{
 };
 mod birth_position;
 mod booking;
+pub mod browser_capture;
 mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
@@ -130,6 +131,7 @@ mod subscriptions;
 mod support;
 mod transcript;
 pub mod usage_repair;
+pub mod web_acquisition;
 mod web_fetch;
 mod witness;
 

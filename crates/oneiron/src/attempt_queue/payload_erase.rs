@@ -49,7 +49,8 @@ use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
     decode_agent_dispatch_input, record_dispatch_input,
 };
-use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
+use crate::browser_library::{admission_payload_actor};
+use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
 use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use crate::dispatch_byoa::{
     BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,

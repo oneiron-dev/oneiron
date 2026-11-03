@@ -596,12 +596,11 @@ pub use crate::vault_cleanup::{
     is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
     set_cleanup_posture, zero_live_members,
 };
+pub use crate::memory::web_acquisition::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, MinExtractedContentBytes, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
+};
 pub use crate::web_fetch::{
-    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
-    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, FirecrawlRenderer, HeadlessDocument,
-    HeadlessRenderer, MinExtractedContentBytes, NativeHeadlessRenderer, NativeReadabilityRenderer,
-    RenderedPage, Renderer, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind,
-    RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult, WebFetcher,
+    FirecrawlRenderer, HeadlessDocument, HeadlessRenderer, NativeHeadlessRenderer, NativeReadabilityRenderer, RenderedPage, Renderer, WebFetcher,
 };
 
 pub use crate::wave_orchestration::{

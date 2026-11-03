@@ -14,7 +14,8 @@ use crate::limit_ask::EngineLimit;
 use crate::llm::manifest::read_manifest;
 use crate::llm::registry::ModelRegistryRow;
 use crate::side_table::{self, Named, SideTable};
-use crate::training_pack::{ComputeChoice, TrainingRun};
+use crate::training_pack::{TrainingRun};
+use crate::skill_optimize::training_choice::ComputeChoice;
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 const CANDIDATES: SideTable<EntityId, OfferCandidateRecord, Named> =
