@@ -261,6 +261,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
         AuthorityOp::OwnerWorkCancel(cancel) => super::owner_work::owner_work_cancel_value(cancel),
+        AuthorityOp::ExportSupplementImported(mark) => {
+            super::owner_work::export_supplement_imported_value(mark)
+        }
         AuthorityOp::CustodyPermitPiece(piece) => {
             super::owner_work::custody_permit_piece_value(piece)
         }
