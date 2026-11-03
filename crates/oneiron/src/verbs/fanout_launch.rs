@@ -132,6 +132,7 @@ pub fn resume_fanout_launch_as(
             launch_choice(input.ruling),
             owner,
             input.remembered_cap,
+            memory.kept_requester().cloned(),
         )?
         .into())
 }
@@ -159,6 +160,7 @@ pub fn resume_fanout_launch_as_holder(
             launch_choice(input.ruling),
             holder,
             input.remembered_cap,
+            memory.kept_requester().cloned(),
         )?
         .into())
 }

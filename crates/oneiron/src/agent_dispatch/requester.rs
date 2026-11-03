@@ -4,8 +4,9 @@
 //! does: the slip, an ask guest's admitted grant (FIX 11688), or a managed
 //! vault's attested owner. A child with none of its own keeps its parent's,
 //! and a retry keeps the payload it clones. A held request released later
-//! keeps the requester it was admitted under (FIX 11691). The in-process
-//! host's own work, and maintenance, keeps none and runs as before.
+//! keeps the requester it was admitted under, unless the resuming surface
+//! carries a kept requester; then that resumer stamps the release (FIX 11691).
+//! The in-process host's own work, and maintenance, keeps none and runs as before.
 //!
 //! Each agent pump checks it again in the write it would claim the try in.
 //! Only a positive withdrawal ends the work: the slip, or an ancestor,
