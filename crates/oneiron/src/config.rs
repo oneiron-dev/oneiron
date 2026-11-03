@@ -1,6 +1,7 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
 pub mod failure_signals;
+pub mod retrieval_affect;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -356,7 +357,7 @@ pub struct VaultConfig {
     /// Affect-weighted retrieval availability (OF-423): arousal-stretched
     /// aging, the critical/aroused sensitivity floor and emotion congruence.
     /// Every dial defaults off; validated when a run starts.
-    pub affect_retrieval: crate::pipeline::AffectRetrievalPolicy,
+    pub affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy,
     /// Default-off community prior for Uniform (`expand_ppr`) retrieval only.
     pub ppr_community: PprCommunityConfig,
     /// Capture retrieval-run telemetry for ordinary searches. Disabled by default;
@@ -677,7 +678,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
-            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
+            affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 1024,
@@ -711,7 +712,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
-            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
+            affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 4096,

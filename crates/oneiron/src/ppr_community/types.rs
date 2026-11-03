@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::{DecodedEdgeValue, EdgeKind};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 pub const PPR_COMMUNITY_SCHEMA_VERSION: u8 = 0;
 

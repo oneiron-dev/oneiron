@@ -6,7 +6,8 @@ use crate::deletion::HydratedShortIdDeletion;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ports::EntityStoreRead;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};

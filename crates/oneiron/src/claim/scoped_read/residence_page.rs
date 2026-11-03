@@ -6,7 +6,9 @@
 //! fixed second, so every page of one search ranks the same list.
 
 use super::*;
-use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
+use crate::pipeline::FacetMode;
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::pipeline::WorldScope;
 use crate::sync::residence::ResolvedRecallSelection;
 
 impl ScopedRead<'_> {

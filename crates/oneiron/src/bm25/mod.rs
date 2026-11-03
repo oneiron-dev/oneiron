@@ -63,7 +63,7 @@ use self::query::{
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
 pub(crate) use scoped::{
