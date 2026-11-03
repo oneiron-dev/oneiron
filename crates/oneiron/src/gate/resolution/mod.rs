@@ -21,10 +21,10 @@ pub(super) use self::manifest_types::CommOptOutPosture;
 pub(in crate::gate) use self::manifest_types::TeacherProbeRow;
 pub(crate) use self::manifest_types::{
     AttributionLimits, ConnectorClassPrecedence, CredentialLifetimePolicy,
-    CredentialLifetimePrecedence, DEFAULT_ATTRIBUTION_REASON_MAX_BYTES,
-    DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS, GateDecisionRetentionPolicy, GateRetentionContext,
-    GateRetentionOverrideCeiling, GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
-    LeaderChatDefault, PolicyManifestResolution, ProjectCollaborationPolicy,
-    ProjectWidenAskFallback, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
+    CredentialLifetimePrecedence, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
+    GateDecisionRetentionPolicy, GateRetentionContext, GateRetentionOverrideCeiling,
+    GateRetentionPrecedence, GateRetentionRow, GateRetentionScope, LeaderChatDefault,
+    PolicyManifestResolution, ProjectCollaborationPolicy, ProjectWidenAskFallback,
+    ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
     ResidenceOperationBudgetRow, SheetAnswerLimitRow, SheetAnswerPrecedence,
 };

@@ -141,6 +141,12 @@ pub struct WitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Write marker for the witnessed turn.
     pub receipt_ref: String,
+    /// The TURN as a typed record ref (OF-063): the generated facade record.
+    /// None for an off-record witness.
+    pub turn: Option<crate::RecordRef>,
+    /// The written MESSAGEs as typed record refs, in input order: the
+    /// generated facade records. Empty for an off-record witness.
+    pub messages: Vec<crate::RecordRef>,
     /// What the wake this turn owes its actor's armed programs came to
     /// (FIX 9970); absent when the turn owes none.
     #[uniffi(default = None)]
@@ -222,6 +228,12 @@ pub struct CommitReceipt {
     pub superseded_short_id: Option<String>,
     /// Gate decision ref, resolvable through `vault.receipts`.
     pub receipt_ref: String,
+    /// The written claim as a typed record ref (OF-063): the generated
+    /// facade record.
+    pub claim: Option<crate::RecordRef>,
+    /// The superseded claim as a typed record ref, if any: the generated
+    /// facade record.
+    pub superseded: Option<crate::RecordRef>,
 }
 
 /// What became of one element of a per-element claim batch (`vault.commit`,
@@ -486,6 +498,9 @@ pub struct EntityRefReceipt {
     pub id_hex: String,
     /// Write marker.
     pub receipt_ref: String,
+    /// The written entity as a typed record ref (OF-063): the generated
+    /// facade record.
+    pub record: Option<crate::RecordRef>,
 }
 
 /// One lexical hit, carrying engine index scores verbatim.
@@ -712,6 +727,9 @@ pub struct RecallScope {
     /// Registry kinds to return; unset returns every kind but
     /// conversations, sessions, facets and worlds.
     pub kinds: Option<Vec<String>>,
+    /// Project audience ids. Omitted or empty adds no narrowing to what the
+    /// caller may read.
+    pub project_refs: Option<Vec<String>>,
     /// Conversation entity refs. Empty adds no narrowing; with `person_ref`,
     /// only conversations selected by both axes remain.
     pub conversation_refs: Option<Vec<String>>,
