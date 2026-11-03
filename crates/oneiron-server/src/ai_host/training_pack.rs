@@ -51,9 +51,9 @@ const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 /// served against the returned checkpoint, and records nothing itself.
 type TrainingEvaluator = Box<dyn Fn(&TrainingEvalInput) -> oneiron::Result<HeldOutResult>>;
 
-/// Trains or scores the run one leased `coach.training_run` attempt names.
-/// A run that moved on, or whose spec is not the one its owner authorized,
-/// leaves nothing to do.
+/// Trains, recovers or scores the run one leased `coach.training_run`
+/// attempt names. A run that moved on, or whose spec is not the one its
+/// owner authorized, leaves nothing to do.
 pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
@@ -64,6 +64,8 @@ pub(super) fn run(
     };
     if run.state == TrainingState::Authorized {
         train(server, &run, now)
+    } else if run.state == TrainingState::Running {
+        recover(server, &run)
     } else {
         evaluate(server, &run, now)
     }
@@ -200,6 +202,47 @@ fn dispatch(
         {
             tracing::warn!(kind = ?error.kind(), "a refused training run kept no hold");
         }
+    }
+}
+
+/// Recovers a Running run whose waiter was lost: polls its trainer for a
+/// terminal receipt and completes it, or leaves it Running. A missing
+/// trainer, binding or admission stays Running without a new hold (a Running
+/// run does not await the host); a still-outstanding job polls None and is a
+/// no-op. `ConnectorFailed` stays terminal.
+fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
+    if trainer_binding(server, &run.compute.connector).is_none() {
+        return Ok(());
+    }
+    let Some(connector) = training_connector(server, run) else {
+        return Ok(());
+    };
+    let Ok(declaration) = training_declaration(run) else {
+        return Ok(());
+    };
+    let admission = server
+        .ai
+        .declared_run(run.admission_ref(), declaration, None)
+        .admission()
+        .clone();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return Err(Error::InvalidConfig(
+                "the training run's runtime did not start".into(),
+            ));
+        }
+    };
+    let output = runtime.block_on(connector.poll(&run.id, &run.spec_blake3))?;
+    match output {
+        Some(output) => {
+            server.vault().complete_training_pack(&admission, output)?;
+            Ok(())
+        }
+        None => Ok(()),
     }
 }
 

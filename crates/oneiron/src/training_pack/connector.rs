@@ -57,6 +57,10 @@ pub struct TrainOutput {
 
 pub type TrainingFuture<'a> = Pin<Box<dyn Future<Output = Result<TrainOutput>> + Send + 'a>>;
 
+/// A status read: the completed output when the job's terminal receipt is
+/// present, or `None` while it is unknown or still running.
+pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<Option<TrainOutput>>> + Send + 'a>>;
+
 /// A host adapter may wait hours. It uses (run, spec_blake3) as the provider's
 /// idempotency key and uses this admission for any teacher calls. Only training
 /// rows are passed; sealed rows are not part of the connector request. The host
@@ -67,6 +71,15 @@ pub trait TrainingConnector: Send + Sync {
         request: TrainRequest,
         admission: &'a RunAdmission,
     ) -> TrainingFuture<'a>;
+
+    /// A read-only status check by the provider's idempotency key: the
+    /// completed output when the job already reached its terminal receipt,
+    /// or `None` when the job is unknown or still running. Poll never
+    /// starts work and never synthesizes an error for a missing receipt.
+    fn poll<'a>(&'a self, run: &EntityId, spec_blake3: &[u8; 32]) -> PollFuture<'a> {
+        let _ = (run, spec_blake3);
+        Box::pin(async { Ok(None) })
+    }
 }
 
 impl TrainingPlan {

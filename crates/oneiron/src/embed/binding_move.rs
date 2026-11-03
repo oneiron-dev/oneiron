@@ -383,8 +383,13 @@ pub(crate) fn move_undone_in_txn(
         owner: SwitchOwner::Actor(actor),
     };
     BINDING_MOVE.put(&vault.store, wtxn, &pending.source.id(), &pending)?;
-    if let BindingSource::Offer { offer, .. } = &pending.source {
-        crate::skill_optimize::undo_staged_switch_in_txn(vault, wtxn, offer, actor, at)?;
+    match &pending.source {
+        BindingSource::Offer { offer, .. } => {
+            crate::skill_optimize::undo_staged_switch_in_txn(vault, wtxn, offer, actor, at)?;
+        }
+        BindingSource::Training { receipt } => {
+            crate::training_pack::undo_training_role_swap_in_txn(vault, wtxn, &receipt.run)?;
+        }
     }
     Ok(())
 }
@@ -455,6 +460,9 @@ pub(crate) fn undo_staged_binding_in_txn(
         }
     };
     BINDING_MOVE.put(&vault.store, wtxn, source, &pending)?;
+    if applied && let BindingSource::Training { receipt } = &pending.source {
+        crate::training_pack::undo_training_role_swap_in_txn(vault, wtxn, &receipt.run)?;
+    }
     let setup = match &pending.link {
         Some(link) => move_back_in_txn(vault, wtxn, link, applied)?,
         None => BTreeSet::new(),

@@ -1,5 +1,5 @@
 //! Pins and receipts shared by the training pack and its host adapters.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -204,6 +204,7 @@ pub struct TrainingDispatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingTeachersPin {
     pub models: Vec<ModelId>,
+    pub aliases: BTreeMap<String, ModelId>,
     pub target: String,
     pub purpose: String,
 }
@@ -214,6 +215,8 @@ pub struct TrainingTeachersPin {
 pub struct TrainingDeclarationPin {
     pub teachers: Option<TrainingTeachersPin>,
     pub budget: BudgetLine,
+    pub connectors: BTreeSet<String>,
+    pub custody_overrides: BTreeSet<String>,
 }
 
 /// Where an authorization came from: the owner's own door, or their yes on

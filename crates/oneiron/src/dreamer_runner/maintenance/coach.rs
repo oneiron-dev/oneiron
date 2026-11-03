@@ -426,7 +426,9 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
-        crate::task_verb::issue_training_offer_asks(self, now);
+        if training_offers_at_home(self)? {
+            crate::task_verb::issue_training_offer_asks(self, now);
+        }
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
@@ -645,6 +647,18 @@ fn notify_offer_in_txn(
     Ok(())
 }
 
+/// Whether this device should issue training-offer and swap questions. Before
+/// the first home election every device keeps today's behavior; afterwards
+/// only the elected home asks, while every device keeps its idempotent upkeep.
+fn training_offers_at_home(vault: &Vault) -> Result<bool> {
+    let store = DreamerRunnerStore::new(vault);
+    let Some(home) = store.home_node_designation()? else {
+        return Ok(true);
+    };
+    let local = store.local_home_node_candidate(true, true, false)?;
+    Ok(home.node_id == local.node_id)
+}
+
 /// The nightly offer pass. Each pending offer reaches every owner's inbox as
 /// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
 /// nothing twice and the owner's seen and acked marks stay theirs. Each
@@ -663,6 +677,7 @@ pub(super) fn run_training_offers(
     let parent = Some(attempt.status.attempt.id);
     let run_id = attempt.status.attempt.run_id.as_deref();
     vault.requeue_authorized_training_runs(parent, run_id, now)?;
+    vault.requeue_running_training_runs(parent, run_id, now)?;
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
     for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
@@ -698,8 +713,10 @@ pub(super) fn run_training_offers(
         }
         Ok(())
     })?;
-    crate::task_verb::issue_training_offer_asks(vault, now);
-    crate::task_verb::issue_training_swap_asks(vault, now);
+    if training_offers_at_home(vault)? {
+        crate::task_verb::issue_training_offer_asks(vault, now);
+        crate::task_verb::issue_training_swap_asks(vault, now);
+    }
     Ok(())
 }
 

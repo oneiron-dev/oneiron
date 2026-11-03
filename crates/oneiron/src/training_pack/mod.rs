@@ -24,12 +24,13 @@ pub(crate) use actor_erase::{
     erase_role_actor_in_txn, erase_run_id_in_txn, erase_swap_actor_in_txn,
 };
 pub(crate) use authorize::training_run_job_input;
-pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
+pub use connector::{PollFuture, TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
 pub use custody::stream::{CheckpointFileStream, CheckpointStream};
 pub use detector_corpus::DetectorCorpusRef;
 pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
+    undo_training_role_swap_in_txn,
 };
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
 pub use types::*;
