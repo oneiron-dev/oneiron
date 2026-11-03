@@ -109,6 +109,13 @@ impl Vault {
         Self::open_leased(&canonical, config, lease)
     }
 
+    /// This vault's own directory on this host, as it was opened
+    /// (canonical). A folder read uses it to pass over the vault itself
+    /// (FIX 10249).
+    pub fn path(&self) -> &Path {
+        self.store.env.path()
+    }
+
     /// [`Self::open_owned`] on `directory`, a vault root the caller already
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a

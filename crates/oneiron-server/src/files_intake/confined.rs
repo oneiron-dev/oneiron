@@ -227,6 +227,7 @@ pub(crate) fn walk(
     let mut skips = Skips {
         excluded: &nothing_excluded,
         unopened: &mut nothing_unopened,
+        unopened_dir: &mut nothing_unopened,
     };
     walk_below(
         dir.try_clone()?,
@@ -239,10 +240,11 @@ pub(crate) fn walk(
 }
 
 /// What a walk passes over before it opens it, and whom it names a file
-/// that does not open to.
+/// or folder that does not open to.
 struct Skips<'a> {
     excluded: &'a dyn Fn(&Path) -> bool,
     unopened: &'a mut dyn FnMut(&Path),
+    unopened_dir: &'a mut dyn FnMut(&Path),
 }
 
 /// A walk that excludes nothing beyond its own profile.
@@ -258,15 +260,22 @@ fn nothing_unopened(_: &Path) {}
 /// hidden ones too: the path shown, and the file. An entry `excluded` names
 /// by its shown path is passed over before it is opened, a folder before
 /// anything under it is listed. A file that does not open (no read
-/// permission) is named to `unopened` and the walk goes on.
+/// permission) is named to `unopened` and the walk goes on; a folder that
+/// does not open or list is named to `unopened_dir` the same way, so one
+/// unreadable folder never fails the whole read (FIX 10246).
 pub(crate) fn walk_files(
     root: &Path,
     excluded: &dyn Fn(&Path) -> bool,
     unopened: &mut dyn FnMut(&Path),
+    unopened_dir: &mut dyn FnMut(&Path),
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = FILES.entries;
-    let mut skips = Skips { excluded, unopened };
+    let mut skips = Skips {
+        excluded,
+        unopened,
+        unopened_dir,
+    };
     walk_below(open_root(root)?, root, FILES, &mut skips, &mut left, visit)
 }
 
@@ -365,14 +374,27 @@ impl Traversal {
         // A symbolic link is neither a folder nor a file here.
         match kind(&folder.dir, &name, listed)? {
             FileType::Directory => {
-                let child = openat(&folder.dir, name.as_os_str(), directory_flags(), Mode::empty())
+                let opened = openat(&folder.dir, name.as_os_str(), directory_flags(), Mode::empty())
                     .map_err(|error| {
                         anyhow::anyhow!(
                             "{} changed while it was being read; nothing under it was imported ({error})",
                             path.display()
                         )
-                    })?;
-                self.enter(child, path, wanted, left)?;
+                    })
+                    .and_then(|child| self.enter(child, path.clone(), wanted, left));
+                match opened {
+                    Ok(()) => {}
+                    // A Files walk names a folder that does not open and
+                    // goes on (FIX 10246); a refusal of the whole walk (its
+                    // entry budget) still refuses, and any other walk
+                    // refuses as before.
+                    Err(error)
+                        if wanted.every_file && error.downcast_ref::<WalkRefused>().is_none() =>
+                    {
+                        (skips.unopened_dir)(&path);
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             FileType::RegularFile if wanted.visits(&name) => {
                 match open_file(&folder.dir, &name, &path) {

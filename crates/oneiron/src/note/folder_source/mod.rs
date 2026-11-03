@@ -231,9 +231,11 @@ pub struct FolderRescanReport {
     pub removed: usize,
     /// Files a Files source now holds by name only, new or changed.
     pub name_only: usize,
-    /// Files the write door refused; a later rescan tries them again.
+    /// Files the write door refused and folders that would not open (FIX
+    /// 10246); a later rescan tries them again.
     pub failed: usize,
-    /// Why the first of them was refused.
+    /// Why the first of them was refused, or the first folder that would
+    /// not open.
     pub first_error: Option<String>,
 }
 

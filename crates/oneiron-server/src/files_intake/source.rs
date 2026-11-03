@@ -178,8 +178,8 @@ pub(crate) fn rescan(
     let ledger = vault.folder_source_files(&source.folder)?;
     let prior = prior_files(&ledger);
     let prior = RESCAN_MTIME_SHORTCUT.then_some(&prior);
-    let (mut notes, mut name_only, mut facts, mut skipped) =
-        read_for_rescan(source, folder, &mut counts, prior)?;
+    let (mut notes, mut name_only, mut facts, mut skipped, mut unopened_dirs, mut vault_covers) =
+        read_for_rescan(source, folder, &mut counts, prior, Some(vault.path()))?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
     // A new note's inbound links, and a changed note's outbound ones, come
     // from the whole folder, skipped files included: with a new or changed
@@ -194,7 +194,14 @@ pub(crate) fn rescan(
         })
     {
         counts = NoteCounts::default();
-        (notes, name_only, facts, skipped) = read_for_rescan(source, folder, &mut counts, None)?;
+        (
+            notes,
+            name_only,
+            facts,
+            skipped,
+            unopened_dirs,
+            vault_covers,
+        ) = read_for_rescan(source, folder, &mut counts, None, Some(vault.path()))?;
         standings = standings_of(vault, &namespace, &notes)?;
     }
     let mut warnings = crossed_rows(vault, &counts);
@@ -208,17 +215,29 @@ pub(crate) fn rescan(
         .chain(name_only.iter().map(|file| file.path.as_str()))
         .collect::<HashSet<_>>();
     // Only a file that is gone retracts: one the read passed over (blank,
-    // hard-linked, unreadable) is still there. A continuation part names its
+    // hard-linked, unreadable) is still there, and so is one under a folder
+    // that would not open this scan (FIX 10246): its children could not be
+    // listed, so nothing under it is missing. A continuation part names its
     // file in its path; it retracts too when that file was read and its text
     // no longer reaches the part.
+    let unopened_prefixes: Vec<String> =
+        unopened_dirs.iter().map(|dir| format!("{dir}/")).collect();
+    let under_unopened = |path: &str| {
+        unopened_dirs.iter().any(|dir| path == dir)
+            || unopened_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+    };
     let missing = ledger
         .iter()
         .filter(|file| file.state != FolderFileState::Retracted)
         .filter(|file| !seen.contains(file.path.as_str()))
+        .filter(|file| !under_unopened(&file.path))
         .filter(|file| {
             let read_from = file_of(&file.path, mark);
-            (read_from != file.path && seen.contains(read_from))
-                || std::fs::symlink_metadata(folder.join(read_from)).is_err()
+            !under_unopened(read_from)
+                && ((read_from != file.path && seen.contains(read_from))
+                    || std::fs::symlink_metadata(folder.join(read_from)).is_err())
         })
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
@@ -302,6 +321,26 @@ pub(crate) fn rescan(
     // Skipped files keep what the ledger holds: each counts as unchanged,
     // as the reconcile counts the files it read and found the same.
     report.unchanged += skipped.len();
+    // The vault's own folder attached as its source reads nothing, and
+    // says so rather than reporting an empty success (FIX 10249).
+    if vault_covers {
+        report.failed += 1;
+        report.first_error.get_or_insert_with(|| {
+            "the folder is the vault's own folder; the vault never reads itself".to_owned()
+        });
+    }
+    // A folder that would not open is said with the files the write door
+    // refused: a later rescan tries it again (FIX 10246).
+    if !unopened_dirs.is_empty() {
+        report.failed += unopened_dirs.len();
+        report.first_error.get_or_insert_with(|| {
+            format!(
+                "{} folders would not open: {}",
+                unopened_dirs.len(),
+                unopened_dirs[0]
+            )
+        });
+    }
     // The notes have landed: what keeping their originals meets is said
     // beside the report, never in place of it.
     warnings.extend(keep_originals(
@@ -342,24 +381,46 @@ fn read_for_rescan(
     folder: &Path,
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
+    vault_dir: Option<&Path>,
 ) -> anyhow::Result<(
     Vec<Note>,
     Vec<NameOnlyFile>,
     HashMap<String, FileFacts>,
     Vec<String>,
+    Vec<String>,
+    bool,
 )> {
-    let (mut notes, mut name_only, facts, mut skipped) = match &source.files {
+    let (mut notes, mut name_only, facts, mut skipped, unopened_dirs, vault_covers) = match &source
+        .files
+    {
         Some(files) => {
-            let read = super::files::read_files(folder, &files.exclude, counts, prior)?;
-            (read.notes, read.name_only, read.facts, read.skipped)
+            let read = super::files::read_files(folder, &files.exclude, counts, prior, vault_dir)?;
+            (
+                read.notes,
+                read.name_only,
+                read.facts,
+                read.skipped,
+                read.unopened_dirs,
+                read.vault_covers_folder,
+            )
         }
-        None => read_folder_rescan(folder, counts, prior)?,
+        None => {
+            let (notes, name_only, facts, skipped) = read_folder_rescan(folder, counts, prior)?;
+            (notes, name_only, facts, skipped, Vec::new(), false)
+        }
     };
     // A part goes with its file.
     notes.retain(|note| included(&source.include, note.file()));
     name_only.retain(|file| included(&source.include, &file.path));
     skipped.retain(|path| included(&source.include, path));
-    Ok((notes, name_only, facts, skipped))
+    Ok((
+        notes,
+        name_only,
+        facts,
+        skipped,
+        unopened_dirs,
+        vault_covers,
+    ))
 }
 
 /// What the vault holds of each note read: new, changed or as it was.
