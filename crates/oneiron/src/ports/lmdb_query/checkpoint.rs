@@ -22,7 +22,6 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -37,6 +36,7 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb,
     RowLocator, Unresolved,
 };
+use crate::write_envelope::claim_body::decode_claim_body;
 
 /// The carrier an identity op's row is: its body names the actors it
 /// stamps, and the live erase rewrites it in place (`IDENTITY_OPS`).
@@ -102,7 +102,7 @@ fn is_note(value: &[u8]) -> bool {
 /// response; an origin claim names its actor with no lossless split.
 fn claim_placement(body: &[u8]) -> Placement {
     match decode_claim_body(body, true) {
-        Ok(claim) if claim.predicate == crate::llm::DREAMER_STEP_PREDICATE => {
+        Ok(claim) if claim.predicate == crate::model_step_record::DREAMER_STEP_PREDICATE => {
             Placement::Other(OtherClient::Response)
         }
         Ok(claim) if OriginClaimKind::of(&claim.predicate).is_some() => {

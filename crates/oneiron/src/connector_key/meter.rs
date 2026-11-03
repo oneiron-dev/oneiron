@@ -8,9 +8,9 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
+use oneiron_model::llm::{BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold};
 
 use super::lifecycle::derived_key_catalog_in_txn;
 use super::record::{

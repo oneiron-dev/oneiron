@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use zeroize::Zeroizing;
 
 use super::{Budget, Walked, encode_failed, over_budget, unreadable};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 fn payload(bytes: &[u8], budget: &mut Budget) -> Walked<Zeroizing<Vec<u8>>> {
     let limit = budget.limit();

@@ -19,11 +19,11 @@ use super::{
     push_admission, receive_pack_repo_identity_hex,
 };
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::error::Result;
 use crate::federation::git_push::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::origin::secret_marks::{admitted_marks, record_receive_secret_marks_in_txn};
+use crate::store::code_snapshot::RepoRef;
 
 impl Vault {
     pub(in crate::origin::smart_http) fn record_receive_pack_intent(

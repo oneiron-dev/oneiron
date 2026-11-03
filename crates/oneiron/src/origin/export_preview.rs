@@ -27,15 +27,21 @@ pub use self::types::{
 use self::handles::PreviewIdentity;
 use super::export_input::{ExportGap, ExportPromotion, export_message};
 use super::tree::OriginTreeFile;
-use crate::code_revision::{
-    CodeImportManifest, CodeRevision, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK, manifest_id,
-    materialize_code_revision_tree,
-};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::merge_queue::QueueTestedTarget;
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::{EntityId, Vault};
+use crate::{
+    code_revision::materialize_code_revision_tree,
+    store::{
+        code_import_manifest::CodeImportManifest,
+        code_import_manifest::manifest_id,
+        code_revision_record::{CodeRevision, CodeTreeInventory},
+    },
+};
 
 /// One pinned leaf: its captured identity and its exact raw bytes.
 #[derive(Debug, Clone)]
@@ -550,3 +556,5 @@ fn changed_files(
     }
     files
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

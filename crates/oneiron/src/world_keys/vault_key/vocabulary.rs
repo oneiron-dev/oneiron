@@ -94,8 +94,8 @@ pub enum VaultKeyUnlock<'a> {
     /// and none need be carried (`kit`).
     Kit {
         vault_id: [u8; 32],
-        pieces: &'a [crate::recovery::KitPiece],
-        passphrase: Option<&'a crate::recovery::KitPassphrase>,
+        pieces: &'a [crate::store::recovery_kit::KitPiece],
+        passphrase: Option<&'a crate::store::recovery_kit::KitPassphrase>,
         /// This host's keystore, as a sealed vault's pages unlock on it: the
         /// piece of the kit it keeps for an install a carried device wrap
         /// names joins `pieces`, so the owner gives one piece fewer here (FIX

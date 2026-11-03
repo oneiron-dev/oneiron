@@ -3,7 +3,7 @@ use super::*;
 use crate::WriteActor;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::build_cache::{ActionResult, ArtifactVersionRef, BuildCacheResult};
-use crate::checkout::CheckoutTaskClass;
+use crate::store::checkout_task::CheckoutTaskClass;
 use crate::temporal::TimeRange;
 
 impl Memory<'_> {

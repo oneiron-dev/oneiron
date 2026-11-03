@@ -112,6 +112,24 @@ pub(crate) fn submission_carriage(value: &[u8]) -> ResponseScan {
     })
 }
 
+/// Who owns the submission row at `id`'s copies, read in `txn`: none when
+/// it is gone or does not decode. The queue reads it to take its own copy
+/// of the step's failure text with the submission's (FIX 10460).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn submission_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &AttemptId,
+) -> Result<Vec<EntityId>> {
+    let Some(bytes) = SUBMISSIONS.get_bytes(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(submission_owners(&bytes))
+}
+
 /// Who owns the submission row `value`'s copies: none for a row that does
 /// not decode.
 pub(crate) fn submission_owners(value: &[u8]) -> Vec<EntityId> {

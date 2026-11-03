@@ -91,7 +91,7 @@ pub(crate) use self::step_state::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
-    erase_submissions_in_txn, submission_carriage, submission_owners,
+    erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
 };
 
 #[cfg(test)]

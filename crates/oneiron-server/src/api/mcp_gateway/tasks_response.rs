@@ -727,6 +727,47 @@ async fn mcp_task_row<T: Send + 'static>(
     })
 }
 
+/// Runs blocking row `tool` by `row` on a blocking thread, on the caller's
+/// surface rebuilt there (FIX 9609): an organ call may wait out its whole
+/// deadline, which must never hold an async runtime worker. The row's hooks
+/// stay with its caller. The rows its reads listed come back beside its
+/// result, a refusal's too. The rebuilt surface keeps the row's credential
+/// and write context. Rows needing direct authorship must not take this
+/// hop: the listing's bind is not
+/// re-applied inside (today only `vault.workspace.work_companion.set` and
+/// `tasks.answer`, neither a blocking row).
+async fn mcp_off_runtime_row<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    actor: &McpCallContext,
+    surface: McpRowSurface,
+    row: impl FnOnce(&oneiron::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send + 'static,
+) -> Result<(oneiron::memory::MemoryResult<T>, Vec<oneiron::EntityId>), McpGatewayError> {
+    let (server, actor) = (Arc::clone(server), actor.clone());
+    // A code-mode call writes for the leased run its origin seals, on this
+    // thread too (FIX 10748).
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+    tokio::task::spawn_blocking(move || {
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
+            let memory = surface.memory(&server, &actor, &producers);
+            row(&memory)
+        });
+        (output, producers.take())
+    })
+    .await
+    .map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            format!("{tool} worker ended without a result"),
+        )
+    })
+}
+
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
 /// takes the person's own proof (OF-417), an attendee ask's answer the

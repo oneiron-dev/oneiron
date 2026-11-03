@@ -4,13 +4,13 @@
 //! the step layer's retry authority, budget trap, or the claim trust gate.
 
 use crate::error::{Error, Result};
-use crate::llm::{CallClass, FinishReason, LlmRequest, LlmResponse};
 use crate::side_table::{self, Raw, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
     Vault,
 };
+use oneiron_model::llm::{CallClass, FinishReason, LlmRequest, LlmResponse};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

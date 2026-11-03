@@ -433,10 +433,10 @@ pub(crate) fn erase_connector_reply_results_in_txn(
         let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &artifact)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &artifact, &neighbors)?;
         if graph {
-            crate::ppr::increment_graph_version(store, txn)?;
+            crate::store::graph_version::increment_graph_version(store, txn)?;
         }
         if vector {
-            crate::hnsw::increment_vector_version(store, txn)?;
+            crate::store::vector_index::increment_vector_version(store, txn)?;
         }
     }
     Ok(())

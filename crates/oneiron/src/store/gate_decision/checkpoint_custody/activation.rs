@@ -150,7 +150,7 @@ impl Store {
         expected: Option<&ExpectedPadObjects>,
     ) -> Result<(
         Vec<String>,
-        Vec<crate::world_keys::WorldKeyId>,
+        Vec<oneiron_authority::authority::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
         PadObjectsLanding,
     )> {

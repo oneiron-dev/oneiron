@@ -4,10 +4,10 @@ use super::doc_actor::DocActor;
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::ActorStamp;
-use crate::provenance::made_by::{MadeBy, MadeByClass};
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::ActorStamp;
+use crate::write_envelope::provenance::made_by::{MadeBy, MadeByClass};
 use loro::{
     CommitOptions, ExportMode, Frontiers, LoroDoc, LoroMap, LoroText, LoroValue, ValueOrContainer,
 };
@@ -412,7 +412,7 @@ fn stamp_head(doc: &LoroDoc, stamp: ActorStamp, verb: &str) -> String {
     format!(
         "{STAMP} {verb} actor={}.{} op={:?}",
         stamp.token.to_hex(),
-        crate::edit_distance::actor_class_token(stamp.class),
+        crate::write_envelope::actor_tokens::actor_class_token(stamp.class),
         doc.oplog_vv()
     )
 }
@@ -528,7 +528,7 @@ pub(super) fn parse_stamp(message: Option<&str>) -> Stamped {
 /// space.
 fn stamp_class(tail: &str) -> Option<crate::EdgeActorClass> {
     let class = tail.strip_prefix('.')?.split(' ').next()?;
-    crate::edit_distance::actor_class_from_token(class)
+    crate::write_envelope::actor_tokens::actor_class_from_token(class)
 }
 
 /// `message` cut around its actor token, when it is an engine stamp spelled

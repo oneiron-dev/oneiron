@@ -44,8 +44,8 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::llm::Scope;
 use crate::store::Store;
+use oneiron_model::llm::Scope;
 
 pub(crate) use keyframe::{
     FoldWork, KeyframeCommit, Sizing, commit_keyframe_in_txn, erase_in_txn, fold_groups,
@@ -141,6 +141,12 @@ pub(crate) fn route_in_txn(
     now: u64,
 ) -> Result<bool> {
     let vault = store.vault();
+    // An excluded conversation's span is never framed into the session;
+    // it stays on its own rung, which parks it before any read.
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    if excluded.contains_turn(vault, txn, &span.turn)? {
+        return Ok(false);
+    }
     let policy = policy_in_txn(vault, txn)?;
     let key = session_key()?;
     let mut session = state::open_in_txn(vault, txn, key, &policy.follower_instruction, [0; 32])?;
@@ -328,6 +334,7 @@ fn plan_in_txn(
     let prefix = prefix_bytes(session, log, standing);
     let room = call.sizing.room(prefix);
     let owed = owed_novelty_in_txn(vault, txn)?;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     session
         .state
         .handed
@@ -336,6 +343,11 @@ fn plan_in_txn(
     let mut planned = 0_usize;
     for (span, readable) in owed {
         if !readable || session.state.handed.contains(&span.id) {
+            continue;
+        }
+        // Excluded conversations are never framed or asked; the span
+        // stays owed and queued for if it is un-excluded.
+        if excluded.contains_turn(vault, txn, &span.turn)? {
             continue;
         }
         let framed = log.find(&span).is_some();

@@ -62,7 +62,7 @@ pub(crate) struct RedactionAuditReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) room_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) room_role: Option<crate::conversation::RoomRole>,
+    pub(crate) room_role: Option<crate::store::conversation_body::RoomRole>,
     /// When the erase completed overall, on its final row alone: its sweep,
     /// if it queued one, and every custody retirement it binds had finished
     /// (FIX 5844, C-ERASE-FINAL).
@@ -90,7 +90,7 @@ impl RedactionAuditReceipt {
 #[derive(Debug, Clone)]
 pub(crate) struct RedactionReceiptInput {
     pub actor_principal: Option<EntityId>,
-    pub room_authority: Option<(EntityId, crate::conversation::RoomRole)>,
+    pub room_authority: Option<(EntityId, crate::store::conversation_body::RoomRole)>,
     pub request_id: String,
     pub scope: RedactionScope,
     pub reason: DeleteReason,
@@ -176,7 +176,7 @@ pub(crate) fn encode_redaction_audit_receipt(
     custody_retirements: Vec<String>,
     capture_failures: Vec<CaptureFailure>,
     receipt_id: &EntityId,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     let envelope_learned_at = input.hard_purge_complete_at;
     let receipt = RedactionAuditReceipt {
@@ -214,7 +214,7 @@ pub(super) fn sign_redaction_audit_receipt(
     mut receipt: RedactionAuditReceipt,
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
@@ -234,7 +234,7 @@ fn receipt_attestation(
     body_unsigned: &[u8],
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> BTreeMap<String, String> {
     use ed25519_dalek::Signer;
 

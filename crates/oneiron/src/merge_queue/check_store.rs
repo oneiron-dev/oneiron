@@ -22,14 +22,16 @@ use super::plan::FrozenCheckPlan;
 use super::storage::{BATCHES, check_row_size};
 use super::{CheckPhase, MergeBatch, MergeQueue, MergeQueuePointers, Quarantine};
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt,
+    AttemptId, AttemptQueue, AttemptState, ClaimOutcome, CompleteAttempt, EnqueueOutcome,
+    FailAttempt,
 };
 use crate::consent::QueuedCheckApproval;
 use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::ports::JobQueue;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::{EntityId, Vault};
 
 /// The AttemptQueue kind a queue check's attempt carries.

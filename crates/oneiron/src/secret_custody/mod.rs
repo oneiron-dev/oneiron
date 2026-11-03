@@ -90,14 +90,7 @@ mod use_handle;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
-    pub(super) const PORTABLE_MIN: &str = "secret.custody.floor.portable.min";
-    pub(super) const PORTABLE_MAX: &str = "secret.custody.floor.portable.max";
-    pub(super) const DEVICE_BOUND_MIN: &str = "secret.custody.floor.device_bound.min";
-    pub(super) const DEVICE_BOUND_MAX: &str = "secret.custody.floor.device_bound.max";
-    pub(super) const CROSS_VAULT_MIN: &str = "secret.custody.floor.cross_vault.min";
-    pub(super) const CROSS_VAULT_MAX: &str = "secret.custody.floor.cross_vault.max";
-    pub(super) const ROTATION_MAX_AGE_SECS: &str = "secret.custody.rotation_max_age_secs";
-    pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
+    pub(super) use crate::secret_record::floor_keys::*;
 }
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
