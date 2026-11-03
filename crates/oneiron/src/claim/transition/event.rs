@@ -26,6 +26,9 @@ pub(crate) enum ClaimTransitionKind {
     Decay = 4,
     Weaken = 5,
     Stale = 6,
+    /// A critical confirm left unanswered past its deadline returns the
+    /// claim's approval to a proposal.
+    ConfirmLapse = 7,
 }
 
 impl ClaimTransitionKind {
@@ -38,6 +41,7 @@ impl ClaimTransitionKind {
             4 => Self::Decay,
             5 => Self::Weaken,
             6 => Self::Stale,
+            7 => Self::ConfirmLapse,
             _ => return Err(invalid()),
         })
     }
@@ -102,7 +106,12 @@ fn validate(event: &SignedClaimTransitionEvent) -> Result<()> {
         return Err(invalid());
     }
     match (event.kind, event.delta) {
-        (ClaimTransitionKind::Approve | ClaimTransitionKind::Reject, TransitionDelta::None) => {}
+        (
+            ClaimTransitionKind::Approve
+            | ClaimTransitionKind::Reject
+            | ClaimTransitionKind::ConfirmLapse,
+            TransitionDelta::None,
+        ) => {}
         (
             ClaimTransitionKind::Retract | ClaimTransitionKind::SupersedeClose,
             TransitionDelta::ValidTo(_),

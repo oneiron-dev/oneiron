@@ -16,6 +16,8 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
+mod contact_verdict_index;
+
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
     SideTable::new(&side_table::CONSENT_WIDEN_PROPOSAL);
@@ -677,13 +679,15 @@ impl Vault {
             verdict: verdict.to_owned(),
             decision_id: decision_id.as_bytes(),
         });
-        WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)
+        WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
+        contact_verdict_index::index_settled_offer_in_txn(&self.store, txn, reference, &row)
     }
 
     /// Every contact-disclosure offer settled with `verdict`, read in the
     /// caller's `txn`, beside its proposal reference and in reference order.
-    /// There is no index by verdict, so this scans the table. A row that
-    /// fails validation is skipped: it settles nothing.
+    /// This scans the table; the once lister first tries the (contact,
+    /// verdict) index and falls back here on any doubt. A row that fails
+    /// validation is skipped: it settles nothing.
     pub(super) fn settled_contact_disclosure_offers_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
