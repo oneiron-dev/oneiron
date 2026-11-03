@@ -19,6 +19,7 @@ use oneiron_llm_systemone::{
 use zeroize::Zeroizing;
 
 use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key};
+use super::http::is_cloud_node;
 use crate::config::ServeConfig;
 use crate::config::models::{BrokerConfig, ModelsConfig};
 
@@ -272,6 +273,7 @@ impl SystemOneTransport for SystemOneLeg {
                 url.path().to_owned(),
                 request.headers,
                 request.model,
+                is_cloud_node(),
                 &request.body,
             );
             let mut answer = self

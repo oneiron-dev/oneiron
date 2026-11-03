@@ -1644,7 +1644,7 @@ export type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: str
 /** `oneiron::campaign::surface::actions::CampaignUnsubscribeReceipt` */
 export type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string }
 /** `oneiron::campaign::surface::program::CampaignProgramOutboundSpec` */
-export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean }
+export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean; subject?: string | null }
 /** `oneiron::campaign::surface::program::CampaignProgramStepSpec` */
 export type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null }
 /** `oneiron::campaign::surface::program::CampaignProgramAudienceSpec` */
@@ -7580,25 +7580,25 @@ export type AnsweringAuthority = { kind: "word"; person: BodyActor } | { kind: "
 /** `oneiron::office_body::consent::MemberAnswer` */
 export type MemberAnswer = { by: AnsweringAuthority; caller: BodyActor; head: number[]; fork_head: number[]; landed?: number[] | null; at: number }
 /** `oneiron::office_body::consent::ProposalMember` */
-export type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; origin?: AttemptId | null; verdict: MemberVerdict; answer?: MemberAnswer | null }
+export type ProposalMember = { artifact: EntityId; fork: EntityId; opener: BodyActor; run_root?: EntityId | null; origin?: AttemptId | null; verdict: MemberVerdict; answer?: MemberAnswer | null }
 /** `oneiron::office_body::consent::BundleVerdict` */
 export type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go"
 /** `oneiron::office_body::consent::ProposalSettlement` */
 export type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null }
 /** `oneiron::office_body::consent::ProposalAsk` */
-export type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number }
+export type ProposalAsk = { artifact: EntityId; ask: EntityId; forks: EntityId[]; at: number }
 /** `oneiron::office_body::consent::ProposalAskRefusal` */
-export type ProposalAskRefusal = { forks: EntityId[]; reason: string; at: number }
+export type ProposalAskRefusal = { artifact: EntityId; forks: EntityId[]; reason: string; at: number }
 /** `oneiron::office_body::consent::OfficeBodyProposal` */
-export type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[]; ask_refused?: ProposalAskRefusal | null }
+export type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null; asks?: ProposalAsk[]; ask_refused?: ProposalAskRefusal[] }
 /** `oneiron::office_body::consent::SettleVerdict` */
 export type SettleVerdict = "accept" | "reject"
 /** `oneiron_docedit::live::pptx::ApproveScope` */
 export type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string }
 /** `oneiron::office_body::verbs::OfficeBodyReviewedFork` */
-export type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] }
+export type OfficeBodyReviewedFork = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] }
 /** `oneiron::office_body::verbs::OfficeBodyProposalSettleRequest` */
-export type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null }
+export type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed: OfficeBodyReviewedFork[]; reason?: string | null }
 /** `oneiron::office_body::verbs::OfficeBodyExportVerbRequest` */
 export type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null }
 /** `oneiron::office_body::records::OfficeRecalcZone` */

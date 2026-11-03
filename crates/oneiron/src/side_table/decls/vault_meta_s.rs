@@ -207,7 +207,7 @@ side_tables! {
     /// only relays a caller-encoded `&[u8]` (`crate::receipt::send_receipt_txn`
     /// already ran `rmp_serde::to_vec_named` before calling in); binding it
     /// `Named` here would re-encode already-encoded bytes on every write.
-    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored;
+    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored [accepts: crate::store::send_receipt_summary_accepts_masked];
     /// Connector-send attempt audit row. Key: id16 + bytes32.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
@@ -229,11 +229,11 @@ side_tables! {
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
-    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored;
+    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
-    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named Authored;
+    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named Authored [accepts: crate::settings::customization_settings_accepts_masked];
     /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
     /// auto). Value: the mode's ASCII name. Key: ().
     DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
@@ -241,7 +241,7 @@ side_tables! {
     /// Key: ().
     DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
-    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored;
+    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_curator_rubric_accepts_masked];
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
     DREAMER_HARNESS_THRESHOLDS: VaultMeta b"settings:dreamer:harness:thresholds:v1" LegacyJson;
     /// Owner-set cadence dial for the proactivity digest. Key: ().
@@ -249,13 +249,13 @@ side_tables! {
     /// Owner-confirmed digest policy claim revision. Key: id16, value: hash32.
     DREAMER_PROACTIVITY_CONFIRMED: VaultMeta b"settings:dreamer:proactivity:confirmed:v1:" Raw;
     /// Owner-confirmed presentation row. Key: singleton.
-    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson Authored;
+    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_presentation_accepts_masked];
     /// Owner-set projector surprise policy. Key: ().
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
     /// Owner-set relationship-stewardship rules. Key: ().
-    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson Authored;
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_stewardship_rules_accepts_masked];
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -266,7 +266,7 @@ side_tables! {
     /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
     /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
     /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
-    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored;
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored [accepts: crate::settings::model_owner_fallback_accepts_masked];
     /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
