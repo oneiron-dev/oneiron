@@ -19,17 +19,16 @@ use crate::dreamer_runner::{
     DreamerParkCause, DreamerRunnerStore,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::{ call_as_step_checked,
-};
-use oneiron_model::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
-};
+use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
+};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

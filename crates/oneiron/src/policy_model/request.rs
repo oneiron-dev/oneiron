@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use oneiron_model::llm::SafeguardModelBinding;
 use crate::store::GateSystemNoticeAction;
+use oneiron_model::llm::SafeguardModelBinding;
 
 use super::planes::PolicyPlane;
 

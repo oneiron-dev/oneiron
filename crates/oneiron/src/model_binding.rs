@@ -1,8 +1,8 @@
 //! Model-role bindings and calibrated verdict values.
 
-use oneiron_model::llm::{ModelId, ModelLocality, ModelTierRef};
 use crate::claim::{ConfidenceBand, VerdictBasis};
 use crate::error::{Error, Result};
+use oneiron_model::llm::{ModelId, ModelLocality, ModelTierRef};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

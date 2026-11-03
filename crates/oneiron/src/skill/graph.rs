@@ -4,8 +4,7 @@ use super::SkillRole;
 use crate::attempt_queue::AttemptRecord;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer,
-    run_graph_question_with_proposals,
+    AnswerRecord, GraphAnswerer, run_graph_question_with_proposals,
 };
 use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};
 use crate::{EntityId, Vault, WriteActor};

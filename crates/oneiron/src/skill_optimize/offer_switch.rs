@@ -16,12 +16,12 @@ use super::{EvalSeat, OfferModelPin};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::names_no_actor;
 use crate::embed::{BindingMoveState, BindingNotApplied, BindingSource};
-use oneiron_model::llm::LlmCapability;
-use crate::llm::manifest::{ read_manifest};
+use crate::llm::manifest::read_manifest;
 use crate::model_binding::{MODEL_ROLES, ModelBinding, ModelRole};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelId;
 
 /// The switch one offer's approval applied, keyed by offer id.

@@ -28,22 +28,19 @@ use crate::dreamer_wake::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::TypeRef;
-use crate::model_binding::ModelRole;
-use crate::llm::{
-    call_as_step_checked,
-};
 use crate::inference_context::HostInferenceContext;
-use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
-    TierPrecedence,
-};
+use crate::learning::TypeRef;
+use crate::llm::call_as_step_checked;
+use crate::model_binding::ModelRole;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::self_heal::audit::AttemptConfession;
 use crate::task_verb::QueueTaskBrief;
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 use std::collections::BTreeMap;
 
 mod landing;

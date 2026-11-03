@@ -29,9 +29,9 @@ use super::{TURNS, invalid};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::error::{Error, Result};
-use crate::run_budget::DeclaredMaximum;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::run_budget::DeclaredMaximum;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::{

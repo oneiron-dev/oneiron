@@ -28,17 +28,16 @@ use crate::dreamer_wake::{
 };
 use crate::error::{Error, Result};
 use crate::human_task::{OpenAskFollowup, OpenHumanAskKind};
-use crate::llm::{ call_as_step,
-};
-use oneiron_model::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelTierRef, ResponseFormat, TierPrecedence,
-};
+use crate::llm::call_as_step;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::receipt::ReceiptQuery;
 use crate::{
     ClaimApprovalStatus, ClaimListFilter, ClaimView, EdgeActorClass, EntityId, Vault, WriteActor,
+};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
 /// The share of the window its records may fill; the rest is the reply's.

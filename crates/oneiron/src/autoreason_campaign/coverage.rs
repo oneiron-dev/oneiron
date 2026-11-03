@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::llm::decision::{ TypedDecision};
+use crate::llm::decision::TypedDecision;
 use crate::model_decision::DecisionQuestion;
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,

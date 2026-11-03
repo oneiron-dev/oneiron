@@ -28,9 +28,9 @@ use crate::attempt_queue::{AttemptId, AttemptResultRef, AttemptState};
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::{ settled_step_for_caller};
-use crate::model_step_record::CallerSettledStep;
+use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::model_step_record::CallerSettledStep;
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 use crate::{EdgeActorClass, Vault};
 

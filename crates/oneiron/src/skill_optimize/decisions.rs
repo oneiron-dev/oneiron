@@ -4,9 +4,8 @@
 use std::collections::BTreeMap;
 
 use crate::entity_id::bytes_to_hex_lower;
+use crate::llm::decision::{DecisionLadder, TypedDecision};
 use crate::model_decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
-use crate::llm::decision::{ DecisionLadder, TypedDecision,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
     Reversibility, StateCut, cut_text, fit_reserve_state, fit_state,

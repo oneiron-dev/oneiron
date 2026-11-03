@@ -11,8 +11,8 @@ use crate::dreamer_consolidation::evidence::{
 use crate::dreamer_consolidation::stage_log::LandingTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
-use oneiron_model::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
+use oneiron_model::llm::Scope;
 use std::collections::BTreeMap;
 
 pub struct ScopedConsolidationWrite {

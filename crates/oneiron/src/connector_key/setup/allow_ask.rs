@@ -11,8 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::llm::decision::{ AskTo, HumanDecisionRequest,
-};
+use crate::llm::decision::{AskTo, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
     ProviderPin,

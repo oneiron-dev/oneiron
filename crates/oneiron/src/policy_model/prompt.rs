@@ -21,9 +21,7 @@
 //! written down here because the person who writes the document is the person
 //! whose classifier quality depends on it.
 
-use std::collections::{
-    BTreeMap, BTreeSet,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value as JsonValue, json};
 

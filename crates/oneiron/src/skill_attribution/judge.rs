@@ -8,11 +8,8 @@ use serde_json::{Value, json};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_model::llm::CallPurpose;
+use crate::llm::decision::{DecisionCall, DecisionLadder, DecisionProvider, TypedDecision};
 use crate::model_decision::catalogue::ATTRIBUTION_HUNK;
-use crate::llm::decision::{ DecisionCall,
-    DecisionLadder, DecisionProvider, TypedDecision,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
     DecisionQuestion, DecisionRung, MAX_DECISION_STATE_BYTES, ProviderDecision, ProviderPin,
@@ -20,6 +17,7 @@ use crate::model_decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill_optimize::union_source_rows;
+use oneiron_model::llm::CallPurpose;
 
 use super::calibration::{AuditAnswerSource, RawAnswer};
 use super::types::{

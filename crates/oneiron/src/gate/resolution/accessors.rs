@@ -9,8 +9,8 @@ use crate::EntityId;
 
 use crate::error::Result;
 use crate::gate::hosted_tts_policy::HostedTtsLimits;
-use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 #[cfg(feature = "sync")]
@@ -497,7 +497,8 @@ impl PolicyManifestResolution {
             .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
             .unwrap_or(vault_min)
             .max(vault_min);
-        crate::teacher_probe_policy::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
+        crate::teacher_probe_policy::TeacherProbePolicy::resolved(vault_min, effective, holder_ref)
+            .ok()
     }
 
     /// Conversion UI/notification choices from trusted, resolved manifest

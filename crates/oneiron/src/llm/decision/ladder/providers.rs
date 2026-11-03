@@ -258,6 +258,6 @@ impl DecisionProvider for ModelDecisionProvider {
 }
 
 pub use crate::model_decision::{
-    MAX_DECISION_STATE_BYTES, MAX_SCORE_LEVEL_BYTES, SCORE_LEVELS_FIELD,
-    PairedAnswer, ProviderCapability, ProviderDecision, level_score, score_levels_in,
+    MAX_DECISION_STATE_BYTES, MAX_SCORE_LEVEL_BYTES, PairedAnswer, ProviderCapability,
+    ProviderDecision, SCORE_LEVELS_FIELD, level_score, score_levels_in,
 };

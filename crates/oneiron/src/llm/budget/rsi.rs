@@ -450,5 +450,6 @@ impl Vault {
 }
 
 pub use crate::research_budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
 };

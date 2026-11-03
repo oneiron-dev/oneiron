@@ -182,9 +182,13 @@ pub(crate) fn claim_read_policy_allows(
         return false;
     }
 
-    if explicit_scope
-        .is_some_and(|scope| !scope.admits("read", &claim.record, &oneiron_authority::federation::Scope::top()))
-    {
+    if explicit_scope.is_some_and(|scope| {
+        !scope.admits(
+            "read",
+            &claim.record,
+            &oneiron_authority::federation::Scope::top(),
+        )
+    }) {
         return false;
     }
     let mut saw_core_read_grant = false;
@@ -206,10 +210,11 @@ pub(crate) fn claim_read_policy_allows(
         if !scoped_read_actor_matches(grant, actor_key) {
             continue;
         }
-        if grant
-            .authority_scope
-            .admits("read", &claim.record, &oneiron_authority::federation::Scope::top())
-            && scoped_read_scope_matches_claim(grant.scope.as_ref(), claim)
+        if grant.authority_scope.admits(
+            "read",
+            &claim.record,
+            &oneiron_authority::federation::Scope::top(),
+        ) && scoped_read_scope_matches_claim(grant.scope.as_ref(), claim)
         {
             return true;
         }
@@ -308,7 +313,8 @@ fn selector_world_axis(selectors: Option<&Value>) -> Option<WorldAxis> {
     for (key, value) in entries {
         if matches!(key.as_str(), Some("world" | "world_ref" | "worldRef")) {
             let one = Value::Map(vec![(key.clone(), value.clone())]);
-            axis = oneiron_authority::federation::scope_codec::legacy_read_scope(Some(&one))?.worlds;
+            axis =
+                oneiron_authority::federation::scope_codec::legacy_read_scope(Some(&one))?.worlds;
         }
     }
     Some(axis)
@@ -368,19 +374,21 @@ fn record_allowed_held(
             _ => false,
         };
         if position_only
-            && oneiron_authority::federation::scope_codec::legacy_read_scope(grant.scope.as_ref()).is_some_and(
-                |selectors| {
+            && oneiron_authority::federation::scope_codec::legacy_read_scope(grant.scope.as_ref())
+                .is_some_and(|selectors| {
                     let mut ceilings = vec![&selectors.worlds, &grant.authority_scope.worlds];
                     ceilings.extend(proof.map(|scope| &scope.worlds));
                     let record = held(&ceilings);
-                    selectors.admits("read", &record, &oneiron_authority::federation::Scope::top())
-                        && grant.authority_scope.admits(
-                            "read",
-                            &record,
-                            &oneiron_authority::federation::Scope::top(),
-                        )
-                },
-            )
+                    selectors.admits(
+                        "read",
+                        &record,
+                        &oneiron_authority::federation::Scope::top(),
+                    ) && grant.authority_scope.admits(
+                        "read",
+                        &record,
+                        &oneiron_authority::federation::Scope::top(),
+                    )
+                })
         {
             return true;
         }
@@ -424,7 +432,11 @@ fn scoped_read_scope_matches_claim(scope: Option<&Value>, claim: &ClaimReadView<
     let Some(selectors) = scoped_read_position_selectors(scope) else {
         return false;
     };
-    if !selectors.admits("read", &claim.record, &oneiron_authority::federation::Scope::top()) {
+    if !selectors.admits(
+        "read",
+        &claim.record,
+        &oneiron_authority::federation::Scope::top(),
+    ) {
         return false;
     }
     let Some(Value::Map(entries)) = scope else {
@@ -468,7 +480,9 @@ fn scoped_read_scope_matches_claim(scope: Option<&Value>, claim: &ClaimReadView<
 
 /// The position Scope a legacy read selector names, or `None` when it names
 /// one ambiguously (two world keys) or carries a key no door knows.
-fn scoped_read_position_selectors(scope: Option<&Value>) -> Option<oneiron_authority::federation::Scope> {
+fn scoped_read_position_selectors(
+    scope: Option<&Value>,
+) -> Option<oneiron_authority::federation::Scope> {
     if let Some(Value::Map(entries)) = scope
         && entries
             .iter()
@@ -500,7 +514,8 @@ pub(crate) fn scoped_read_grant_reads_world(
         return false;
     }
     let scope = &grant.authority_scope;
-    let id = oneiron_authority::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    let id =
+        oneiron_authority::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
     if !scope.verbs.contains(&"read".to_owned())
         || !scope.worlds.contains(&id)
         || scope.audience.is_bottom()

@@ -399,6 +399,6 @@ pub(crate) use crate::claim_check::apply_verdict_floor;
 mod tests;
 
 pub use crate::model_binding::{
-    MODEL_ROLES, CalibratedVerdict, ModelBinding, ModelDisposition, ModelRole, ModelSlot,
+    CalibratedVerdict, MODEL_ROLES, ModelBinding, ModelDisposition, ModelRole, ModelSlot,
     VerdictBinding, VerdictMode,
 };

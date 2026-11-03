@@ -17,9 +17,7 @@
 //! the text they read, as untrusted data beside the case or report. The Issues
 //! job also reads the issues positive model findings file (OF-418 L3), each
 //! diagnosed in `coach_diagnostic`.
-use std::time::{
-    Duration, Instant,
-};
+use std::time::{Duration, Instant};
 
 use rmpv::Value;
 use serde_json::json;
@@ -40,9 +38,8 @@ use crate::dreamer_runner::{
 use crate::failure_ladder::{FailureClass, HealerCase, verified_blocked_reports};
 use crate::failure_signals::CodeFixSource;
 use crate::limit_ask::EngineLimit;
+use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::COACH_HEAL_ROUTE;
-use crate::llm::decision::{ DecisionLadder,
-};
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };

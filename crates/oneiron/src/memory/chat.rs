@@ -47,9 +47,9 @@ use crate::context_pack::{
     PackItemAccounting, PackStats, PackTokenStats, TokenAllocation,
 };
 use crate::entity_id::EntityId;
-use oneiron_model::llm::BudgetLease;
 use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN};
 use crate::serialize::{SerializeConfig, serialize_pack};
+use oneiron_model::llm::BudgetLease;
 
 /// Chat uses the same closed five-level effort vocabulary as retrieval.
 pub type ChatDepth = Effort;

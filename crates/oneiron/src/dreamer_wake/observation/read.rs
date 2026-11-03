@@ -15,8 +15,8 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_model::llm::BudgetLeaseState;
 use crate::side_table::{Named, SideCodec};
+use oneiron_model::llm::BudgetLeaseState;
 
 /// Rows one page carries when the request names no limit.
 pub const WAKE_OBSERVATION_PAGE_DEFAULT: usize = 50;

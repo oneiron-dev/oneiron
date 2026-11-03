@@ -1,7 +1,7 @@
 //! Typed manifest work budget for consolidation retries. This selects how
 //! much *authorized* evidence to attempt, never whether a read is permitted.
-use oneiron_model::llm::Scope;
 use crate::{EntityId, Error, Result};
+use oneiron_model::llm::Scope;
 use rmpv::Value;
 use std::num::NonZeroUsize;
 

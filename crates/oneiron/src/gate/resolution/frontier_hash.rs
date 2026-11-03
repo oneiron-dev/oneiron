@@ -609,9 +609,11 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "authority_scope");
         hash_opt_value(
             hasher,
-            Some(&oneiron_authority::federation::scope_codec::encode_scope_value(
-                &grant.authority_scope,
-            )?),
+            Some(
+                &oneiron_authority::federation::scope_codec::encode_scope_value(
+                    &grant.authority_scope,
+                )?,
+            ),
         )?;
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;

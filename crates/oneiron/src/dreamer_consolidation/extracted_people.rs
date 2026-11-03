@@ -16,10 +16,10 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use oneiron_model::llm::ScopeResource;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_model::llm::ScopeResource;
 
 mod bindings;
 pub(crate) use bindings::pin_lineage_origin_in_txn;
