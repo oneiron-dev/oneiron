@@ -1062,7 +1062,7 @@ fn adopt_persisted_revision_identities(archive: &DocxArchive, doc: &mut CanonDoc
     let Some(bytes) = archive.get(crate::runtime::REVISION_IDS_PART) else {
         return;
     };
-    let Ok(root) = Element::parse(std::io::Cursor::new(bytes.to_vec())) else {
+    let Ok(root) = crate::word_xml::parse_document_xml(bytes) else {
         // A malformed sidecar is not worth failing an import over: it is an
         // optimization, and derivation still produces a correct document. It
         // IS worth not trusting.

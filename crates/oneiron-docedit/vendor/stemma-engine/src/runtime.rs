@@ -9839,7 +9839,7 @@ pub fn validate_docx_report(docx_bytes: &[u8]) -> Result<ValidationReport, Runti
     if let Some(main_part) = &main_part
         && let Some(doc_xml) = archive.get(main_part)
     {
-        match xmltree::Element::parse(doc_xml) {
+        match crate::word_xml::parse_document_xml(doc_xml) {
             Ok(root) => {
                 use crate::docx_validate_annotations::{
                     check_colfirst_collast_pairing, check_custom_xml_range_pairing,
@@ -9917,7 +9917,9 @@ pub fn validate_docx_report(docx_bytes: &[u8]) -> Result<ValidationReport, Runti
                 // failure — never "ok" because the checks could not run.
                 issues.push(ValidationIssue {
                     code: ValidationIssueCode::PackageInvariant,
-                    message: format!("main document part {main_part} is not well-formed XML: {e}"),
+                    message: format!(
+                        "main document part {main_part} is not well-formed XML: {e:?}"
+                    ),
                     context: Some(main_part.clone()),
                 });
             }
