@@ -20,8 +20,8 @@ mod tests;
 
 pub use piece::{KitId, KitPiece, PieceExport, RecoveryCode};
 pub(crate) use store::{
-    KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_piece_install,
-    vault_key_piece_install,
+    KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_pending_piece_install,
+    recovery_root_piece_install, vault_key_piece_install,
 };
 
 const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";

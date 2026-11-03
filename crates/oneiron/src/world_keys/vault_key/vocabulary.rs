@@ -104,11 +104,12 @@ pub enum VaultKeyUnlock<'a> {
     },
     /// The world (recovery-root) kit's pieces, two or one and the kit
     /// passphrase (FIX 11974): they rebuild the recovery-root seed bound to
-    /// `vault_id`, the id the owner names, which must be the artifact's or
-    /// the vault's, and the seed's recovery secret opens the `world-kit`
-    /// escrow wrap the artifact carries, as an [`Escrow`](Self::Escrow) of
-    /// that label rebuilt in plain would. A fresh restore never carries
-    /// pieces this way: a new install has no kept piece to join (FIX 11973).
+    /// `vault_id`, the authority-genesis id the owner names. That id is not
+    /// the artifact's independent store id, which names kept slots and the
+    /// `world-kit` escrow wrap the seed's recovery secret opens, as an
+    /// [`Escrow`](Self::Escrow) of that label rebuilt in plain would. A fresh
+    /// restore never carries pieces this way: a new install has no kept piece
+    /// to join (FIX 11973).
     WorldKit {
         vault_id: [u8; 32],
         /// The exact kit whose pending kept piece joins even when `pieces`

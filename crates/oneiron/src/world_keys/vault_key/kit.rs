@@ -42,7 +42,8 @@ use crate::error::Result;
 use crate::recovery::{
     KitError, KitId, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
     KitSecretKind, RestoredKitSecret, issue_vault_key_kit, join_kept_piece,
-    recovery_root_piece_install, restore_kit, vault_key_piece_install,
+    recovery_root_pending_piece_install, recovery_root_piece_install, restore_kit,
+    vault_key_piece_install,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
 use crate::world_keys::kit_piece::keep_this_machine_piece;
@@ -107,22 +108,23 @@ pub(super) fn open_kit(
     committed_key(vault_id, carried.commitment(), secret)
 }
 
-/// The recovery secret the world kit's pieces in `unlock` rebuild for the
-/// vault `vault_id`, bound to the id the owner names, which must be
-/// `vault_id`. With the keystore `unlock` names, this machine's own
-/// recovery-root piece of the kit joins the pieces given before the pages
+/// The recovery secret the world kit's pieces in `unlock` rebuild, bound to
+/// its authority-genesis `WorldKit.vault_id`. The mirror's independent store
+/// id names the kept slots here and the escrow wrap the caller opens; the two
+/// ids are never compared. With the keystore `unlock` names, this machine's
+/// own recovery-root piece of the kit joins the pieces given before the pages
 /// open (FIX 11974): the kept piece of each install a carried device wrap
-/// names, of the install the vault id alone names (FIX 12055), current or
+/// names, of the install the store id alone names (FIX 12055), current or
 /// still pending. The caller opens the `world-kit` escrow wrap with the
 /// secret, as a world kit rebuilt in plain does. Every kit refusal names
 /// its fixed reason, never piece bytes.
 pub(super) fn open_world_kit(
-    vault_id: &[u8; 32],
+    store_vault_id: &[u8; 32],
     carried: &CarriedVaultKey,
     unlock: &VaultKeyUnlock<'_>,
 ) -> Result<HybridSecretKey> {
     let VaultKeyUnlock::WorldKit {
-        vault_id: named,
+        vault_id: world_vault_id,
         kit,
         pieces,
         passphrase,
@@ -131,15 +133,12 @@ pub(super) fn open_world_kit(
     else {
         return Err(refused("the unlock carries no world kit pieces"));
     };
-    if named != vault_id {
-        return Err(refused("the kit names another vault"));
-    }
     let given: Vec<&KitPiece> = pieces.iter().collect();
     let pending = Some(*kit);
     let (kept, unreadable) = match keystore {
         Some(keystore) => kept_pieces(
             keystore,
-            vault_id,
+            store_vault_id,
             carried,
             KitSecretKind::RecoveryRoot,
             pending,
@@ -151,7 +150,7 @@ pub(super) fn open_world_kit(
         .filter(|piece| piece.kit_id() == *kit)
         .collect::<Vec<_>>();
     let secret = restore_joined(
-        *vault_id,
+        *world_vault_id,
         KitSecretKind::RecoveryRoot,
         &given,
         &kept,
@@ -236,6 +235,23 @@ fn kept_pieces(
                  piece did not read; unlocking with the pieces the device wraps find"
             );
             unreadable = true;
+        }
+    }
+    if kind == KitSecretKind::RecoveryRoot
+        && let Some(kit) = pending
+    {
+        match recovery_root_pending_piece_install(&**keystore, vault_id, kit) {
+            Ok(Some(install)) if !installs.contains(&install) => installs.push(install),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?keystore_error(error).kind(),
+                    kit_kind = ?kind,
+                    "the vault id's name of the install keeping this kit's pending piece did \
+                     not read; unlocking with the pieces the device wraps find"
+                );
+                unreadable = true;
+            }
         }
     }
     let mut pairs = vec![KitPiecePair::Current(kind)];

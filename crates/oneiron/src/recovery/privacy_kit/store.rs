@@ -9,8 +9,10 @@
 //! pair of its own, named by its kit id (FIX 11977, 12046): its draw keeps its piece
 //! there, and its confirm moves it to the current pair, so a drawn kit the owner never
 //! confirms leaves the current kit's piece and every other drawn kit's in place. A
-//! data-key kit has no confirm and no pending pair. The two writes are not one
-//! platform operation: a pair torn between two pieces fails the piece's check and
+//! data-key kit has no confirm and no pending pair. Each pending pair also names
+//! its install in its own per-kit slot, cleared when that pair is removed, so a
+//! sealed pre-open lookup can find a confirm's crash-left pending piece. The two
+//! writes are not one platform operation: a pair torn between two pieces fails the piece's check and
 //! reads as corrupt, never as a piece. Keeping a kit's current piece also names
 //! this install in that kind's own slot of the vault id alone, and emptying it
 //! clears that name (FIX 12054, FIX 12055): a sealed vault's pages unlock before
@@ -82,8 +84,8 @@ impl KitPieceStore {
 
     /// Keeps `piece` in `pair`, its kind's current pair or its own kit's pending
     /// pair, replacing the piece kept there. A tail that does not write after its
-    /// head did empties the pair: half a piece is no piece. A current pair's
-    /// piece kept names this install by the vault id alone (FIX 12054, 12055).
+    /// head did empties the pair: half a piece is no piece. A current or pending
+    /// pair's piece kept names this install by the vault id alone (FIX 12054, 12055).
     pub(crate) fn put(&self, piece: &KitPiece, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
         let [head, tail] = self.slots(pair);
         let bytes = piece.slot_bytes();
@@ -128,8 +130,7 @@ impl KitPieceStore {
     }
 
     /// Empties both slots of `pair`. Empty slots are not an error. An emptied
-    /// current pair clears the vault id's name of this install for its kind
-    /// (FIX 12054, FIX 12055).
+    /// pair clears its vault-id-alone name of this install (FIX 12054, FIX 12055).
     pub(crate) fn delete(&self, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
         let [head, tail] = self.slots(pair);
         self.keystore.delete(&head)?;
@@ -139,7 +140,7 @@ impl KitPieceStore {
     }
 
     /// Names this install, in the slot of the vault id alone, as the one whose
-    /// slots keep the kit's piece, once `pair`, that kit kind's current pair,
+    /// slots keep the kit's piece, once `pair`, a current or pending pair,
     /// holds it (FIX 12054, FIX 12055): a sealed vault's pages unlock before its
     /// machine id can be read, and the owner may have removed the device wrap
     /// that names this install. The name replaces another install's: the
@@ -161,7 +162,7 @@ impl KitPieceStore {
         }
     }
 
-    /// Clears [`Self::name_install`]'s name once `pair`, a kit kind's current
+    /// Clears [`Self::name_install`]'s name once `pair`, a current or pending
     /// pair, is emptied, when it names this install: another install's name
     /// of its own piece stays (FIX 12054, FIX 12055). Best-effort: a name
     /// left behind names empty slots, which read as no piece.
@@ -242,6 +243,21 @@ pub(crate) fn recovery_root_piece_install(
     piece_install(keystore, vault_id, KitPieceSlot::RecoveryRootInstall)
 }
 
+/// The machine id of the install whose slots keep pending recovery-root kit
+/// `kit`'s piece of the vault whose store id is `vault_id`, filed by the vault
+/// id alone so the exact pending kit is discoverable before its pages open.
+pub(crate) fn recovery_root_pending_piece_install(
+    keystore: &dyn DeviceKeystore,
+    vault_id: &[u8; 32],
+    kit: KitId,
+) -> oneiron_keystore::Result<Option<[u8; 16]>> {
+    piece_install(
+        keystore,
+        vault_id,
+        KitPieceSlot::RecoveryRootPendingInstall(kit.0),
+    )
+}
+
 /// The install the vault-id-alone slot `slot` names for `vault_id`.
 fn piece_install(
     keystore: &dyn DeviceKeystore,
@@ -262,8 +278,9 @@ fn piece_install(
 }
 
 /// The vault-id-alone slot naming the install that keeps `pair`'s piece, and
-/// that kit kind's short name for log lines: only a current pair names an
-/// install, each kind in its own slot (FIX 12054, FIX 12055).
+/// that kit kind's short name for log lines: a current pair names its kind's
+/// install slot, and a pending pair names its own per-kit slot (FIX 12054,
+/// FIX 12055).
 fn install_name(pair: KitPiecePair) -> Option<(KitPieceSlot, &'static str)> {
     match pair {
         KitPiecePair::Current(KitSecretKind::VaultKey) => {
@@ -272,7 +289,10 @@ fn install_name(pair: KitPiecePair) -> Option<(KitPieceSlot, &'static str)> {
         KitPiecePair::Current(KitSecretKind::RecoveryRoot) => {
             Some((KitPieceSlot::RecoveryRootInstall, "recovery-root"))
         }
-        KitPiecePair::Pending(_) => None,
+        KitPiecePair::Pending(kit) => Some((
+            KitPieceSlot::RecoveryRootPendingInstall(kit.0),
+            "recovery-root-pending",
+        )),
     }
 }
 
