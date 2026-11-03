@@ -16,7 +16,7 @@ use super::{
 use crate::Vault;
 use crate::authority::{HolderExportNeed, HolderExportRequest};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::CallerLocality;
+use crate::settings::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -429,7 +429,7 @@ impl Vault {
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Some(claim) = body.bytes()
-                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
@@ -551,6 +551,16 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // FIX 11844: a custody secret only the fold knows here is named for
+        // its holder too, as a held row's unopened value is above.
+        // The manifest names each by id, so the import shows it owed (FIX
+        // 12066).
+        let mut fold_only_secrets = Vec::new();
+        if include_secrets && only.is_none() && cut == ExportCut::Archive {
+            let fold_only = self.fold_only_holder_needs_in_txn(&rtxn);
+            fold_only_secrets = fold_only.iter().map(|need| need.secret).collect();
+            holder_requests.extend(fold_only.into_iter().map(HolderExportRequest::unrecorded));
+        }
         // Each carried thread's binding, read in this snapshot, so its
         // members are told should its root go before the audit (FIX 6681).
         thread_roots.capture_in(&self.store.read(), &rtxn);
@@ -570,6 +580,7 @@ impl Vault {
                     secrets_included: include_secrets
                         && only.is_none()
                         && cut == ExportCut::Archive,
+                    fold_only_secrets,
                     embedding_setup,
                     sources: sources.into_iter().collect(),
                 },

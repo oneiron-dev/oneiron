@@ -19,9 +19,8 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimSource, ClaimSubject, decode_claim_body, encode_claim_body,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -358,6 +357,7 @@ impl Vault {
             put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
+        let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // OF-013: each session's floor rises to the archive's and never falls,
         // so numbering here never goes back under an epoch a purge removed.
         let mut floors = archive.spool.rows(ArchiveRecordKind::EpochFloor);
@@ -398,6 +398,7 @@ impl Vault {
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
             missing_secrets,
+            owed_secrets,
             embedding_setup,
             restored_side_rows,
             unchanged_side_rows,
@@ -758,6 +759,24 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         }
     }
     Ok((restored, unchanged, skipped, missing))
+}
+
+/// The fold-only custody secrets the archive's manifest lists (FIX 12066)
+/// that have no record here, in the import's writer: each is owed through
+/// its export secret supplement.
+fn owed_secrets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    listed: &[String],
+) -> Result<Vec<EntityId>> {
+    let mut owed = Vec::new();
+    for id in listed {
+        let id = parse_id(id)?;
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)? {
+            owed.push(id);
+        }
+    }
+    Ok(owed)
 }
 
 fn validate_existing_source<R: Read + Seek>(
@@ -1276,7 +1295,7 @@ pub(super) fn import_edge(
     Ok(EdgeImport::Landed)
 }
 
-fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
+fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body::ClaimBody> {
     let body = decode_claim_body(bytes, true)?;
     if crate::subject_model::is_subject_model_predicate(&body.predicate) {
         crate::subject_model::imported_subject_body(&body)

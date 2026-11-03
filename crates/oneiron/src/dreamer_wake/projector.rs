@@ -727,24 +727,178 @@ pub(crate) fn words_taken_in_txn(
         .is_some_and(|statements| reading(&statements) == taken))
 }
 
-/// Records `turn`'s current words as taken by work a Micro selection retry
-/// just assigned (its widened branch or an owed chunk), the same
-/// assignment-time record `hold_in_txn` makes for a projector round (FIX
-/// 12246): without it a later deferral re-widens to the same peer and
-/// extracts its words again. Only the taken reading is recorded; round
-/// membership stays the projector's. A turn whose statements do not read
-/// here is left as it stands.
-pub(crate) fn take_words_in_txn(
+/// The reading of `text` said in `class`, as a branch froze it: the
+/// version a completed widened branch records as taken, never a live
+/// reread after its commit.
+pub(crate) fn reading_of_text(text: &str, class: Option<ClaimSource>) -> [u8; 32] {
+    reading(&super::statement_material::statements(text, class))
+}
+
+/// Records one frozen reading as taken by the widened branch that read it
+/// (FIX 12246): without it a later deferral re-widens to the same peer and
+/// extracts its words again.
+pub(crate) fn take_reading_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
+    reading: [u8; 32],
 ) -> Result<()> {
-    let Some(statements) = turn_statements_in_txn(vault, txn, turn)? else {
-        return Ok(());
-    };
     let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
-    given.taken = Some(reading(&statements));
+    given.taken = Some(reading);
     GIVEN.put(&vault.store, txn, turn, &given)
+}
+
+/// Whether `turn` is still live and still reads as `frozen` in `txn`:
+/// the guard a widened stamp owes the gap since its branch opened
+/// (FIX 12246). A turn erased in that gap must get no stamp at all -
+/// recording its erased words' digest would undo the erasure's
+/// delete - and a turn whose words moved on must not be marked read
+/// at a reading it no longer has. Liveness is checked before
+/// equality: a gone turn reads as the empty set, which would equal an
+/// empty frozen reading. The live reading is a comparand only; it is
+/// never stamped.
+pub(crate) fn reading_current_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    frozen: [u8; 32],
+) -> Result<bool> {
+    if turn_key_in_txn(&vault.store, txn, turn)?.is_none() {
+        return Ok(false);
+    }
+    Ok(turn_statements_in_txn(vault, txn, turn)?.is_some_and(|live| reading(&live) == frozen))
+}
+
+/// The latest-round bookkeeping of `hold_in_txn` for an assignment a
+/// Micro selection retry records outside a window (a completed widened
+/// branch's stamp, an owed chunk's enqueue): the stamped turns join
+/// `round`'s membership the way a window's payload does, the newest
+/// stamped turn moves `LATEST` forward under `round` - the carrier
+/// attempt's own round, which its completion applies through the usual
+/// door - the previous latest round retires, stamped turns ride
+/// nothing, and riders their assignment may have changed the value of
+/// are released. Without it a stamped turn left an earlier one
+/// holding, and a later return to its words was consumed as that
+/// turn's repeat; without the membership, erasing the stamped turn
+/// never found the round its later repeats rode. `stamped` carries the
+/// readings the caller already recorded as taken; they are never
+/// recomputed here. No round: membership and the forward move are
+/// skipped.
+pub(crate) fn note_assignment_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    round: Option<[u8; 32]>,
+    stamped: &[(EntityId, [u8; 32])],
+) -> Result<()> {
+    let store = &vault.store;
+    let mut queued = BTreeSet::new();
+    let mut latest: Option<(TurnKey, [u8; 32], EntityId)> = None;
+    for (turn, reading) in stamped {
+        let Some(at) = turn_key_in_txn(store, txn, turn)? else {
+            continue;
+        };
+        queued.insert(at);
+        if latest.as_ref().is_none_or(|(before, ..)| at > *before) {
+            latest = Some((at, *reading, *turn));
+        }
+    }
+    if let Some(round_id) = round
+        && !queued.is_empty()
+    {
+        // The stamped turns join the carrier round the way a window's
+        // payload does, so erasing or demoting one later finds the round
+        // and releases the repeats that rode its hold. Append, never
+        // overwrite: the carrier's original members stay members. A
+        // caller that already registered them (owed chunks) makes this
+        // a no-op.
+        let existing = ROUND.get(store, txn, &round_id)?;
+        let mut linked = existing.is_none();
+        let mut round_row = existing.unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+        for (_, turn) in &queued {
+            let mut given = GIVEN.get(store, txn, turn)?.unwrap_or_default();
+            if !given.rounds.contains(&round_id) {
+                given.rounds.push(round_id);
+                GIVEN.put(store, txn, turn, &given)?;
+            }
+            if !round_row.turns.contains(turn) {
+                round_row.turns.push(*turn);
+                linked = true;
+            }
+        }
+        if linked {
+            ROUND.put(store, txn, &round_id, &round_row)?;
+        }
+    }
+    if let (Some(round), Some((key, reading, turn))) = (round, latest) {
+        let previous = LATEST.get(store, txn, &())?;
+        if previous.as_ref().is_none_or(|previous| key >= previous.key) {
+            let partition =
+                crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, &turn)?;
+            if let Some(partition) = partition {
+                let row = LatestTurn {
+                    key,
+                    round,
+                    partition,
+                    reading: Some(reading),
+                };
+                LATEST.put(store, txn, &(), &row)?;
+                if let Some(previous) = previous
+                    && previous.round != round
+                {
+                    retire_in_txn(store, txn, &previous.round)?;
+                }
+            }
+        }
+    }
+    // A turn assigned again rides nothing.
+    for (_, turn) in &queued {
+        unride_in_txn(store, txn, turn)?;
+    }
+    release_in_txn(store, txn, &queued)
+}
+
+/// Records a fresh owed chunk as a projection round and its turns' current
+/// words as taken, in its enqueue transaction (FIX 12246): the same
+/// assignment-time record `hold_in_txn` makes, so erasing or demoting one
+/// pending chunk member retires the round and puts its surviving turns
+/// back to be read again. Completion marks this round applied through the
+/// same kind + dedupe-key id every projector round uses.
+pub(crate) fn take_chunk_words_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    kind: &str,
+    dedupe_key: &str,
+    turns: &[EntityId],
+) -> Result<()> {
+    let id = round_id(kind, dedupe_key);
+    let mut round = ROUND
+        .get(&vault.store, txn, &id)?
+        .unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+    round.applied = false;
+    round.turns = turns.to_vec();
+    ROUND.put(&vault.store, txn, &id, &round)?;
+    let mut stamped = Vec::new();
+    for turn in turns {
+        let mut given = GIVEN.get(&vault.store, txn, turn)?.unwrap_or_default();
+        if !given.rounds.contains(&id) {
+            given.rounds.push(id);
+        }
+        if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
+            let reading = reading(&statements);
+            given.taken = Some(reading);
+            stamped.push((*turn, reading));
+        }
+        GIVEN.put(&vault.store, txn, turn, &given)?;
+    }
+    note_assignment_in_txn(vault, txn, Some(id), &stamped)
 }
 
 /// The version of one turn's statements.
@@ -758,7 +912,7 @@ fn reading(statements: &BTreeSet<[u8; 32]>) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
-fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
+pub(crate) fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:dreamer-projector:round:v1");
     hash.update(&(kind.len() as u64).to_be_bytes());

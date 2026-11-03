@@ -206,6 +206,7 @@ pub(crate) fn audit_window_sample_in_txn(
     if draws == 0 {
         return Ok(Vec::new());
     }
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     let mut turns = Vec::new();
     for row in READ.iter_from(&vault.store, txn, &[])? {
         let (turn, read) = row?;
@@ -223,6 +224,9 @@ pub(crate) fn audit_window_sample_in_txn(
     for (_, turn, reading) in turns {
         if windows.len() >= draws {
             break;
+        }
+        if excluded.contains_turn(vault, txn, &turn)? {
+            continue;
         }
         let mut drawn: Vec<([u8; 32], SieveAuditWindow)> =
             turn_windows_in_txn(vault, txn, &turn, reading, size)?

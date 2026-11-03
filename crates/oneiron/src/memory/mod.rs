@@ -241,10 +241,11 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
-    PeoplePage, PersonRequest,
+    GrantAskedRow, GrantRequestedScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
@@ -281,11 +282,13 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
-pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub use reads::{
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VAULT_RECEIPTS_PAGE_MAX,
+    VaultReceiptsPage,
+};
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
-pub(crate) use recall::conversation_candidate_admits;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
@@ -294,6 +297,7 @@ pub use recall::{
     RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
     resolve_recall_dial,
 };
+pub(crate) use recall::{ConversationGate, conversation_candidate_admits};
 #[cfg(feature = "sync")]
 pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{

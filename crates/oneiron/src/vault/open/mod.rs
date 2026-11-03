@@ -214,7 +214,8 @@ impl Vault {
     #[doc(hidden)]
     pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
+        use oneiron_contracts::claim::ClaimSource;
+        use crate::write_envelope::claim_body::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
         use rmpv::Value;
 
@@ -328,7 +329,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     fn install_fixture_source_permits(&self, actor: EntityId, peer_sources: bool) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use crate::claim::ClaimSource;
+        use oneiron_contracts::claim::ClaimSource;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
         use rmpv::Value;
 
@@ -550,6 +551,7 @@ impl Vault {
             config,
             analyzer,
             writer_lease: None,
+            page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
@@ -557,6 +559,7 @@ impl Vault {
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
+            confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
@@ -618,6 +621,8 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        vault.backfill_widen_contact_verdict_index(false)?;
+        crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {

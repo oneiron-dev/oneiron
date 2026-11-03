@@ -8,7 +8,7 @@ use crate::affect::vad_annotation_delete_scope_exists_in_txn;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::deindex_lexical_query_hints_for_target;
-use crate::claim::ClaimSubject;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::EdgeConfirmationStatus;
 use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;

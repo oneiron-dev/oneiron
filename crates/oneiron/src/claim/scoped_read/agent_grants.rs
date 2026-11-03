@@ -16,6 +16,7 @@
 //! clock failure, admits nothing and leaves B's answer, counted in a warning
 //! that names no content.
 
+use crate::claim::ClaimRecordScope;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;

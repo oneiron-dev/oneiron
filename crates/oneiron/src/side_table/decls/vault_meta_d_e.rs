@@ -125,6 +125,8 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// Operator-set conversation ids excluded from Dreamer consolidation. Key: ().
+    DREAMER_EXCLUDED_CONVERSATIONS: VaultMeta b"dreamer:excluded_conversations:v1" Named;
     /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
     /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
     /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
@@ -178,8 +180,8 @@ side_tables! {
     DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named
         => crate::dreamer_runner::maintenance::identity::erase_actor_sources_in_txn;
     /// Each open identity ask under every id its erase reads (FIX 10376):
-    /// its turn, message, candidates and provisional. Key: id16(source) +
-    /// hash32(ask key).
+    /// its turn, message, candidates, provisional and surfaced turn. Key:
+    /// id16(source) + hash32(ask key).
     DREAMER_IDENTITY_ASK_BY_SOURCE: VaultMeta b"dreamer:identity:v1:ask_by_source:" Raw;
     /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
     DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;

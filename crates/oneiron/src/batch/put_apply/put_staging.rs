@@ -207,12 +207,13 @@ pub(super) fn stage_skill_index_rows(
     crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
 }
 
-/// Keeps CLAIM-derived thread and Dreamer indexes on every put/replay door.
+/// Keeps CLAIM-derived thread, Dreamer and counterparty-identity indexes on
+/// every put/replay door.
 pub(super) fn stage_claim_projection_indexes(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    body: &crate::claim::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
     if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
@@ -221,7 +222,8 @@ pub(super) fn stage_claim_projection_indexes(
     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
         store, wtxn, id, body, learned_at,
     )?;
-    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
+    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)?;
+    crate::counterparty_contact::maintain_counterparty_identity_index_for_put(store, wtxn, id, body)
 }
 
 /// The caller's write stamps and origin for the three carrier guards.
@@ -422,7 +424,7 @@ pub(super) fn stage_claim_projection(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
-    body: Option<&crate::claim::ClaimBody>,
+    body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
     if let Some(body) = body {
@@ -512,7 +514,7 @@ pub(super) fn validate_scope_carriers(
 pub(super) struct ProposedClaimObservation<'a> {
     pub(super) id: EntityId,
     pub(super) replicated: bool,
-    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) body: Option<&'a crate::write_envelope::claim_body::ClaimBody>,
     pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
     pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(super) body_changed: bool,
@@ -533,12 +535,12 @@ pub(super) fn stage_local_proposal_observation(
     } = observation;
     if !replicated
         && let Some(body) =
-            body.filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+            body.filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = envelope
     {
         // The stored claim's scope, never a caller-selected policy position.
         let scope = crate::gate::policy_values::PolicyEvaluationScope {
-            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(body.world.unwrap_or_else(oneiron_contracts::claim::base_world_id)),
             project: Some(body.scope_project),
             ..Default::default()
         };

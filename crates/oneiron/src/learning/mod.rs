@@ -89,7 +89,7 @@ pub const LEARNING_PREDICATES: &[&str] = &[
 ];
 
 /// The family's namespace, engine-reserved.
-pub const LEARNING_NAMESPACE: &str = "learning";
+pub use crate::write_envelope::claim_predicate::LEARNING_NAMESPACE;
 
 /// Whether `predicate` is in the `learning` namespace. Companion memory reads
 /// exclude every such claim: learning views only.

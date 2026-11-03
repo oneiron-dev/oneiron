@@ -4,6 +4,7 @@
 //! a wildcard selector. A body edit inherits its birth scope; a facet move
 //! requires a new record, never a restamp of the same id. A NOTE's world
 //! alone is read from its live `InWorld` edges at every read (`note_world`).
+use crate::claim::ClaimRecordScope;
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -381,14 +382,12 @@ pub(crate) fn record_world_in(
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
         return Ok(crate::world_keys::pad_world_in_body(data).ok().map(Some));
     }
-    // So do a world's key wraps; its settings entries are base reality.
+    // So do a world's side rows, its key wraps and the joins of their
+    // leaves (FIX 11868); its settings entries are base reality.
     if kind == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         return Ok(crate::authority::decode_authority_log_entry_body(data)
             .ok()
-            .map(|entry| match entry.op {
-                crate::authority::AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
-                _ => None,
-            }));
+            .map(|entry| crate::authority::side_world(&entry.op)));
     }
     if kind == crate::registry::ENTITY_TYPE_NOTE {
         return Ok(note_world::note_worlds_in(store, txn, id).world());

@@ -18,9 +18,14 @@ struct PartitionStarted<'a> {
     payload: rmpv::Value,
     resources: BranchResources<'a>,
     /// The peers this attempt's widening newly assigned beyond its
-    /// queued originals: recorded as taken once its result commits
-    /// (FIX 12246).
-    widened: Vec<EntityId>,
+    /// queued originals, with the readings this branch froze of their
+    /// words at its open: recorded as taken only once the run completes,
+    /// under `widened_round` (FIX 12246). A held run stamps none of them.
+    widened: Vec<(EntityId, [u8; 32])>,
+    /// The projection round this attempt itself carries, for the
+    /// latest-round bookkeeping its widened stamp owes; `None` for an
+    /// unkeyed attempt, which records no assignment at all.
+    widened_round: Option<[u8; 32]>,
     charges: StepChargeTally,
 }
 
@@ -83,6 +88,7 @@ impl ConsolidationExecutor<'_> {
             payload,
             resources,
             widened,
+            widened_round,
             mut charges,
         } = started;
         let run_started = Instant::now();
@@ -98,8 +104,16 @@ impl ConsolidationExecutor<'_> {
             )
             .await;
         stages.close_model_run(run_started);
-        self.settle_partition_run(&resources, run, &widened, ctx, &mut charges, stages)
-            .await
+        self.settle_partition_run(
+            &resources,
+            run,
+            &widened,
+            widened_round,
+            ctx,
+            &mut charges,
+            stages,
+        )
+        .await
     }
 
     /// Opens `plan`'s branch resources at the wake pin: the payload the
@@ -128,11 +142,34 @@ impl ConsolidationExecutor<'_> {
             }
             resources => resources?,
         };
-        let widened = Self::widened_turns(attempt, plan);
+        // The widened peers carry the readings this branch froze of their
+        // words at its open: a window slot's finish re-opens its branch,
+        // but the stamp owes the words as first read, never a reread.
+        let widened: Vec<(EntityId, [u8; 32])> = Self::widened_turns(attempt, plan)
+            .into_iter()
+            .filter_map(|turn| {
+                resources
+                    .taken_reading(&turn)
+                    .ok()
+                    .map(|reading| (turn, reading))
+            })
+            .collect();
+        // The projection round this attempt itself carries: a deferral
+        // requeues this same row, and a successor copies kind + dedupe
+        // key, so the id names the live round its window or chunk made.
+        let widened_round = attempt
+            .status
+            .attempt
+            .dedupe_key
+            .as_deref()
+            .map(|dedupe_key| {
+                crate::dreamer_wake::projection_round_id(&attempt.status.attempt.kind, dedupe_key)
+            });
         Ok(PartitionStart::Running(Box::new(PartitionStarted {
             payload,
             resources,
             widened,
+            widened_round,
             charges: StepChargeTally::default(),
         })))
     }
@@ -144,7 +181,8 @@ impl ConsolidationExecutor<'_> {
         &mut self,
         resources: &BranchResources<'_>,
         run: crate::llm::DurableStepResult<PartitionRun>,
-        widened: &[EntityId],
+        widened: &[(EntityId, [u8; 32])],
+        widened_round: Option<[u8; 32]>,
         ctx: &WakeAttemptContext<'_>,
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
@@ -170,7 +208,7 @@ impl ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
+                    .commit_candidates(&resources, candidates, &widened, widened_round, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -185,7 +223,7 @@ impl ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &widened, ctx, stages)
+                    .commit_candidates(&resources, candidates, &[], widened_round, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -390,6 +428,7 @@ impl ConsolidationExecutor<'_> {
                 let PartitionStarted {
                     resources,
                     widened,
+                    widened_round,
                     mut charges,
                     ..
                 } = *started;
@@ -400,6 +439,7 @@ impl ConsolidationExecutor<'_> {
                             &resources,
                             Err(error),
                             &widened,
+                            widened_round,
                             ctx,
                             &mut charges,
                             &mut stages,
@@ -412,6 +452,7 @@ impl ConsolidationExecutor<'_> {
                             &resources,
                             Ok(run),
                             &widened,
+                            widened_round,
                             ctx,
                             &mut charges,
                             &mut stages,
@@ -441,6 +482,7 @@ impl ConsolidationExecutor<'_> {
                                     &fresh,
                                     run,
                                     &widened,
+                                    widened_round,
                                     ctx,
                                     &mut charges,
                                     &mut stages,
@@ -461,14 +503,19 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an
-    /// accepted commit it also records the words this branch's widening
-    /// assigned (`widened`) as taken, in the stamp's own commit after the
-    /// candidates' (FIX 12246).
+    /// accepted commit it also records the frozen readings this branch's
+    /// widening assigned (`widened`) as taken - only for widened turns
+    /// still live and still reading as frozen when the stamp runs -
+    /// with the latest-round bookkeeping that assignment owes under
+    /// this attempt's own round
+    /// (`widened_round`), in the stamp's own commit after the candidates'
+    /// (FIX 12246). An attempt with no round of its own records nothing.
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
-        widened: &[EntityId],
+        widened: &[(EntityId, [u8; 32])],
+        widened_round: Option<[u8; 32]>,
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
     ) -> Result<()> {
@@ -483,14 +530,30 @@ impl ConsolidationExecutor<'_> {
             )
             .await;
         stages.commit_ms = ms_since(started);
-        if accepted.is_ok() && !widened.is_empty() {
+        // No carrier round (an unkeyed attempt) means no assignment record
+        // at all, exactly as hold_in_txn skips dedupe-less outcomes: taken
+        // without its round's membership and latest move would suppress
+        // the turns while an older turn still holds. Unstamped, they
+        // re-enter through the usual doors.
+        if accepted.is_ok() && !widened.is_empty() && widened_round.is_some() {
             // A failed stamp never fails the commit the extraction already
             // landed; it only costs a later duplicate extraction.
             let stamped = ctx.vault.with_write_txn_grouped(|txn| {
-                for turn in widened {
-                    crate::dreamer_wake::take_words_in_txn(ctx.vault, txn, turn)?;
+                // A widened turn erased or rewritten since the branch
+                // opened is not stamped at its frozen reading: an erasure
+                // in the gap already deleted its row, and moved-on words
+                // re-enter through the usual doors.
+                let mut current = Vec::new();
+                for (turn, reading) in widened {
+                    if crate::dreamer_wake::reading_current_in_txn(ctx.vault, txn, turn, *reading)?
+                    {
+                        current.push((*turn, *reading));
+                    }
                 }
-                Ok(())
+                for (turn, reading) in &current {
+                    crate::dreamer_wake::take_reading_in_txn(ctx.vault, txn, turn, *reading)?;
+                }
+                crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, &current)
             });
             if let Err(error) = stamped {
                 tracing::warn!(

@@ -56,8 +56,17 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
+pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
+pub(crate) mod history_advance;
+mod history_pin_freshness;
+pub(crate) mod history_seal;
+pub use history_pin_freshness::{
+    MACHINE_HISTORY_FRESHNESS_CHALLENGE_LIFETIME, MACHINE_HISTORY_FRESHNESS_DOMAIN,
+    MACHINE_HISTORY_FRESHNESS_VERSION, MachineHistoryFreshnessChallenge,
+    MachineHistoryFreshnessResponse, MachineHistoryPinFreshness,
+};
 pub(crate) mod history_projection;
 pub use history_projection::ResolvedMachineClaim;
 pub(crate) mod history_store;
@@ -103,6 +112,7 @@ pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
 pub use scope_stamp::{
+    ClaimRecordScope,
     PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
