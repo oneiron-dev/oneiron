@@ -139,6 +139,7 @@ fn held_press(action: &CodeConsentBrowserAction) -> Option<HeldPress> {
         name: action.name.clone(),
         locator: action.locator.clone(),
         page: action.page.clone(),
+        audience: action.audience.clone(),
         tab: action.tab.clone(),
         document: action.document.clone(),
         generation: action.session.clone(),
