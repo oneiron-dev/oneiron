@@ -126,15 +126,16 @@ impl Vault {
             drop(wtxn);
             return Ok(ConnectorGrantRedemption::Held { reason });
         }
-        let row = match self.admit_grant_in_txn(&mut wtxn, grant, target, now, true) {
-            Ok(row) => row,
+        let (row, seat) = match self.admit_grant_in_txn(&mut wtxn, grant, target, now, true) {
+            Ok(admitted) => admitted,
             Err(error) => {
                 // A lazy expiry lands even though the redemption refuses.
                 wtxn.commit()?;
                 return Err(error);
             }
         };
-        let value = read_value_for_ref_in_txn(self, &wtxn, &row.custody, &row.effector)?;
+        let bound = seat.as_deref().unwrap_or(&row.effector);
+        let value = read_value_for_ref_in_txn(self, &wtxn, &row.custody, bound)?;
         wtxn.commit()?;
         apply(&value)?;
         Ok(ConnectorGrantRedemption::Redeemed(SecretGrantRedemption {
