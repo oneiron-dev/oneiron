@@ -73,10 +73,23 @@ impl EngineNativeExecutor<'_> {
                         ) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
-                                if let crate::code_run::ExecutorStorage::Canonical(vault) =
-                                    &self.storage
-                                {
-                                    vault.post_compact_hooks(hooks, &plan, first, last);
+                                // The post chain runs where its pre chain
+                                // did: the vault, or the run's room (FIX
+                                // 1594).
+                                match &self.storage {
+                                    crate::code_run::ExecutorStorage::Canonical(vault) => {
+                                        vault.post_compact_hooks(hooks, &plan, first, last);
+                                    }
+                                    crate::code_run::ExecutorStorage::Session(binding) => {
+                                        crate::compaction::post_compact_hooks_in_room(
+                                            &binding.session,
+                                            &binding.route,
+                                            hooks,
+                                            &plan,
+                                            first,
+                                            last,
+                                        );
+                                    }
                                 }
                                 Ok(())
                             }

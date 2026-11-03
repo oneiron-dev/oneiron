@@ -149,8 +149,8 @@ impl EngineNativeExecutor<'_> {
             &driver.memory_profile().verbatim_pins,
             &fits,
         );
-        // A run bound to a room runs no hooks: their receipts would land on
-        // record.
+        // A run bound to a room runs its hooks in the room (FIX 1594), as
+        // its turns do: their receipts land there, never on record.
         let hooks = match &self.storage {
             crate::code_run::ExecutorStorage::Canonical(vault) => vault.pre_compact_hooks(
                 crate::compaction::compact_invocation(run_id.as_bytes(), watermark),
@@ -160,7 +160,18 @@ impl EngineNativeExecutor<'_> {
                 budget,
                 &fits,
             ),
-            crate::code_run::ExecutorStorage::Session(_) => CompactHooks::default(),
+            crate::code_run::ExecutorStorage::Session(binding) => {
+                crate::compaction::pre_compact_hooks_in_room(
+                    &binding.session,
+                    &binding.route,
+                    crate::compaction::compact_invocation(run_id.as_bytes(), watermark),
+                    self.gated_write.actor().entity_ref(),
+                    &window,
+                    &mut pins,
+                    budget,
+                    &fits,
+                )
+            }
         };
         if let Some(stop) = hooks.pending() {
             return Ok(Err(stop.clone()));
