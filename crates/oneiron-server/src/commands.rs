@@ -150,6 +150,7 @@ mod owner;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;
+pub(crate) use owner::page_seal_at;
 pub use owner::widen_proposals;
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,

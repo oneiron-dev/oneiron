@@ -107,20 +107,27 @@ struct SharedEnvEntry {
     /// Strong: the host keeps the env open for archive reads and the owed
     /// orphan-body collect. The last handle drop closes the env.
     vault: Arc<Vault>,
+    /// Retained for leave checks and idempotent purge resume, whether or not a
+    /// sync lane is running. Left envs never start a run on this connection.
+    connection: Arc<SyncConnection>,
     /// None once the env has left (or left before this process opened it).
     lane: Option<ActiveLane>,
+    /// The confirmed receipt finished every replica purge batch. The owed
+    /// orphan-body collect continues independently in housekeeping.
+    purge_complete: bool,
     /// The last unix second a leave check ran clean (`None` answered).
     /// Failures leave the stamp alone, so they retry on the next round.
     last_leave_check: u64,
 }
 
-/// One opened env before its run starts: the vault, its leave state read,
-/// and (while unleft) the constructed lane connection.
+/// One opened env before its run starts: the vault, its leave state read, and
+/// the connection leave checks keep even after the sync lane ends.
 struct OpenedEnv {
     key: SharedEnvKey,
     path: PathBuf,
     vault: Arc<Vault>,
-    lane: Option<Arc<SyncConnection>>,
+    connection: Arc<SyncConnection>,
+    left: bool,
 }
 
 #[derive(Default)]
@@ -150,10 +157,10 @@ impl SharedEnvRegistry {
     /// by a reap freeze waits for thaw instead. A repeated membership keeps
     /// its first entry.
     ///
-    /// `vault_config` is the same engine config the served vault opened
-    /// with (dimensions, map size, embedding space, seal); each env vault
-    /// opens with a clone of it, existing roots only (a mistyped path
-    /// refuses, it never mints a vault). `lease_vault_id` is the host's
+    /// `config` is the serve config the personal vault opened with. Each env
+    /// gets a fresh `config.vault_config()` and its own page seal resolved for
+    /// its path, existing roots only (a mistyped path refuses, it never mints
+    /// a vault). `lease_vault_id` is the host's
     /// numeric lease scope, the same id the served vault's materializer
     /// carries. `admission` admits each env's first lane run, held through
     /// the whole run. `freeze` pauses lane runs for reap: `None` on
@@ -162,7 +169,7 @@ impl SharedEnvRegistry {
     /// worker.
     pub(crate) async fn open_all(
         entries: Vec<crate::config::SharedEnvConfig>,
-        vault_config: &oneiron::VaultConfig,
+        config: &crate::config::ServeConfig,
         lease_vault_id: u64,
         admission: crate::server::HousekeepingAdmission,
         freeze: Option<crate::device_sync::ReapFreeze>,
@@ -172,7 +179,7 @@ impl SharedEnvRegistry {
             registry
                 .insert(
                     &entry,
-                    vault_config,
+                    config,
                     lease_vault_id,
                     admission.clone(),
                     freeze.clone(),
@@ -191,7 +198,7 @@ impl SharedEnvRegistry {
     pub(crate) async fn insert(
         &self,
         entry: &crate::config::SharedEnvConfig,
-        vault_config: &oneiron::VaultConfig,
+        config: &crate::config::ServeConfig,
         lease_vault_id: u64,
         admission: crate::server::HousekeepingAdmission,
         freeze: Option<crate::device_sync::ReapFreeze>,
@@ -214,39 +221,39 @@ impl SharedEnvRegistry {
             );
             return;
         }
-        let vault_config = vault_config.clone();
+        let config = config.clone();
         let opened =
-            tokio::task::spawn_blocking(move || open_one(&spec, &vault_config, lease_vault_id))
-                .await;
+            tokio::task::spawn_blocking(move || open_one(&spec, &config, lease_vault_id)).await;
         match opened {
             Ok(Ok(env)) => {
-                let lane = match env.lane {
-                    Some(connection) => {
-                        let first = admission();
-                        let (stop, stop_rx) = tokio::sync::oneshot::channel();
-                        let task = tokio::spawn(run_lane(
-                            Arc::clone(&connection),
-                            stop_rx,
-                            freeze,
-                            first,
-                            env.key.0,
-                        ));
-                        Some(ActiveLane {
-                            connection,
-                            stop,
-                            task,
-                            vault_id: env.key.0,
-                        })
-                    }
+                let lane = if env.left {
                     // Already left: no run needs an admission.
-                    None => None,
+                    None
+                } else {
+                    let first = admission();
+                    let (stop, stop_rx) = tokio::sync::oneshot::channel();
+                    let task = tokio::spawn(run_lane(
+                        Arc::clone(&env.connection),
+                        stop_rx,
+                        freeze,
+                        first,
+                        env.key.0,
+                    ));
+                    Some(ActiveLane {
+                        connection: Arc::clone(&env.connection),
+                        stop,
+                        task,
+                        vault_id: env.key.0,
+                    })
                 };
                 self.lock().insert(
                     env.key,
                     SharedEnvEntry {
                         path: env.path,
                         vault: env.vault,
+                        connection: env.connection,
                         lane,
+                        purge_complete: false,
                         last_leave_check: 0,
                     },
                 );
@@ -284,42 +291,36 @@ impl SharedEnvRegistry {
         earliest
     }
 
-    /// One leave-check round, called from the lifecycle tick: for each env
-    /// that still has a lane, is due its hourly check, and has not left,
-    /// one task runs `SyncConnection::check_shared_leave` under a bounded
-    /// host-side timeout. The caller holds each handle (in
-    /// `HousekeepingPasses`) so shutdown joins the checks. A confirmed
-    /// leave detaches the lane and keeps the vault handle; a refusal or
-    /// failure (a 401 included) warns and retries on the next round, and is
-    /// never read as a leave.
+    /// One leave-check round, called from the lifecycle tick: every env
+    /// without a completed purge gets one bounded confirmation task. An
+    /// already-recorded leave calls the same idempotent confirmation again,
+    /// so an interrupted purge resumes instead of looking complete. The
+    /// caller holds each handle so shutdown joins the checks. A refusal or
+    /// failure (a 401 included) warns and retries, never reads as a leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
         let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>)> = {
             let envs = self.lock();
             envs.iter()
                 .filter_map(|(key, entry)| {
-                    let lane = entry.lane.as_ref()?;
-                    if now.saturating_sub(entry.last_leave_check) < LEAVE_CHECK_EVERY_SECS {
+                    if entry.purge_complete
+                        || now.saturating_sub(entry.last_leave_check) < LEAVE_CHECK_EVERY_SECS
+                    {
                         return None;
                     }
                     Some((
                         key.clone(),
                         Arc::clone(&entry.vault),
-                        Arc::clone(&lane.connection),
+                        Arc::clone(&entry.connection),
                     ))
                 })
                 .collect()
         };
         let mut checks = Vec::with_capacity(due.len());
         for (key, vault, connection) in due {
-            // Left-ness is re-derived, never stored: one cheap read per due env.
+            // A receipt is not purge completion: every recorded left gets the
+            // same idempotent confirmation again until it finishes.
             match oneiron::sync::shared_leave::has_left(&vault) {
-                Ok(true) => {
-                    // The lane should already be gone (a confirmed check
-                    // drops it); drop a drifted one now rather than
-                    // checking again.
-                    self.detach_lane(&key);
-                }
-                Ok(false) => checks.push(self.spawn_leave_check(key, connection, now)),
+                Ok(true) | Ok(false) => checks.push(self.spawn_leave_check(key, connection, now)),
                 Err(error) => tracing::warn!(
                     vault_id = key.0,
                     kind = ?error.kind(),
@@ -366,6 +367,7 @@ impl SharedEnvRegistry {
             let check = connection.check_shared_leave(vault_id, &member);
             match tokio::time::timeout(LEAVE_CHECK_TIMEOUT, check).await {
                 Ok(Ok(Some(receipt))) => {
+                    this.note_purge_complete(&key, now);
                     this.detach_lane(&key);
                     tracing::info!(
                         vault_id = vault_id,
@@ -404,6 +406,15 @@ impl SharedEnvRegistry {
                 path = %entry.path.display(),
                 "shared env lane detached; vault stays open"
             );
+        }
+    }
+
+    /// Marks the confirmed receipt's full replica purge complete. Owed
+    /// orphan-body collection continues in housekeeping after this point.
+    fn note_purge_complete(&self, key: &SharedEnvKey, now: u64) {
+        if let Some(entry) = self.lock().get_mut(key) {
+            entry.purge_complete = true;
+            entry.last_leave_check = now;
         }
     }
 
@@ -575,10 +586,24 @@ fn direct_home_url(home_url: &str, vault_id: u64) -> Result<(), String> {
 /// line for the caller; it names the path and vault id, never member/slip/secret.
 fn open_one(
     spec: &SharedEnvSpec,
-    vault_config: &oneiron::VaultConfig,
+    config: &crate::config::ServeConfig,
     lease_vault_id: u64,
 ) -> Result<OpenedEnv, String> {
     let vault_id = spec.vault_id;
+    let mut resolved = config.vault_config();
+    let mut serve_path = config.clone();
+    serve_path.vault_path = spec.path.clone();
+    serve_path.maximum_tier = false;
+    resolved.page_seal = if oneiron::world_keys::vault_is_sealed(&spec.path)
+        .map_err(|error| format!("shared env {vault_id} seal state unreadable: {error:#}"))?
+    {
+        crate::commands::page_seal_at(&serve_path, None).map_err(|error| {
+            format!("shared env {vault_id} page seal did not resolve: {error:#}")
+        })?
+    } else {
+        // A personal seal never crosses into another env, sealed or plain.
+        None
+    };
     let key: SharedEnvKey = (vault_id, spec.member.clone());
     // Existing-only, but process-owned: precheck the vault file so a typo
     // never creates one, then take the same writer lease every served vault
@@ -589,7 +614,7 @@ fn open_one(
             spec.path.display()
         ));
     }
-    let vault = oneiron::Vault::open_owned(&spec.path, vault_config.clone())
+    let vault = oneiron::Vault::open_owned(&spec.path, resolved)
         .map_err(|error| format!("open {path}: {error:#}", path = spec.path.display()))?;
     let vault = Arc::new(vault);
     // The canonical dir, for diagnostics; the open refuses a missing root,
@@ -600,12 +625,12 @@ fn open_one(
         .unwrap_or_else(|_| spec.path.clone());
     let left = oneiron::sync::shared_leave::has_left(&vault)
         .map_err(|error| format!("shared env {vault_id} left state unreadable: {error:#}"))?;
-    let lane = if left {
-        None
-    } else {
+    if !left {
         direct_home_url(&spec.home_url, vault_id)?;
-        Some(open_lane(Arc::clone(&vault), spec, lease_vault_id)?)
-    };
+    }
+    // Left or not, this connection stays for idempotent leave confirmation;
+    // only unleft entries start a sync run on it.
+    let connection = open_lane(Arc::clone(&vault), spec, lease_vault_id)?;
     if left {
         tracing::info!(
             vault_id = vault_id,
@@ -623,7 +648,8 @@ fn open_one(
         key,
         path,
         vault,
-        lane,
+        connection,
+        left,
     })
 }
 
@@ -651,8 +677,16 @@ fn open_lane(
     let key = credential
         .signing_key()
         .map_err(|error| format!("lane slip of shared env {vault_id} unusable: {error:#}"))?;
+    let residence_selector = shared_residence_selector(&vault, &credential.token)?;
+    let residence_mode = if residence_selector.is_some() {
+        oneiron::sync::SyncResidenceMode::Opened
+    } else {
+        // No live member grant: full replication has no Opened selector gate.
+        oneiron::sync::SyncResidenceMode::All
+    };
     let client_config = SyncClientConfig {
         server_url: spec.home_url.clone(),
+        residence_mode,
         transport_credential: Some(oneiron::sync::SyncTransportCredential::new(
             credential.token.clone(),
             key.clone(),
@@ -661,6 +695,7 @@ fn open_lane(
             credential.token,
             key,
         )),
+        residence_selector,
         ..SyncClientConfig::default()
     };
     let connection = SyncConnection::new(
@@ -672,6 +707,43 @@ fn open_lane(
     )
     .map_err(|error| format!("lane of shared env {vault_id} unbuildable: {error:#}"))?;
     Ok(Arc::new(connection))
+}
+
+/// The own-device member grant the paired slip names, for residence reads.
+/// Never inferred from the home's root or peer bytes.
+fn shared_residence_selector(
+    vault: &oneiron::Vault,
+    token: &str,
+) -> Result<Option<oneiron::sync::SyncSelector>, String> {
+    let slip = oneiron::authority::CapabilitySlip::from_token(token)
+        .map_err(|error| format!("lane slip of shared env unusable: {error:#}"))?;
+    let claims = &slip.claims;
+    let Some(grant) = claims.grant_ref.as_deref() else {
+        return Ok(None);
+    };
+    let grant = oneiron::EntityId::from_hex(grant)
+        .map_err(|_| "the paired credential's grant_ref is not an entity id".to_owned())?;
+    let holder = oneiron::EntityId::from_hex(&claims.holder_ref)
+        .map_err(|_| "the paired credential's holder is not an actor".to_owned())?;
+    let live_grant = vault
+        .get_raw(&grant)
+        .map_err(|error| format!("paired grant unreadable: {error:#}"))?
+        .is_some_and(|raw| {
+            raw.first() == Some(&oneiron_contracts::registry::ENTITY_TYPE_FEDERATION_GRANT)
+        })
+        && !vault
+            .is_deleted_shell(&grant)
+            .map_err(|error| format!("paired grant liveness unreadable: {error:#}"))?;
+    if !live_grant {
+        return Ok(None);
+    }
+    Ok(Some(oneiron::sync::SyncSelector::new(
+        grant,
+        holder,
+        oneiron::sync::SyncSelectorWorld::All,
+        Vec::new(),
+        Vec::new(),
+    )))
 }
 
 /// The check's failure, as a static kind only: a refusal's own fixed

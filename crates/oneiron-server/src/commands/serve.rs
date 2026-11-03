@@ -203,10 +203,9 @@ pub(super) async fn serve_anchored(
             crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
         // Dedicated shared environments open beside the personal lane, never
         // through HOME/XDG discovery (FIX 2051, FIX 11136).
-        let env_config = config.vault_config();
         let shared = crate::shared_envs::SharedEnvRegistry::open_all(
             config.shared_env.clone(),
-            &env_config,
+            &config,
             config.lease_vault_id,
             crate::server::admit_every_pass(),
             None,
