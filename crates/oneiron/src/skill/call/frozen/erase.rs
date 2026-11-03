@@ -112,8 +112,10 @@ pub(crate) fn erase_callable_cases_in_txn(
 }
 
 /// Whether the live attempt `receipt` names — still running, its pack
-/// receipt not sealed yet — read the erased row (FIX 12187): its recorded
-/// read set. `false` when the receipt names no attempt row, as before.
+/// receipt not sealed yet — read the erased row (FIX 12187): positive
+/// membership in its accumulated read set. Reports only union, so an
+/// incomplete set still proves a reported row was read; `None` (unknown)
+/// remains no positive evidence. `false` when the receipt names no row.
 fn live_attempt_names_source(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -127,7 +129,11 @@ fn live_attempt_names_source(
     let Some(record) = queue.get_in_txn(txn, attempt)? else {
         return Ok(false);
     };
-    Ok(record.source_rows().is_some_and(|rows| rows.contains(id)))
+    Ok(record
+        .read_set
+        .as_ref()
+        .and_then(|set| set.rows.as_deref())
+        .is_some_and(|rows| rows.contains(id)))
 }
 
 /// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
