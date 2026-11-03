@@ -20,9 +20,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState,
     BUDGET_HOLD_ACTOR,
 };
+use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

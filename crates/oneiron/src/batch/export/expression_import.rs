@@ -242,7 +242,7 @@ pub(super) fn validate_local_actor(
         .ok_or(Error::CorruptedIndex("import actor header"))?;
     crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("import actor is not locally active"));
     }

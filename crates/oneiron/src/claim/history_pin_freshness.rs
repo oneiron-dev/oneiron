@@ -313,7 +313,7 @@ impl Vault {
         let Some(vault_id) = self.authority_view_readonly_in_txn(&txn)?.vault_id else {
             return Ok(None);
         };
-        let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
+        let Some(machine) = crate::store::install_identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);
         };
         drop(txn);
@@ -430,7 +430,7 @@ impl Vault {
             return Ok(None);
         }
         let txn = self.store.env.read_txn()?;
-        if crate::identity::read_machine_id_in_txn(self, &txn)? != Some(challenge.machine) {
+        if crate::store::install_identity::read_machine_id_in_txn(self, &txn)? != Some(challenge.machine) {
             return Ok(None);
         }
         let fold = self.authority_view_readonly_in_txn(&txn)?;
