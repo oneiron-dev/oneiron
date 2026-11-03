@@ -130,7 +130,7 @@ impl TaggingReconciler {
     /// claim is [`Claim::Replan`]. A payload this build cannot read is
     /// claimed as live, to be failed.
     fn claim(&self, asked: Option<ExtractionWork>) -> Result<Claim> {
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         let attempt = |now| ClaimAttempt {
             lease_owner: self.lease_owner.clone(),
             now,
