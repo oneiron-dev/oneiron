@@ -52,7 +52,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
@@ -387,7 +387,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
