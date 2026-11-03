@@ -118,15 +118,22 @@ pub(crate) struct AuthorityContinuation {
     /// Persistent, so the next continuation shares it and adds only the
     /// tail's (FIX 12308).
     ids: im::OrdMap<crate::EntityId, AuthorityEntryHash>,
+    /// The highest store-order sequence this fold read (FIX 12369), where
+    /// the fold read the whole stored log under a complete store-order
+    /// index: its `ids` are then exactly the rows sequenced up to it, and
+    /// the next fold range-scans only the rows past it. None where the
+    /// index cannot vouch for that (an adopted image's fold, an incomplete
+    /// index): the next fold takes the type-index scan.
+    max_seq: Option<u64>,
 }
 
 impl AuthorityContinuation {
-    fn of(base: super::fold_resume::FoldBase) -> Option<Self> {
+    fn of(base: super::fold_resume::FoldBase, max_seq: Option<u64>) -> Option<Self> {
         let ids = base
             .hashes()
             .map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
             .collect::<Option<_>>()?;
-        Some(Self { base, ids })
+        Some(Self { base, ids, max_seq })
     }
 
     /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
@@ -135,12 +142,13 @@ impl AuthorityContinuation {
         baseline: &'a Self,
         base: super::fold_resume::FoldBase,
         tail: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+        max_seq: Option<u64>,
     ) -> Option<Self> {
         let mut ids = baseline.ids.clone();
         for hash in tail {
             ids.insert(authority_log_entity_id_from_hash(hash).ok()?, *hash);
         }
-        Some(Self { base, ids })
+        Some(Self { base, ids, max_seq })
     }
 }
 
@@ -620,6 +628,11 @@ fn fold_stored_tail_in_txn(
                     baseline,
                     base,
                     tail.iter().map(|(hash, _)| hash),
+                    if baseline.max_seq.is_some() {
+                        super::store_order::complete_max_in_txn(store, txn)?
+                    } else {
+                        None
+                    },
                 ),
             });
         }
@@ -662,6 +675,7 @@ fn fold_stored_tail_in_txn(
             key.policy.stale_roster_window_secs,
         ),
     );
+    let max_seq = super::store_order::complete_max_in_txn(store, txn)?;
     Ok(AuthorityTailFold::Complete {
         view: AuthorityView {
             fold: Arc::new(fold),
@@ -670,7 +684,7 @@ fn fold_stored_tail_in_txn(
         next_deadline_secs,
         continuation: base
             .map(|base| base.with_pinned(pinned))
-            .and_then(AuthorityContinuation::of),
+            .and_then(|base| AuthorityContinuation::of(base, max_seq)),
     })
 }
 

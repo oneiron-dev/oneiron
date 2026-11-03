@@ -111,6 +111,14 @@ side_tables! {
     /// Pointer to the current default (winning) authoring strategy pin and its promotion receipt.
     /// Key: ().
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
+    /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
+    /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
+    /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
+    /// Key: u64be (the sequence). Value: id16.
+    AUTHLOG_STORE_ORDER: VaultMeta b"authlog:store_order:v1:" Raw;
+    /// The store-order index's state: whether every row stored before the index existed has
+    /// been sequenced, and the next free sequence (9 raw bytes: the flag, then u64be). Key: ().
+    AUTHLOG_STORE_ORDER_STATE: VaultMeta b"authlog:store_order_state:v1" Raw;
     /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
     AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
     /// What this home's root signed for a linked machine's own checkpoint image (FIX 5195): the

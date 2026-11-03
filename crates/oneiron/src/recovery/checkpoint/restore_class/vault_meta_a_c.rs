@@ -42,6 +42,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ATTEMPT_PACK_RECEIPT, CONTENT),
     (&t::AUTOREASON_BEAM_ONCE, CONTENT),
     (&t::AUTOREASON_BEAM_DEFAULT, CONTENT),
+    // The store-order index stays with the live authority rows it sequences (FIX 12369).
+    (&t::AUTHLOG_STORE_ORDER, LIVE),
+    (&t::AUTHLOG_STORE_ORDER_STATE, LIVE),
     (&t::AUTHORITY_CHECKPOINT_V2_HEAD, LIVE),
     (&t::AUTHORITY_CHECKPOINT_V2_IMAGE, LIVE),
     (&t::AUTHORITY_CHECKPOINT_ADOPTED_PIN, LIVE),

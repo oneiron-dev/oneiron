@@ -72,6 +72,7 @@ pub(super) fn stage_put_projections(
         let first_stored = observe_authority_put(
             store,
             wtxn,
+            &fixed.id,
             &key,
             dispatch.authority_entry_observation.as_ref(),
             dispatch.authority_entry_hash_pin.as_ref(),
