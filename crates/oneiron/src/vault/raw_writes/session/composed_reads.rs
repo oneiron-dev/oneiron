@@ -6,15 +6,15 @@
 //! A search or a builder run registers its retrieval run through the room's
 //! route, so an off-record room's run row stays in the room.
 
-use crate::entity_id::EntityId;
-use crate::memory::{Memory};
-use oneiron_contracts::memory::{MemoryResult};
-use crate::ports::EntityStoreRead;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
-use crate::vault::edges::{ancestors_in, subtree_in, would_create_cycle_in};
 use crate::ContextPackBuilder;
 use crate::PipelineBuilder;
+use crate::entity_id::EntityId;
+use crate::memory::Memory;
+use crate::ports::EntityStoreRead;
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
+use crate::vault::edges::{ancestors_in, subtree_in, would_create_cycle_in};
+use oneiron_contracts::memory::MemoryResult;
 use oneiron_retrieval::pipeline::ScoredEntity;
 
 impl Memory<'_> {

@@ -64,9 +64,9 @@ pub const COACH_TRIPWIRES_FACET: &str = "coach.tripwires";
 /// ARCH-0079): a pending skill tradeoff ask that waited out a reminder window
 /// climbs one rung of its role chain, ending at the vault owners.
 pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
+pub use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;
 pub use crate::claim::maintenance_kind::COACH_TRAINING_OFFER_FACET;
 pub use crate::claim::maintenance_kind::COACH_WEAVE_DIGEST_SETTINGS_FACET;
-pub use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;
 /// Browser programs (CUA E8, FIX 7605): programs proposed from solved runs
 /// and repairs of failed ones, with no model, through
 /// [`Vault::run_coach_browser_programs`].

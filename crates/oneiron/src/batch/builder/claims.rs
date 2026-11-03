@@ -5,9 +5,9 @@ use super::BatchBuilder;
 
 use rmpv::Value;
 
-use crate::write_envelope::affect_trigger::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
+use crate::write_envelope::affect_trigger::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::write_envelope::claim_predicate::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
 };

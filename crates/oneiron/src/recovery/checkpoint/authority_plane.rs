@@ -29,11 +29,13 @@ use crate::agent_def::{
     AgentCeiling, AgentModel, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::gate::dispatch_compliance::observations::{JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
+};
+use crate::gate::dispatch_compliance::observations::{
+    JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
 };
 use crate::llm::{ModelId, ModelTierRef};
 use crate::note::{NoteActor, NoteKind};
@@ -800,7 +802,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                         verdict: scan_verdict(&claim),
                     };
                 }
-                if claim.predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_JURISDICTION {
+                if claim.predicate
+                    == crate::write_envelope::cohort_claims::PREDICATE_COMM_JURISDICTION
+                {
                     return Compared::Jurisdiction {
                         access: (space, private),
                         observation: jurisdiction(&claim),

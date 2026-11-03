@@ -36,13 +36,14 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 
 pub use crate::store::claim_descriptors::CLAIM_CLASS_DESCRIPTOR_BODY_KEYS;
-pub use crate::store::claim_descriptors::ClaimWriteClass;
-pub use crate::store::claim_descriptors::ClaimValidatorKind;
-pub use crate::store::claim_descriptors::ClaimSubjectKind;
-pub use crate::store::claim_descriptors::EnforcementStamp;
 pub use crate::store::claim_descriptors::ClaimClassDescriptor;
+pub use crate::store::claim_descriptors::ClaimSubjectKind;
+pub use crate::store::claim_descriptors::ClaimValidatorKind;
+pub use crate::store::claim_descriptors::ClaimWriteClass;
+pub use crate::store::claim_descriptors::EnforcementStamp;
 use crate::store::claim_descriptors::{
-    DESCRIPTOR_PUT_OPERATION, compile_schema, compiled_descriptor, compiled_row, hash_hex, invalid, json_value,
+    DESCRIPTOR_PUT_OPERATION, compile_schema, compiled_descriptor, compiled_row, hash_hex, invalid,
+    json_value,
 };
 
 /// Checks `body` against its class's descriptor where the descriptor
@@ -82,8 +83,8 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
 }
 
 pub use crate::store::claim_descriptors::claim_class_descriptor_id;
-pub use crate::store::claim_descriptors::encode_claim_class_descriptor;
 pub use crate::store::claim_descriptors::decode_claim_class_descriptor;
+pub use crate::store::claim_descriptors::encode_claim_class_descriptor;
 
 /// The synced descriptor at `predicate`'s id, when one is there and reads.
 /// A soft-erased shell, a body this build cannot decode or a row naming

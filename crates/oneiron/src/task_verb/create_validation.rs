@@ -4,10 +4,10 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 use crate::human_task::HumanTaskError;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;

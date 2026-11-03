@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_base::config::VectorEvidenceFloors;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use oneiron_base::config::VectorEvidenceFloors;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;
@@ -200,7 +200,6 @@ pub(crate) fn validate_space_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-
 
 pub(crate) const TEXT_HASH_LEN: usize = 32;
 
@@ -500,6 +499,15 @@ pub struct MediaEmbeddingInput<'a> {
     pub source_rows: Option<&'a [EntityId]>,
 }
 
+impl MediaEmbeddingInput<'_> {
+    /// Every row the input's bytes came from, or its own id when unknown.
+    #[must_use]
+    pub fn source_rows(&self) -> &[EntityId] {
+        self.source_rows
+            .unwrap_or(std::slice::from_ref(&self.entity_id))
+    }
+}
+
 /// One document's answer from a media model: its vector with the device and runtime that
 /// computed it, stored beside the vector outside the space identity (FIX 7796), or why the
 /// model refused that document by its content.
@@ -537,9 +545,13 @@ pub trait MediaEmbedder: Send + Sync {
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
+        release: &(dyn Fn(&[EntityId]) -> Result<()> + Sync),
     ) -> Result<Vec<MediaOutcome>> {
-        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        let rows: Vec<EntityId> = inputs
+            .iter()
+            .flat_map(MediaEmbeddingInput::source_rows)
+            .copied()
+            .collect();
         release(&rows)?;
         self.embed_each(inputs)
     }
@@ -568,4 +580,3 @@ pub struct MediaEmbedReport {
     /// a device-local world keeps them (FIX 382). They stay unsent, for a later pass.
     pub withheld: usize,
 }
-
