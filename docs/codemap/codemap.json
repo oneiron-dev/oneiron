@@ -4751,7 +4751,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CapabilitySlip",
@@ -15156,6 +15156,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AutoCheckCandidate",
+      "AutoCheckCandidateOwned",
+      "AutoCheckNotes",
+      "AutoCheckOutcome",
+      "AutoCheckSignals"
+     ],
+     "path": "src/claim_check.rs",
+     "purpose": "Claim auto-check candidates and normalized verdict values",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20011,39 +20032,15 @@
      "notable": [
       "Bm25RankProfile",
       "HnswConfig",
-      "HostingPrivacyPosture",
-      "TextAnalyzerConfig",
-      "TextIndexOptions",
-      "VaultConfig",
-      "VaultDataKeyCustody",
-      "VaultPrivacyConfig",
-      "VectorEvidenceFloors"
+      "VaultConfig"
      ],
      "path": "src/config.rs",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
      "surface": {
-      "const": 5,
       "crate-vis": 1,
-      "enum": 2,
-      "fn": 13,
-      "mod": 1,
-      "re-export": 1,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "DeploymentTier",
-      "FailureSignalConfig"
-     ],
-     "path": "src/config/failure_signals.rs",
-     "purpose": "The owner's \"Help improve Oneiron\" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)…",
-     "surface": {
-      "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 6,
+      "re-export": 2,
+      "struct": 3
      }
     },
     {
@@ -39604,6 +39601,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostInferenceBinding",
+      "HostInferenceContext"
+     ],
+     "path": "src/inference_context.rs",
+     "purpose": "Host-bound inference identity and extraction context",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -41824,8 +41836,8 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 23,
-      "mod": 192,
+      "crate-vis": 24,
+      "mod": 202,
       "re-export": 87
      }
     },
@@ -42297,23 +42309,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AutoCheckCandidate",
-      "AutoCheckCandidateOwned",
       "AutoCheckDecisions",
-      "AutoCheckNotes",
-      "AutoCheckOutcome",
-      "AutoCheckSignals",
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
      "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
-      "const": 2,
-      "crate-vis": 6,
-      "enum": 1,
-      "fn": 7,
-      "struct": 5,
-      "trait": 1
+      "crate-vis": 5,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -42356,23 +42361,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "RsiBudgetConfig",
-      "RsiBudgetError",
-      "RsiBudgetRead",
-      "RsiBudgetShare",
-      "RsiExplorationRead",
-      "RsiOverdraftReceipt",
-      "RsiSettlement",
-      "RsiSpendPurpose",
-      "RsiTopUp"
-     ],
+     "notable": [],
      "path": "src/llm/budget/rsi.rs",
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
-      "enum": 4,
       "fn": 14,
-      "struct": 5
+      "re-export": 1
      }
     },
     {
@@ -42459,15 +42453,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AnswerActor"
-     ],
+     "notable": [],
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 2
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -42523,17 +42514,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "QuestionFamily"
-     ],
+     "notable": [],
      "path": "src/llm/decision/catalogue.rs",
-     "purpose": "The engine's registered typed-question families, in one place",
+     "purpose": "Defined below the model invocation layer",
      "surface": {
-      "const": 49,
-      "fn": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -42543,7 +42530,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 4
      }
     },
     {
@@ -42597,7 +42584,8 @@
      "path": "src/llm/decision/held.rs",
      "purpose": "What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host…",
      "surface": {
-      "fn": 5,
+      "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -42633,7 +42621,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DecisionCall",
@@ -42641,18 +42629,14 @@
       "DecisionPack",
       "DecisionProvider",
       "ModelDecisionProvider",
-      "PairedAnswer",
-      "ProviderCapability",
-      "ProviderDecision",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder/providers.rs",
      "purpose": "Decision ladder providers and the calls they answer",
      "surface": {
-      "const": 3,
-      "crate-vis": 3,
-      "fn": 8,
-      "struct": 7,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 4,
       "trait": 2
      }
     },
@@ -42660,22 +42644,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AskAct",
       "AskRole",
       "AskRoleResolver",
       "AskTo",
-      "HolderKind",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ResolvedRole",
-      "RoleHolder",
-      "RoleRank"
+      "RoleHolder"
      ],
      "path": "src/llm/decision/ladder/roles.rs",
      "purpose": "Decision ladder person asks and the roles they go to",
      "surface": {
-      "enum": 4,
-      "fn": 5,
+      "enum": 1,
+      "fn": 4,
+      "re-export": 1,
       "struct": 4,
       "trait": 2
      }
@@ -42797,24 +42779,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "BandMode",
-      "DecisionBandEnforceRequest",
-      "DecisionBandLearnRequest",
-      "DecisionBandPolicy",
-      "DecisionBandReadRequest",
-      "LearnedBand",
-      "PersonThreshold",
-      "Reversibility",
-      "ThinkThreshold"
-     ],
+     "notable": [],
      "path": "src/llm/decision/policy.rs",
-     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "purpose": "Defined below the model invocation layer",
      "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 11,
-      "struct": 7
+      "re-export": 1
      }
     },
     {
@@ -43077,16 +43046,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "GraphQuestionInput",
-      "GraphQuestionRef"
-     ],
+     "notable": [],
      "path": "src/llm/decision/questions/recipe.rs",
      "purpose": "Explicit, resident-authored context recipes over immutable graph questions",
      "surface": {
       "crate-vis": 1,
       "fn": 1,
-      "struct": 2
+      "re-export": 1
      }
     },
     {
@@ -43096,34 +43062,21 @@
       "AnswerProposal",
       "AnswerRecord",
       "ArtifactUnits",
-      "CalibrationPair",
-      "OmittedNeighbor",
-      "OutcomeBinding",
-      "OutcomeLabel",
-      "OutcomeSource",
-      "OutcomeWindowClose",
-      "QuestionActivation",
       "QuestionAskerClass",
-      "QuestionAudience",
       "QuestionDefinition",
-      "QuestionMedia",
       "QuestionRecord",
-      "QuestionScheduleHead",
-      "RefreshPolicy",
       "RefreshTrigger",
-      "ScheduledBackfill",
-      "SourceConflict",
-      "WindowOutcome"
+      "ScheduledBackfill"
      ],
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "enum": 7,
-      "fn": 5,
-      "re-export": 1,
-      "struct": 14,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 4,
+      "re-export": 2,
+      "struct": 6,
       "type": 1
      }
     },
@@ -43326,12 +43279,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "HostRule",
-      "HostRuleProvider",
-      "HostRuleRef"
+      "HostRuleProvider"
      ],
      "path": "src/llm/decision/rules.rs",
      "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
@@ -43339,7 +43291,8 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 6,
-      "struct": 3
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -43371,20 +43324,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SlideReviewLimits",
-      "SlideReviewPolicy",
-      "SlideReviewPrecedence",
-      "SlideReviewRoute"
-     ],
+     "notable": [],
      "path": "src/llm/decision/slides_policy.rs",
-     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "purpose": "Defined below the model invocation layer",
      "surface": {
-      "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "re-export": 1
      }
     },
     {
@@ -43396,42 +43342,22 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "AnswerContract",
-      "DecisionAnswer",
-      "DecisionBand",
-      "DecisionClass",
-      "DecisionDial",
-      "DecisionQuestion",
-      "DecisionQuestionInput",
       "DecisionReceipt",
-      "DecisionRung",
-      "DecisionTime",
-      "EvidenceVersion",
-      "HumanAskReason",
-      "ImageBox",
       "ImagePin",
-      "ImagePoint",
-      "PairedReading",
-      "PersonChangedAnswer",
-      "ProviderPin",
-      "Reasoning",
-      "ReasoningCause",
       "ReceiptAnswerer",
       "ReceiptAsk",
-      "StateCut",
-      "StopCause",
       "TypedDecision"
      ],
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
-      "crate-vis": 5,
-      "enum": 8,
-      "fn": 15,
-      "struct": 17
+      "crate-vis": 3,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -43487,41 +43413,30 @@
      "notable": [
       "AuthorizedInference",
       "BoundInference",
-      "HostInferenceBinding",
-      "HostInferenceContext",
       "InferencePolicySnapshot"
      ],
      "path": "src/llm/inference_admission.rs",
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
-      "enum": 1,
-      "fn": 15,
-      "struct": 4
+      "fn": 12,
+      "re-export": 1,
+      "struct": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CalibratedVerdict",
-      "ModelBinding",
-      "ModelDisposition",
-      "ModelManifest",
-      "ModelRole",
-      "ModelSlot",
-      "VerdictBinding",
-      "VerdictMode"
+      "ModelManifest"
      ],
      "path": "src/llm/manifest.rs",
      "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
      "surface": {
-      "const": 1,
       "crate-vis": 5,
-      "enum": 4,
-      "fn": 17,
+      "fn": 13,
       "mod": 1,
-      "re-export": 3,
-      "struct": 4
+      "re-export": 4,
+      "struct": 1
      }
     },
     {
@@ -43571,16 +43486,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "TeacherProbeApproval",
-      "TeacherProbePolicy"
+      "TeacherProbeApproval"
      ],
      "path": "src/llm/manifest/teacher_probe.rs",
      "purpose": "Policy-bound extraction-teacher probe approval for manifest publication",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "fn": 6,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -43952,21 +43866,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "BudgetLine",
-      "DeclarationEditor",
-      "DeclarationError",
-      "DeclaredTeachers",
-      "LeaseUnit",
-      "RunDeclaration"
-     ],
+     "notable": [],
      "path": "src/llm/run_admission/declaration.rs",
-     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "purpose": "Run declaration values are defined below the invocation layer",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
-      "fn": 15,
-      "struct": 4
+      "re-export": 1
      }
     },
     {
@@ -44014,25 +43918,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AddFundsNotice",
-      "CheckpointRef",
-      "DeclaredMaximum",
-      "JobMaximum",
-      "JobSignal",
-      "JobStartRefused",
-      "MaximumShown",
-      "MaximumStop",
-      "ResumeOffer",
-      "ResumeRefused",
-      "StopRefused"
-     ],
+     "notable": [],
      "path": "src/llm/run_admission/job_maximum.rs",
-     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "purpose": "Paid-job maximum values are defined below the invocation layer",
      "surface": {
-      "enum": 4,
-      "fn": 9,
-      "struct": 7
+      "re-export": 1
      }
     },
     {
@@ -44420,7 +44310,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
       "ModelStepReceipt",
@@ -44435,8 +44324,8 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 3,
-      "re-export": 2,
-      "struct": 6
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -44501,18 +44390,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SettledStepRequest",
-      "SettledStepView"
-     ],
+     "notable": [],
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
       "crate-vis": 4,
       "fn": 1,
-      "struct": 2
+      "re-export": 1
      }
     },
     {
@@ -44604,26 +44490,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DreamerTrapKind",
-      "DreamerTrapState",
-      "DurableStepContext",
-      "DurableStepError",
-      "StepOutcome",
-      "StepProgression",
-      "TrapRef"
-     ],
+     "notable": [],
      "path": "src/llm/step/types.rs",
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
-      "const": 8,
-      "crate-vis": 46,
-      "enum": 5,
-      "fn": 3,
-      "struct": 2,
-      "type": 2
+      "crate-vis": 37,
+      "re-export": 3
      }
     },
     {
@@ -49424,6 +49298,305 @@
       "fn": 6,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibratedVerdict",
+      "ModelBinding",
+      "ModelDisposition",
+      "ModelRole",
+      "ModelSlot",
+      "VerdictBinding",
+      "VerdictMode"
+     ],
+     "path": "src/model_binding.rs",
+     "purpose": "Model-role bindings and calibrated verdict values",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnswerActor"
+     ],
+     "path": "src/model_decision/answer_actor.rs",
+     "purpose": "An answer actor identity, including its erased state",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuestionFamily"
+     ],
+     "path": "src/model_decision/catalogue.rs",
+     "purpose": "The engine's registered typed-question families, in one place",
+     "surface": {
+      "const": 49,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/codec.rs",
+     "purpose": "Canonical entity references for typed-decision wire records",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/mod.rs",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values",
+     "surface": {
+      "crate-vis": 3,
+      "mod": 2,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandPolicy",
+      "DecisionBandReadRequest",
+      "LearnedBand",
+      "PersonThreshold",
+      "Reversibility",
+      "ThinkThreshold"
+     ],
+     "path": "src/model_decision/policy.rs",
+     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 11,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PairedAnswer",
+      "ProviderCapability",
+      "ProviderDecision"
+     ],
+     "path": "src/model_decision/provider.rs",
+     "purpose": "Provider answer values, capabilities, and score-level rules",
+     "surface": {
+      "const": 3,
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/questions/mod.rs",
+     "purpose": "Graph-question recipe and outcome vocabulary",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQuestionInput",
+      "GraphQuestionRef"
+     ],
+     "path": "src/model_decision/questions/recipe.rs",
+     "purpose": "Graph-question identities and explicit evidence joins",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibrationPair",
+      "OmittedNeighbor",
+      "OutcomeBinding",
+      "OutcomeLabel",
+      "OutcomeSource",
+      "OutcomeWindowClose",
+      "QuestionActivation",
+      "QuestionAudience",
+      "QuestionMedia",
+      "QuestionScheduleHead",
+      "RefreshPolicy",
+      "SourceConflict",
+      "WindowOutcome"
+     ],
+     "path": "src/model_decision/questions/records.rs",
+     "purpose": "Standing-question outcome, refresh, and evidence values",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AskAct",
+      "HolderKind",
+      "RoleRank"
+     ],
+     "path": "src/model_decision/roles.rs",
+     "purpose": "Actor-free role ranks, ask acts, and holder kinds",
+     "surface": {
+      "enum": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/model_decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/state.rs",
+     "purpose": "Caller-prepared decision state fitting",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerContract",
+      "DecisionAnswer",
+      "DecisionBand",
+      "DecisionClass",
+      "DecisionDial",
+      "DecisionQuestion",
+      "DecisionQuestionInput",
+      "DecisionRung",
+      "DecisionTime",
+      "EvidenceVersion",
+      "HostRuleRef",
+      "HumanAskReason",
+      "ImageBox",
+      "ImagePoint",
+      "PairedReading",
+      "PersonChangedAnswer",
+      "ProviderPin",
+      "Reasoning",
+      "ReasoningCause",
+      "StateCut",
+      "StopCause"
+     ],
+     "path": "src/model_decision/types.rs",
+     "purpose": "Typed decision questions, answer contracts, and measurement values",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 8,
+      "fn": 13,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DurableStepContext",
+      "StepOutcome"
+     ],
+     "path": "src/model_step_context.rs",
+     "purpose": "Caller-owned model-step context and terminal outcomes",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_step_effect.rs",
+     "purpose": "Durable model-step identity frozen into outbound effects",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DurableStepError"
+     ],
+     "path": "src/model_step_error.rs",
+     "purpose": "Durable model-step failure and reply-check contracts",
+     "surface": {
+      "enum": 1,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerTrapKind",
+      "DreamerTrapState",
+      "ModelStepCheckpoint",
+      "SettledStepRequest",
+      "SettledStepView",
+      "StepProgression",
+      "TrapRef"
+     ],
+     "path": "src/model_step_record.rs",
+     "purpose": "Durable model-step claim vocabulary and progression values",
+     "surface": {
+      "const": 8,
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -56818,23 +56991,21 @@
       "CommunityBoostReport",
       "CommunityCacheMeta",
       "CommunityEdge",
-      "CommunityError",
       "CommunityGraphInput",
       "CommunityId",
       "CommunityMembership",
       "CommunityProjection",
       "CommunityRefreshReport",
-      "PprCommunityCache",
-      "PprCommunityConfig"
+      "PprCommunityCache"
      ],
      "path": "src/ppr_community/types.rs",
      "purpose": "Community constants, error, ids, config and shared shells",
      "surface": {
-      "const": 11,
+      "const": 6,
       "crate-vis": 6,
-      "enum": 1,
-      "fn": 4,
-      "struct": 11
+      "fn": 3,
+      "re-export": 7,
+      "struct": 10
      }
     },
     {
@@ -60190,6 +60361,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RsiBudgetConfig",
+      "RsiBudgetError",
+      "RsiBudgetRead",
+      "RsiBudgetShare",
+      "RsiExplorationRead",
+      "RsiOverdraftReceipt",
+      "RsiSettlement",
+      "RsiSpendPurpose",
+      "RsiTopUp"
+     ],
+     "path": "src/research_budget.rs",
+     "purpose": "Research-loop budget configuration, settlement, and refusal values",
+     "surface": {
+      "enum": 4,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ResultBodyCollectReport"
      ],
      "path": "src/result_body/collect.rs",
@@ -60349,6 +60541,60 @@
      "path": "src/retrieval_depth/tests/repairs.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLine",
+      "DeclarationEditor",
+      "DeclarationError",
+      "DeclaredTeachers",
+      "LeaseUnit",
+      "RunDeclaration"
+     ],
+     "path": "src/run_budget/declaration.rs",
+     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddFundsNotice",
+      "CheckpointRef",
+      "DeclaredMaximum",
+      "JobMaximum",
+      "JobSignal",
+      "JobStartRefused",
+      "MaximumShown",
+      "MaximumStop",
+      "ResumeOffer",
+      "ResumeRefused",
+      "StopRefused"
+     ],
+     "path": "src/run_budget/job_maximum.rs",
+     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "surface": {
+      "enum": 4,
+      "fn": 9,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_budget/mod.rs",
+     "purpose": "Run budget declarations and paid-job maximum state",
+     "surface": {
+      "re-export": 2
+     }
     },
     {
      "bucket": "s",
@@ -76594,6 +76840,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "TeacherProbePolicy"
+     ],
+     "path": "src/teacher_probe_policy.rs",
+     "purpose": "Resolved extraction-teacher probe policy values",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
@@ -85424,6 +85685,13 @@
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
+    "claim_check": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Claim auto-check candidates and normalized verdict values"
+    },
     "cluster": {
      "files": 2,
      "impl_vault": false,
@@ -85551,10 +85819,10 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
@@ -85921,6 +86189,13 @@
      "layout": "dir",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
+    "inference_context": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host-bound inference identity and extraction context"
+    },
     "inference_snapshot": {
      "files": 6,
      "impl_vault": true,
@@ -86039,6 +86314,48 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
+    },
+    "model_binding": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Model-role bindings and calibrated verdict values"
+    },
+    "model_decision": {
+     "files": 13,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values"
+    },
+    "model_step_context": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Caller-owned model-step context and terminal outcomes"
+    },
+    "model_step_effect": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Durable model-step identity frozen into outbound effects"
+    },
+    "model_step_error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Durable model-step failure and reply-check contracts"
+    },
+    "model_step_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Durable model-step claim vocabulary and progression values"
     },
     "note": {
      "files": 67,
@@ -86243,6 +86560,13 @@
      "layout": "file+dir",
      "purpose": "RET-010 host-injected top-N rerank seam (1186-D1/D2)"
     },
+    "research_budget": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Research-loop budget configuration, settlement, and refusal values"
+    },
     "result_body": {
      "files": 5,
      "impl_vault": true,
@@ -86263,6 +86587,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ONE-207: the retrieval half of the effort dial"
+    },
+    "run_budget": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Run budget declarations and paid-job maximum state"
     },
     "run_tree": {
      "files": 11,
@@ -86523,6 +86854,13 @@
      "layout": "file",
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
     },
+    "teacher_probe_policy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Resolved extraction-teacher probe policy values"
+    },
     "team": {
      "files": 15,
      "impl_vault": false,
@@ -86692,9 +87030,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 113,
+   "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5889,
+   "source_files": 5913,
    "test_files": 900
   },
   "oneiron-android": {
@@ -87631,6 +87969,59 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostingPrivacyPosture",
+      "TextAnalyzerConfig",
+      "TextIndexOptions",
+      "VaultDataKeyCustody",
+      "VaultPrivacyConfig",
+      "VectorEvidenceFloors"
+     ],
+     "path": "src/config.rs",
+     "purpose": "Portable runtime configuration moved down from the engine crate",
+     "surface": {
+      "const": 5,
+      "enum": 2,
+      "fn": 7,
+      "mod": 2,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeploymentTier",
+      "FailureSignalConfig"
+     ],
+     "path": "src/config/failure_signals.rs",
+     "purpose": "The owner's \"Help improve Oneiron\" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunityError",
+      "PprCommunityConfig"
+     ],
+     "path": "src/config/ppr_community.rs",
+     "purpose": "Portable PPR community prior: the config closure moved down from the engine crate",
+     "surface": {
+      "const": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -87743,7 +88134,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 16
+      "mod": 17
      }
     },
     {
@@ -87888,6 +88279,13 @@
      "layout": "file",
      "purpose": "Multilingual analyzer subsystem"
     },
+    "config": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Portable runtime configuration moved down from the engine crate"
+    },
     "distance": {
      "files": 1,
      "impl_vault": false,
@@ -87996,7 +88394,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 19,
+   "source_files": 22,
    "test_files": 2
   },
   "oneiron-bench": {

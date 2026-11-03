@@ -3,10 +3,10 @@ use super::{
     ClaimInput, CommitOutcome, CommitReceipt, Memory, MemoryError, MemoryResult, RecordRefusal,
 };
 use crate::claim::ClaimApprovalStatus;
-use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Error};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 use serde::{Deserialize, Serialize};
 
 /// The explicit relationship position: `all`, or a set of relationships.

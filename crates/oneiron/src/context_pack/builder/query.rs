@@ -10,7 +10,7 @@ use crate::write_envelope::profile_snapshot::PsychProfileKey;
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 
-use crate::llm::ModelId;
+use oneiron_model::llm::ModelId;
 
 use super::super::types::{
     ContextPackRetrievalBudget, DEFAULT_CONTEXT_FRACTION, DEFAULT_MAX_FIELD_CHARS,

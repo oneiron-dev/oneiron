@@ -4,8 +4,8 @@
 use super::partition::{ConsolidationPartitionPlan, encode_partition_payload};
 use super::support::invalid_consolidation;
 use crate::Result;
-use crate::llm::Scope;
 use crate::side_table::{self, LegacyJson, SideTable};
+use oneiron_model::llm::Scope;
 use rmpv::Value;
 
 /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
@@ -18,18 +18,18 @@ pub(super) const KEY_BRANCH_SCOPE: &str = "branch_scope";
 impl ConsolidationPartitionPlan {
     /// Exact output resource for this ordered, queued TURN slice: its
     /// one-part branch's.
-    pub fn output_resource(&self) -> crate::llm::ScopeResource {
+    pub fn output_resource(&self) -> oneiron_model::llm::ScopeResource {
         self.branch().output_resource()
     }
 
     /// Exact graph/vector signals projection for this TURN slice. Reading it
     /// still requires actor authority and the accompanying four-axis scope.
-    pub fn signals_resource(&self) -> crate::llm::ScopeResource {
+    pub fn signals_resource(&self) -> oneiron_model::llm::ScopeResource {
         self.branch().signals_resource()
     }
 
     /// Exact stored gap projection for this partition and branch slice.
-    pub fn gap_resource(&self, scope: &Scope) -> crate::llm::ScopeResource {
+    pub fn gap_resource(&self, scope: &Scope) -> oneiron_model::llm::ScopeResource {
         super::gap::branch_gap_projection(&self.branch(), scope)
     }
 

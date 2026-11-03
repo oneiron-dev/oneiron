@@ -19,7 +19,6 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::note_world;
-use oneiron_authority::federation::Scope;
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -28,6 +27,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
+use oneiron_authority::federation::Scope;
 
 use super::disclosable_set::DisclosableSet;
 use super::disclosure_tier;

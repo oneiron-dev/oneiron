@@ -274,7 +274,7 @@ impl Memory<'_> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        lease: Option<&crate::llm::BudgetLease>,
+        lease: Option<&oneiron_model::llm::BudgetLease>,
         execution: &crate::retrieval_depth::RecallExecution<'_>,
         pin: &RecallPin,
     ) -> MemoryResult<super::MemoryPack> {
