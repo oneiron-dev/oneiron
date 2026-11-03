@@ -42,6 +42,15 @@ pub(crate) fn dreamer_parked_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<DreamerParkedAttemptRecord, Raw>(bytes)
 }
 
+/// The only resume failures a delivery may skip (FIX 1503). Every other
+/// decode/storage/lifecycle failure remains a hard error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResumePrecheck {
+    Proceed,
+    SkipOtherOwner,
+    SkipOrphanPark,
+}
+
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {
     pub(super) vault: &'a Vault,
@@ -1063,6 +1072,26 @@ impl<'a> DreamerRunnerStore<'a> {
             self.vault.store.notify_proactivity_changes();
         }
         Ok(resumed)
+    }
+
+    /// Read-only form of the two resume checks a delivery may skip. No park
+    /// row is removed, no lease is released and no queue row is changed.
+    pub(crate) fn resume_precheck_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt_id: AttemptId,
+        park_owner: &str,
+    ) -> Result<ResumePrecheck> {
+        let Some(record) = PARKED.get(&self.vault.store, &*wtxn, &attempt_id)? else {
+            return Ok(ResumePrecheck::Proceed);
+        };
+        if record.park_owner != park_owner {
+            return Ok(ResumePrecheck::SkipOtherOwner);
+        }
+        if self.status_with_park_in_txn(wtxn, attempt_id)?.is_none() {
+            return Ok(ResumePrecheck::SkipOrphanPark);
+        }
+        Ok(ResumePrecheck::Proceed)
     }
 
     /// Transaction-composable body of [`Self::resume_parked`], so the trap
