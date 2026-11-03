@@ -63,10 +63,7 @@ pub enum ExportDelivery {
     Transfer,
 }
 
-/// The `format` that names the whole-vault archive.
-pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
-/// The `format` that names the lossy OKF bundle.
-pub const EXPORT_TARGET_OKF: &str = "okf";
+pub use crate::serialize::{EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF};
 
 /// One export: the archive, or the OKF bundle. On the wire the ZIP is
 /// standard base64.

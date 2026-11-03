@@ -6,6 +6,8 @@
 
 mod approval;
 
+pub(crate) use crate::store::lifecycle_receipt_ref;
+
 pub use self::approval::channel_identity_lifecycle_approve_once_digest;
 pub(crate) use self::approval::{
     LifecycleApplied, LifecycleCall, LifecycleCallState, RecordedIdentityView,
@@ -765,10 +767,6 @@ impl Vault {
             .append_channel_identity_lifecycle_receipt_in_txn(wtxn, &receipt)?;
         Ok(receipt)
     }
-}
-
-pub(crate) fn lifecycle_receipt_ref(receipt_id: ChannelIdentityLifecycleReceiptId) -> String {
-    format!("identity_lifecycle:{}", receipt_id.to_hex())
 }
 
 #[cfg(test)]

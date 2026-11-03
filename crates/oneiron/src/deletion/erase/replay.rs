@@ -122,7 +122,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
+                crate::key_material::WorldKeyDestroyCause::ReplayedTombstone,
                 decoded.request_id,
             )?;
             // A hard tombstone of one pad row retires that key's pad in
@@ -158,7 +158,7 @@ impl Vault {
             let (existed, had_vector, ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, id, false)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
@@ -426,7 +426,7 @@ impl Vault {
             // A peer's tombstone proves no owner intent either: a credential
             // leaves only through the local revoke door.
             if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-                return Err(crate::secret_custody::reject_secret_custody_byte());
+                return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
                 || crate::workspace_roster::is_project_revision_type(
@@ -451,8 +451,8 @@ impl Vault {
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
         use crate::error::{ArtifactError, SecretError, SyncError};
-        use crate::identity_topology::IdentityTopologyRejection;
-        use crate::secret_custody::CUSTODY_SEAL_REASON;
+        use crate::secret_record::CUSTODY_SEAL_REASON;
+        use oneiron_contracts::identity_topology::IdentityTopologyRejection;
         matches!(
             error,
             Error::Registry(
@@ -473,7 +473,7 @@ impl Vault {
             ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
                 "task authority facts are immutable"
             )) | Error::Record(crate::error::RecordError::ConversationState(
-                crate::workspace_roster::AUDIENCE_EDIT_BOUND
+                crate::store::conversation_body::AUDIENCE_EDIT_BOUND
             )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }

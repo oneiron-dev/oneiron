@@ -35,16 +35,34 @@ use super::publisher::{
     EngineCandidateRun, EngineNotRun, EnginePairState,
 };
 use crate::code_run::shadow_runner::{
-    EngineArtifactPin, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowBodyRef, ShadowDeterminism,
-    ShadowIsolation, ShadowIsolationRequired, ShadowMeterContext, ShadowModelPin,
-    ShadowRequestDigest, ShadowRunRequest, ShadowRunResult, ShadowSandboxBinding, ShadowScope,
-    ShadowSource, ShadowSourceAdmission, ShadowStatus, ShadowStepIdentity, ShadowTarget,
-    ShadowTraceEntry, ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason,
+    ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowSourceAdmission, ShadowStatus,
     prepare_admitted_shadow_step_source,
 };
-use crate::code_run::{CapsuleHost, ExecutorStepStart, StepReplayCapsule, step_replay_capsules};
+use crate::code_run::step_replay_capsules;
+use crate::dreamer_runner::shadow_values::EngineArtifactPin;
+use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
+use crate::dreamer_runner::shadow_values::ShadowArmLease;
+use crate::dreamer_runner::shadow_values::ShadowBodyRef;
+use crate::dreamer_runner::shadow_values::ShadowIsolation;
+use crate::dreamer_runner::shadow_values::ShadowIsolationRequired;
+use crate::dreamer_runner::shadow_values::ShadowMeterContext;
+use crate::dreamer_runner::shadow_values::ShadowModelPin;
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowSandboxBinding;
+use crate::dreamer_runner::shadow_values::ShadowScope;
+use crate::dreamer_runner::shadow_values::ShadowSource;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
+use crate::dreamer_runner::shadow_values::ShadowTarget;
+use crate::dreamer_runner::shadow_values::ShadowTraceEntry;
+use crate::dreamer_runner::shadow_values::ShadowTraceKind;
+use crate::dreamer_runner::shadow_values::ShadowUnavailable;
+use crate::dreamer_runner::shadow_values::ShadowUnavailableReason;
+use crate::dreamer_runner::step_replay::CapsuleHost;
+use crate::dreamer_runner::step_replay::ExecutorStepStart;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{ReplayFidelity, ShadowRun};
-use crate::{ContentPart, EntityId, LlmRequest, LlmResponse, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 /// A pair's part, or why the pair has no verdict.
 type Outcome<T> = std::result::Result<T, EngineNotRun>;

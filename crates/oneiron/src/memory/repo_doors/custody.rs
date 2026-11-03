@@ -26,7 +26,6 @@ use super::{RepoRunAnswer, RepoRunBinding, refusal_error, repo_target};
 use crate::EntityId;
 use crate::checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps};
 use crate::codebase::RepoRef;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::memory::origin_doors::OriginPublicationState;
 use crate::memory::{
@@ -40,6 +39,7 @@ use crate::origin::secret_projection::checkout_recipient::record_run_checkout_re
 use crate::origin::smart_http::{
     ORIGIN_REPO_DIR_SUFFIX, origin_repo_dir, origin_serving_root, push_queue_key,
 };
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 /// The hold a run's export answers while no Grant both admits its ref over
 /// the revision's paths and lists `publish` (L02's publication policy). The
@@ -442,6 +442,6 @@ fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
 }
 
 /// A checkout port refusal, as the run reads it.
-fn checkout_refusal(error: crate::checkout::lease::CheckoutError) -> MemoryError {
+fn checkout_refusal(error: crate::store::checkout_lease::CheckoutError) -> MemoryError {
     crate::memory::checkout_doors::refusal(error)
 }

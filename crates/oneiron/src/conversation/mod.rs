@@ -53,21 +53,15 @@ use crate::error::{RecordError, Result};
 use crate::{EntityId, Error, Vault, WriteActor};
 use serde::{Serialize, de::DeserializeOwned};
 
-fn invalid(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidConversationBody(reason))
-}
+use crate::store::conversation_body::invalid;
 fn state(reason: &'static str) -> Error {
     Error::Record(RecordError::ConversationState(reason))
 }
 fn denied() -> Error {
     Error::Record(RecordError::ConversationDenied)
 }
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| invalid("body encode"))
-}
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
-}
+use crate::store::conversation_body::decode;
+use crate::store::conversation_body::encode;
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);
@@ -97,3 +91,5 @@ mod tests;
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::chat_breakpoint::chat_breakpoint_accepts_masked;
+
+pub mod voice_roster;

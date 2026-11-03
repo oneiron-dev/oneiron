@@ -21,10 +21,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
-use crate::agent_inbox_lens::{
-    AgentInboxDiaryReview, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant,
-    InboxImpact,
-};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -35,6 +31,11 @@ use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault, WriteActor};
+use crate::{
+    agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::{AgentInboxDiaryReview, AgentInboxItemKind},
+    inbox::view_values::{AgentInboxParticipant, InboxImpact},
+};
 use serde::{Deserialize, Serialize};
 
 mod log;
@@ -972,7 +973,7 @@ fn work_vault_admin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, reader: EntityI
     Ok(
         vault.vault_kind_in_txn(txn)? == crate::agent_def::VaultKind::Work
             && crate::workspace_roster::vault_standing_in(vault, txn, reader)?
-                == Some(crate::workspace_roster::VaultStanding::Admin),
+                == Some(crate::memory::vault_standing::VaultStanding::Admin),
     )
 }
 

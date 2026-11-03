@@ -19,13 +19,16 @@ use super::type_tree_upkeep::{
     TEAM_SHAPE_CHARGES_FAILED_TEAMS, TEAM_SHAPE_GATE_ADMITS, TeamShapeReserve, TreeGateOutcome,
     TypeEvidence, recount,
 };
-use crate::agent_dispatch::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME, load_team_type_tree};
+use crate::agent_dispatch::load_team_type_tree;
 use crate::attempt_queue::{AttemptId, ManifestEntry};
 use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::{ArtifactError, ErrorKind};
-use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::DecisionQuestion;
+use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
+use crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
     GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay,

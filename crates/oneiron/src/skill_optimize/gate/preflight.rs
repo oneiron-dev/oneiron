@@ -12,8 +12,8 @@
 //! gate's evidence in place of a live report, so a regressing floor rejects
 //! before any live run is spent on it.
 use super::*;
-use crate::learning::honesty::HONESTY_AXIS;
 use crate::side_table::Named;
+use crate::skill::learning_judge::HONESTY_AXIS;
 use crate::skill_optimize::AxisScores;
 use crate::workspace_roster::GoalExplorationBudget;
 use serde::{Deserialize, Serialize};

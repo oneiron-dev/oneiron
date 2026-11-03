@@ -10,10 +10,9 @@ use super::{
     append_pack_manifest_fields,
 };
 use crate::EntityId;
-use crate::attempt_queue::ManifestEntry;
-use crate::memory::{
-    Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
-};
+use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
+use crate::store::attempt_manifest::ManifestEntry;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The outcome a reply's craft receipt carries: never a context emit's.
 const CRAFT_EXPOSED: &str = "craft_exposed";
