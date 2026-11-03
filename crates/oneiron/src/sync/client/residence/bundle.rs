@@ -320,7 +320,8 @@ pub(crate) async fn relay_sealed_bundle(
     relay.reached = true;
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
-    match access::serve_admissions(vault, &mut rpc).await {
+    let mut backoff = manager.pad_object_backoff();
+    match access::serve_admissions(vault, &mut rpc, &mut backoff).await {
         Ok(offered) => relay.offered = offered,
         Err(TransportError::InvalidPayload(_)) => {}
         Err(error) => return Err(error),

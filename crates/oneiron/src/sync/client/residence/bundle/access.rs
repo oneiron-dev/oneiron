@@ -133,6 +133,7 @@ fn target_from_wire(machine: &str, key: &str) -> Result<PadAdmissionTarget, Tran
 pub(super) async fn serve_admissions(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
+    backoff: &mut super::super::backoff::PadObjectBackoff,
 ) -> Result<usize, TransportError> {
     match SEALED_PAD_GRANT_FULFIL {
         GrantFulfil::EveryUpkeepBeforeSweep => {}
@@ -185,15 +186,20 @@ pub(super) async fn serve_admissions(
             .or_default()
             .push((target, root));
     }
+    // A generation no longer pending starts its backoff over (FIX 6691).
+    backoff.retain(|generation| {
+        by_generation.contains_key(generation) || waiting.contains(generation)
+    });
     let mut offered = 0;
     let mut asks = OwnAsks::default();
     for (generation, targets) in by_generation {
         if !waiting.contains(&generation) {
-            offered += serve_generation(vault, rpc, generation, &targets, &mut asks).await?;
+            offered +=
+                serve_generation(vault, rpc, generation, &targets, &mut asks, backoff).await?;
             continue;
         }
         let mut lacks = OwnAsks::default();
-        match serve_generation(vault, rpc, generation, &targets, &mut lacks).await {
+        match serve_generation(vault, rpc, generation, &targets, &mut lacks, backoff).await {
             Ok(taken) => offered += taken,
             Err(error) => tracing::warn!(
                 %error,
@@ -216,7 +222,13 @@ async fn serve_generation(
     generation: SealedBundleGeneration,
     targets: &[(PadAdmissionTarget, Option<RecoveryRootId>)],
     asks: &mut OwnAsks,
+    backoff: &mut super::super::backoff::PadObjectBackoff,
 ) -> Result<usize, TransportError> {
+    // FIX 6691: an object this machine could not open is fetched again
+    // only once its wait runs out, not on every upkeep tick.
+    if !backoff.due(&generation) {
+        return Ok(0);
+    }
     let Some((_, bytes)) = read_object(
         &mut PartSource::Machine(rpc),
         Some(generation),
@@ -225,6 +237,7 @@ async fn serve_generation(
     .await?
     .whole()?
     else {
+        backoff.missed(generation);
         return Ok(0);
     };
     let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
@@ -239,8 +252,11 @@ async fn serve_generation(
     }
     let sealed: Vec<SealedPadAdmissionGrant> = {
         let Ok(opened) = vault.open_key_pads_to_erase(&pads, None, &grants) else {
+            backoff.missed(generation);
             return Ok(0);
         };
+        // The object landed and opened: its wait clears (FIX 6691).
+        backoff.landed(&generation);
         // A target this machine does not stand as the owner's under that
         // key stays pending.
         targets
