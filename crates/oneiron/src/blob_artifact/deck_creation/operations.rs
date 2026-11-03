@@ -7,7 +7,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
+use crate::memory::{Memory, resolve_entity_ref};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::file_secret_marks::SecretSight;
 use crate::typed_body::LiftedSources;
 use oneiron_docedit::design_plan::Brief;
@@ -311,7 +312,7 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         if owner.revalidate_in_txn(self.vault(), txn)? != self.actor() {
             return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
+                oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                 "owner proof names another actor",
                 &[],
             ));
@@ -517,7 +518,7 @@ impl Memory<'_> {
             )?;
             if *blake3::hash(&sighted).as_bytes() != metadata.content_hash {
                 return Err(MemoryError::new(
-                    crate::memory::MEMORY_CODE_FORBIDDEN,
+                    oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                     "a masked input cannot be copied into a new deck",
                     &[],
                 ));

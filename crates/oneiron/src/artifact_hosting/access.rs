@@ -232,8 +232,8 @@ impl Vault {
                 && grant.confers_at(now)
                 && matches!(
                     crate::authority::federation_grant_activation(&fold, &id),
-                    crate::authority::FederationGrantActivation::Unpacted
-                        | crate::authority::FederationGrantActivation::Active
+                    oneiron_authority::authority::FederationGrantActivation::Unpacted
+                        | oneiron_authority::authority::FederationGrantActivation::Active
                 )
                 && grant.authority_scope.admits(
                     "read",

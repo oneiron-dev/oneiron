@@ -158,7 +158,7 @@ impl Vault {
             let (existed, had_vector, ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, id, false)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.

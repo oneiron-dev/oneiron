@@ -22,6 +22,7 @@ mod classify;
 mod custom_review;
 mod drill;
 mod healer_case;
+pub mod healer_dispatch;
 mod impact;
 mod ladder;
 mod lineage;

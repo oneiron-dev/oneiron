@@ -27,9 +27,8 @@ use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding,
-};
+use crate::memory::{Memory, verify_actor_binding};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::secret_record::CustodyTier;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;

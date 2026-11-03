@@ -7,7 +7,7 @@
 
 use super::{RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
 use crate::Vault;
-use crate::authority::{ActSurface, CustodyChange};
+use oneiron_authority::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::{ActiveChange};

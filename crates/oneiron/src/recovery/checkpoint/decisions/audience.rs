@@ -12,7 +12,7 @@ use crate::interlocutor::{InterlocutorPartyInput, InterlocutorResolutionInput};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP};
 use crate::side_table::RawValue;
-use crate::voice_identity::VoiceSessionRosterV1;
+use crate::conversation::voice_roster::VoiceSessionRosterV1;
 use crate::workspace_roster::{LEADER_CHAT_FIELD, LeaderChat, ProjectReader};
 use crate::{EntityId, Result, Vault};
 use std::cmp::Ordering;

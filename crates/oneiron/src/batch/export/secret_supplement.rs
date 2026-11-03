@@ -20,7 +20,8 @@ use zeroize::Zeroizing;
 
 use super::document_import::parse_id;
 use crate::Vault;
-use crate::authority::{ActSurface, OpenedSecretSupplement, SecretSupplementImport};
+use oneiron_authority::authority::{ActSurface};
+use crate::authority::{OpenedSecretSupplement, SecretSupplementImport};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::secret_record::{ArchiveSameId};
