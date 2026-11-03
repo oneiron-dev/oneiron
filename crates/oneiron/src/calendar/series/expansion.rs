@@ -252,7 +252,7 @@ fn expand(
     // The latest start this page walked, the period of the occurrence the
     // walk is at, and where the next page resumes once the deadline ends
     // this one.
-    let mut latest = None;
+    let mut latest: Option<u64> = None;
     let mut period: Option<WalkPeriod> = None;
     let mut next = None;
     for (step, occurrence) in (&series).into_iter().enumerate() {
