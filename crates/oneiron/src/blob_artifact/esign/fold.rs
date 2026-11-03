@@ -172,7 +172,9 @@ impl EsignState {
                 self.signatures
                     .insert(signature.field.clone(), signature.clone());
             }
-            EsignEvent::Signed { recipient, next } => {
+            EsignEvent::Signed {
+                recipient, next, ..
+            } => {
                 self.require_turn(recipient, now)?;
                 if self.recipients[recipient].access != AccessStatus::Verified {
                     return Err(invalid("access authentication required"));

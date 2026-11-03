@@ -90,7 +90,7 @@ async fn action(
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let Ok(caller) = signing_caller(&parts, &server) else {
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
         return refused();
     };
     let request: ingress::ActionBody =
@@ -98,10 +98,14 @@ async fn action(
             Ok(request) => request,
             Err(response) => return response,
         };
-    match server
-        .vault
-        .execute_signing_action_as(&token, &request.action, caller, ip, ua)
-    {
+    match server.vault.execute_signing_action_as(
+        &token,
+        &request.action,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    ) {
         Ok(outcome) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
@@ -122,17 +126,17 @@ async fn action(
 /// the vault's owner, with no credential of its own, is that person while
 /// the vault records him as its live owner; otherwise its capability stands
 /// alone, as a browser signer's does.
-fn signing_caller(request: &Parts, server: &SyncServer) -> Result<SigningCaller, ()> {
+fn signing_caller(
+    request: &Parts,
+    server: &SyncServer,
+) -> Result<(SigningCaller, Option<oneiron::EntityId>), ()> {
     let headers = &request.headers;
     if !headers.contains_key(header::AUTHORIZATION) {
-        let owner =
-            crate::auth::attested_owner(&request.extensions, server).is_some_and(|holder| {
-                crate::auth::CoreAuth::for_attested_owner(holder, server).is_ok()
-            });
-        return Ok(if owner {
-            SigningCaller::Person
-        } else {
-            SigningCaller::Bearer
+        let auth = crate::auth::attested_owner(&request.extensions, server)
+            .and_then(|holder| crate::auth::CoreAuth::for_attested_owner(holder, server).ok());
+        return Ok(match auth {
+            Some(auth) => (SigningCaller::Person, auth.principal_entity()),
+            None => (SigningCaller::Bearer, None),
         });
     }
     let auth = crate::auth::CoreAuth::for_managed_request(
@@ -145,10 +149,11 @@ fn signing_caller(request: &Parts, server: &SyncServer) -> Result<SigningCaller,
         crate::auth::CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
     })
     .map_err(|_| ())?;
-    Ok(match auth.actor_class() {
+    let caller = match auth.actor_class() {
         Some("human") => SigningCaller::Person,
         _ => SigningCaller::Agent,
-    })
+    };
+    Ok((caller, auth.principal_entity()))
 }
 
 type NetworkPeer = Result<

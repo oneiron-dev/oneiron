@@ -160,6 +160,29 @@ pub struct RecipientState {
     pub access: AccessStatus,
     pub expires_at: u64,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EsignAuthenticationMethod {
+    Bearer,
+    Person,
+    Agent,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EsignSigningIntent {
+    Direct,
+    HeldAllow,
+}
+/// The accepted act's evidence, kept apart from the platform's seal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningEvidence {
+    pub authentication_method: EsignAuthenticationMethod,
+    /// No disclosure artifact exists yet; absence is recorded, not invented.
+    pub disclosure_version: Option<String>,
+    pub consent: bool,
+    pub intent: EsignSigningIntent,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EsignEvent {
@@ -176,6 +199,9 @@ pub enum EsignEvent {
     Signed {
         recipient: String,
         next: Option<String>,
+        evidence: EsignSigningEvidence,
+        /// Frozen item ids and versions to which this act consented.
+        items: Vec<EsignItem>,
     },
     Declined {
         recipient: String,

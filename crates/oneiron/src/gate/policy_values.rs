@@ -9,6 +9,8 @@ pub(super) enum PolicyValueKey {
     CalendarOutcomeGraceSeconds,
     CommOptOutPosture,
     DreamerRetryParkSeconds,
+    EsignRateDocumentThreshold,
+    EsignRateRecipientThreshold,
     EscalationStandingRulings,
     MinerRecurrenceReceipts,
     MinerRejectionWaitSeconds,
@@ -29,6 +31,8 @@ impl PolicyValueKey {
             "calendar_outcome_grace_seconds" => Some(Self::CalendarOutcomeGraceSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
+            "esign_rate_document_threshold" => Some(Self::EsignRateDocumentThreshold),
+            "esign_rate_recipient_threshold" => Some(Self::EsignRateRecipientThreshold),
             "escalation_standing_rulings" => Some(Self::EscalationStandingRulings),
             "miner_recurrence_receipts" => Some(Self::MinerRecurrenceReceipts),
             "miner_rejection_wait_seconds" => Some(Self::MinerRejectionWaitSeconds),
@@ -50,6 +54,8 @@ impl PolicyValueKey {
             Self::CalendarOutcomeGraceSeconds => "calendar_outcome_grace_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
+            Self::EsignRateDocumentThreshold => "esign_rate_document_threshold",
+            Self::EsignRateRecipientThreshold => "esign_rate_recipient_threshold",
             Self::EscalationStandingRulings => "escalation_standing_rulings",
             Self::MinerRecurrenceReceipts => "miner_recurrence_receipts",
             Self::MinerRejectionWaitSeconds => "miner_rejection_wait_seconds",
@@ -89,6 +95,8 @@ impl PolicyValueKey {
             | Self::CalendarOutcomeGraceSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
+            | Self::EsignRateDocumentThreshold
+            | Self::EsignRateRecipientThreshold
             | Self::EscalationStandingRulings
             | Self::MinerRecurrenceReceipts
             | Self::MinerRejectionWaitSeconds
@@ -104,135 +112,8 @@ impl PolicyValueKey {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PolicyPrecedence {
-    NestedNarrowing,
-    MostSpecific,
-}
-impl PolicyPrecedence {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "nested_narrowing" => Some(Self::NestedNarrowing),
-            "most_specific" => Some(Self::MostSpecific),
-            _ => None,
-        }
-    }
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NestedNarrowing => "nested_narrowing",
-            Self::MostSpecific => "most_specific",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PolicyValue {
-    ArtifactAnswerQuietSeconds(u64),
-    CalendarOutcomeGraceSeconds(u64),
-    CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
-    DreamerRetryParkSeconds(u64),
-    EscalationStandingRulings(u64),
-    MinerRecurrenceReceipts(u64),
-    MinerRejectionWaitSeconds(u64),
-    ProposalCheckThreshold(u64),
-    ProviderCooldownDefaultSeconds(u64),
-    ProviderCooldownMaxSeconds(u64),
-    ProviderCooldownMaxWaitSeconds(u64),
-    ResidentRunMaxTries(u64),
-    ScopePrecedence(PolicyPrecedence),
-    SessionIdleFloorSeconds(u64),
-    SessionLifetimeCeilingSeconds(u64),
-    WorkflowStepMaxTries(u64),
-}
-impl PolicyValue {
-    fn restrict(self, other: Self) -> Self {
-        match (self, other) {
-            // A longer quiet never wakes a proposer sooner than any trusted
-            // row asks.
-            (Self::ArtifactAnswerQuietSeconds(a), Self::ArtifactAnswerQuietSeconds(b)) => {
-                Self::ArtifactAnswerQuietSeconds(a.max(b))
-            }
-            // A longer grace never asks about a meeting sooner than any
-            // trusted row asks.
-            (Self::CalendarOutcomeGraceSeconds(a), Self::CalendarOutcomeGraceSeconds(b)) => {
-                Self::CalendarOutcomeGraceSeconds(a.max(b))
-            }
-            (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
-                Self::CommOptOutPosture(a.restrict(b))
-            }
-            // A longer pause never resumes a Retry park sooner than any
-            // trusted row asks.
-            (Self::DreamerRetryParkSeconds(a), Self::DreamerRetryParkSeconds(b)) => {
-                Self::DreamerRetryParkSeconds(a.max(b))
-            }
-            // More agreeing rulings or recurring receipts, or a longer quiet
-            // after a rejection, never proposes sooner than any trusted row
-            // asks.
-            (Self::EscalationStandingRulings(a), Self::EscalationStandingRulings(b)) => {
-                Self::EscalationStandingRulings(a.max(b))
-            }
-            (Self::MinerRecurrenceReceipts(a), Self::MinerRecurrenceReceipts(b)) => {
-                Self::MinerRecurrenceReceipts(a.max(b))
-            }
-            (Self::MinerRejectionWaitSeconds(a), Self::MinerRejectionWaitSeconds(b)) => {
-                Self::MinerRejectionWaitSeconds(a.max(b))
-            }
-            (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
-                Self::ProposalCheckThreshold(a.min(b))
-            }
-            // A longer rest never sends a call to a refusing provider sooner
-            // than any trusted row asks.
-            (Self::ProviderCooldownDefaultSeconds(a), Self::ProviderCooldownDefaultSeconds(b)) => {
-                Self::ProviderCooldownDefaultSeconds(a.max(b))
-            }
-            (Self::ProviderCooldownMaxSeconds(a), Self::ProviderCooldownMaxSeconds(b)) => {
-                Self::ProviderCooldownMaxSeconds(a.max(b))
-            }
-            // A call waits for a cooling chain no longer than every trusted
-            // row allows.
-            (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
-                Self::ProviderCooldownMaxWaitSeconds(a.min(b))
-            }
-            // A shorter idle floor or lifetime ceiling never keeps a sitting
-            // open longer than any trusted row allows.
-            (Self::SessionIdleFloorSeconds(a), Self::SessionIdleFloorSeconds(b)) => {
-                Self::SessionIdleFloorSeconds(a.min(b))
-            }
-            (Self::SessionLifetimeCeilingSeconds(a), Self::SessionLifetimeCeilingSeconds(b)) => {
-                Self::SessionLifetimeCeilingSeconds(a.min(b))
-            }
-            // A lower cap never retries past what any trusted row allows.
-            (Self::ResidentRunMaxTries(a), Self::ResidentRunMaxTries(b)) => {
-                Self::ResidentRunMaxTries(a.min(b))
-            }
-            (Self::WorkflowStepMaxTries(a), Self::WorkflowStepMaxTries(b)) => {
-                Self::WorkflowStepMaxTries(a.min(b))
-            }
-            _ => unreachable!("policy values for different keys never compose"),
-        }
-    }
-
-    pub(super) fn as_str(self) -> String {
-        match self {
-            Self::CommOptOutPosture(value) => value.as_str().to_owned(),
-            Self::ArtifactAnswerQuietSeconds(value)
-            | Self::CalendarOutcomeGraceSeconds(value)
-            | Self::DreamerRetryParkSeconds(value)
-            | Self::EscalationStandingRulings(value)
-            | Self::MinerRecurrenceReceipts(value)
-            | Self::MinerRejectionWaitSeconds(value)
-            | Self::ProposalCheckThreshold(value)
-            | Self::ProviderCooldownDefaultSeconds(value)
-            | Self::ProviderCooldownMaxSeconds(value)
-            | Self::ProviderCooldownMaxWaitSeconds(value)
-            | Self::ResidentRunMaxTries(value)
-            | Self::SessionIdleFloorSeconds(value)
-            | Self::SessionLifetimeCeilingSeconds(value)
-            | Self::WorkflowStepMaxTries(value) => value.to_string(),
-            Self::ScopePrecedence(value) => value.as_str().to_owned(),
-        }
-    }
-}
+mod value;
+pub(super) use value::{PolicyPrecedence, PolicyValue};
 
 /// The hierarchy is a precedence rule for policy, not the six-axis authority
 /// Scope lattice. The caller's context must come from trusted write facts.
@@ -426,6 +307,16 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                         }
                         PolicyValueKey::DreamerRetryParkSeconds => {
                             PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
+                        }
+                        PolicyValueKey::EsignRateDocumentThreshold => {
+                            PolicyValue::EsignRateDocumentThreshold(
+                                raw.as_u64().filter(|v| *v > 0)?,
+                            )
+                        }
+                        PolicyValueKey::EsignRateRecipientThreshold => {
+                            PolicyValue::EsignRateRecipientThreshold(
+                                raw.as_u64().filter(|v| *v > 0)?,
+                            )
                         }
                         // A threshold of zero rulings or receipts is no
                         // threshold; a zero wait re-proposes at the next pass.

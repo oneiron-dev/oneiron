@@ -1,7 +1,7 @@
 //! Vault-local, receipt-backed ceremony observation and the `[limits]`
 //! crossings of signature uploads and signing door bodies; neither ever
 //! denies signing.
-use super::model::invalid;
+use super::model::{EsignAuthenticationMethod, invalid};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -12,8 +12,13 @@ const CHECK: SideTable<Vec<u8>, EsignRateCheck, Named> =
     SideTable::new(&side_table::ESIGN_PUBLIC_CHECK);
 
 const WINDOW_SECS: u64 = 60;
-const RECIPIENT_THRESHOLD: u64 = 120;
-const DOCUMENT_THRESHOLD: u64 = 1200;
+
+fn unknown_esign_rate_verb() -> String {
+    "unknown".to_owned()
+}
+fn unknown_esign_rate_actor_class() -> String {
+    "unknown".to_owned()
+}
 
 /// Local per-window call count. A capability is never stored in this receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +28,14 @@ pub struct EsignRateReceipt {
     pub recipient: Option<String>,
     pub window_started_at_secs: u64,
     pub count: u64,
+    /// The call's verb and class; old mixed counter reads say "unknown".
+    #[serde(default = "unknown_esign_rate_verb")]
+    pub verb: String,
+    #[serde(default = "unknown_esign_rate_actor_class")]
+    pub actor_class: String,
+    /// The verified actor id, or `None` for bearer-only or an id-less credential.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 /// OF-520 question at the first crossing of an advisory threshold.
@@ -130,11 +143,16 @@ pub(super) fn observe(
     document: &str,
     recipient: &str,
     now: u64,
+    verb: &str,
+    authentication_method: EsignAuthenticationMethod,
+    verified_actor: Option<EntityId>,
 ) -> Result<()> {
     let window = now / WINDOW_SECS * WINDOW_SECS;
+    let thresholds =
+        crate::gate::esign_rate_policy::esign_rate_thresholds_in_txn(&vault.store, txn);
     for (scope, threshold) in [
-        (Some(recipient), RECIPIENT_THRESHOLD),
-        (None, DOCUMENT_THRESHOLD),
+        (Some(recipient), thresholds.recipient),
+        (None, thresholds.document),
     ] {
         let key = count_key(document, scope);
         let count = match COUNT.get(&vault.store, txn, &key)? {
@@ -145,11 +163,19 @@ pub(super) fn observe(
             None => 0,
         }
         .saturating_add(1);
+        let actor_class = match authentication_method {
+            EsignAuthenticationMethod::Bearer => "bearer",
+            EsignAuthenticationMethod::Person => "person",
+            EsignAuthenticationMethod::Agent => "agent",
+        };
         let receipt = EsignRateReceipt {
             document: document.to_owned(),
             recipient: scope.map(str::to_owned),
             window_started_at_secs: window,
             count,
+            verb: verb.to_owned(),
+            actor_class: actor_class.to_owned(),
+            actor: verified_actor.map(|actor| actor.to_hex()),
         };
         // The count rises by one a call within its window, so it passes the
         // threshold exactly once there: that call keeps the window's check.
@@ -197,6 +223,9 @@ pub(super) fn keep_limit_crossings(
                     recipient: Some(recipient.to_owned()),
                     window_started_at_secs: window,
                     count: observed,
+                    verb: unknown_esign_rate_verb(),
+                    actor_class: unknown_esign_rate_actor_class(),
+                    actor: None,
                 },
                 threshold: bound,
                 limit: Some(row.key().to_owned()),
@@ -224,6 +253,9 @@ impl Vault {
                     recipient: recipient.map(str::to_owned),
                     window_started_at_secs,
                     count,
+                    verb: unknown_esign_rate_verb(),
+                    actor_class: unknown_esign_rate_actor_class(),
+                    actor: None,
                 })
             })
             .transpose()

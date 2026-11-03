@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4458 declarations.
+// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4461 declarations.
 // Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3506,7 +3506,7 @@ declare namespace Sdk {
   type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null; secret_is_text?: boolean };
   type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
   type ReceiptOutcome = "unknown";
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; audience?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3728,7 +3728,7 @@ declare namespace Sdk {
   type EsignField = { id: string; item: number; recipient: string; required: boolean; geometry: FieldGeometry; meta: FieldMeta };
   type EsignNoticeSwitches = { invite: boolean; pending: boolean; completed: boolean; rejection: boolean; void: boolean; expiry: boolean };
   type EsignLifecycleRules = { expiry_after_seconds: number; first_reminder_after_seconds: number; repeat_reminder_every_seconds: number; reminder_cap_seconds: number; notices: EsignNoticeSwitches };
-  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
+  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; token_expires_at?: number | null; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
   type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
   type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
   type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
@@ -3743,7 +3743,10 @@ declare namespace Sdk {
   type RecipientState = { delivery: DeliveryStatus; signing: SigningStatus; access: AccessStatus; expires_at: number };
   type FieldValue = { kind: "text"; value: string } | { kind: "checked"; value: boolean } | { kind: "signature"; value: { image_ref: string } };
   type SignatureRow = { field: string; recipient: string; value: FieldValue; at: number };
-  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
+  type EsignAuthenticationMethod = "bearer" | "person" | "agent";
+  type EsignSigningIntent = "direct" | "held_allow";
+  type EsignSigningEvidence = { authentication_method: EsignAuthenticationMethod; disclosure_version?: string | null; consent: boolean; intent: EsignSigningIntent };
+  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null; evidence: EsignSigningEvidence; items: EsignItem[] } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
   type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null };
