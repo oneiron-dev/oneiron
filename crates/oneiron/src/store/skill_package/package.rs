@@ -14,7 +14,7 @@ pub(crate) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
-pub use crate::write_envelope::skill_source::{HubFile, SkillPackageFormat};
+use crate::write_envelope::skill_source::{HubFile, SkillPackageFormat};
 
 /// Capability surface used by the rug-pull widening diff.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
