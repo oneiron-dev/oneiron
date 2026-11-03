@@ -507,7 +507,8 @@ fn plot_moved(
     let mut mates = base_series
         .iter()
         .filter_map(|line| line.id)
-        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)));
+        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)))
+        .peekable();
     let joined = mates.peek().is_some()
         && mates.all(|other| {
             side_series
