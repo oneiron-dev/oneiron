@@ -3,6 +3,14 @@
   "oneiron": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "benches/agent_verb_rows_replay.rs",
+     "purpose": "FIX 837 speed bench: cold full-record reads versus warm cached repeated reads",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -7289,7 +7297,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -7339,7 +7347,7 @@
      "path": "src/batch/secret_scan/container/retained_iterative.rs",
      "purpose": "The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -14083,7 +14091,7 @@
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6,
       "re-export": 1
      }
@@ -14100,10 +14108,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/access_class.rs",
+     "purpose": "FIX 11915 stage B: a CLAIM row's admission judged once per access class",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -14191,7 +14209,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -14233,7 +14251,7 @@
      "path": "src/claim/scoped_read/facet_gate.rs",
      "purpose": "A credential narrowed to some facets, and a room with a facet set, limit what this lane reads, by the one…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -14269,7 +14287,7 @@
      "path": "src/claim/scoped_read/guest_bound.rs",
      "purpose": "FIX 7929: a guest's read stays inside its grant's current effective scope at every row, in the serving…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -14550,7 +14568,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 4
      }
     },
@@ -16518,6 +16536,7 @@
      "path": "src/code_run/read_set.rs",
      "purpose": "Read-set witnesses a resident attempt's replay record can prove (FIX 7020)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -16620,7 +16639,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 24,
       "struct": 12
@@ -27891,7 +27910,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/erase.rs",
      "purpose": "What an erase reaches of the Coach's drafts on live agent-health cards (FIX 9221)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -28025,7 +28044,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/sources.rs",
      "purpose": "The rows a Coach answer on an agent-health card was drafted from (FIX 9220)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -28792,7 +28811,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 4,
       "fn": 2,
       "re-export": 2,
@@ -28862,6 +28881,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/index.rs",
+     "purpose": "Per-id membership over the identity asks, hints and applied identity inverses (FIX 10376): each row under…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/identity/presentation.rs",
      "purpose": "How an ask is shown: candidate labels, options, its view and its card",
      "surface": {
@@ -28885,7 +28914,7 @@
      "path": "src/dreamer_runner/maintenance/identity/settle_undo.rs",
      "purpose": "The Dreamer's automatic identity settles, receipted and revertible (FIX 3327, OF-023)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34536,7 +34565,7 @@
      "path": "src/federation/facet_read.rs",
      "purpose": "The one facet rule (owner ruling FACET-READ = A)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -35630,13 +35659,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/feedback/intake/report/erase.rs",
      "purpose": "A report cluster's members and their erase (FIX 9856)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -36646,7 +36675,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -85079,7 +85108,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85387,7 +85416,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86425,7 +86454,7 @@
    },
    "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5856,
+   "source_files": 5859,
    "test_files": 902
   },
   "oneiron-android": {
