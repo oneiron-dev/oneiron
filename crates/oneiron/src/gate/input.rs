@@ -1,6 +1,6 @@
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::claim::ClaimSource;
-use crate::comm::SendOverrideMatch;
+use crate::write_envelope::communication::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::consent::tool_scope::ScopedMcpCallContext;
