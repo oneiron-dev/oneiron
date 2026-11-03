@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    CoordinationPattern, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
+     load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
 };
+use crate::team::team_shape::CoordinationPattern;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::task_type_ref::TypeRef;

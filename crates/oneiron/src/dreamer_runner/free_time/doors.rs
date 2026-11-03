@@ -25,7 +25,7 @@ use super::receipt::{
     FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor, receipts_in_txn,
 };
 use super::{CYCLE, FreeTimeKind, POLICY};
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::agent_dispatch::budget_doors::RunRungSettlement;
 use crate::attempt_queue::AttemptId;
 use crate::authority::ActAuthority;

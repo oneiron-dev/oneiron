@@ -69,18 +69,7 @@ pub enum ConsultResultSummary {
     },
 }
 
-/// Board-projected consult outcome: canonical short refs, never result bodies.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsultResultPresence {
-    Answer {
-        result_ref: String,
-        evidence_ref_count: usize,
-    },
-    Abstained {
-        result_ref: String,
-        reason_ref: String,
-    },
-}
+pub use crate::context_board::consult_result::ConsultResultPresence;
 
 /// The ONE terminal register value. Disposition, `result_ref`, summary, and
 /// `finished_at` merge atomically as this single value — never as independently

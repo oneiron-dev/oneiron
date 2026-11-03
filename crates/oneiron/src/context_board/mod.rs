@@ -3,6 +3,8 @@
 //! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
 //! `people` roster, session read-set riders and stream projections.
 
+pub mod consult_result;
+pub mod task_kind;
 mod capabilities;
 mod children;
 pub use children::{

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
-use crate::agent_dispatch::CoordinationPattern;
+use crate::team::team_shape::CoordinationPattern;
 use crate::error::Result;
 use crate::claim::learning_estimate::OwnTally;
 use crate::claim::learning_estimate::fold_value;

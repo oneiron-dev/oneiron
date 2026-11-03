@@ -15,7 +15,7 @@ use super::join_consent::{
 };
 use super::join_receipt::{JoinParticipation, JoinReceipt, RecordedAnswer, RosterActor};
 use crate::EntityId;
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};

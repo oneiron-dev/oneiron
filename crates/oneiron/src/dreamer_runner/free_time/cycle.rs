@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use super::items::FreeTimeItemBinding;
 use super::policy::{FreeTimePolicy, FreeTimeSchedule, FreeTimeSplit, effective_policy};
 use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeKind, ITEM, POLICY};
-use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScopeId};
+use crate::agent_dispatch::{AgentDispatcher, };
+use crate::workspace_roster::spend_scope::ChildSpend;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
