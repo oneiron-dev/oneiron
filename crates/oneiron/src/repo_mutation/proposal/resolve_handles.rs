@@ -25,14 +25,14 @@ const HANDLE_OPEN: &[u8] = b"[secret ";
 /// The successor minted for `original`, if one stands: its derived id's
 /// row, verified to resolve this original.
 pub(super) fn successor_of(vault: &Vault, original: EntityId) -> Result<Option<EntityId>> {
-    let id = successor_id(original);
+    let id = successor_id(original)?;
     Ok(vault
         .repo_proposal(id)?
         .filter(|row| row.resolves == Some(original))
         .map(|_| id))
 }
 
-fn successor_id(original: EntityId) -> EntityId {
+fn successor_id(original: EntityId) -> Result<EntityId> {
     entity_id_from_hash_material(RESOLVED_SUCCESSOR_DOMAIN, &[original.as_bytes()])
 }
 
@@ -67,7 +67,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Whether any file the row carries holds a handle span: what a merge
 /// stack refuses outright, as its tested tree already binds the reviewed
 /// bytes and no successor can join it after the fact.
-pub(super) fn refuse_handle_bearing_row(row: &RepoProposal) -> Result<()> {
+pub(in crate::repo_mutation) fn refuse_handle_bearing_row(row: &RepoProposal) -> Result<()> {
     if row
         .files
         .iter()
@@ -129,7 +129,7 @@ pub(super) fn resolved_successor(
         &row.message,
     )?;
     let mut successor = row.clone();
-    successor.id = successor_id(row.id);
+    successor.id = successor_id(row.id)?;
     successor.files = vec![RepoProposedFile::ordinary(path, resolved)];
     successor.status = RepoProposalStatus::Approved;
     successor.resolves = Some(row.id);
