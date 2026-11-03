@@ -451,6 +451,20 @@ pub(crate) fn ordinary_entity_visible(
         )?)
 }
 
+/// [`ordinary_entity_visible`] judged on a record the caller already
+/// decoded under this same transaction: its type byte and body stand in
+/// for the raw fetch and header parse.
+pub(crate) fn ordinary_entity_visible_with_body(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<bool> {
+    Ok(entity_type != crate::registry::ENTITY_TYPE_NOTE
+        || note_body_readable(store, txn, id, body, None)?)
+}
+
 #[cfg(test)]
 mod tests;
 
