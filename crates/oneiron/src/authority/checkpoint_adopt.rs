@@ -188,11 +188,56 @@ pub(crate) fn adopted_authority_checkpoint_in_txn(
         return Ok(None);
     };
     let bytes =
-        super::checkpoint::checkpoint_image_bytes_in_txn(store, txn, &adopted.pin.checkpoint)?
-            .ok_or(Error::CorruptedIndex("adopted authority checkpoint image"))?;
-    VerifiedAuthorityCheckpoint::verify(&adopted.pin, &bytes, &adopted.attestations)
-        .map(Some)
+        super::checkpoint::checkpoint_image_bytes_in_txn(store, txn, &adopted.pin.checkpoint)?;
+    verified_adoption(&adopted, bytes.as_deref()).map(Some)
+}
+
+/// `adopted` verified again against `image`, the stored bytes of the image
+/// its pin names: a missing image, or one that no longer verifies, is
+/// corruption.
+fn verified_adoption(
+    adopted: &AdoptedCheckpoint,
+    image: Option<&[u8]>,
+) -> Result<VerifiedAuthorityCheckpoint> {
+    let bytes = image.ok_or(Error::CorruptedIndex("adopted authority checkpoint image"))?;
+    VerifiedAuthorityCheckpoint::verify(&adopted.pin, bytes, &adopted.attestations)
         .map_err(|_| Error::CorruptedIndex("adopted authority checkpoint"))
+}
+
+/// The full `vault_meta` key of the adopted pin row: its key is `()`, so
+/// its table's prefix alone (FIX 11823).
+pub(crate) fn adopted_pin_row_key() -> &'static [u8] {
+    ADOPTED.decl().prefix
+}
+
+/// The full `vault_meta` key of the image a stored adopted pin row,
+/// `pin_row`, names (FIX 11823).
+///
+/// # Errors
+///
+/// A pin row that does not decode.
+pub(crate) fn adopted_image_row_key(pin_row: &[u8]) -> Result<Vec<u8>> {
+    let adopted = ADOPTED.decode_value(pin_row)?;
+    Ok(super::checkpoint::checkpoint_image_row_key(
+        &adopted.pin.checkpoint,
+    ))
+}
+
+/// The image a vault adopted, from its stored pin row `pin_row` and the
+/// stored bytes of the image that row names, read off its disk with no
+/// `Store`: verified as [`adopted_authority_checkpoint_in_txn`] verifies a
+/// stored adoption (FIX 11823).
+///
+/// # Errors
+///
+/// A pin row that does not decode; a missing image, or one that no longer
+/// verifies, is corruption.
+#[cfg(feature = "sync")]
+pub(crate) fn verified_adoption_of_rows(
+    pin_row: &[u8],
+    image: Option<&[u8]>,
+) -> Result<VerifiedAuthorityCheckpoint> {
+    verified_adoption(&ADOPTED.decode_value(pin_row)?, image)
 }
 
 /// The image id the stored adoption's pin names, read without verifying the
