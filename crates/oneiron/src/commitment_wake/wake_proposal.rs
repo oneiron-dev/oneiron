@@ -426,7 +426,7 @@ fn match_landed_proposal(
 /// about an obligation, never a restatement of what the user said.
 fn commitment_wake_evidence(instance_id: EntityId) -> Value {
     crate::dreamer_consolidation::encode_consolidation_evidence(
-        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+        &crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope {
             refs: vec![instance_id],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,

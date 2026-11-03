@@ -27,6 +27,7 @@ mod observations_tests;
 mod own_changes;
 mod read_set;
 mod room;
+pub(crate) mod room_offer;
 mod room_verbs;
 #[cfg(test)]
 mod room_verbs_tests;

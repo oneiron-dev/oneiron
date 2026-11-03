@@ -35,9 +35,14 @@ use serde_json::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
+use crate::skill::learning_judge::DivergenceCase;
+use crate::claim::learning_predicate::LearningPredicate;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_evidence::Retest;
+use crate::claim::learning_evidence::RetestScore;
+use crate::skill::learning_judge::TakeoverVerdict;
 use crate::learning::{
-    DivergenceCase, LearningCell, LearningPredicate, Observation, Retest, RetestScore,
-    TakeoverVerdict, judge_takeover_verdict, learning_estimate, record_judge_conversion,
+    LearningCell, judge_takeover_verdict, learning_estimate, record_judge_conversion,
     record_retest, withdraw_judge_conversion,
 };
 use crate::model_decision::DecisionAnswer;
@@ -520,7 +525,7 @@ fn axis_rate(
     for receipt in receipts {
         let mut seen = BTreeSet::new();
         for digest in &cells {
-            if let Some(row) = crate::learning::evidence::EVIDENCE.get(
+            if let Some(row) = crate::claim::learning_evidence::EVIDENCE.get(
                 &vault.store,
                 &txn,
                 &(*digest, receipt.clone()),

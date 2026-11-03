@@ -436,7 +436,7 @@ fn write_t1_lease_rows_in_txn(
     crate::housekeeping::note_wake_in_txn(
         &vault.store,
         wtxn,
-        crate::housekeeping::HousekeepingSweep::SecretLeaseExpiry,
+        crate::store::housekeeping_schedule::HousekeepingSweep::SecretLeaseExpiry,
         expires_at,
     )?;
     Ok(lease)

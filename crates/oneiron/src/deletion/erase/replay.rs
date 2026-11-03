@@ -473,7 +473,7 @@ impl Vault {
             ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
                 "task authority facts are immutable"
             )) | Error::Record(crate::error::RecordError::ConversationState(
-                crate::workspace_roster::AUDIENCE_EDIT_BOUND
+                crate::store::conversation_body::AUDIENCE_EDIT_BOUND
             )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }

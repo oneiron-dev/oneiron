@@ -12,7 +12,9 @@
 //! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
 //! counters and span emission.
 
+pub mod maintenance_predicate;
 mod annotation_hold;
+pub mod turn_action_kind;
 mod borrowed_lease;
 mod budget_hold;
 mod cancel;

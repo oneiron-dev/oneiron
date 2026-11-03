@@ -2,6 +2,7 @@
 //! entity / vector / edge / text / temporal operations. Also hosts
 //! edge-record helpers kept for Vault-facing compatibility.
 
+pub(crate) mod speculative_passes;
 mod actors_memory;
 mod database_digests;
 mod doctor_manifest;
@@ -103,7 +104,7 @@ pub struct Vault {
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
+    pub(crate) housekeeping: std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
@@ -183,7 +184,7 @@ pub struct Vault {
     pub(crate) home_search: std::sync::Mutex<crate::sync::connection::HomeSearchSlot>,
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
-    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    pub(crate) speculative_passes: crate::vault::speculative_passes::SpeculativePasses,
     /// The room a host lends the origin for reading whole LFS manifests
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
