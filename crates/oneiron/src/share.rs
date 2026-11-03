@@ -275,9 +275,9 @@ pub(crate) fn check_generic_grant_write(
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         let old_scope = match decode_access_grant_body(body) {
             Ok(old) => old.scope,
-            Err(_) => match decode_erased_share_body(body) {
+            Err(error) => match decode_erased_share_body(body) {
                 Ok(terms) => terms.scope,
-                Err(error) => return Err(error),
+                Err(_) => return Err(error),
             },
         };
         if matches!(old_scope, AccessGrantScope::SharedBrief { .. }) {
