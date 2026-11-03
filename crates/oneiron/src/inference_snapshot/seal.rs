@@ -32,7 +32,6 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 use crate::world_keys::{os_fill, refused};
 
-
 /// Plaintext per chunk: one envelope seals this much of the body.
 const CHUNK_LEN: usize = 64 * 1024;
 /// The snapshot id's width: fresh random bytes, never taken from a digest.
@@ -43,11 +42,8 @@ const RECIPIENT: &[u8] = b"oneiron/inference-snapshot/chunk";
 /// The domain a wrapped data key's associated data opens with.
 const WRAP_AAD_DOMAIN: &[u8] = b"oneiron/inference-snapshot-key/v1\0";
 
-
-
-
 pub use crate::store::snapshot_key::WrappedSnapshotKey;
-use crate::store::snapshot_key::{VERSION, WRAPPED_LEN, WRAP_NONCE_LEN, corrupt};
+use crate::store::snapshot_key::{VERSION, WRAP_NONCE_LEN, WRAPPED_LEN, corrupt};
 
 /// One snapshot's sealed body: the snapshot id, the chunk count, the
 /// plaintext length, and one envelope per chunk. Opaque bytes: no key, no

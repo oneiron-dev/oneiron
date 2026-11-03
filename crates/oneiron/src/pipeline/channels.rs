@@ -164,8 +164,7 @@ pub(super) fn temporal_window(
 
     // Query-constant blend weights: one `exp` per query, reused by every
     // scoring-context construction below (bit-identical values).
-    let (alpha, one_minus_alpha) =
-        TemporalScoringContext::blend_weights(now, config.anchor_end);
+    let (alpha, one_minus_alpha) = TemporalScoringContext::blend_weights(now, config.anchor_end);
 
     for round in 0..ADAPTIVE_ROUNDS {
         rounds = round + 1;
@@ -431,8 +430,7 @@ pub(super) fn score_temporal_candidate(
     let age = scoring.now.saturating_sub(meta.learned_at) as f64;
     let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
 
-    let score =
-        (scoring.alpha * s_proximity + scoring.one_minus_alpha * s_recency) as f32;
+    let score = (scoring.alpha * s_proximity + scoring.one_minus_alpha * s_recency) as f32;
     let overlap_tiebreak = match config.anchor_mode {
         TemporalAnchorMode::Learned => {
             if d_lrn == 0 {

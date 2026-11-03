@@ -39,7 +39,9 @@ use crate::EntityId;
 use crate::sync::types::WindowKey;
 use rpc::{ResidenceRpc, refused, residence_budgets};
 
-pub use crate::memory::residence_item::{SearchSource, ResidenceHit, ResidenceSearch, ThinItem, OpenedItem};
+pub use crate::memory::residence_item::{
+    OpenedItem, ResidenceHit, ResidenceSearch, SearchSource, ThinItem,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

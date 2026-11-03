@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::write_envelope::task_body::TaskRole;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
+use crate::write_envelope::task_body::TaskRole;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
 use self::put_staging::{stage_claim_projection, stage_optional_side_row};

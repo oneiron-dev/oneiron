@@ -37,9 +37,11 @@ use crate::error::Result;
 
 use self::schedule::SweepState;
 
-pub use crate::store::housekeeping_schedule::{HousekeepingSweep, HostOnlyReason, HousekeepingBudget};
 pub(crate) use crate::store::housekeeping_schedule::HousekeepingHandle;
-use crate::store::housekeeping_schedule::{Deadline, Runner, MINUTE, HOUR, DAY};
+use crate::store::housekeeping_schedule::{DAY, Deadline, HOUR, MINUTE, Runner};
+pub use crate::store::housekeeping_schedule::{
+    HostOnlyReason, HousekeepingBudget, HousekeepingSweep,
+};
 
 /// Which sweeps a pass considers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

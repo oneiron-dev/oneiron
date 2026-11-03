@@ -1,7 +1,7 @@
 //! Consent-wait choices, settlement outcomes and bound call identities.
 
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// The three answers canon's confirm offers (DEC-0006): approve once (the
 /// default), approve and stop asking, deny (CALLS: outcome names).

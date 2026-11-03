@@ -204,4 +204,4 @@ fn unresolved(conversation: &EntityId, error: Error) -> Result<()> {
     }
 }
 
-pub(crate) use crate::memory::conversation_preview::{LatestMessage, turn_text, snippet};
+pub(crate) use crate::memory::conversation_preview::{LatestMessage, snippet, turn_text};

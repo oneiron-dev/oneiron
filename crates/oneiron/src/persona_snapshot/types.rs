@@ -41,9 +41,8 @@ pub const PERSONA_SNAPSHOT_EXPORT_BODY_KEYS: [&str; 14] = [
 ];
 
 pub(crate) use crate::serialize::persona_export_fields::{
-    PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL,
+    PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL, PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL,
     PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD,
-    PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL,
 };
 
 /// Default cap on top-salience subject claim rows in a compile.

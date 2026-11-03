@@ -47,8 +47,8 @@ use self::work::{
 };
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
-use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
     ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,

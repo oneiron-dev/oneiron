@@ -5,17 +5,17 @@ use super::{
     policy_risk::outbound_dispatch_policy_risk,
 };
 use crate::attempt_queue::AttemptId;
-use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
-use crate::outbound::linkedin_policy::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
     OutboundReplaySafety, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
+use crate::outbound::linkedin_policy::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
+use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentState, read_intent_for_attempt_in_txn,
 };
@@ -520,10 +520,15 @@ fn reply_thread_pin(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     thread_ref: &str,
-) -> std::result::Result<Option<crate::write_envelope::thread_claim::ThreadMask>, OutboundDispatchError> {
+) -> std::result::Result<
+    Option<crate::write_envelope::thread_claim::ThreadMask>,
+    OutboundDispatchError,
+> {
     let pin = match vault.sticky_thread_mask(thread_ref, None)? {
         crate::write_envelope::thread_claim::StickyMaskDecision::Keep(pin)
-        | crate::write_envelope::thread_claim::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
+        | crate::write_envelope::thread_claim::StickyMaskDecision::Conflict {
+            pinned: pin, ..
+        } => pin,
         crate::write_envelope::thread_claim::StickyMaskDecision::Unset => return Ok(None),
     };
     if request.actor.actor_entity_ref != Some(pin.actor_ref)

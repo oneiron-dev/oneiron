@@ -39,4 +39,3 @@ pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL: &[&str] = &[
 /// made without its refs left out (FIX 1199). A copy that carries its refs
 /// stores no such key.
 pub(crate) const KEY_OMITTED_REFS: &str = "omittedRefs";
-

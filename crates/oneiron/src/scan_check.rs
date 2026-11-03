@@ -28,8 +28,8 @@ use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 
 mod engine_scan;
 mod engine_scan_table;
-use engine_scan_table::EngineScanThreshold;
 pub use engine_scan::EngineScan;
+use engine_scan_table::EngineScanThreshold;
 
 pub use crate::store::DEFAULT_SCAN_CHECK_THRESHOLD;
 
@@ -40,8 +40,8 @@ const POLICY: SideTable<[u8; 1], u64, Raw> = SideTable::new(&side_table::ORIGIN_
 const CHECK: SideTable<([u8; 1], Vec<u8>), ScanCheck, Named> =
     SideTable::new(&side_table::ORIGIN_SCAN_CHECK);
 
-pub(crate) use crate::store::PendingScanChecks;
 use crate::store::CheckKey;
+pub(crate) use crate::store::PendingScanChecks;
 pub use crate::store::ScanCheck;
 
 fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {

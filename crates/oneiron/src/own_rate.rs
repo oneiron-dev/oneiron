@@ -14,8 +14,8 @@ const WINDOWS: SideTable<(EntityId, String), OwnRateWindow, Named> =
 const CHECKS: SideTable<(EntityId, String), OwnRateCheck, Named> =
     SideTable::new(&side_table::OWN_RATE_CHECK);
 
-pub use crate::store::own_rate_record::OwnRateKind;
 pub(crate) use crate::store::own_rate_record::OwnRate;
+pub use crate::store::own_rate_record::OwnRateKind;
 
 /// The Dreamer's auto-write rate: 1000 Auto claims an hour per agent actor.
 const AUTO_WRITE: OwnRate = OwnRate {

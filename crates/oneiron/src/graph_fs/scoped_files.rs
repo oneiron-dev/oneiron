@@ -4,9 +4,9 @@ use super::model::GraphFsResolver;
 use crate::claim::{PointRead, ReadRow};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_contracts::gate::RetrievalFilter;
 use crate::memory::repo_secret_reads::repo_asset_body_in_txn;
 use crate::ports::ScopedReadResult;
+use oneiron_contracts::gate::RetrievalFilter;
 
 impl GraphFsResolver<'_, '_> {
     pub(super) fn file_rows(

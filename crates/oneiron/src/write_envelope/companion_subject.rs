@@ -1,11 +1,11 @@
 //! Typed companion task domain: scopes, PERSON/relationship subjects, and task keys.
 
 use super::person_identity::invalid_companion;
+use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::write_envelope::claim_predicate::{
     COMPANION_EXPRESSION_PROFESSIONAL, COMPANION_EXPRESSION_UNRESTRICTED, COMPANION_EXPRESSION_WARM,
 };
-use crate::entity_id::EntityId;
-use crate::error::Result;
 
 /// Companion task subject kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -10,8 +10,8 @@
 
 use rmpv::Value;
 
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::error::{Error, Result};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 /// One captured audio segment, subject = the ASSET entity holding its bytes.
 pub const PREDICATE_VOICE_SEGMENT: &str = "voice.segment";

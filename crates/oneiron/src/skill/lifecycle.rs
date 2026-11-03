@@ -1,5 +1,3 @@
 //! Skill record vocabulary, defined below the skill behavior layer.
 
-pub use crate::write_envelope::skill_record::lifecycle::{
-    SkillLifecycle, SkillGovernanceTier,
-};
+pub use crate::write_envelope::skill_record::lifecycle::{SkillGovernanceTier, SkillLifecycle};

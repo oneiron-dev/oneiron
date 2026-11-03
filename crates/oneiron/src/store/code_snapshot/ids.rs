@@ -1,7 +1,7 @@
 //! Domain-separated entity identifiers for immutable snapshot assets and manifests.
 
-use super::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
 use super::snapshot::write_hash_len;
+use super::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 

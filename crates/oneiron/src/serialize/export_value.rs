@@ -140,7 +140,10 @@ impl ExportBodyFile {
 pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
     entity_type == crate::registry::ENTITY_TYPE_ASSET
         && std::str::from_utf8(body).is_err()
-        && matches!(crate::store::skill_source_carrier::decode_source_carrier(body), Ok(None))
+        && matches!(
+            crate::store::skill_source_carrier::decode_source_carrier(body),
+            Ok(None)
+        )
         && matches!(
             crate::skill_hub::pack_catalog::decode_source_body(body),
             Ok(None)
@@ -402,10 +405,17 @@ fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
     if claim.predicate != crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE {
         return;
     }
-    let Ok(record) = crate::write_envelope::provenance::codec::decode_edge_provenance_body(&claim.value) else {
+    let Ok(record) =
+        crate::write_envelope::provenance::codec::decode_edge_provenance_body(&claim.value)
+    else {
         return;
     };
-    if crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(&record, claim.evidence.as_ref()).is_err() {
+    if crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(
+        &record,
+        claim.evidence.as_ref(),
+    )
+    .is_err()
+    {
         return;
     }
     let ExportValue::Map(entries) = exported else {

@@ -1,14 +1,16 @@
 //! Web acquisition values and the host-supplied acquisition port.
 use serde::{Deserialize, Serialize};
 
-mod url;
-mod result;
-mod refusal;
 mod door;
-pub(crate) use url::*;
-use result::FetchResultWire;
-pub use refusal::{HostedEgressRefusal, HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON};
+mod refusal;
+mod result;
+mod url;
 pub use door::{WebCrawlRequest, WebFetchRequest};
+pub use refusal::{
+    HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressRefusal,
+};
+use result::FetchResultWire;
+pub(crate) use url::*;
 
 /// Domain prefix for the OF-444 content identity.
 pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\0";
@@ -374,7 +376,6 @@ pub(crate) fn content_hash(markdown: &str) -> String {
     hasher.update(markdown.as_bytes());
     hasher.finalize().to_hex().to_string()
 }
-
 
 /// Acquisition used by actor-bound import. Each method is one ladder operation.
 pub trait WebAcquisition {
