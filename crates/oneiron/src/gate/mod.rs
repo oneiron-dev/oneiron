@@ -22,6 +22,8 @@ mod constants;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
+pub(crate) mod experiment_selection_policy;
+pub(crate) mod failure_signal_policy;
 mod default_manifest;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row

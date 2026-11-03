@@ -7,8 +7,9 @@ use crate::attempt_queue::encoding::{
 };
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, DreamerAttemptPayload, decode_dreamer_attempt_payload,
+    DreamerAttemptPayload, decode_dreamer_attempt_payload,
 };
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};

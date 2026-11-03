@@ -1,6 +1,6 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
@@ -407,7 +407,7 @@ pub(crate) struct PolicyManifestResolution {
     /// The trusted rows behind `diagnostic_bounds` and the fields they state
     /// (FIX 10096): carried for the tripwire receipt, never consulted to admit.
     pub(crate) diagnostic_bounds_origin: Option<crate::self_heal::tripwires::TripwireBoundsOrigin>,
-    pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(crate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     /// The trusted residence rows met so far, whose resolution is
     /// `residence_operation_budgets` (FIX 8783).

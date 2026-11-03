@@ -950,7 +950,7 @@ impl CompactionDriver {
 fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
     let watermark = crate::dreamer_consolidation::read_watermark(
         vault,
-        crate::dreamer_runner::DreamerConsolidationScope::Micro,
+        crate::store::consolidation_scope::DreamerConsolidationScope::Micro,
     )?;
     Ok(CompactionWatermark {
         learned_at: watermark.last_learned_at,

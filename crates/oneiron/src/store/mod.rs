@@ -134,6 +134,12 @@ pub mod retained_memory;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub mod dreamer_attempt_kind;
+pub mod consolidation_scope;
+pub mod setting_seed;
+pub mod snapshot_lock_result;
+pub mod snapshot_key;
+
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
