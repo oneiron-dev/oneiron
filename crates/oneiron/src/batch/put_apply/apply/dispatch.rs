@@ -140,7 +140,7 @@ pub(super) fn dispatch_put_type(
             fixed.own_device,
         )?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
-        crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+        crate::store::code_artifact_body::validate_code_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
