@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::Finding;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::task_verb::StoredBrief;
 use crate::{EntityId, Error, Result, Vault};
 

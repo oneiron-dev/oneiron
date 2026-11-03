@@ -6,6 +6,7 @@
 //! alone is read from its live `InWorld` edges at every read (`note_world`).
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -293,7 +294,7 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
         }
         // A confirmed name keeps the facet `settle_source_birth` gave it:
         // every kind with a declared identity key (FIX 11382).
-        kind if !crate::ingest::identity_fields_for_kind(kind).is_empty() => {
+        kind if !crate::store::identity_hints::identity_fields_for_kind(kind).is_empty() => {
             Scope {
                 facets: proposed.facets.clone(),
                 ..prior.clone()
@@ -381,14 +382,12 @@ pub(crate) fn record_world_in(
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
         return Ok(crate::world_keys::pad_world_in_body(data).ok().map(Some));
     }
-    // So do a world's key wraps; its settings entries are base reality.
+    // So do a world's side rows, its key wraps and the joins of their
+    // leaves (FIX 11868); its settings entries are base reality.
     if kind == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         return Ok(crate::authority::decode_authority_log_entry_body(data)
             .ok()
-            .map(|entry| match entry.op {
-                crate::authority::AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
-                _ => None,
-            }));
+            .map(|entry| crate::authority::side_world(&entry.op)));
     }
     if kind == crate::registry::ENTITY_TYPE_NOTE {
         return Ok(note_world::note_worlds_in(store, txn, id).world());

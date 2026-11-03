@@ -141,7 +141,7 @@ pub(crate) struct RevealAsker {
     task: Option<String>,
     /// The durable code-mode step the asker's call is, as its run's
     /// dispatcher named it (FIX 11683); `None` for any other call.
-    step: Option<crate::runtime_hooks::InvocationId>,
+    step: Option<crate::store::verb_invocation::InvocationId>,
 }
 
 impl RevealAsker {
@@ -159,7 +159,10 @@ impl RevealAsker {
     }
 
     /// This asker with the code-mode step its call is, as the host bound it.
-    pub(crate) fn with_step(mut self, step: Option<crate::runtime_hooks::InvocationId>) -> Self {
+    pub(crate) fn with_step(
+        mut self,
+        step: Option<crate::store::verb_invocation::InvocationId>,
+    ) -> Self {
         self.step = step;
         self
     }

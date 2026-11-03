@@ -38,24 +38,26 @@ use crate::dreamer_runner::{
 use crate::failure_ladder::{FailureClass, HealerCase, verified_blocked_reports};
 use crate::failure_signals::CodeFixSource;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::COACH_HEAL_ROUTE;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::COACH_HEAL_ROUTE;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::self_heal::blocked_reports::{self, BlockedIssue};
 use crate::self_heal::issue_work::{self, IssueCursor, PendingIssue};
-use crate::self_heal::{DiagnosticEventClass, HealContextSeed, HealEvidenceContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{
     SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillOptimizeBrief,
 };
 use crate::{EntityId, Result, Vault};
+use crate::{
+    self_heal::HealContextSeed, self_heal::HealEvidenceContext,
+    store::diagnostic_record::DiagnosticEventClass,
+};
 
-/// Predicate of a proposed heal for a failure-ladder case.
-pub const COACH_HEAL_PROPOSAL_PREDICATE: &str = "coach.heal.proposal";
-/// Predicate of a proposed heal for a blocked report.
-pub const COACH_ISSUE_PROPOSAL_PREDICATE: &str = "coach.issue.proposal";
+pub use crate::attempt_queue::maintenance_predicate::COACH_HEAL_PROPOSAL_PREDICATE;
+pub use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_PROPOSAL_PREDICATE;
 /// Reports one page of an Issues run reads. A page, never a cap: the run
 /// reads on to the last waiting report (FIX 1554).
 const ISSUES_BATCH: usize = 32;

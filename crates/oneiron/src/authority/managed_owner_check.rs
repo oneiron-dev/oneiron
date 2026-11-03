@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError};
-use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError};
 use crate::{EntityId, Vault};
+use oneiron_contracts::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError};
 
 /// Why an attested owner's queued item runs no more: the reason its item
 /// records.

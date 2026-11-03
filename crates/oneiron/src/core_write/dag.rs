@@ -12,11 +12,12 @@ use super::shape::{
     core_write_times, encode_core_body, entity_id, optional_entity_id, text_pairs,
 };
 use crate::WriteActor;
-use crate::conversation_dag::{
+use crate::memory::Memory;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::store::conversation_record::{
     AddressMode, AppendRecord, AppendedRecord, DagReplyTarget, QuoteSpan,
 };
-use crate::memory::{Memory, MemoryResult};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron_contracts::memory::MemoryResult;
 
 /// Who a record addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -139,7 +140,7 @@ impl DagRecordAppendInput {
                 .quote
                 .as_ref()
                 .map(|quote| {
-                    Ok::<_, crate::memory::MemoryError>(QuoteSpan {
+                    Ok::<_, oneiron_contracts::memory::MemoryError>(QuoteSpan {
                         message: entity_id(&quote.message, "quote.message")?,
                         start: quote.start,
                         end: quote.end,

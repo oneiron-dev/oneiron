@@ -26,7 +26,9 @@ use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
-use crate::task_verb::sdk::{AgentVerb, CUSTODY_VALUE_ROWS, RunVerb};
+use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::RunVerb;
+use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

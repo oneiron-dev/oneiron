@@ -5,7 +5,7 @@ use super::migrations::PackMigration;
 use super::setup::PackSetup;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
-use crate::saved_query::PackMigrationMap;
+use crate::skill_hub::pack_catalog::predicate_rewrites::PackMigrationMap;
 use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
