@@ -47,7 +47,7 @@ side_tables! {
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
-    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored;
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored [accepts: crate::receipt::dispatch_observation_accepts_masked];
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;
@@ -134,7 +134,7 @@ side_tables! {
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
     /// FIX 7510: one follower model result: a suffix's batch readings with its cache evidence, or
     /// a keyframe's folded text. Key: id16(attempt) + u64be(session sequence).
-    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored;
+    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored [accepts: crate::dreamer_wake::dreamer_follower_result_accepts_masked];
     /// FIX 7510: one follower session's cursors, prefix digest, epoch, keyframe ref, writer fence
     /// and prepared suffix. Key: hash32(session).
     DREAMER_FOLLOWER_STATE: VaultMeta b"dreamer:follower:state:v1:" Named Engine;
@@ -227,7 +227,7 @@ side_tables! {
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
-    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
+    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored [accepts: crate::dreamer_runner::dreamer_parked_accepts_masked];
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
     /// ref).
     DREAMER_PEER_WAIT: VaultMeta b"dreamer:peer_wait:v1:" Raw;
@@ -465,7 +465,7 @@ side_tables! {
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
+    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored [accepts: crate::edit_distance::edit_distance_proposal_artifact_accepts_masked]
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Raw proposal document whose served texts were custody-marked before it was kept, outside
     /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
