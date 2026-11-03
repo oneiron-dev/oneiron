@@ -139,7 +139,9 @@ const RECEIPT_FIELD_PRE_SEND_MATCH_COUNT: &str = "pre_send_match_count";
 const RECEIPT_FIELD_POST_SEND_MATCH_COUNT: &str = "post_send_match_count";
 
 pub use crate::outbound::linkedin_policy::{
-    LinkedInSandboxRuntime, LinkedInSelectorDriver, LinkedInNetworkRoute, LinkedInManagedTransport, LinkedInPasswordCustody, LinkedInMcpServerHarness, LinkedInLoginHandoff, LinkedInEscalationConfig, LinkedInSandboxHostConfig,
+    LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport,
+    LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody,
+    LinkedInSandboxHostConfig, LinkedInSandboxRuntime, LinkedInSelectorDriver,
 };
 
 /// Adapter for recorded `stickerdaniel/linkedin-mcp-server` messaging outputs.

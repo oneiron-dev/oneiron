@@ -600,9 +600,9 @@ pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_ti
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 #[cfg(feature = "sync")]
-mod replica;
-#[cfg(feature = "sync")]
 pub(crate) mod frame_envelope;
+#[cfg(feature = "sync")]
+mod replica;
 #[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]

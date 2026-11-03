@@ -1,9 +1,9 @@
 //! Host recipient and sealing policy for checkpoint legal-hold members.
 
-use std::num::NonZeroU64;
+use crate::{Error, Result};
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::backup::host_holds_recipient_id;
-use crate::{Error, Result};
+use std::num::NonZeroU64;
 
 /// The host recipient a hosted vault seals its checkpoints' host-order
 /// family to: the public bundle its supervisor pinned and delivered (a
@@ -68,4 +68,3 @@ pub enum HostHoldsSealing {
     /// says the member is unavailable. Never a refused start.
     RecipientMissing,
 }
-

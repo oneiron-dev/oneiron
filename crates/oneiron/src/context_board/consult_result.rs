@@ -10,4 +10,3 @@ pub enum ConsultResultPresence {
         reason_ref: String,
     },
 }
-

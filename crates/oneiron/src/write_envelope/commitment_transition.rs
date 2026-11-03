@@ -16,7 +16,6 @@ use crate::error::Result;
 /// closes at that start.
 pub(crate) const STATUS_CHANGE_MINTS_SUCCESSOR: bool = true;
 
-
 /// The claim a batched lapse of `commitment` writes: with
 /// [`STATUS_CHANGE_MINTS_SUCCESSOR`], its successor, derived from the
 /// commitment so the gate preflight and the apply name the same new claim;

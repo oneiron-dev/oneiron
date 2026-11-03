@@ -25,15 +25,14 @@ use heed::types::Bytes;
 
 use crate::error::{Error, Result};
 use crate::side_table;
+use crate::store::pad_object_membership::PadObjectMembership;
 use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
 use crate::sync::residence::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall,
-    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    generations_an_install_retires_in_txn, install_captured_pad_objects_in_txn,
-    read_back_captured_in_txn, read_back_put_back_in_txn,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, capture_current_pad_objects_in_rows,
+    capture_current_pad_objects_in_txn, generations_an_install_retires_in_txn,
+    install_captured_pad_objects_in_txn, read_back_captured_in_txn, read_back_put_back_in_txn,
 };
-use crate::store::pad_object_membership::PadObjectMembership;
 
 /// A bundle part key's generation, in hex, after its table prefix.
 const GENERATION_HEX: usize = 48;

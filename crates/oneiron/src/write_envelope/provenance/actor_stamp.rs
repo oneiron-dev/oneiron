@@ -12,4 +12,3 @@ pub struct ActorStamp {
     /// The writing actor's class, which a stamp spells after its token.
     pub class: EdgeActorClass,
 }
-
