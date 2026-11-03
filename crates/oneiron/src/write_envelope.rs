@@ -19,6 +19,7 @@ pub mod identity_pair;
 pub mod identity_reputation;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod thread_claim;
 pub mod cohort_claims;
 pub mod communication;
 pub(crate) mod communication_record;

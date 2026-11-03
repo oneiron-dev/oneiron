@@ -10,7 +10,7 @@ use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
-use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
+use crate::outbound::linkedin_policy::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
     OutboundReplaySafety, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
@@ -520,11 +520,11 @@ fn reply_thread_pin(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     thread_ref: &str,
-) -> std::result::Result<Option<crate::thread_passport::ThreadMask>, OutboundDispatchError> {
+) -> std::result::Result<Option<crate::write_envelope::thread_claim::ThreadMask>, OutboundDispatchError> {
     let pin = match vault.sticky_thread_mask(thread_ref, None)? {
-        crate::thread_passport::StickyMaskDecision::Keep(pin)
-        | crate::thread_passport::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
-        crate::thread_passport::StickyMaskDecision::Unset => return Ok(None),
+        crate::write_envelope::thread_claim::StickyMaskDecision::Keep(pin)
+        | crate::write_envelope::thread_claim::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
+        crate::write_envelope::thread_claim::StickyMaskDecision::Unset => return Ok(None),
     };
     if request.actor.actor_entity_ref != Some(pin.actor_ref)
         || request

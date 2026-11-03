@@ -53,11 +53,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "fetch",
-                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::WebFetchRequest>(),
             ),
             (
                 "crawl",
-                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebCrawlRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::WebCrawlRequest>(),
             ),
             (
                 "report",
@@ -4791,13 +4791,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.settings.web_connector.replace",
                 crate::code_run::vault_read::request_schema::<
-                    crate::web_connector::WebConnectorSetting,
+                    crate::settings::web_connector::WebConnectorSetting,
                 >(),
             ),
             (
                 "vault.connectors.web.usage",
                 crate::code_run::vault_read::request_schema::<
-                    crate::web_connector::WebConnectorUsageRead,
+                    crate::settings::web_connector::WebConnectorUsageRead,
                 >(),
             ),
             (
@@ -7886,8 +7886,8 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
         >(),
-        "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
-        "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
+        "fetch" => crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::FetchResult>(),
+        "crawl" => crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FeedbackSubjectPreview,
         >(),
@@ -9671,13 +9671,13 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
         "vault.settings.web_connector" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorSetting,
+            crate::settings::web_connector::WebConnectorSetting,
         >(),
         "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorSetting,
+            crate::settings::web_connector::WebConnectorSetting,
         >(),
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
-            crate::web_connector::WebConnectorUsagePage,
+            crate::settings::web_connector::WebConnectorUsagePage,
         >(),
         "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
@@ -19066,11 +19066,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 decode(value.clone())?;
         }
         "fetch" => {
-            let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
+            let _input: crate::memory::web_acquisition::WebFetchRequest = decode(value.clone())?;
         }
         "crawl" => {
-            let input: crate::web_fetch::WebCrawlRequest = decode(value.clone())?;
-            crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+            let input: crate::memory::web_acquisition::WebCrawlRequest = decode(value.clone())?;
+            crate::memory::web_acquisition::CrawlPageBudget::new(input.page_budget)
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         }
         "report" => {
@@ -21936,10 +21936,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
         "vault.settings.web_connector.replace" => {
-            let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
+            let _input: crate::settings::web_connector::WebConnectorSetting = decode(value.clone())?;
         }
         "vault.connectors.web.usage" => {
-            let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
+            let _input: crate::settings::web_connector::WebConnectorUsageRead = decode(value.clone())?;
         }
         "vault.models.oneironer.bind" => {
             let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
@@ -25975,15 +25975,15 @@ pub fn vault_commitments_supersede(
 }
 pub fn fetch(
     memory: &Memory<'_>,
-    input: crate::web_fetch::WebFetchRequest,
-) -> MemoryResult<crate::web_fetch::FetchResult> {
+    input: crate::memory::web_acquisition::WebFetchRequest,
+) -> MemoryResult<crate::memory::web_acquisition::FetchResult> {
     crate::task_verb::sdk::host_only(memory, "fetch", &input)
 }
 pub fn crawl(
     memory: &Memory<'_>,
-    input: crate::web_fetch::WebCrawlRequest,
-) -> MemoryResult<crate::web_fetch::CrawlResult> {
-    crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+    input: crate::memory::web_acquisition::WebCrawlRequest,
+) -> MemoryResult<crate::memory::web_acquisition::CrawlResult> {
+    crate::memory::web_acquisition::CrawlPageBudget::new(input.page_budget)
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     crate::task_verb::sdk::host_only(memory, "crawl", &input)
 }
@@ -33014,19 +33014,19 @@ pub fn vault_models_manifest_replace(
 pub fn vault_settings_web_connector(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
-) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::read_web_connector_setting(memory)
 }
 pub fn vault_settings_web_connector_replace(
     memory: &Memory<'_>,
-    input: crate::web_connector::WebConnectorSetting,
-) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    input: crate::settings::web_connector::WebConnectorSetting,
+) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::replace_web_connector_setting(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,
-    input: crate::web_connector::WebConnectorUsageRead,
-) -> MemoryResult<crate::web_connector::WebConnectorUsagePage> {
+    input: crate::settings::web_connector::WebConnectorUsageRead,
+) -> MemoryResult<crate::settings::web_connector::WebConnectorUsagePage> {
     crate::task_verb::sdk::read_web_connector_usage(memory, input)
 }
 pub fn vault_models_oneironer_bind(

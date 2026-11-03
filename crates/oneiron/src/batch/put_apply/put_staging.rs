@@ -216,7 +216,7 @@ pub(super) fn stage_claim_projection_indexes(
     body: &crate::write_envelope::claim_body::ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
-    if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+    if crate::write_envelope::thread_claim::is_thread_claim_predicate(&body.predicate) {
         super::index_thread_claim_subject(store, wtxn, id, body, learned_at)?;
     }
     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(

@@ -31,8 +31,9 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::browser_library::{
-    WorkflowResolution, resolve_workflow_in_txn, secret_param_names_in_txn,
+    resolve_workflow_in_txn, secret_param_names_in_txn,
 };
+use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
