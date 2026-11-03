@@ -91,8 +91,8 @@ mod connection_pressure;
 mod kept;
 mod rows;
 pub(crate) use connection_pressure::{
-    BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolPressure,
-    PressureCredentialKey, SocketHold, attach_body_credential, with_body_credential,
+    BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolConnections,
+    PoolPressure, PressureCredentialKey, SocketHold, attach_body_credential, with_body_credential,
 };
 pub use rows::LimitRow;
 /// The question a crossed row asks: what it is set to, the most it saw, and
@@ -153,7 +153,13 @@ impl LimitQuestions {
     pub(crate) fn connection_pool_pressure(&self) -> ConnectionPoolPressure {
         match &self.pool_pressure {
             Some(pressure) => pressure.snapshot(),
-            None => ConnectionPoolPressure::Clear,
+            // A sink that keeps no pool observes no connections: every
+            // count stands at the none it has seen (FIX 9134).
+            None => ConnectionPoolPressure::Clear {
+                connections: PoolConnections::default(),
+                reserve_bound: 0,
+                parking_bound: 0,
+            },
         }
     }
     /// Nobody waits in `row`'s line since its crossing `epoch`.

@@ -249,7 +249,7 @@ pub trait AgentVerbDoor: Send + Sync {
     /// refuses it as unbound.
     fn connector_answer(
         &self,
-        _request: &crate::task_verb::sdk::ConnectorAnswerRequest,
+        _request: &crate::code_run::ConnectorAnswerRequest,
         _invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {

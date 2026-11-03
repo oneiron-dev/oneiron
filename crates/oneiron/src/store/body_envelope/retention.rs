@@ -14,6 +14,9 @@
 //! once no instance row and no inline binding names it, so the collector
 //! has taken its file first, past every reader's pin.
 
+use std::collections::BTreeSet;
+use std::sync::{Mutex, PoisonError};
+
 use heed::{RoTxn, RwTxn};
 
 use super::custody::{instance_id, instance_of};
@@ -267,7 +270,7 @@ pub(crate) fn note_settled_inline_in_txn(
 
 /// The content handle of the result body `digest`.
 fn inline_handle(digest: &[u8; 32]) -> String {
-    crate::code_run::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+    crate::store::result_manifest::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
         hash: *digest,
         byte_len: 0,
     })
@@ -341,7 +344,12 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
 /// waiting on a holder defers; so does a Retention one that a lease, a kept
 /// copy or a standing hold needs now (FIX 6022), read under the finisher's
 /// custody write guard and writer.
-fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Result<bool> {
+fn ready_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    intent: &RetirementIntent,
+    kept: &BTreeSet<[u8; 16]>,
+) -> Result<bool> {
     let Some(instance) = instance_of(&intent.subject.at(0)) else {
         return Ok(false);
     };
@@ -361,7 +369,7 @@ fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Re
         }
     }
     if intent.cause == RetireCause::Retention {
-        return super::retention_policy::retention_ready_in_txn(store, txn, &instance);
+        return super::retention_policy::retention_ready_in_txn(store, txn, &instance, kept);
     }
     Ok(true)
 }
@@ -375,8 +383,32 @@ impl Store {
     ///
     /// Storage and custody errors.
     pub(crate) fn finish_body_custody_retirements(&self) -> Result<()> {
+        // The pass's holder snapshot (FIX 9067): read under an intent's
+        // write guard, once per holder epoch, instead of the whole holder
+        // directory per intent. Only a Retention intent reads it — an
+        // erase owns its cause and no holder read ever defers it, as it
+        // never did. A snapshot that does not read defers a Retention
+        // intent, as a per-intent read that failed did.
+        let snapshot: Mutex<Option<(u64, BTreeSet<[u8; 16]>)>> = Mutex::new(None);
         self.finish_custody_retirements(CustodyKind::BodyInstance, |txn, intent| {
-            ready_in_txn(self, txn, intent)
+            if intent.cause != RetireCause::Retention {
+                return ready_in_txn(self, txn, intent, &BTreeSet::new());
+            }
+            let epoch = self.core.key_custody.holders_epoch();
+            let mut held = snapshot.lock().unwrap_or_else(PoisonError::into_inner);
+            if held.as_ref().is_none_or(|(at, _)| *at != epoch) {
+                let Some(custody) = self.core.key_custody.local() else {
+                    return Ok(false);
+                };
+                let Ok(kept) = custody.kept_image_instances() else {
+                    return Ok(false);
+                };
+                *held = Some((epoch, kept));
+            }
+            let Some((_, kept)) = held.as_ref() else {
+                return Ok(false);
+            };
+            ready_in_txn(self, txn, intent, kept)
         })
     }
 

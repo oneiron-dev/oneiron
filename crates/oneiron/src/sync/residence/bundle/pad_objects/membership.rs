@@ -7,34 +7,19 @@
 //! and the restore names it owed.
 
 use super::super::{
-    GENERATIONS, PARTS, SealedBundleEntry, SealedBundleObject, order, part_key,
+    GENERATIONS, PARTS, SealedBundleEntry, SealedBundleObject, object_prefix, order, part_key,
     sealed_generation_hex,
 };
 use super::{
-    ACCESS, CapturedObject, CapturedPadObjects, CurrentPadObjects, PadObjectMeta,
-    current_pad_objects_in_txn, generation_prefix, put_access, whole,
+    ACCESS, CapturedObject, CapturedPadObjects, CurrentPadObjects, Family, PadObjectMeta,
+    QUEUED_PREFIX, current_pad_objects_in_txn, generation_prefix, put_access,
+    read_back_captured_in_txn, txn_rows, whole,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::world_keys::SealedBundleGeneration;
 
-/// What an install does with the generations a store and a capture do not
-/// both keep (CALLS: PAD-1 generation membership).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PadObjectMembership {
-    /// A source's capture over a restored copy or an activated archive: each
-    /// generation only the source keeps is adopted when the capture carries
-    /// its bundle and its pad object whole, else it stays not carried. Each
-    /// generation only the copy keeps is retired, bundle, pad object and
-    /// grants, only when the source's own keep and age rule, run over the
-    /// generations its same read keeps with that one placed among them by
-    /// commit order, retires it; else it keeps its bytes.
-    SourceKeepRuleProvesRetired,
-    /// A store's own objects put back over an install that did not read
-    /// back: every generation they keep comes back as they held it, whole or
-    /// not, and each the install brought that they do not keep goes.
-    StoreOwnPutBack,
-}
+pub(crate) use crate::store::pad_object_membership::PadObjectMembership;
 
 /// What an install changes of the generations a store keeps, past the
 /// objects of the ones it keeps with the capture.
@@ -166,6 +151,124 @@ fn adopt_in_txn(
         put_access(store, wtxn, grant, raw)?;
     }
     GENERATIONS.put(store, wtxn, &key, &meta.entry.encode())
+}
+
+/// Puts `entry`'s pad object back as a store held it: `parts` at their
+/// offsets, whole or not, under `digest`, its entry last (FIX 11825). What a
+/// store's own objects put back hold, never cut again nor required whole.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn put_pads_as_held(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut entry: SealedBundleEntry,
+    digest: [u8; 32],
+    parts: &[(u64, Vec<u8>)],
+) -> Result<()> {
+    let generation = entry.generation;
+    let prefix = object_prefix(&generation, SealedBundleObject::Pads);
+    PARTS.delete_from(store, wtxn, prefix.as_bytes())?;
+    for (offset, part) in parts {
+        let key = part_key(&generation, SealedBundleObject::Pads, *offset);
+        PARTS.put(store, wtxn, &key, part)?;
+    }
+    entry.pads_digest = digest;
+    let key = sealed_generation_hex(&generation);
+    GENERATIONS.put(store, wtxn, &key, &entry.encode())
+}
+
+impl CapturedPadObjects {
+    /// This capture, a store's own read before `installing` lands over it,
+    /// with each outbox key `installing` carries that it does not hold
+    /// noted (FIX 12142): the rows that install adds, which a put-back of
+    /// this capture takes out again.
+    pub(crate) fn noting_outbox_added_by(mut self, installing: &Self) -> Self {
+        let added = installing
+            .queued
+            .iter()
+            .map(|(key, _)| key)
+            .filter(|key| !self.queued.iter().any(|(held, _)| held == *key))
+            .cloned()
+            .collect();
+        self.outbox_added = added;
+        self
+    }
+}
+
+/// Puts `rows`, a generation's grant rows a store held under `prefix`, back
+/// as it held them, through their table (FIX 12142): every row under
+/// `prefix` goes first, so none an install added there stays. The
+/// install's own revision covers these rows, so no other writer changed
+/// them since.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn put_access_as_held(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    prefix: &[u8],
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<()> {
+    ACCESS.delete_from(store, wtxn, prefix)?;
+    for (key, raw) in rows {
+        put_access(store, wtxn, key, raw)?;
+    }
+    Ok(())
+}
+
+/// Puts the admission outbox back as `baseline`, a store's own capture,
+/// held it, through its table (FIX 12142): each key the install over it
+/// added goes ([`CapturedPadObjects::noting_outbox_added_by`]), then each
+/// row it held lands as it held it. No revision covers the outbox, so a row
+/// another writer queued since the install stays.
+///
+/// # Errors
+///
+/// A key that is not text; storage errors.
+pub(super) fn put_outbox_as_held(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    baseline: &CapturedPadObjects,
+) -> Result<()> {
+    for key in &baseline.outbox_added {
+        let key = std::str::from_utf8(key).map_err(|_| Error::InvalidKey)?;
+        ACCESS.delete(store, wtxn, &key.to_owned())?;
+    }
+    for (key, raw) in &baseline.queued {
+        put_access(store, wtxn, key, raw)?;
+    }
+    Ok(())
+}
+
+/// Whether the store holds, in `txn`, its own objects put back as
+/// `baseline`, their capture before the install, holds them (FIX 12142):
+/// the revision that capture names, so each kept generation's entry and
+/// grant rows as the store held them, each pad object as
+/// [`read_back_captured_in_txn`] reads it, and each admission outbox row as
+/// the store held it, with none the install added left. It is never judged
+/// against the put-back's own revision, which holds whatever the put-back
+/// wrote.
+///
+/// # Errors
+///
+/// An entry or a part key that does not decode; storage errors.
+pub(crate) fn read_back_put_back_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    baseline: &CapturedPadObjects,
+) -> Result<bool> {
+    if !read_back_captured_in_txn(store, txn, &baseline.index, baseline)? {
+        return Ok(false);
+    }
+    let outbox = txn_rows(store, txn, Family::Access, QUEUED_PREFIX)?;
+    Ok(baseline.queued.iter().all(|row| outbox.contains(row))
+        && baseline
+            .outbox_added
+            .iter()
+            .all(|added| outbox.iter().all(|(key, _)| key != added)))
 }
 
 /// Whether `object` carries both of `entry`'s objects whole: its pad object

@@ -11,8 +11,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use sha2::Digest;
 
@@ -462,7 +463,7 @@ pub(super) fn contact_deleted_in_txn(
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, contact_id)?.deleted)
 }
 
-fn claim_body_in_txn(
+pub(super) fn claim_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

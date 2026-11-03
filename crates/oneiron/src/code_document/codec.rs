@@ -4,15 +4,11 @@ use loro::{IdSpan, LoroDoc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::Result;
 
 use super::types::CodeDocumentFrontier;
 
-pub(super) fn invalid() -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-        "invalid code document state",
-    ))
-}
+pub(super) use crate::store::code_document_values::invalid;
 
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid())
@@ -42,20 +38,7 @@ pub(super) fn path_key(repo: &str, path: &str) -> Vec<u8> {
     key(b"code_document:path:v1:", &path_hash(repo, path))
 }
 
-pub(super) fn validate_path(repo: &str, path: &str) -> Result<()> {
-    if repo.trim().is_empty()
-        || repo.len() > 4096
-        || repo.contains('\0')
-        || path.is_empty()
-        || path.len() > 4096
-        || path.starts_with('/')
-        || path.contains(['\\', '\0'])
-        || path.split('/').any(|part| matches!(part, "" | "." | ".."))
-    {
-        return Err(invalid());
-    }
-    Ok(())
-}
+pub(super) use crate::store::code_document_values::validate_path;
 
 pub(super) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
     LoroDoc::from_snapshot(bytes).map_err(|_| invalid())

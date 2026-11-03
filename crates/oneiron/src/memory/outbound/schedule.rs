@@ -23,10 +23,7 @@ use crate::receipt::delivered_send_receipt_for_task;
 
 mod dispatch;
 
-/// Attempt-queue kind for bridge-scheduled outbound intents. Pending schedules
-/// use the queue's kind-scoped dedupe index; delivered sends use the additive
-/// durable client-idempotency index.
-pub const BRIDGE_OUTBOUND_ATTEMPT_KIND: &str = "bridge.outbound.schedule";
+pub use crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
 impl Memory<'_> {
     /// Schedules one connector-send TASK through the OF-327 chokepoint. The

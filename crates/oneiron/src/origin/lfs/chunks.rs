@@ -116,7 +116,10 @@ impl LfsManifest {
 
     /// The ordinary ASSET that stores this manifest.
     pub fn asset_id(&self) -> Result<EntityId> {
-        crate::codebase::entity_id_from_hash_material(VAULT_LFS_ASSET_ID_DOMAIN, &[&self.hash()?])
+        crate::store::code_snapshot::entity_id_from_hash_material(
+            VAULT_LFS_ASSET_ID_DOMAIN,
+            &[&self.hash()?],
+        )
     }
 
     fn validate(&self) -> Result<()> {
@@ -180,7 +183,7 @@ pub(super) fn invalid(why: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidLfsObject(why))
 }
 pub(super) fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
+    crate::store::code_snapshot::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
 }
 /// The LFS store's own read of a manifest or chunk, a chunk of an object not
 /// yet published included. Only an ASSET passes, so no custody row does.

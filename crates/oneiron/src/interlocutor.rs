@@ -13,13 +13,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::conversation::ContainerAttendee;
+use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment};
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
 use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
 
 /// Display label for a supplied voice roster that could not be resolved. The
 /// entry exists so an unresolvable roster narrows disclosure instead of

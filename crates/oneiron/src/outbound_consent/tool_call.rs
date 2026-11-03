@@ -13,33 +13,8 @@ pub use self::headers::header_parameters;
 
 use self::headers::{canonical_header, declared_headers, dynamic_header};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolGrantDataClass {
-    Arguments,
-    XMcpHeader,
-}
-impl ToolGrantDataClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Arguments => "arguments",
-            Self::XMcpHeader => "x_mcp_header",
-        }
-    }
-    pub(crate) fn valid_grant_set(classes: &[Self]) -> bool {
-        matches!(
-            classes,
-            [Self::Arguments] | [Self::XMcpHeader] | [Self::Arguments, Self::XMcpHeader]
-        )
-    }
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "arguments" => Some(Self::Arguments),
-            "x_mcp_header" => Some(Self::XMcpHeader),
-            _ => None,
-        }
-    }
-}
+pub use crate::consent::tool_scope::ToolGrantDataClass;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeaderGrantRequirement {
@@ -240,13 +215,14 @@ impl FrozenToolCall {
                 return Err(invalid_schema());
             }
         }
+        // One parameter may carry two requirements when two schema branches
+        // name its header differently (FIX 10417); the header set still keys
+        // each requirement once.
         let mut headers = std::collections::BTreeSet::new();
-        let mut parameters = std::collections::BTreeSet::new();
         for requirement in &frozen.grant_requirements {
             if requirement.data_class != ToolGrantDataClass::XMcpHeader
                 || canonical_header(&requirement.header)? != requirement.header
                 || !headers.insert(requirement.header.clone())
-                || !parameters.insert(requirement.parameter.clone())
                 || frozen.arguments.contains_key(&requirement.parameter)
                 || !frozen.headers.contains_key(&requirement.header)
             {
