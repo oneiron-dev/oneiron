@@ -16,15 +16,19 @@ use super::check_store::{CHECK_CONFIGS, CHECK_WORK, QueueCheckConfiguration, Que
 use super::source_types::{QUEUE_SOURCE_DIR, QUEUE_SOURCE_LEAF, ServedQueueSource};
 use super::storage::{BATCHES, QUEUE_STATE};
 use super::{MergeQueue, QueueCheckRequest, QueueDriverTarget};
-use crate::code_revision::{
-    CodeImportManifest, CodeTreeInventory, IMPORT_MANIFEST_PREDICATE,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
-};
-use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};
+use crate::store::code_snapshot::RepoRef;
 use crate::{EntityId, Vault};
+use crate::{
+    code_revision::import_snapshot_custody_in_txn,
+    store::code_import_manifest::{manifest_digest, manifest_id},
+    store::{
+        code_import_manifest::CodeImportManifest, code_import_manifest::IMPORT_MANIFEST_PREDICATE,
+        code_revision_record::CodeTreeInventory,
+    },
+};
 
 /// The refusal of a served repository's queue door before any init bound
 /// its source.
@@ -62,11 +66,12 @@ pub(super) fn served_store_folder(repo_ref: &RepoRef) -> Option<&str> {
 }
 
 /// The engine-derived root of `store`'s queue source (CALL 1). Creates
-/// nothing; a store name that is not a hex identity has no root.
+/// nothing; a store name that is not a hex identity has no root. GitWire
+/// reads it to settle a crashed add of this root (FIX 7706).
 ///
 /// # Errors
 /// A vault environment path that does not resolve, or a malformed store.
-pub(super) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
+pub(crate) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
     if store.is_empty() || !store.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::CorruptedIndex(
             "a queue source store is not a hex identity",
@@ -531,3 +536,5 @@ impl MergeQueue<'_> {
         }))
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

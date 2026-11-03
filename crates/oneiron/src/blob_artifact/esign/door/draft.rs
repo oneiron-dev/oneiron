@@ -9,7 +9,8 @@ use super::super::model::{EsignAuditActor, EsignState, validate_document};
 use super::{EsignCreateRequest, EsignDraftView, document_id};
 use crate::EntityId;
 use crate::claim::ScopedRead;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::MemoryResult;
 
 impl Memory<'_> {
     /// `vault.esign.create`: drafts a signing document on `document_ref` as

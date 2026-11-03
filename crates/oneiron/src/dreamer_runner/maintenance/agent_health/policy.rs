@@ -18,12 +18,9 @@ use crate::edge::EdgeKind;
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Error, Result, Vault};
 
-/// The reviewer skill: its revision's `policy.json` seeds the T1 dials, and
-/// an owner's outcome on a card scores that revision.
-pub(crate) const AGENT_HEALTH_REVIEW_SKILL_ID: &str = "agent-health-review";
+pub(crate) use crate::skill::health_review::AGENT_HEALTH_REVIEW_SKILL_ID;
 
-/// The package file that carries a revision's seeds: one number per dial key.
-pub(crate) const REVIEWER_POLICY_FILE: &str = "policy.json";
+pub(crate) use crate::skill::health_review::REVIEWER_POLICY_FILE;
 
 /// The detector dials a revision may seed. The review switch, the owner copy
 /// and the escalation TTL decide whether and to whom a card goes; a revision

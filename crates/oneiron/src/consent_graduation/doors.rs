@@ -325,15 +325,18 @@ impl crate::memory::Memory<'_> {
     /// `forbidden` when the scope belongs to another actor or the actor binding
     /// fails, plus the scope and storage errors of
     /// [`Vault::demote_scope_to_propose`].
-    pub fn demote_own_ramp_scope(&self, scope: &RampScope) -> crate::memory::MemoryResult<()> {
+    pub fn demote_own_ramp_scope(
+        &self,
+        scope: &RampScope,
+    ) -> oneiron_contracts::memory::MemoryResult<()> {
         let vault = self.vault();
         let at = vault.store.clock.now_recorded_at();
         // Giving up one's own grant requires the actor binding, not a content-write grant.
         vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
             scope.validate()?;
             if scope.actor != self.actor().to_hex() {
-                return Err(crate::memory::MemoryError::new(
-                    crate::memory::MEMORY_CODE_FORBIDDEN,
+                return Err(oneiron_contracts::memory::MemoryError::new(
+                    oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                     "an actor demotes only its own ramp scope",
                     &["Ask the owner to demote another actor's scope."],
                 ));
@@ -345,7 +348,7 @@ impl crate::memory::Memory<'_> {
                 self.actor_class(),
             )?;
             append_demotion_in_txn(vault, wtxn, scope, DemotionReason::AgentJudgment, at)
-                .map_err(crate::memory::MemoryError::from)
+                .map_err(oneiron_contracts::memory::MemoryError::from)
         })
     }
 }

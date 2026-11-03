@@ -61,52 +61,9 @@ use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
-/// Subject-model vocabulary version. Claim bodies retain the generic claim ABI.
-pub const SUBJECT_MODEL_SCHEMA_VERSION: u64 = 1;
-
-/// The only entity kinds that can stand behind an actor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SubjectKind {
-    Person,
-    Org,
-}
-
-impl SubjectKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Person => "person",
-            Self::Org => "org",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "person" => Some(Self::Person),
-            "org" => Some(Self::Org),
-            _ => None,
-        }
-    }
-
-    fn from_entity_type(entity_type: Option<u8>) -> Result<Self> {
-        match entity_type {
-            Some(ENTITY_TYPE_PERSON) => Ok(Self::Person),
-            Some(ENTITY_TYPE_ORG) => Ok(Self::Org),
-            _ => Err(Error::InvalidClaimBody(
-                "actor.subject_ref subject must be a PERSON or ORG",
-            )),
-        }
-    }
-}
-
-/// An actor's singular subject, with its checked entity kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ActorSubjectAnchor {
-    pub actor_ref: EntityId,
-    pub subject_ref: EntityId,
-    pub subject_kind: SubjectKind,
-}
+pub use crate::write_envelope::subject_record::{
+    ActorSubjectAnchor, SUBJECT_MODEL_SCHEMA_VERSION, SubjectKind,
+};
 
 impl Vault {
     /// Writes one active anchor and stamps the host-authenticated writer.
@@ -150,51 +107,13 @@ impl Vault {
     }
 }
 
-/// Anchors an actor to the PERSON or ORG standing behind it.
-///
-/// Reserved `actor.*` namespace: writable only through [`anchor_actor_subject`]
-/// via the crate-internal reserved claim door, never through
-/// `Vault::put_claim`.
-pub const PREDICATE_ACTOR_SUBJECT_REF: &str = "actor.subject_ref";
+pub use crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF;
 
 /// Records whether a PERSON is `meat` or `model`.
 /// Engine-owned individually; other `person.*` predicates remain public.
-pub const PREDICATE_PERSON_SUBSTRATE: &str = "person.substrate";
+pub use crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE;
 
-/// What a PERSON is made of (ARCH-0063 R7).
-///
-/// Deliberately NOT an entity-type fork. A `Model` person is a person: it
-/// merges, consents, and holds relationships through exactly the same paths a
-/// `Meat` person does. The registry is untouched by this distinction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum PersonSubstrate {
-    /// A biological someone.
-    Meat,
-    /// A model-backed someone.
-    Model,
-}
-
-impl PersonSubstrate {
-    /// Stable wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Meat => "meat",
-            Self::Model => "model",
-        }
-    }
-
-    /// Parses the wire spelling. Exactly two are accepted.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "meat" => Some(Self::Meat),
-            "model" => Some(Self::Model),
-            _ => None,
-        }
-    }
-}
+pub use crate::write_envelope::subject_record::PersonSubstrate;
 
 /// Anchors `actor_ref` to `subject_ref`, superseding any prior anchor.
 ///

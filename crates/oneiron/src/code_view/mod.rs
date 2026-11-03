@@ -1,9 +1,9 @@
 //! Per-agent file views over codebase blobs, with one owned shared service set.
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
-use crate::checkout::CheckoutTaskClass;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
+use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

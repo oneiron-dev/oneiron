@@ -14,37 +14,8 @@ const WINDOWS: SideTable<(EntityId, String), OwnRateWindow, Named> =
 const CHECKS: SideTable<(EntityId, String), OwnRateCheck, Named> =
     SideTable::new(&side_table::OWN_RATE_CHECK);
 
-/// What an own-rate window counts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OwnRateKind {
-    /// Task creates and asks by one actor.
-    TaskCreate,
-    /// Claims an agent wrote as Auto.
-    AutoWrite,
-    /// Wrong labels one reader filed on one weave link or item.
-    WeaveCorrection,
-    /// Consult fan-out requests by one actor, one count per request.
-    ConsultFanout,
-}
-
-impl OwnRateKind {
-    const fn token(self) -> &'static str {
-        match self {
-            Self::TaskCreate => "task_create",
-            Self::AutoWrite => "auto_write",
-            Self::WeaveCorrection => "weave_correction",
-            Self::ConsultFanout => "consult_fanout",
-        }
-    }
-}
-
-/// An advisory threshold and the window it counts over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OwnRate {
-    pub(crate) threshold: u64,
-    pub(crate) window_seconds: u64,
-}
+pub(crate) use crate::store::own_rate_record::OwnRate;
+pub use crate::store::own_rate_record::OwnRateKind;
 
 /// The Dreamer's auto-write rate: 1000 Auto claims an hour per agent actor.
 const AUTO_WRITE: OwnRate = OwnRate {
@@ -123,22 +94,7 @@ pub(crate) fn take_counted_auto_writes() -> Vec<AutoWriteDoor> {
     COUNTED_AUTO_WRITES.with(|doors| std::mem::take(&mut *doors.borrow_mut()))
 }
 
-/// OF-520 question at an own actor's first threshold crossing in one window.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OwnRateCheck {
-    pub kind: OwnRateKind,
-    pub actor: String,
-    pub window_started_at: u64,
-    /// 0 for a count with no time window, such as every report on one link.
-    pub window_seconds: u64,
-    pub count: u64,
-    pub threshold: u64,
-}
-
-impl OwnRateCheck {
-    pub const KIND: &'static str = "own_rate_burst";
-}
+pub use crate::store::own_rate_record::OwnRateCheck;
 
 #[derive(Serialize, Deserialize)]
 struct OwnRateWindow {
