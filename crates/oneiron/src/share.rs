@@ -12,8 +12,8 @@ use sha2::Sha256;
 use crate::Vault;
 use crate::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-    decode_access_grant_body, decode_entity_ref, encode_access_grant_body, invalid_grant,
-    required_value, validate_keys,
+    decode_access_grant_body, decode_entity_ref, decode_erased_share_body,
+    encode_access_grant_body, invalid_grant, required_value, validate_keys,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
@@ -269,8 +269,18 @@ pub(crate) fn check_generic_grant_write(
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
     {
-        let old = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if matches!(old.scope, AccessGrantScope::SharedBrief { .. }) {
+        // An erased history names its scope in its terms (FIX 4981): only
+        // a SharedBrief history keeps this door's refusal. Any other erased
+        // scope is not this door's grant.
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let old_scope = match decode_access_grant_body(body) {
+            Ok(old) => old.scope,
+            Err(_) => match decode_erased_share_body(body) {
+                Ok(terms) => terms.scope,
+                Err(error) => return Err(error),
+            },
+        };
+        if matches!(old_scope, AccessGrantScope::SharedBrief { .. }) {
             return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                 "shared briefs require the share door",
             )));
