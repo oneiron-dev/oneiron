@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use crate::claim::scope_stamp;
+use super::scope_stamp;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 

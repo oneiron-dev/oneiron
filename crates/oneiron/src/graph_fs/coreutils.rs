@@ -4,7 +4,8 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 use std::time::Instant;
 
-use crate::claim::{ScopedReadReceipt, decode_claim_body};
+use oneiron_contracts::claim::ScopedReadReceipt;
+use crate::write_envelope::claim_body::decode_claim_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};

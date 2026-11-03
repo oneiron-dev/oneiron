@@ -7,7 +7,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::*;
-use crate::claim::{base_world_id, scope_stamp};
+use super::{base_world_id, scope_stamp};
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
 // decoded ONCE per result for gate + projection" — tests assert exact

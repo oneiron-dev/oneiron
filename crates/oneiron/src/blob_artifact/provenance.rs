@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use crate::batch::secret_scan;
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
 
 use super::body::validate_text_field;

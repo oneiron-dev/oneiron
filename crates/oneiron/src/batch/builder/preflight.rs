@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 
 use heed::RwTxn;
 
-use crate::claim::ClaimApprovalStatus;
+use oneiron_contracts::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;

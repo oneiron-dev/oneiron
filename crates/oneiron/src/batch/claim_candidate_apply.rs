@@ -50,13 +50,13 @@ pub(super) fn apply_claim_candidate(
 
     let subject = candidate.subject();
     if candidate.predicate() == crate::pipeline::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-        && subject != crate::claim::ClaimSubject::Entity(actor.entity_ref())
+        && subject != crate::write_envelope::claim_body::ClaimSubject::Entity(actor.entity_ref())
     {
         return Err(Error::InvalidClaimBody(
             "world default subset must be authored by its subject agent",
         ));
     }
-    if let crate::claim::ClaimSubject::Entity(subject_id) = subject
+    if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) = subject
         && !crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &subject_id)?
     {
         return Err(Error::EntityNotFound);
@@ -98,7 +98,7 @@ pub(super) fn apply_claim_candidate(
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.
     let birth_weight = crate::claim::claim_initial_claim_of_weight(&body)?;
-    let data = crate::claim::encode_claim_body(&body)?;
+    let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(
             store,
@@ -162,8 +162,8 @@ pub(super) fn apply_claim_candidate(
     )?;
 
     let subject_id = match subject {
-        crate::claim::ClaimSubject::Entity(subject_id) => Some(subject_id),
-        crate::claim::ClaimSubject::Edge { .. } => None,
+        crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) => Some(subject_id),
+        crate::write_envelope::claim_body::ClaimSubject::Edge { .. } => None,
     };
     let removed_claim_of = reconcile_claim_of_edges(store, wtxn, &id, subject_id)?;
     let mut had_graph_mutation = !removed_claim_of.is_empty();
@@ -214,7 +214,7 @@ pub(crate) fn claim_candidate_birth_facet(
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         })
         .and_then(|raw| {
-            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+            crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
         })
         .map(|stored| stored.scope_facet);
     match stored_facet {
