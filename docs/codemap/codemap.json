@@ -81,9 +81,10 @@
      "path": "src/access_grant/codec.rs",
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
-      "const": 2,
-      "crate-vis": 25,
-      "fn": 2
+      "const": 1,
+      "crate-vis": 23,
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -12656,7 +12657,8 @@
      "purpose": "Canonical MessagePack body and claim-structure codec for ChannelIdentity",
      "surface": {
       "crate-vis": 19,
-      "fn": 3
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -12707,10 +12709,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/channel_identity/keys.rs",
-     "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
+     "purpose": "Pinned channel-identity vocabulary, defined with the claim wire values",
      "surface": {
-      "const": 22,
-      "crate-vis": 18
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -24755,6 +24757,7 @@
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
+      "const": 1,
       "crate-vis": 31,
       "fn": 1
      }
@@ -39228,7 +39231,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 11
      }
     },
     {
@@ -39238,9 +39241,9 @@
      "path": "src/identity_redirect.rs",
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
-      "const": 1,
       "crate-vis": 7,
-      "fn": 4
+      "fn": 4,
+      "re-export": 1
      }
     },
     {
@@ -39252,28 +39255,21 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CampaignEmailWebhookEvent",
       "EmailDeliveryDisposition",
-      "EmailReputationWebhookSignal",
-      "IdentityAttestationTier",
-      "IdentityReputation",
-      "IdentityReputationSignal",
-      "IdentityReputationStatus",
-      "IdentitySendRateClamp",
-      "IdentityWarmupStage",
       "SenderHealthProjection"
      ],
      "path": "src/identity_reputation.rs",
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)",
      "surface": {
-      "const": 17,
       "crate-vis": 2,
-      "enum": 5,
-      "fn": 16,
-      "struct": 5
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -39322,14 +39318,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/distinct_claim.rs",
      "purpose": "The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value…",
      "surface": {
       "crate-vis": 8,
-      "fn": 3
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -39339,7 +39336,7 @@
      "path": "src/identity_topology/event_body_codec.rs",
      "purpose": "The low-level MessagePack field codec for the type-76 event body, plus the stateless admission checks every…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -39569,8 +39566,9 @@
      "path": "src/identity_topology/wire_keys.rs",
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
-      "const": 2,
-      "crate-vis": 65
+      "const": 1,
+      "crate-vis": 64,
+      "re-export": 1
      }
     },
     {
@@ -64014,6 +64012,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/access_grant_fields.rs",
+     "purpose": "Access-grant body fields used by context-pack serialization",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -64169,7 +64178,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 5
      }
@@ -68787,7 +68796,7 @@
      "path": "src/store/channel_identity_receipts.rs",
      "purpose": "Append-only channel-identity lifecycle receipt ledger",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 2
      }
@@ -69401,6 +69410,16 @@
      "purpose": "The inference snapshot custody client: one erasable wrapped data key per snapshot, on the one typed custody…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/install_identity.rs",
+     "purpose": "Install identity rows, attestation values, and transaction-bound signing accessors",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -70031,7 +70050,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "mod": 10,
       "re-export": 20
      }
@@ -84752,7 +84771,7 @@
      "surface": {
       "crate-vis": 27,
       "fn": 27,
-      "mod": 3,
+      "mod": 6,
       "re-export": 1,
       "struct": 5
      }
@@ -84771,6 +84790,28 @@
       "enum": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/channel_identity/keys.rs",
+     "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
+     "surface": {
+      "const": 22,
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/channel_identity/mod.rs",
+     "purpose": "Channel-identity claim predicates and pinned wire keys",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -84916,6 +84957,40 @@
       "crate-vis": 11,
       "enum": 5,
       "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/identity_pair.rs",
+     "purpose": "Symmetric identity-pair claim vocabulary and structural validation",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmailReputationWebhookSignal",
+      "IdentityAttestationTier",
+      "IdentityReputation",
+      "IdentityReputationSignal",
+      "IdentityReputationStatus",
+      "IdentitySendRateClamp",
+      "IdentityWarmupStage"
+     ],
+     "path": "src/write_envelope/identity_reputation.rs",
+     "purpose": "Sender reputation values, wire predicates, and pure claim validation",
+     "surface": {
+      "const": 17,
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 15,
       "struct": 3
      }
     },
@@ -86457,7 +86532,7 @@
     "identity_reputation": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
@@ -86959,7 +87034,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87071,7 +87146,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 204,
+     "files": 205,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -87316,7 +87391,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
     "write_envelope": {
-     "files": 12,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -87325,7 +87400,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5934,
+   "source_files": 5940,
    "test_files": 900
   },
   "oneiron-android": {
