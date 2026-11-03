@@ -115199,7 +115199,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -116205,7 +116205,7 @@
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
       "crate-vis": 9,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },

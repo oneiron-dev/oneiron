@@ -1275,7 +1275,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 3 struct · 3 enum · 24 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
 | `src/mcp/qualification.rs` | src | s | 1 re-export | — | Public MCP qualification API, implemented at the vault boundary |
-| `src/mcp/quickjs_provider.rs` | src | m | 1 struct · 7 fn · 8 crate-vis | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
+| `src/mcp/quickjs_provider.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
 | `src/mcp/registry.rs` | src | m | 1 struct · 23 fn · 9 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | m | 3 struct · 1 enum · 9 fn · 1 crate-vis | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/run_seats.rs` | src | s | 3 crate-vis | — | Each durable run's compaction seat, kept by the host across `execute_code` calls: a pass in flight, its… |
@@ -1365,7 +1365,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/responses_socket.rs` | src | m | 4 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
 | `src/models/responses_socket/context.rs` | src | s | 6 crate-vis | — | One server's Responses state (FIX 9516): the vault its stored chains are kept in and the owner's `store`… |
 | `src/models/role_route.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 crate-vis | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
-| `src/models/router.rs` | src | s | 1 struct · 6 fn · 9 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
+| `src/models/router.rs` | src | s | 1 struct · 7 fn · 9 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
 | `src/models/runtime.rs` | src | m | 19 fn · 5 crate-vis | — | Model runtime construction and accessors |
 | `src/models/served.rs` | src | s | 3 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
