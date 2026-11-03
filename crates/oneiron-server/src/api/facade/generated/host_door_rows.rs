@@ -196,6 +196,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultPersonasExport,
     VaultPersonasEdit,
     SelfMemoryDiaryQuery,
+    SelfMemoryPadsRead,
+    SelfMemoryPadsAdminReads,
     VaultBudgetsLeaseOpen,
     VaultBudgetsLease,
     VaultBudgetsLeaseTopUp,
@@ -411,6 +413,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultFederationConnectDisconnect,
     VaultFederationConnectExport,
     VaultFederationConnectRejoin,
+    VaultFederationConnectWorldPrivacyExport,
+    VaultFederationConnectWorldPrivacyReceive,
     VaultTrustedContactsName,
     VaultTrustedContactsList,
     VaultTrustedContactsConsent,
@@ -531,6 +535,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
+    VaultConsentCreateAutoWeaveGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -903,6 +908,8 @@ impl HostDoorRow {
             "vault.personas.export" => Self::VaultPersonasExport,
             "vault.personas.edit" => Self::VaultPersonasEdit,
             "self.memory.diary.query" => Self::SelfMemoryDiaryQuery,
+            "self.memory.pads.read" => Self::SelfMemoryPadsRead,
+            "self.memory.pads.admin_reads" => Self::SelfMemoryPadsAdminReads,
             "vault.budgets.lease.open" => Self::VaultBudgetsLeaseOpen,
             "vault.budgets.lease" => Self::VaultBudgetsLease,
             "vault.budgets.lease.top_up" => Self::VaultBudgetsLeaseTopUp,
@@ -1120,6 +1127,12 @@ impl HostDoorRow {
             "vault.federation.connect.disconnect" => Self::VaultFederationConnectDisconnect,
             "vault.federation.connect.export" => Self::VaultFederationConnectExport,
             "vault.federation.connect.rejoin" => Self::VaultFederationConnectRejoin,
+            "vault.federation.connect.world_privacy.export" => {
+                Self::VaultFederationConnectWorldPrivacyExport
+            }
+            "vault.federation.connect.world_privacy.receive" => {
+                Self::VaultFederationConnectWorldPrivacyReceive
+            }
             "vault.trusted_contacts.name" => Self::VaultTrustedContactsName,
             "vault.trusted_contacts.list" => Self::VaultTrustedContactsList,
             "vault.trusted_contacts.consent" => Self::VaultTrustedContactsConsent,
@@ -1250,6 +1263,7 @@ impl HostDoorRow {
             "vault.connectors.calls.approve_once" => Self::VaultConnectorsCallsApproveOnce,
             "vault.consent.deny" => Self::VaultConsentDeny,
             "vault.consent.create_standing_grant" => Self::VaultConsentCreateStandingGrant,
+            "vault.consent.create_auto_weave_grant" => Self::VaultConsentCreateAutoWeaveGrant,
             "vault.consent.registry" => Self::VaultConsentRegistry,
             "vault.consent.failure_signals_held" => Self::VaultConsentFailureSignalsHeld,
             "vault.consent.revoke" => Self::VaultConsentRevoke,

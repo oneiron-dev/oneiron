@@ -84,6 +84,7 @@ mod skill_edit_goal_policy;
 mod skill_tradeoff_policy;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
+pub(crate) mod weave_grant;
 pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
@@ -108,9 +109,9 @@ pub use self::confirm::{
     GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub(crate) use self::confirm::{
-    claim_critical_confirm_settled_in_txn, critical_confirm_has_no_deadline,
-    critical_write_confirm_binding, pending_row_holds_critical_confirm,
-    reconcile_critical_write_confirm_on_replicated_overwrite,
+    ConfirmDemotionRetries, claim_critical_confirm_settled_in_txn,
+    critical_confirm_has_no_deadline, critical_write_confirm_binding,
+    pending_row_holds_critical_confirm, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::consolidation_readers::{

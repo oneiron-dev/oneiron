@@ -23,7 +23,10 @@
 //!   record of that landing, its common ancestor and its validation overlap,
 //!   and is refused until a held-out win in this campaign turned merge
 //!   crossover on. A controller weaves only a claim it wrote; one past
-//!   Proposed stands only on the gate's Allow for it under the owner's Grant.
+//!   Proposed stands only where the gate recorded the owner's auto-weave
+//!   Grant for it, scoped to this campaign, its skill or the claim's project
+//!   (minted by `vault.consent.create_auto_weave_grant`; the gate's Allow
+//!   alone no longer counts).
 //! - Parents rank by the DGM formula until the engine estimator's information
 //!   gain wins a held-out selection benchmark (`estimator`). Each round
 //!   receipts every branch's Beta belief either way.
