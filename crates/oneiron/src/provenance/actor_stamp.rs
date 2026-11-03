@@ -89,7 +89,7 @@ pub(crate) fn actor_stamp_in_txn(
         ClaimSubject::Entity(actor.entity_ref()),
         Value::Map(vec![(
             Value::from(STAMP_TOKEN_VALUE_KEY_CLASS),
-            Value::from(crate::edit_distance::actor_class_token(actor.actor_class())),
+            Value::from(crate::write_envelope::actor_tokens::actor_class_token(actor.actor_class())),
         )]),
         1.0,
         ClaimApprovalStatus::Auto,
@@ -180,7 +180,7 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
         .iter()
         .find(|(key, _)| key.as_str() == Some(STAMP_TOKEN_VALUE_KEY_CLASS))
         .and_then(|(_, value)| value.as_str())
-        .and_then(crate::edit_distance::actor_class_from_token)?;
+        .and_then(crate::write_envelope::actor_tokens::actor_class_from_token)?;
     Some(WriteActor::new(actor, class))
 }
 

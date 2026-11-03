@@ -629,7 +629,7 @@ pub(crate) fn bind_peer(
             (rmpv::Value::from("peer"), rmpv::Value::from(peer)),
             (
                 rmpv::Value::from("class"),
-                rmpv::Value::from(crate::edit_distance::actor_class_token(actor.actor_class())),
+                rmpv::Value::from(crate::write_envelope::actor_tokens::actor_class_token(actor.actor_class())),
             ),
         ]),
         1.0,
