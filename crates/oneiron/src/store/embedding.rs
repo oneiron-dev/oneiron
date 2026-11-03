@@ -550,6 +550,7 @@ pub trait MediaEmbedder: Send + Sync {
         let rows: Vec<EntityId> = inputs
             .iter()
             .flat_map(MediaEmbeddingInput::source_rows)
+            .copied()
             .collect();
         release(&rows)?;
         self.embed_each(inputs)

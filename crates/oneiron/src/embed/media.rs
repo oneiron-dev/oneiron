@@ -110,13 +110,10 @@ impl<'a> MediaEgressGate<'a> {
         if self.egress.decide_media(&input) != EgressDecision::Allow {
             return Ok(false);
         }
-        Ok(self.flagged.is_empty()
-            || !crate::settings::device_local_keeps_among(
-                store,
-                txn,
-                &self.flagged,
-                input.source_rows(),
-            )?)
+        Ok(
+            self.flagged.is_empty()
+                || !any_kept_in(store, txn, &self.flagged, input.source_rows())?,
+        )
     }
 }
 
