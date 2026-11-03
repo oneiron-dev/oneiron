@@ -7,7 +7,7 @@ The runbook is [docs/ops/guest-image-family.md](../../../docs/ops/guest-image-fa
 
 | File | Holds |
 |---|---|
-| `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (absent until measured). |
+| `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (state `unbuilt` until a build measures them). |
 | `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, directories, empty files, owners, OCI run config). |
 | `packages.lock.toml` | The resolved Debian closure, written by the first `fetch --learn`. |
 | `build.py`, `imagebuild/` | `validate`, `fetch`, `build --variant`, `receipt`, `manifest`; `imagebuild/attest.py` writes each build's SBOM and provenance statement. |
@@ -60,7 +60,7 @@ What the vault (phase 4) installs, with no guest plumbing:
 Its receipt's `vault_capabilities` holds what deploy/firecracker/build.py's
 rootfs receipt would: guest runtime revision 0 with a null descriptor (no
 rootless guest runtime is staged), and trusted organ builds revision 1.
-Measured (run @@VTAG@@): @@VAULT_SIZES@@.
+Measured (run v8): OCI archive 261,918,720 B (249.8 MiB), unpacked files 828,261,961 B (789.9 MiB; 291,391,049 B above the proposed 512 MiB budget), sparse ext4 989,855,744 B (944.0 MiB; 3,305,111,552 B below the 4 GiB cap), and builder peak RSS 40,842,067,968 B (38.04 GiB).
 
 The vault output is an export, not something this family launches. It has an
 OCI form because every output does, but the vault runs only as a Firecracker

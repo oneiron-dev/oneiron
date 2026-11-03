@@ -111,7 +111,7 @@ deploy/firecracker/build.py and checks that they agree. It reads neither this
 manifest's `contracts.vault` nor the family receipt. Taking the family's
 vault needs LC's hash-preserving import (`vault-family-artifact-import`), a
 kernel, and LC's boot legs. A no-runtime candidate is never a profile that
-binds guest runtimes. Measured (run @@VTAG@@): @@VAULT_SIZES@@.
+binds guest runtimes. Measured (run v8): OCI archive 261,918,720 B (249.8 MiB), unpacked files 828,261,961 B (789.9 MiB; 291,391,049 B above the proposed 512 MiB budget), sparse ext4 989,855,744 B (944.0 MiB; 3,305,111,552 B below the 4 GiB cap), and builder peak RSS 40,842,067,968 B (38.04 GiB).
 
 ## Wire
 

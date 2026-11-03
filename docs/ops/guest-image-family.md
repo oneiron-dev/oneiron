@@ -379,10 +379,10 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 | Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity (margin to 4 GiB) | ext4 allocated | Builder peak RSS (kel) |
 |---|---|---|---|---|---|---|---|
 | base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (111,010,816) | <= 256 MiB: within | 224.0 MiB (234,881,024; 3.78 GiB) | 131.3 MiB | 2.21 GiB |
-| browser | built-candidate | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,114,323) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.21 GiB |
-| desktop-cua | built-candidate | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,846) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.44 GiB |
-| checker | built-candidate | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
-| generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
+| browser | boot-proved | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,114,323) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.21 GiB |
+| desktop-cua | boot-proved | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,846) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.44 GiB |
+| checker | boot-proved | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
+| generic-agent | boot-proved | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
 
 - **Four outputs are `boot-proved` by their acceptance smokes**, all on
   p5's images. On kel (10-22 21:3x-21:4x, `--network none`): the checker by L11-A's
@@ -413,14 +413,15 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   `libX11.so.6`, `libXi.so.6`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`
   and the loader: all in the variant's runtime packages. Its licence texts
   are in `/usr/share/doc/cua-driver`. The SBOM lists the driver and 381
-  Cargo packages of its own graph. Not measured: MCP, the display, or any
-  boot.
+  Cargo packages of its own graph. Its p5 OCI smoke passed all seven
+  MCP/display legs; Firecracker and cold boot were not measured.
 - **generic-agent** carries Bun 1.4.3 at `/usr/local/bin/bun` (88,979,072
   bytes, sha256 `7ce7d6b654ed…`, the zip member byte for byte), the three
   tsrs packages under `/opt/tsrs/node_modules` (46,145,435 bytes; the native
   `@tsrs/linux-x64-gnu/tsrs` is 28,708,944 bytes, 0555), the launchers
   `/usr/local/bin/tsrs` and `/usr/local/bin/tsrs-wasm`, and Debian's
-  python3 3.13. Not measured: any exec, Bun, tsrs or Python run, or a boot.
+  python3 3.13. Its p5 OCI smoke passed all nine Python/Bun/tsrs legs;
+  Firecracker and cold boot were not measured.
 - **The checker's store is hard-linked again (FIX 10348).** With the
   checkout index and reflogs removed before the repacks, each git
   dependency's checkout pack and its db's pack are the same bytes and the
@@ -450,8 +451,10 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   `GFDL-1.3-no-invariant` text pointing at
   `/usr/share/common-licenses/GFDL-3`, a file Debian does not ship; a
   missing file adds nothing, and the reader does not guess the one meant.
-- Writable and snapshot bytes, the guest's peak RAM and cold boot are
-  unmeasured: no candidate here has been booted.
+- Writable and snapshot bytes are unmeasured for every output, and cold boot
+  is unmeasured for every smoked output. Guest peak RAM was sampled for
+  browser (13,641,973 B), desktop-cua (58.1 MiB) and generic-agent
+  (188.6 MiB), not for checker; base has no boot proof.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
   15.8 GiB on kel (16,943,620,096 bytes, run p5) and 15.5 GiB on bel
   (16,669,384,704 bytes, run p6), at a 16 GiB booking for five variants
@@ -594,10 +597,11 @@ Booting the Firecracker rootfs is a separate step. It needs a host
 `ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
 this pack installs those.
 
-**The candidates (10-22, run p5).** All five stay on kel, loaded into its
-containerd-store docker as `oneiron-image-<variant>:candidate`, each archive
-with its receipt, release manifest, SBOM and provenance beside it under
-the run's artifacts directory. The loaded id is the manifest digest:
+**The four smoked candidates (10-22, run p5).** These four stay on kel,
+loaded into its containerd-store docker as `oneiron-image-<variant>:candidate`,
+each archive with its receipt, release manifest, SBOM and provenance beside
+it under the run's artifacts directory. Base stays built-candidate with no
+smoke; vault has no p5 output. The loaded id is the manifest digest:
 
 | Variant | Archive sha256 | Manifest (loaded id) | Config |
 |---|---|---|---|
@@ -613,8 +617,8 @@ that same commit. The browser entrypoint, the desktop entrypoint and the
 checker helper are the pinned repo files, byte for byte. The checker's
 `gst-ptp-helper` keeps its v2 `security.capability`.
 
-What each smoke has to show before its output is `boot-proved` again or
-for the first time: the browser's OCI Lightpanda leg (L11-B); the
+What each smoke showed for its now-boot-proved output (see the release.toml
+notes): the browser's OCI Lightpanda leg (L11-B); the
 checker's offline workspace check (L11-A); desktop-cua serving MCP on
 stdio with its Xvfb display (L11-B); generic-agent's exec of Python, Bun,
 `tsrs` (native) and `tsrs-wasm` with no registry (L11-B).
@@ -634,11 +638,15 @@ The vault variant builds like the others, with these differences:
   features) compile in release in the image's build overlay:
   build-essential, pkg-config and libexpat1-dev. expat-sys finds Debian's
   Expat through pkg-config and links `libexpat.so.1` (libexpat1, in the
-  image), not the Expat 2.1.0 its crate bundles. @@VAULT_NEEDED@@
+  image), not the Expat 2.1.0 its crate bundles. DT_NEEDED, read from the ELF dynamic sections: oneiron-server links `libexpat.so.1`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and `ld-linux-x86-64.so.2`; oneiron-broker drops the Expat entry; oneiron-vm-init and oneiron-vm-outbox link only `libgcc_s.so.1`, `libc.so.6` and the loader. Every entry is present in `/usr/lib/x86_64-linux-gnu` in the rootfs.
 - **Memory.** A release build of oneiron-server ran out of memory above
-  22 GiB at one Cargo job, so book the vault build at 48G on a host that
-  allows it (nelly); kel, bel and mel cap a guest at 16G.
-  @@VAULT_PEAK@@
+  22 GiB at one Cargo job. Run v6 on nelly at 48G and 8 threads was also
+  OOM-killed. Run v8
+  on gce-ci-3 used 96G, 32 threads and Cargo's default `-j`: its largest
+  process peaked at 40,842,067,968 B (38.04 GiB), and the whole-job cgroup
+  peaked at 85,016,260,608 B (79.19 GiB, anonymous memory plus page cache).
+  Book vault release builds on gce-ci-3 at 96G, 32 threads and default `-j`;
+  kel, bel and mel cap a guest at 16G and cannot take that shape.
 - **What the init runs.** sh, cat, head and sync come with Debian's
   essential set; mount and umount with `mount`. `reboot -f` is busybox's
   reboot applet, through one root-owned link, `/usr/bin/reboot` ->
@@ -668,7 +676,11 @@ this candidate instead is LC's `vault-family-artifact-import`, together
 with the kernel and LC's boot legs (health, provision, restore, outbox,
 resolver, shutdown). None of them ran here.
 
-**The candidate (run @@VTAG@@, nelly):** @@VAULT_TABLE@@
+**The candidate (run v8, gce-ci-3):**
+
+| OCI archive | Unpacked filesystem | Proposed payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS |
+|---|---|---|---|---|---|
+| 249.8 MiB (261,918,720 B) | 789.9 MiB (828,261,961 B) | 512 MiB: **OUTSIDE by 291,391,049 B** | 944.0 MiB (989,855,744 B); 3,305,111,552 B under the 4 GiB cap | 815.6 MiB (855,261,184 B) | 38.04 GiB (40,842,067,968 B) |
 
 ## Repeatability
 
@@ -690,7 +702,8 @@ not call an image reproducible until that comparison holds.
 **Run v4 (mel, 10-23 01:2x, the vault pack's builder with its C prefix maps
 and empty-files directive) against p5:** base, browser, desktop-cua and
 generic-agent are identical, member for member, with the same OCI ids, ext4
-and native binaries, so their p5 smokes stand. The checker's binaries,
+and native binaries, so the three smoked variants' p5 proofs stand; base
+stays built-candidate. The checker's binaries,
 toolchain and member set are the same, but 39 files differ: every one is a
 crates.io sparse-index cache record in its store (the gix-* family and
 system-deps, 81,921 bytes more), refetched six hours after p5, once gix had
