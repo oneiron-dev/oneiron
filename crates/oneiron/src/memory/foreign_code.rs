@@ -12,8 +12,12 @@ use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
 use crate::code_sandbox::source::{PreparedSource, prepare_source};
-use crate::code_sandbox::{
-    SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
+use crate::{
+    store::{
+        sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier},
+        sandbox_path::SandboxMountTable,
+    },
+    code_sandbox::SandboxProposalWrite,
 };
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
@@ -270,8 +274,8 @@ impl Memory<'_> {
         let output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         for file in &output.outputs {
-            let path = crate::code_sandbox::SandboxVirtualPath::try_new(&file.path)?;
-            if path.mount() != crate::code_sandbox::SandboxMount::Outputs {
+            let path = crate::store::sandbox_path::SandboxVirtualPath::try_new(&file.path)?;
+            if path.mount() != crate::store::sandbox_path::SandboxMount::Outputs {
                 return Err(MemoryError::bad_request(
                     "foreign output must name /mnt/outputs",
                 ));

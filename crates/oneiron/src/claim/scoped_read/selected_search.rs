@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::claim::world_access::WorldAuthoritySet;
-use crate::pipeline::{FacetMode, WorldScope};
+use crate::pipeline::{ WorldScope};
+use crate::claim::retrieval_scope::FacetMode;
 use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
 
 impl ScopedRead<'_> {

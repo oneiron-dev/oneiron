@@ -82,7 +82,7 @@ impl LearningChoiceValue {
             ),
             Self::Width(width) => ChoiceValue::Width(width),
             Self::Pattern(token) => ChoiceValue::Pattern(
-                crate::agent_dispatch::CoordinationPattern::from_token(&token)
+                crate::team::team_shape::CoordinationPattern::from_token(&token)
                     .map_err(|_| bad("pattern is a coordination pattern token"))?,
             ),
             Self::Budget(units) => ChoiceValue::Budget(units),

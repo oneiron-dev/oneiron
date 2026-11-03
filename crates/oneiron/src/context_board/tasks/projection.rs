@@ -4,8 +4,10 @@ use super::authority_state::TaskRenderState;
 use super::render::{bare_job_row, intent_row};
 use crate::consult_ladder::LadderTerminalDisposition;
 use crate::outbound::{ConnectorSendTask, ConnectorSendTaskOutcome};
-use crate::run_tree::{RunTreeNode, RunTreeStatus};
-use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
+use crate::attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus};
+use crate::context_board::consult_result::ConsultResultPresence;
+use crate::context_board::task_kind::TaskKind;
+use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 use crate::{EntityId, Result, Vault};
 
 /// Maximum concrete TASKS rows rendered before the additive overflow footer.
@@ -454,8 +456,8 @@ impl TasksSectionRows {
 const TASK_FITS_CAP: usize = 3;
 
 /// A live child's run state on the TASKS axis.
-const fn child_board_status(status: crate::agent_run_status::AgentRunStatus) -> TaskBoardStatus {
-    use crate::agent_run_status::AgentRunStatus;
+const fn child_board_status(status: crate::context_board::agent_run_status::AgentRunStatus) -> TaskBoardStatus {
+    use crate::context_board::agent_run_status::AgentRunStatus;
     match status {
         AgentRunStatus::Spawned => TaskBoardStatus::Queued,
         AgentRunStatus::Working | AgentRunStatus::NeedsInput => TaskBoardStatus::Running,

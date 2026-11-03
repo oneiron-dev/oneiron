@@ -366,12 +366,12 @@ impl Vault {
         if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
             return Ok(());
         }
-        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if new_body.predicate == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated code revision claim cannot supersede user-stated truth",
             )));
         }
-        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if old_body.predicate == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated claim cannot supersede user-stated code revision truth",
             )));

@@ -3,6 +3,8 @@
 //! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
 //! `people` roster, session read-set riders and stream projections.
 
+pub mod consult_result;
+pub mod task_kind;
 mod capabilities;
 mod children;
 pub use children::{
@@ -166,3 +168,5 @@ pub(super) fn one_line_token(s: &str) -> String {
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
+
+pub mod agent_run_status;

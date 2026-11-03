@@ -50,8 +50,7 @@ use question::{candidate_in, swap_question_text};
 /// Every training swap ask's intent key starts so:
 /// `training_swap/<run hex>/<digest>/<owner hex>`.
 const INTENT_PREFIX: &str = "training_swap/";
-/// The message type of the witnessed question.
-pub(crate) const SWAP_QUESTION_TYPE: &str = "training_swap_question";
+pub(crate) use crate::gate::training_ask_kind::SWAP_QUESTION_TYPE;
 /// The question message's metadata keys: the swap tuple. It locates the
 /// reservation and proves nothing by itself.
 const META_RUN: &str = "training_swap_run";

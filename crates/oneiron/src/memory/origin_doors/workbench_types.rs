@@ -9,7 +9,7 @@ use super::super::merge_queue_doors::MergeQueuePointersView;
 use crate::EntityId;
 use crate::code_document::{CodeDocumentFrontier, CodeFileMetadataEdit};
 use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::code_revision::{CodeImportAnchor};
+use crate::store::code_import_manifest::{CodeImportAnchor};
 use crate::origin::{CodePushCandidateView, ReceivedFileOperation};
 
 /// One served code repository to read.

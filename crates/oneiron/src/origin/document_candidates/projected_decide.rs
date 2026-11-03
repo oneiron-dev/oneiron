@@ -37,7 +37,7 @@ use super::projected_tree::{
 use super::{CandidateQueue, MODE_GITLINK, PreparedPushCandidate};
 use crate::store::code_document_values::CodeFileMetadataEdit;
 use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::code_revision::{CodeRevisionFork, CodeTreeInventory};
+use crate::store::code_revision_record::{CodeRevisionFork, CodeTreeInventory};
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid, GitWire, GitWireRepo};
@@ -48,8 +48,8 @@ use crate::origin::secret_projection::claims::RepoProjectionClaim;
 use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::RepoProjectedFileCopy;
 use crate::origin::secret_projection::git::projection_ingress_dir;
-use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{
+use crate::store::repo_proposal_record::RepoProposedFile;
+use crate::store::repo_proposal_record::{
     ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
 use crate::file_secret_marks::KeyPlaces;
@@ -529,3 +529,5 @@ fn held_with(
         Some(pins),
     ))))
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

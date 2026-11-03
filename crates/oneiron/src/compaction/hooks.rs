@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{CompactionWindowMessage, SwapPlan};
 use crate::store::verb_invocation::InvocationId;
 use crate::error::VerbHookStop;
-use crate::runtime_hooks::{ VerbCall, VerbDomain, VerbHookPre};
+use crate::{runtime_hooks::VerbCall, store::verb_domain::VerbDomain, runtime_hooks::VerbHookPre};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EntityId, Vault};
 
@@ -213,10 +213,10 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
 pub(crate) fn host_compact_as_owner(
     memory: &crate::memory::Memory<'_>,
     owner: &crate::consent::AuthenticatedOwner,
-    input: crate::runtime_hooks::host_doors::HostCompactRequest,
+    input: crate::compaction::host_request::HostCompactRequest,
     backend: &dyn super::CompactionBackend,
     policy: &super::CompactionGatePolicy,
-) -> oneiron_contracts::memory::MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
+) -> oneiron_contracts::memory::MemoryResult<crate::compaction::host_request::HostCompactResult> {
     use oneiron_contracts::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
     let vault = memory.vault();
     if input.token_ceiling == 0 {
@@ -306,7 +306,7 @@ pub(crate) fn host_compact_as_owner(
                     },
                     |_, _| Ok(()),
                 )?;
-                return Ok(crate::runtime_hooks::host_doors::HostCompactResult {
+                return Ok(crate::compaction::host_request::HostCompactResult {
                     epoch,
                     summary,
                     text,

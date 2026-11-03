@@ -8,7 +8,8 @@ use super::{
     AgentHealthCounter, Attempts, DialBook, Dispatched, Dispatches, Finding, Traps, WAIT_PERSON,
     brief, dup_cost_unit, duplicate, entity, settled, task_of,
 };
-use crate::agent_dispatch::{AgentDispatcher, SpendScope, SpendState};
+use crate::agent_dispatch::{AgentDispatcher, SpendScope};
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::edge::EdgeKind;
 use crate::learning::{

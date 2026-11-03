@@ -13,7 +13,7 @@
 //! terminal outcome settles the wait and wakes the parked run.
 
 use crate::Vault;
-use crate::code_run::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
+use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 use crate::consent::code_wait_state::CodeConsentCallSite;
 use crate::code_run::CodeConsentConnectorCall;
 use crate::code_run::CodeConsentDraft;

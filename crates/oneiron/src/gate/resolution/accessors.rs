@@ -80,7 +80,7 @@ impl PolicyManifestResolution {
     /// shipped default row; a malformed or unreadable manifest refuses.
     pub(crate) fn consult_fanout_policy_for(
         &self,
-        scope: &crate::task_verb::ConsultFanOutScope,
+        scope: &crate::gate::consult_fanout_values::ConsultFanOutScope,
     ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(

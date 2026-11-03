@@ -46,6 +46,11 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+pub mod dispatch_target;
+pub(crate) mod dispatch_input;
+pub(crate) use dispatch_input as widen_record;
+pub mod retrieval_scope;
+pub mod consult_payload_ref;
 mod aging_profiles;
 pub mod code_instruction;
 mod authorship;
@@ -136,5 +141,6 @@ pub(crate) use write_target::validate_claim_write_target_in_txn;
 #[cfg(test)]
 mod tests;
 
+pub mod reaction_record;
 #[cfg(feature = "sync")]
 pub mod selector_world;
