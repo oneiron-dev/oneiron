@@ -108,6 +108,7 @@ pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
+pub(crate) use consult_fanout_store::erase_fanout_run_actor_in_txn;
 pub use task_actor::TaskActor;
 pub(crate) use task_actor::{erase_launch_actor_in_txn, erase_wait_actor_in_txn};
 mod task_continuation;
