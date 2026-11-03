@@ -658,7 +658,7 @@ fn element_from_start(
     // first, then the inherited scope.
     let elem_prefix_str = prefix.as_deref().unwrap_or("");
     let namespace = resolve_in_frame_then_scope(&frame, scope, elem_prefix_str);
-    if prefix.is_some() && namespace.is_none() {
+    if prefix.is_some() && namespace.is_none_or(|uri| uri.is_empty()) {
         return Err(WordXmlError::QuickXml {
             position: reader.buffer_position(),
             reason: format!("undeclared namespace prefix: {elem_prefix_str}"),
@@ -673,7 +673,7 @@ fn element_from_start(
     for (mut an, val) in plain_attrs {
         if let Some(ref p) = an.prefix {
             an.namespace = resolve_in_frame_then_scope(&frame, scope, p).map(str::to_string);
-            if an.namespace.is_none() {
+            if an.namespace.as_deref().is_none_or(|uri| uri.is_empty()) {
                 return Err(WordXmlError::QuickXml {
                     position: reader.buffer_position(),
                     reason: format!("undeclared namespace prefix: {p}"),
@@ -828,7 +828,7 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 // Decode the reference (&amp; &#x41; ...) — the xmltree writer
                 // will re-escape on output, so the stored value must be decoded.
                 let text = resolve_general_ref(&r, &reader)?;
-                if stack.is_empty() && text.chars().any(|ch| !is_xml_whitespace(ch)) {
+                if stack.is_empty() {
                     return Err(WordXmlError::QuickXml {
                         position: reader.buffer_position(),
                         reason: "character data outside the document element".to_string(),
@@ -837,7 +837,7 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 push_text(&mut stack, &text);
             }
             Event::CData(c) => {
-                if stack.is_empty() && c.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
+                if stack.is_empty() {
                     return Err(WordXmlError::QuickXml {
                         position: reader.buffer_position(),
                         reason: "CDATA outside the document element".to_string(),
