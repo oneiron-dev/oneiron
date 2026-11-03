@@ -25616,6 +25616,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerExcludedConversations"
+     ],
+     "path": "src/dreamer_consolidation/excluded_conversations.rs",
+     "purpose": "Operator-set conversations that stay out of Dreamer consolidation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25887,7 +25901,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 31,
-      "mod": 4,
+      "mod": 5,
       "re-export": 25
      }
     },
@@ -85611,7 +85625,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86614,7 +86628,7 @@
    },
    "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5878,
+   "source_files": 5879,
    "test_files": 902
   },
   "oneiron-android": {
@@ -108381,7 +108395,7 @@
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
