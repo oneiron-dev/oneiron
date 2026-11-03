@@ -75,6 +75,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     results: Vec<CodeRunRawOutput>,
     /// This step's results stored as bodies, for the record.
     pub(super) captured: Vec<CodeRunRawOutput>,
+    /// The run's durable outputs when this step's host started: the base
+    /// its stores' ordinals count from.
+    output_ordinal_base: usize,
     /// The run's result names, as its record holds them.
     bindings: Vec<CodeRunResultBinding>,
     /// The names this step bound or rebound, in order, for the record.
@@ -168,6 +171,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
             captured: Vec::new(),
+            output_ordinal_base: 0,
             bindings: Vec::new(),
             bound: Vec::new(),
             receipts: Vec::new(),
@@ -239,6 +243,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        self.output_ordinal_base = record.outputs.len();
         // Its steps' type diagnostics kept whole, read as its results are
         // (FIX 8277).
         if let ExecutorStorage::Canonical(vault) = storage {

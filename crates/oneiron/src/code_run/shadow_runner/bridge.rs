@@ -367,9 +367,12 @@ impl<'a> ShadowBridgeHost<'a> {
         name: Option<String>,
         inherit: &[Taint],
     ) -> Result<(CodeRunRawOutput, Value)> {
-        let (output, secret) = self
-            .store
-            .finish_named(store_result_output_path, sink, true)?;
+        let ordinal = self.results.len();
+        let (output, secret) = self.store.finish_named(
+            |digest| store_result_output_path(digest, ordinal),
+            sink,
+            true,
+        )?;
         let taint = match self
             .results
             .iter()

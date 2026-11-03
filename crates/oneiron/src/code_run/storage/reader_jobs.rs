@@ -1294,19 +1294,6 @@ impl ExecutorStorage<'_> {
         let Some((job, members)) = self.live_summary(task, generation)? else {
             return Ok(Err("reader_task_settled".to_owned()));
         };
-        let mut sink = self.code_run_output_sink()?;
-        sink.write(text.as_bytes())?;
-        // The path names the digest the body is published under (FIX 5399b).
-        sink.finalize_sweep()?;
-        let path = crate::engine_executor::store_result_output_path(&sink.digest()?);
-        let output = self.publish_code_run_output(path, sink, true, job.run)?;
-        let mut from = Vec::with_capacity(members.len());
-        for member in &members {
-            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
-                from.push((member.owner, held));
-            }
-        }
-        self.inherit_code_run_result_marks(job.run, &output, &from)?;
         let held = self.get_code_run_replay_record(&job.run)?;
         let expected = held
             .as_ref()
@@ -1321,6 +1308,20 @@ impl ExecutorStorage<'_> {
                 ),
             )
         });
+        let ordinal = record.outputs.len();
+        let mut sink = self.code_run_output_sink()?;
+        sink.write(text.as_bytes())?;
+        // The path names the digest the body is published under (FIX 5399b).
+        sink.finalize_sweep()?;
+        let path = crate::engine_executor::store_result_output_path(&sink.digest()?, ordinal);
+        let output = self.publish_code_run_output(path, sink, true, job.run)?;
+        let mut from = Vec::with_capacity(members.len());
+        for member in &members {
+            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
+                from.push((member.owner, held));
+            }
+        }
+        self.inherit_code_run_result_marks(job.run, &output, &from)?;
         if !record.outputs.iter().any(|held| held.path == output.path) {
             record.outputs.push(output.clone());
         }

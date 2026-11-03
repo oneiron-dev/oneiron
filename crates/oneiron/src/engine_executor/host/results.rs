@@ -169,8 +169,9 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// Publishes the body `sink` wrote as a stored value of the run, named
-    /// by its digest, and binds it to `name`, or to the next free `r<n>`:
-    /// its card. The same bytes stored twice are one output.
+    /// by its digest and the run's output ordinal, and binds it to `name`,
+    /// or to the next free `r<n>`: its card. The same bytes stored twice
+    /// are two outputs; the body bytes are still stored once by content.
     pub(super) fn bind_stored(
         &mut self,
         storage: &ExecutorStorage<'_>,
@@ -193,7 +194,8 @@ impl RecordingJsHost<'_, '_> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
         sink.finalize_sweep()?;
-        let path = store_result_output_path(&sink.digest()?);
+        let ordinal = self.output_ordinal_base + self.captured.len();
+        let path = store_result_output_path(&sink.digest()?, ordinal);
         let input_rows = self.result_rows();
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
