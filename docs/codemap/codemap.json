@@ -107580,7 +107580,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/tasks_response.rs",
@@ -120472,7 +120472,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
