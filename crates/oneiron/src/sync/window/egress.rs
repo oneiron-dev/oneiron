@@ -108,10 +108,13 @@ pub(super) fn scrub_local_only_carriers(
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
     let mut key_carriers: Vec<(String, Vec<u8>)> = Vec::new();
+    // FIX 4667: this pass asks after a row's wrap world up to three
+    // times; decode each distinct AUTHORITY_LOG row once.
+    let wrap_worlds = crate::sync::types::AuthorityWorldMemo::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         if crate::world_keys::pad_body_world(blob).is_some()
-            || crate::sync::types::authority_wrap_world(blob).is_some()
+            || wrap_worlds.wrap_world(blob).is_some()
         {
             key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
@@ -142,7 +145,7 @@ pub(super) fn scrub_local_only_carriers(
     if !key_carriers.is_empty() {
         let txn = vault.store.env.read_txn()?;
         for (raw_key, blob) in key_carriers {
-            if crate::sync::types::entity_belongs_to_window(&blob, key)
+            if wrap_worlds.belongs(&blob, key)
                 && !crate::world_keys::late_pad_in_txn(&vault.store, &txn, &blob)?
             {
                 continue;
@@ -175,7 +178,7 @@ pub(super) fn scrub_local_only_carriers(
             Error::InvalidKey
         } else if crate::world_keys::pad_body_world(&blob).is_some() {
             Error::InvalidConfig("a key pad rides only its live world's own window".into())
-        } else if crate::sync::types::authority_wrap_world(&blob).is_some() {
+        } else if wrap_worlds.wrap_world(&blob).is_some() {
             Error::InvalidConfig("a key wrap rides only its world's own window".into())
         } else {
             crate::secret_custody::reject_secret_custody_byte()
