@@ -192,16 +192,16 @@ pub struct PolicyManifestReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GateCheckerSet {
-    pub binding: crate::llm::manifest::VerdictBinding,
+    pub binding: crate::model_binding::VerdictBinding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerView {
-    pub binding: Option<crate::llm::manifest::VerdictBinding>,
+    pub binding: Option<crate::model_binding::VerdictBinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerReceipt {
-    pub binding: crate::llm::manifest::VerdictBinding,
+    pub binding: crate::model_binding::VerdictBinding,
     pub receipt_ref: String,
 }

@@ -6,8 +6,9 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, SharedVaultWrite};
+use crate::federation::SharedVaultWrite;
 use crate::write_envelope::WriteActor;
+use oneiron_authority::federation::Scope;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The semantic change to one content owner; indexes and receipts follow its
@@ -103,7 +104,8 @@ impl ContentWriteSet {
         let parents = habit_streak_recompute_candidates(&vault.store, txn, ops, &overlay)?;
         let mut derived_parents = BTreeSet::new();
         for parent in parents {
-            if stored_task_role(&vault.store, txn, &parent)? == Some(crate::habit::TaskRole::Habit)
+            if stored_task_role(&vault.store, txn, &parent)?
+                == Some(crate::write_envelope::task_body::TaskRole::Habit)
             {
                 derived_parents.insert(parent);
                 ids.insert(parent);

@@ -1,8 +1,4 @@
 use super::*;
-use crate::affect::coping::{
-    COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
-    validate_coping_outcome_claim_structure,
-};
 use crate::claim::claim_surfaceable;
 use crate::error::{Error, Result};
 use crate::pipeline::corpus_filter::claim_matches_corpus;
@@ -10,6 +6,10 @@ use crate::pipeline::types::{
     DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor,
     DreamerWorkingSetStopReason, PendingVectorEmbedding, RetrievalWithPendingVectors,
     RetrievalWithTelemetry,
+};
+use crate::write_envelope::coping_outcome::{
+    COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
+    validate_coping_outcome_claim_structure,
 };
 
 impl PipelineBuilder<'_> {

@@ -53,13 +53,20 @@ use super::shapes::{self, Door, HANDLE_OPEN};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::KeyPlaces;
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::secret_custody::KeptValues;
+use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
 use crate::secret_custody::{
-    CustodyClass, CustodyWrite, FoundNote, KeptValues, KeyPlaces, KeySpan, KnownValues,
-    MASKED_FILE_BAND, MaskedFile, MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus, masked_file_in_txn, note_found_keys_in_txn,
-    put_masked_file_in_txn, register_custody_in_txn,
+    masked_file_in_txn, note_found_keys_in_txn, put_masked_file_in_txn, register_custody_in_txn,
+};
+use crate::secret_record::CustodyClass;
+use crate::secret_record::{CustodyWrite, FoundNote};
+use crate::secret_record::{
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -625,7 +632,11 @@ impl Masker {
             let id = write.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
                 schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: crate::repo_mutation::masked_record_name(found.reason, &found.value, &id),
+                name: crate::store::repo_environment::masked_record_name(
+                    found.reason,
+                    &found.value,
+                    &id,
+                ),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
                 value_bytes: std::mem::take(&mut *found.value),

@@ -14,7 +14,7 @@ pub(super) struct AdmittedRevision {
 pub(crate) struct RevisionedHits {
     pub(crate) vector_refinement: Option<crate::pipeline::VectorRefinement>,
     pub(crate) embedding_matches:
-        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        std::collections::HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
@@ -29,9 +29,9 @@ enum DenseChannel<'q> {
     /// A vector that `query_kind`'s tower of space `space_id` encoded.
     Space {
         space_id: &'q str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &'q [f32],
-        kinds: &'q [crate::embed::InputKind],
+        kinds: &'q [crate::store::embedding::InputKind],
     },
 }
 
@@ -68,7 +68,7 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
@@ -80,9 +80,9 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_kinds_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {

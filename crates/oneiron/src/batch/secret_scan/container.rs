@@ -48,7 +48,7 @@ use super::{
     Door, detect, framed_payload, release_hit, scan_payload, secret_scan_error, write_payload_hit,
 };
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
+use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
 /// The bytes all of a file's members may decode to over its whole tree: the
 /// floor of what one walk holds. A rebuilt copy is held to it too.
@@ -516,15 +516,54 @@ pub(crate) fn served_masked_copy(
 }
 
 /// The copy a serving door's masked reader may be served of `bytes`, a
-/// container no mark covers whose write-door scan hits (FIX 11553, 12268):
-/// the container encoded again at its root by its own reader around every
-/// member as it is, as a marked file's copy is, so the bytes no reader shows
-/// at its root are left out. `None` when the walk reads `bytes` as no
-/// container, or the rebuild stops: the file stays refused as its scan read
-/// it. The copy is served only once the write door's scan reads it clean.
-pub(crate) fn root_rebuilt_copy(bytes: &[u8]) -> Option<Vec<u8>> {
-    let container = classify(bytes)?;
-    retained_iterative::rebuild_root(container, bytes, &mut Budget::new()).ok()
+/// container no mark covers whose write-door scan hits (FIX 11553, 12268,
+/// 12279): the whole tree encoded again by its readers, every container
+/// member rebuilt the same way, so the bytes no reader shows are left out
+/// at every level, each member's decoding against the one budget `digest`
+/// seeds at the root's entry (FIX 12270). `None` when the walk reads
+/// `bytes` as no container, or the rebuild stops anywhere in the tree:
+/// the file stays refused as its scan read it, and no partial copy is
+/// served. The copy is served only once the write door's scan reads it
+/// clean.
+pub(crate) fn tree_rebuilt_copy(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<Vec<u8>> {
+    classify(bytes)?;
+    retained_iterative::rebuild_tree(bytes, &mut Budget::new().with_root_digest(digest)).ok()
+}
+
+/// The first write-rule hit in what a reader shows of `bytes` (FIX 12280):
+/// a serving pre-walk that refuses a live-content key before the tree
+/// rebuild decodes, encodes and rescans to the same refusal. Only the
+/// refusal's timing may change: a hit under a PDF object stream never
+/// qualifies, as a rebuilt copy writes its objects whole and the rescan
+/// never hands those bytes as a member; a walk that stops (a stop this
+/// walk's caller has already read past once, at its seal read) records no
+/// hit and falls through to the rebuild, which keeps the raw root-byte
+/// hits this walk cannot see on their own path. A member that is itself a
+/// container never qualifies either: the tree rebuild re-encodes its whole
+/// bytes (its own comment and framing dropped), so only its members,
+/// visited below it, can carry a qualifying hit; a leaf member's bytes are
+/// re-handed byte for byte by the rebuild's readers, which is what makes
+/// its hit the rescan's hit too.
+pub(crate) fn live_content_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    let mut hit = None;
+    let mut scan = |path: &[MemberStep], member: &[u8]| -> Walked<()> {
+        if classify(member).is_some()
+            || path
+                .iter()
+                .any(|step| matches!(step, MemberStep::PdfObjectStream { .. }))
+        {
+            return Ok(());
+        }
+        match write_payload_hit(member) {
+            Some(reason) => {
+                hit = Some(reason);
+                Err(Stop::Refuse(reason))
+            }
+            None => Ok(()),
+        }
+    };
+    let _ = walk_members(bytes, &mut scan, digest);
+    hit
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read

@@ -23,14 +23,17 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub(crate) fn filter_candidates(
         mut self,
-        filter: &'a crate::pipeline::CandidateFilter<'a>,
+        filter: &'a crate::store::retrieval_values::CandidateFilter<'a>,
     ) -> Self {
         self.pipeline = self.pipeline.filter_candidates(filter);
         self
     }
 
     /// [`crate::pipeline::PipelineBuilder::gate_candidates`] (FIX 11648).
-    pub(crate) fn gate_candidates(mut self, gate: &'a dyn crate::pipeline::CandidateGate) -> Self {
+    pub(crate) fn gate_candidates(
+        mut self,
+        gate: &'a dyn crate::store::retrieval_values::CandidateGate,
+    ) -> Self {
         self.pipeline = self.pipeline.gate_candidates(gate);
         self
     }
@@ -41,7 +44,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn facet(
         mut self,
         facet_id: &crate::EntityId,
-        mode: crate::pipeline::FacetMode,
+        mode: crate::claim::retrieval_scope::FacetMode,
     ) -> Self {
         self.pipeline = self.pipeline.facet(facet_id, mode);
         self
