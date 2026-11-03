@@ -26,8 +26,8 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
 use oneiron::campaign::surface::{
-    SELF_CAMPAIGN_ARCHIVE, SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ,
-    SELF_CAMPAIGN_UPDATE, SurfaceCall, VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
+    SELF_CAMPAIGN_ARCHIVE, SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_LAUNCH, SELF_CAMPAIGN_MEMBERS,
+    SELF_CAMPAIGN_READ, SELF_CAMPAIGN_UPDATE, SurfaceCall, VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
     VAULT_CAMPAIGN_PROGRAM_CREATE, VAULT_CAMPAIGN_PROGRAM_READ, VAULT_CAMPAIGN_PROGRAM_UPDATE,
     invoke_campaign_surface,
 };
@@ -41,6 +41,7 @@ pub(crate) fn campaign_routes() -> Router<Arc<SyncServer>> {
             get(read_campaign).patch(update_campaign),
         )
         .route("/campaigns/{campaign_ref}/archive", post(archive_campaign))
+        .route("/campaigns/{campaign_ref}/launch", post(launch_campaign))
         .route("/campaigns/{campaign_ref}/members", get(campaign_members))
         .route(
             "/campaigns/{campaign_ref}/programs",
@@ -63,6 +64,17 @@ pub(crate) async fn create_campaign(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     dispatch(&auth, &server, CoreScope::Write, SELF_CAMPAIGN_CREATE, body)
+}
+
+/// `POST /campaigns/{campaign_ref}/launch` → `self.campaign.launch`.
+pub(crate) async fn launch_campaign(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(campaign_ref): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let body = with_path_ref(body, "campaign_ref", &campaign_ref)?;
+    dispatch(&auth, &server, CoreScope::Write, SELF_CAMPAIGN_LAUNCH, body)
 }
 
 /// `GET /campaigns/{campaign_ref}` → `self.campaign.read`.

@@ -53,6 +53,11 @@ pub fn validate_compliance_pack(pack: &CompliancePack) -> Result<()> {
     {
         return Err(invalid_pack("strict pole must name a seeded jurisdiction"));
     }
+    if pack.campaign_complaint_pause_threshold_ppm > 1_000_000 {
+        return Err(invalid_pack(
+            "campaign complaint pause threshold must be within 0..=1_000_000 ppm",
+        ));
+    }
     let mut keys: Vec<(&str, &str, ComplianceRuleKind)> = Vec::with_capacity(pack.rows.len());
     for row in &pack.rows {
         validate_compliance_row(row)?;
@@ -151,6 +156,13 @@ pub(super) fn active_compliance_pack_in_txn(
         Some(pack) => Ok(pack),
         None => embedded_seed_pack(),
     }
+}
+
+pub(crate) fn campaign_complaint_pause_threshold_ppm_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<u32> {
+    Ok(active_compliance_pack_in_txn(store, txn)?.campaign_complaint_pause_threshold_ppm)
 }
 
 /// The ONLY writer of the active pack, and deliberately private: the public

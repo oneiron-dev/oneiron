@@ -104,6 +104,15 @@ pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Whether a campaign that reached its complaint-rate dial should resume.
+/// Keyed by campaign; only an owner person's yes resumes it. Its fixed
+/// machine-lifecycle wording lives in campaign/surface, the second wording exception.
+pub const CAMPAIGN_COMPLAINT_PAUSE: QuestionFamily = QuestionFamily {
+    name: "campaign.complaint_pause",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which eligible model a new seat pins, then which of that model's efforts it runs at.
 /// Keyed by `model`, or by `effort` and the chosen model.
 pub const SEAT_PICK: QuestionFamily = QuestionFamily {
@@ -457,6 +466,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
+    CAMPAIGN_COMPLAINT_PAUSE,
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,

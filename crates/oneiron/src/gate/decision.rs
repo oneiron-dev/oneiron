@@ -276,6 +276,9 @@ pub(crate) enum GateReasonCode {
     /// ([`GateDecision::delegation_narrowing_receipt`]); an owner's review,
     /// as for [`Self::PendingActorCeiling`], decides it.
     PendingDelegationChainCeiling,
+    /// FIX 12542: a campaign-compliance Block is held for the owner's
+    /// clearance rather than overriding a would-be Allow or Pending with Deny.
+    PendingCampaignCompliance,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -326,6 +329,7 @@ impl GateReasonCode {
             Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
+            Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
         }
     }
 
@@ -366,7 +370,9 @@ impl GateReasonCode {
             | Self::PendingConsentBoundExceeded
             | Self::PendingConsentCatastropheFloor
             | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
-            Self::DenyCampaignCompliance => GateMetricReasonClass::CampaignCompliance,
+            Self::DenyCampaignCompliance | Self::PendingCampaignCompliance => {
+                GateMetricReasonClass::CampaignCompliance
+            }
             Self::DenyDreamerDegenerateOutput
             | Self::DenyDreamerMalformed
             | Self::DenyDreamerNoEvidence => GateMetricReasonClass::DreamerPrecommit,

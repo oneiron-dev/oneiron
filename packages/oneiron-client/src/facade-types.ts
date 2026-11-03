@@ -1569,7 +1569,7 @@ export type ComplianceSource = { citation: string; url: string }
 /** `oneiron::campaign::compliance::rules::ComplianceRuleRow` */
 export type ComplianceRuleRow = { jurisdiction: string; channel: string; rule_kind: ComplianceRuleKind; requirement: string; b2b_exemption: B2bExemption; consent?: ConsentRequirement | null; source: ComplianceSource; verified_at: number; version: number; penalty_note: string }
 /** `oneiron::campaign::compliance::rules::CompliancePack` */
-export type CompliancePack = { pack_id: string; pack_version: number; min_engine_version: string; verified_at_max_age_secs: number; unknown_jurisdiction_default: UnknownJurisdictionDefault; strict_pole_jurisdiction: string; jurisdiction_confidence_floor_millis: number; prohibited_list_provenance_classes: string[]; conditional_exemption_evidence: ConditionalExemptionEvidence[]; warning: string; rows: ComplianceRuleRow[] }
+export type CompliancePack = { pack_id: string; pack_version: number; min_engine_version: string; verified_at_max_age_secs: number; unknown_jurisdiction_default: UnknownJurisdictionDefault; strict_pole_jurisdiction: string; jurisdiction_confidence_floor_millis: number; campaign_complaint_pause_threshold_ppm: number; prohibited_list_provenance_classes: string[]; conditional_exemption_evidence: ConditionalExemptionEvidence[]; warning: string; rows: ComplianceRuleRow[] }
 /** `oneiron::campaign::compliance::contracts::ComplianceAmendRequest` */
 export type ComplianceAmendRequest = { prior_version: number; pack: CompliancePack }
 /** `oneiron::campaign::compliance::contracts::ComplianceOperation` */
@@ -1647,7 +1647,7 @@ export type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: s
 /** `oneiron::campaign::surface::program::CreateCampaignProgramRequest` */
 export type CreateCampaignProgramRequest = { schema_version?: number; campaign_ref: string; name: string; steps?: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null }
 /** `oneiron::campaign::surface::program::CampaignProgramLifecycle` */
-export type CampaignProgramLifecycle = "active" | "archived"
+export type CampaignProgramLifecycle = "draft" | "active" | "paused" | "archived"
 /** `oneiron::campaign::surface::program::CampaignProgramDefinitionView` */
 export type CampaignProgramDefinitionView = { schema_version: number; owner_actor: string; campaign_ref: string; name: string; definition_version: number; lifecycle: CampaignProgramLifecycle; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null }
 /** `oneiron::campaign::surface::program::CampaignProgramRecord` */

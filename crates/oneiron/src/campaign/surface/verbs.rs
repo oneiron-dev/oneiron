@@ -15,6 +15,9 @@ use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 /// `self.*` verb: create a CAMPAIGN owned by the authenticated principal.
 pub const SELF_CAMPAIGN_CREATE: &str = "self.campaign.create";
 
+/// `self.*` verb: launch a Draft campaign or resume a Paused one.
+pub const SELF_CAMPAIGN_LAUNCH: &str = "self.campaign.launch";
+
 /// `self.*` verb: read one CAMPAIGN the principal owns.
 pub const SELF_CAMPAIGN_READ: &str = "self.campaign.read";
 
@@ -84,6 +87,7 @@ pub const CAMPAIGN_PROGRAM_VERBS: &[&str] = &[
 /// verb that is discoverable is callable.
 pub const CAMPAIGN_SELF_VERBS: &[&str] = &[
     SELF_CAMPAIGN_CREATE,
+    SELF_CAMPAIGN_LAUNCH,
     SELF_CAMPAIGN_READ,
     SELF_CAMPAIGN_UPDATE,
     SELF_CAMPAIGN_ARCHIVE,
@@ -100,6 +104,8 @@ pub const CAMPAIGN_SELF_VERBS: &[&str] = &[
 pub enum CampaignSurfaceVerb {
     /// [`SELF_CAMPAIGN_CREATE`].
     CampaignCreate,
+    /// [`SELF_CAMPAIGN_LAUNCH`].
+    CampaignLaunch,
     /// [`SELF_CAMPAIGN_READ`].
     CampaignRead,
     /// [`SELF_CAMPAIGN_UPDATE`].
@@ -130,8 +136,9 @@ pub enum CampaignSurfaceVerb {
 
 impl CampaignSurfaceVerb {
     /// Every verb, in the order [`CAMPAIGN_SELF_VERBS`] advertises them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::CampaignCreate,
+        Self::CampaignLaunch,
         Self::CampaignRead,
         Self::CampaignUpdate,
         Self::CampaignArchive,
@@ -169,6 +176,7 @@ impl CampaignSurfaceVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CampaignCreate => SELF_CAMPAIGN_CREATE,
+            Self::CampaignLaunch => SELF_CAMPAIGN_LAUNCH,
             Self::CampaignRead => SELF_CAMPAIGN_READ,
             Self::CampaignUpdate => SELF_CAMPAIGN_UPDATE,
             Self::CampaignArchive => SELF_CAMPAIGN_ARCHIVE,
@@ -194,6 +202,7 @@ impl CampaignSurfaceVerb {
         matches!(
             self,
             Self::CampaignCreate
+                | Self::CampaignLaunch
                 | Self::CampaignUpdate
                 | Self::CampaignArchive
                 | Self::SavedQueryCreate
@@ -254,6 +263,11 @@ pub fn invoke_campaign_surface(
         CampaignSurfaceVerb::CampaignCreate => {
             let request = parse_create_campaign_request(&body)?;
             campaign_record_to_json(&facade.campaign_create(&request, now)?)
+        }
+        CampaignSurfaceVerb::CampaignLaunch => {
+            let campaign_ref = required_entity_ref(&body, "campaign_ref")?;
+            let expected = required_u64(&body, "expected_definition_version")?;
+            campaign_record_to_json(&facade.campaign_launch(campaign_ref, expected, now)?)
         }
         CampaignSurfaceVerb::CampaignRead => {
             let campaign_ref = required_entity_ref(&body, "campaign_ref")?;

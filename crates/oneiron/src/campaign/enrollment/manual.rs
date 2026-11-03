@@ -52,7 +52,7 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
     )?;
     if campaign.definition.lifecycle != CampaignLifecycle::Active {
         return Err(Error::InvalidClaimBody(
-            "an archived campaign cannot enroll",
+            "a campaign that is not active (draft, paused or archived) cannot enroll",
         ));
     }
     if vault.get_entity_type_in_txn(txn, &person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {

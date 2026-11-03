@@ -73,7 +73,9 @@ pub use self::program::{
     campaign_program_step,
 };
 pub use self::program::{CampaignProgramAudience, campaign_programs_for_query};
-pub(crate) use self::program::{put_campaign_program, put_campaign_program_step};
+pub(crate) use self::program::{
+    put_campaign_program, put_campaign_program_step, transition_campaign_programs_in_txn,
+};
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,
     EnrollmentExecution, decode_enrollment_attempt_payload, derive_enrollment_outbound_request,
