@@ -20,9 +20,10 @@ use super::coop_request::{
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-    FailAttempt, RetryAttempt,
+    AttemptQueue, AttemptRecord, ClaimOutcome, CompleteAttempt, FailAttempt, RetryAttempt,
 };
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::authority::FederationPactStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};

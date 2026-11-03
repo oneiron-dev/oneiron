@@ -13,9 +13,9 @@ use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
 };
+use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 
 use super::codec::{
     AUTONOMY, action_bound, action_value, address, key, mode_from, mode_key, mode_value,

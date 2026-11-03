@@ -2,7 +2,9 @@
 mod auxiliary;
 mod query;
 use super::*;
-use crate::attempt_queue::*;
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome};
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;

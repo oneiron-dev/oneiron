@@ -23,9 +23,11 @@ use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundDispatchActor, OutboundDispatchGate,
+    OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
 };
+use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
+use crate::store::outbound_trigger::OutboundIntentTrigger;
 use serde::{Deserialize, Serialize};
 
 /// The signing document whose staged notices the caller sends.
