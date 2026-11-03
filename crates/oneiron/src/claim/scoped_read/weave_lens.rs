@@ -24,9 +24,13 @@ use super::{
     PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReader,
     WeaveReport, WeaveSectionView,
 };
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::learning::LearningCell;
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,

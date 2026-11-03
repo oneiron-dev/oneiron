@@ -428,7 +428,7 @@ impl Store {
         crate::housekeeping::note_wake_in_txn(
             self,
             wtxn,
-            crate::housekeeping::HousekeepingSweep::CriticalConfirmExpiry,
+            crate::store::housekeeping_schedule::HousekeepingSweep::CriticalConfirmExpiry,
             binding.expires_at,
         )
     }

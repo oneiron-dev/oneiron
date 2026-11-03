@@ -14,6 +14,7 @@ mod once_disclosure;
 mod psych_mirror;
 mod quarantine;
 pub(crate) mod retained_copies;
+pub(crate) mod turn_fold;
 #[cfg(test)]
 pub(crate) use self::quarantine::quarantined_entity_count_for_test;
 pub mod source_ranking;

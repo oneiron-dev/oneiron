@@ -83,7 +83,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "project_depth_default"
                 | "project_depth_max"
                 | "policy_values"
-                | crate::failure_signals::policy::POLICY_KEY
+                | crate::gate::failure_signal_policy::POLICY_KEY
                 | "livequery_tracker_limits"
                 | crate::gate::policy_manifest_doors::CLAIM_AGING_PROFILES_KEY
                 | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
@@ -470,10 +470,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     };
 
     let failure_signal_policy =
-        match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
+        match single_map_value(&entries, crate::gate::failure_signal_policy::POLICY_KEY) {
             MapValue::Missing => Vec::new(),
             MapValue::Duplicate => return None,
-            MapValue::Present(value) => crate::failure_signals::policy::decode(value)?,
+            MapValue::Present(value) => crate::gate::failure_signal_policy::decode(value)?,
         };
 
     let policy_values = match single_map_value(&entries, "policy_values") {
@@ -514,7 +514,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let goal_limits = match single_map_value(&entries, "goal_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(crate::policy_model::goal_limits::GoalLimits::decode(value)?),
+        MapValue::Present(value) => {
+            Some(crate::policy_model::goal_limits::GoalLimits::decode(value)?)
+        }
     };
     let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
         MapValue::Missing => None,

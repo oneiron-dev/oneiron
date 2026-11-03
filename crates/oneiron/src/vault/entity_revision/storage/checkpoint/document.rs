@@ -37,7 +37,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::checkpoint::{join_core_row, split_core_row};
 use crate::note::decode_note_body_in_txn;
-use crate::provenance::decode_model_entity_body;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::store::ManifestDbs;
@@ -48,6 +47,7 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, RoundTripPolicy, RowLocator, RowPart,
     TypedRow, Unresolved,
 };
+use crate::write_envelope::provenance::actor_substrate::decode_model_entity_body;
 
 /// The round trip a revision document takes (Engine R1): the same history,
 /// in a container Loro may encode anew. Every ref the ledger keeps hashes a

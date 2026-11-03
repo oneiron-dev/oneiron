@@ -28,7 +28,7 @@ use super::trend_policy::{SECONDS_PER_DAY, TrendPeriods};
 use super::{
     COACH_AGENT_HEALTH_FACET, Dispatched, WAIT_PERSON, covered, entity, read_dials, settled,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
@@ -37,10 +37,11 @@ use crate::limit_ask::EngineLimit;
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
 use crate::run_budget::LeaseUnit;
-use crate::self_heal::{
-    AgentHealthSignal, DiagnosticEventClass, ENTITY_TYPE_DIAGNOSTIC, decode_diagnostic_event_body,
-};
+use crate::self_heal::ENTITY_TYPE_DIAGNOSTIC;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::diagnostic_record::{
+    AgentHealthSignal, DiagnosticEventClass, decode_diagnostic_event_body,
+};
 use crate::{EntityId, Result, Vault};
 
 mod spend;

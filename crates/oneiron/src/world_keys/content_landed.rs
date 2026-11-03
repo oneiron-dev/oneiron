@@ -30,7 +30,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::window_key::WindowKey;
-use crate::sync::window::FORWARD_PASS_VERSION;
+use crate::world_keys::forward_version::FORWARD_PASS_VERSION;
 
 /// A mark's first byte.
 const LANDED_VERSION: u8 = 1;

@@ -139,8 +139,11 @@ impl RawValue for BankRow {
     }
 }
 
-pub use crate::verbs::voice_records::{VoiceRefOrigin, VoiceRegisterClip, VoiceRefPack, VoiceIdentity, VoiceTargetClone, VoiceRenderDecision, VoiceRenderConsent, VoiceRenderGrant, VoiceTargetRecord, VoiceRefFence};
 pub use crate::memory::voice_actor::VoiceRefSubjectKind;
+pub use crate::verbs::voice_records::{
+    VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip,
+    VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant, VoiceTargetClone, VoiceTargetRecord,
+};
 
 use crate::memory::voice_actor::{invalid, valid_id};
 

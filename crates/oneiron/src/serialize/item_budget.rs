@@ -43,7 +43,8 @@ pub(super) fn apply_item_budget_with_depth_limit(
         }
         true
     } else {
-        stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.reason =
+            crate::serialize::pack_accounting::PackItemAccountingReason::ItemBudget;
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
         false
     }

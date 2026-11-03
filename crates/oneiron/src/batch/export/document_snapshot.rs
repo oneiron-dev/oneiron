@@ -29,10 +29,16 @@ use crate::write_envelope::WriteActor;
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
+    pub(crate) outputs: Vec<(
+        crate::store::result_manifest::CodeRunRawOutput,
+        Option<&'static str>,
+    )>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
-    pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
+    pub(crate) receipts: Vec<(
+        crate::store::reader_fold_receipt::ReaderFoldReceipt,
+        Option<&'static str>,
+    )>,
 }
 
 /// One result body a clean occurrence names: its bytes as they stream, read
@@ -691,12 +697,12 @@ fn archive_custody_secret(
     on_device: bool,
     include_secrets: bool,
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
-    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use crate::secret_record::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
-            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
+            && !crate::secret_record::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {

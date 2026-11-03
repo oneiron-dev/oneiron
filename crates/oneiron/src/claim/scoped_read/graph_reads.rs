@@ -4,10 +4,11 @@ use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 use crate::edge::EdgeKind;
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EdgeInfo, EntityId, Error, Result};
+use oneiron_contracts::gate::RetrievalFilter;
 use std::collections::HashSet;
 
 type GraphAskNeighbors = Vec<(EntityId, u8, Vec<u8>)>;

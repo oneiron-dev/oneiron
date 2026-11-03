@@ -51,7 +51,7 @@ pub struct ScopedReadActorKey {
     pub(super) room_facets: Option<EntityId>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
-    pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
+    pub(super) worlds: Option<crate::claim::world_access::WorldAuthoritySet>,
     /// Where the read's rows go: off this device or not, and each machine a
     /// connection proved beside that (mesh PR2b); see [`Self::at`] and
     /// [`Self::for_destination`].
@@ -518,11 +518,11 @@ impl ScopedReadActorKey {
     /// How a reader holding this key sees a stored key: as stored for the
     /// vault owner's own key, as its handle for every other. A door derives
     /// it from the key it reads under each time, never from a stored sight.
-    pub(crate) fn secret_sight(&self) -> crate::secret_custody::SecretSight {
+    pub(crate) fn secret_sight(&self) -> crate::file_secret_marks::SecretSight {
         if self.reads_as_vault_owner() {
-            crate::secret_custody::SecretSight::Owner
+            crate::file_secret_marks::SecretSight::Owner
         } else {
-            crate::secret_custody::SecretSight::Masked
+            crate::file_secret_marks::SecretSight::Masked
         }
     }
 
@@ -564,7 +564,10 @@ impl ScopedReadActorKey {
     /// other record as base reality. The ceiling only narrows: it meets any
     /// the key already holds.
     #[must_use]
-    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+    pub(crate) fn within_worlds(
+        mut self,
+        worlds: crate::claim::world_access::WorldAuthoritySet,
+    ) -> Self {
         self.worlds = Some(match self.worlds.take() {
             Some(held) => held.meet(&worlds),
             None => worlds,

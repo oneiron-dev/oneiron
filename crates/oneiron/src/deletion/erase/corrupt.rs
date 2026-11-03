@@ -32,10 +32,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, WindowDeletionRows};
-use crate::provenance::EdgeRef;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 
 /// Whether a SoftErase has scrubbed the classified body since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

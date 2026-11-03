@@ -15,7 +15,7 @@ use super::shape::{
 use crate::Vault;
 use crate::batch::BatchBuilder;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::memory::{Memory};
+use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// One entity put in a batch.
@@ -196,8 +196,8 @@ impl Vault {
             // an audience edit its thread's audience door's (FIX 5545).
             if entity.entity_type == crate::registry::ENTITY_TYPE_TURN
                 && [
-                    crate::workspace_roster::ROOM_THREAD_KEY,
-                    crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+                    crate::store::conversation_body::ROOM_THREAD_KEY,
+                    crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY,
                 ]
                 .iter()
                 .any(|key| entity.body.get(*key).is_some())

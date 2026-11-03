@@ -174,7 +174,7 @@ fn run_skill_optimize_bound(
     let authority = vault.dreamer_attempt_authority(attempt)?.ok_or(invalid(
         "skill optimization requires an admitted Coach attempt",
     ))?;
-    if authority.facet != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+    if authority.facet != crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || authority.actor != vault.coach_authority()?.entity_ref()
     {
         return Err(invalid(
@@ -220,7 +220,7 @@ fn run_skill_optimize_bound(
     let drafted_in = proven_cycle(vault, attempt)?;
     let stamp = SkillRepairStamp {
         actor: vault.dreamer_actor_for_attempt(attempt)?,
-        facet: crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+        facet: crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
         attempt,
         cycle: &drafted_in,
         owner,
@@ -436,7 +436,7 @@ fn issues_draft_of_other_target(
     provenance: &Value,
     target: &EntityId,
 ) -> bool {
-    use crate::dreamer_runner::maintenance::coach::COACH_ISSUES_FACET;
+    use crate::claim::maintenance_kind::COACH_ISSUES_FACET;
     let Value::Map(fields) = provenance else {
         return false;
     };
@@ -492,7 +492,7 @@ pub(crate) fn propose_skill_edit_as_owner(
             .ok_or(invalid(
                 "a submitted candidate needs a stored optimize attempt",
             ))?;
-        if queued.kind != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
+        if queued.kind != crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
             return Err(invalid(
                 "a submitted candidate needs a skill_optimize attempt",
             ));

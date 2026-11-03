@@ -303,11 +303,11 @@ impl Vault {
                 None => crate::vault::embedded_owner_actor_id()?,
             },
         };
-        let settled = |outcome| crate::runtime_hooks::SettledFact {
+        let settled = |outcome| crate::consent::settlement_fact::SettledFact {
             proposal: binding.claim_id,
             outcome,
             settled_by,
-            kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+            kind: crate::consent::settlement_fact::SettlementKind::CriticalWriteConfirm,
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
@@ -380,7 +380,7 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    settled(crate::runtime_hooks::SettledOutcome::Approved),
+                    settled(crate::consent::settlement_fact::SettledOutcome::Approved),
                 )?;
                 Ok(Ok(CriticalWriteConfirmResolution::Cleared))
             }
@@ -426,9 +426,9 @@ impl Vault {
                     self,
                     wtxn,
                     settled(if retract {
-                        crate::runtime_hooks::SettledOutcome::Retracted
+                        crate::consent::settlement_fact::SettledOutcome::Retracted
                     } else {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }),
                 )?;
                 Ok(Ok(if retract {

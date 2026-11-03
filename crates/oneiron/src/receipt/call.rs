@@ -52,12 +52,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Rows;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The prefix every call receipt ref carries.
 pub const CALL_RECEIPT_REF_PREFIX: &str = "call:";
@@ -74,10 +74,7 @@ const MAX_CALL_RECEIPT_FIELD_BYTES: usize = 256;
 /// `actor_ref` is the connection's id, and no person is named.
 pub const CONNECTION_CALL_ACTOR_CLASS: &str = "connection";
 
-/// What an erased actor's call receipts state in place of who called: the
-/// actor, its class and the credential it presented (FIX 812). Engine call
-/// 10-18, behind this one constant.
-pub const ERASED_CALL_IDENTITY: &str = "erased";
+pub use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
 /// The wire a call arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -415,7 +412,7 @@ impl Vault {
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
         );
-        let graph = crate::ppr::read_graph_version(&self.store, &txn)?;
+        let graph = crate::store::graph_version::read_graph_version(&self.store, &txn)?;
         let mut inputs = ActionInputs::new()
             .with("vault.changes", head)
             .with("vault.graph", graph.to_string());

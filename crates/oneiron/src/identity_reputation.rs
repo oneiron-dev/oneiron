@@ -5,38 +5,24 @@
 //! callers consume the per-identity clamp result before scheduling sends.
 
 use crate::Vault;
-use crate::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression_in_txn};
+use crate::campaign::send_hygiene::apply_suppression_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::cohort_claims::suppression::{SuppressionCause, SuppressionInput};
 
-pub use crate::write_envelope::identity_reputation::{
-    IDENTITY_REPUTATION_SCHEMA_VERSION,
-    PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE,
-    PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
-    PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
-    PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER,
-    PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
-    PREDICATE_IDENTITY_REPUTATION_UPDATED_AT,
-    PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
-    IDENTITY_REPUTATION_CLAIM_PREDICATES,
-    WARMUP_COLD_DAILY_CAP,
-    WARMUP_WARMING_DAILY_CAP,
-    CONSTRAINED_REPUTATION_DAILY_CAP,
-    DEGRADED_REPUTATION_DAILY_CAP,
-    COMPLAINT_CONSTRAINED_THRESHOLD,
-    COMPLAINT_DEGRADED_THRESHOLD,
-    BOUNCE_CONSTRAINED_THRESHOLD,
-    BOUNCE_DEGRADED_THRESHOLD,
-    IdentityWarmupStage,
-    IdentityAttestationTier,
-    IdentityReputationStatus,
-    IdentityReputation,
-    IdentityReputationSignal,
-    EmailReputationWebhookSignal,
-    IdentitySendRateClamp,
-    is_identity_reputation_claim_predicate,
-};
 pub(crate) use crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure;
+pub use crate::write_envelope::identity_reputation::{
+    BOUNCE_CONSTRAINED_THRESHOLD, BOUNCE_DEGRADED_THRESHOLD, COMPLAINT_CONSTRAINED_THRESHOLD,
+    COMPLAINT_DEGRADED_THRESHOLD, CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP,
+    EmailReputationWebhookSignal, IDENTITY_REPUTATION_CLAIM_PREDICATES,
+    IDENTITY_REPUTATION_SCHEMA_VERSION, IdentityAttestationTier, IdentityReputation,
+    IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage,
+    PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER, PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
+    PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE, PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
+    PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
+    PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
+    WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
+};
 
 /// What one provider webhook says happened to one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +77,7 @@ pub struct SenderHealthProjection {
     /// The resulting per-identity send-rate clamp.
     pub clamp: IdentitySendRateClamp,
     /// The suppression a hard bounce wrote, if any.
-    pub suppression: Option<crate::campaign::send_hygiene::SuppressionReceipt>,
+    pub suppression: Option<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>,
 }
 
 /// Projects one campaign email webhook, opening its own transaction.

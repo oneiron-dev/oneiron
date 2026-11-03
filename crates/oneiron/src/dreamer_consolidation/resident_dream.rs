@@ -17,8 +17,6 @@
 use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::actor_claims::ResidentCraftCandidate;
-use crate::agent_def::DreamingMode;
-use crate::agent_inbox_lens::{AgentInboxDiaryReview, ResolvedInboxText};
 use crate::dreamer_runner::{
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -33,7 +31,9 @@ use crate::model_binding::ModelRole;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::agent_record::DreamingMode;
 use crate::{EntityId, Vault, WriteActor};
+use crate::{agent_inbox_lens::ResolvedInboxText, inbox::view_values::AgentInboxDiaryReview};
 use oneiron_model::llm::{BudgetGuard, LlmBackend, ModelId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

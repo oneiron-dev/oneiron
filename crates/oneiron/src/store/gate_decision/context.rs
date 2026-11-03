@@ -299,7 +299,7 @@ impl GateDecisionReadContext {
                 body.predicate.as_str(),
                 "conversation.summary"
                     | "merge.summary"
-                    | crate::reaction::PREDICATE_REACTION_OUTCOME
+                    | crate::store::reaction_predicate::PREDICATE_REACTION_OUTCOME
             )
         {
             return None;

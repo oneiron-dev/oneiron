@@ -32,10 +32,10 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, S
 use crate::entity_id::EntityId;
 use crate::lens::{RecordRefPreview, ResolveRecordRefRequest};
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
-use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
 use crate::store::SessionStoreView;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -339,7 +339,7 @@ impl<'s> SessionReadContext<'s> {
     /// no indexed revision is read live.
     fn indexed_revisions(
         &self,
-        hits: &[crate::pipeline::ScoredEntity],
+        hits: &[oneiron_retrieval::pipeline::ScoredEntity],
     ) -> MemoryResult<std::collections::HashMap<EntityId, crate::vault::RevisionRef>> {
         let txn = self
             .vault

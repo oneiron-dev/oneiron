@@ -26,8 +26,8 @@ use crate::deletion::carrier_actor_merged;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitWireRepo;
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 
@@ -106,7 +106,7 @@ impl OriginClaimKind {
             Self::Admission => RECEIVE_PACK_ADMISSION_PREDICATE,
             Self::Outcome => RECEIVE_PACK_OUTCOME_PREDICATE,
             Self::ExternalImportSource => {
-                crate::repo_mutation::external_import::EXTERNAL_IMPORT_SOURCE_PREDICATE
+                crate::store::repo_import_predicate::EXTERNAL_IMPORT_SOURCE_PREDICATE
             }
         }
     }

@@ -36,8 +36,7 @@ use crate::error::{Error, Result};
 use crate::runtime_hooks::verb::VerbAskCredentialRef;
 use crate::side_table::{self, Named, SideTable};
 
-/// The attempt kind the host's admission worker claims (CUA E8b).
-pub const PROGRAM_ADMISSION_KIND: &str = "browser.program.admit";
+pub use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
 
 /// Each admission job's receipt, and the association a filing in its run
 /// wrote. Key: the job's id.

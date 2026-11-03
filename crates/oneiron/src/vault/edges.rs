@@ -11,7 +11,8 @@ use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
 #[cfg(test)]

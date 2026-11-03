@@ -15,13 +15,13 @@ use super::join_consent::{
 };
 use super::join_receipt::{JoinParticipation, JoinReceipt, RecordedAnswer, RosterActor};
 use crate::EntityId;
-use crate::agent_dispatch::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
 use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 
 /// What an actor's erase does with a settled join, or a settled offer card,
 /// that names it by an id where only a live party can stand.

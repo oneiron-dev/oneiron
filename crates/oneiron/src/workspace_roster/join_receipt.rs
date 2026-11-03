@@ -16,12 +16,12 @@ use super::join_consent::{
 use super::join_history::{
     ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, RosterBindingErase, live_join,
 };
-use crate::agent_dispatch::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EntityId, Vault};
 
 /// One join intent's receipt. Key: its join ref.

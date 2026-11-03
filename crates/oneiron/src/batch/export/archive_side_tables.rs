@@ -1215,13 +1215,16 @@ impl SideContext {
                 let Some(snapshot) = id_at(key, 0) else {
                     return Ok(Travel::Orphan);
                 };
-                let Ok(decoded) = crate::store::code_snapshot::decode_codebase_snapshot(value) else {
+                let Ok(decoded) = crate::store::code_snapshot::decode_codebase_snapshot(value)
+                else {
                     return Ok(Travel::Broken(snapshot));
                 };
                 let carriers = decoded
                     .files
                     .iter()
-                    .map(|file| crate::store::code_snapshot::archive_codebase_asset_id(&file.content_hash))
+                    .map(|file| {
+                        crate::store::code_snapshot::archive_codebase_asset_id(&file.content_hash)
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 Travel::With(snapshot, carriers)
             }

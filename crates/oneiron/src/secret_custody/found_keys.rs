@@ -67,49 +67,9 @@ const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table:
 /// The records whose notice is still due, with when their keys were found.
 const DUE: SideTable<EntityId, u64, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY_DUE);
 
-/// What the owner did about one found key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FoundKeyAction {
-    /// The custody record took a new value.
-    Rotate,
-    /// The record or file that held the key was deleted.
-    Delete,
-    /// An agent was granted reveals of the key's class.
-    Grant,
-    /// The owner ruled it no secret: the value went back, and its custody
-    /// record was revoked.
-    NotASecret,
-}
+pub use crate::secret_record::FoundKeyAction;
 
-impl FoundKeyAction {
-    /// The pinned action word.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Rotate => "rotate",
-            Self::Delete => "delete",
-            Self::Grant => "grant",
-            Self::NotASecret => "not_a_secret",
-        }
-    }
-}
-
-/// The owner's last act on one found key, and its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FoundKeySettled {
-    pub action: FoundKeyAction,
-    /// The owner who acted; `None` for a rotation, whose receipt names it,
-    /// or once that owner was erased (FIX 3520).
-    pub by: Option<EntityId>,
-    pub at: u64,
-    /// The act's receipt: `rotation:<hex>`, `redaction:<hex>` or
-    /// `gate:<hex>`.
-    pub receipt: String,
-    /// The standing grant a `grant` wrote; revoke it in the consent
-    /// registry.
-    pub grant_ref: Option<String>,
-}
+pub use crate::secret_record::FoundKeySettled;
 
 /// One record's notice as the owner reads it: the record, and each key the
 /// mask lifted out of it.
@@ -170,15 +130,7 @@ impl FoundKey {
     }
 }
 
-/// One key a mask lifted, as the mask hands it over.
-#[derive(Debug, Clone)]
-pub(crate) struct FoundNote {
-    pub(crate) record: EntityId,
-    pub(crate) custody: EntityId,
-    pub(crate) handle: String,
-    pub(crate) reason: &'static str,
-    pub(crate) place: String,
-}
+pub(crate) use crate::secret_record::FoundNote;
 
 /// Erasing `actor` from the found keys it settled (FIX 3520): each
 /// settlement keeps its action, its time, its receipt and its grant, and

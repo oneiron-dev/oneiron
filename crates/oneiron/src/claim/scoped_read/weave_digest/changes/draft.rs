@@ -20,9 +20,8 @@ use super::super::settings::{
     owner_changes_in_txn, owner_wire_in_txn, settings_row_in_txn,
 };
 use super::{evaluation_due, refused_under, settings_of, step_of};
-use crate::dreamer_runner::maintenance::coach::{
-    COACH_HOST_QUEUE_KIND, COACH_WEAVE_DIGEST_SETTINGS_FACET,
-};
+use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
+use crate::claim::maintenance_kind::COACH_WEAVE_DIGEST_SETTINGS_FACET;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::error::Result;
 use crate::{EntityId, Vault};
@@ -186,7 +185,10 @@ impl Vault {
                 };
                 if record.skill_id == WEAVE_DIGEST_SETTINGS_SKILL_NAME
                     && crate::write_envelope::skill_record::skill_loadable(&record)
-                    && matches!(crate::write_envelope::skill_record::resident_of(&record), Ok(None))
+                    && matches!(
+                        crate::write_envelope::skill_record::resident_of(&record),
+                        Ok(None)
+                    )
                 {
                     named.push(id);
                 }

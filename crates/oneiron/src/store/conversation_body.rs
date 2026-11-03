@@ -1,9 +1,9 @@
 //! Conversation body vocabulary and strict body codecs.
 
-use std::collections::{BTreeMap, BTreeSet};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use crate::{EntityId, Error};
 use crate::error::{RecordError, Result};
+use crate::{EntityId, Error};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,7 +123,6 @@ impl ConversationBody {
     }
 }
 
-
 pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidConversationBody(reason))
 }
@@ -134,4 +133,64 @@ pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
+}
+
+/// The door-owned TURN body key a thread binding rides under.
+pub(crate) const ROOM_THREAD_KEY: &str = "room_thread";
+
+/// A thread TURN's birth binding: its thread's root, the room whose
+/// membership it reads under, the trunk turn the thread hangs off and, on
+/// the root alone, the audience the thread names (`None`: it reads as its
+/// room does). The room is the canonical one, never a session's shell, and
+/// every turn of a thread repeats its root's room and anchor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ThreadBinding {
+    pub(crate) root: EntityId,
+    pub(crate) room: EntityId,
+    pub(crate) anchor: Option<EntityId>,
+    pub(crate) audience: Option<BTreeSet<EntityId>>,
+}
+
+/// The door-owned TURN body key an audience edit rides under.
+pub(crate) const ROOM_THREAD_AUDIENCE_KEY: &str = "room_thread_audience";
+
+/// The producer a private thread's notices are recorded under; a read
+/// admits such a notice to its recipient and the thread's readers alone
+/// (FIX 6473).
+pub(crate) const THREAD_NOTICE_PRODUCER: &str = "rooms.private_thread";
+
+/// The bound a plain delete or unlink of a kept edit meets.
+pub(crate) const AUDIENCE_EDIT_BOUND: &str = "a thread audience edit stays while its thread's root lives; erase the thread or its people instead";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRoom {
+    pub schema_version: u8,
+    pub kind: String,
+    pub project_id: String,
+    #[serde(rename = "memberIds")]
+    pub member_ids: Vec<String>,
+    /// Membership never grants additional memory scope.
+    pub claims_scope_ref: String,
+    /// Absent on an ordinary room, so its body and API shape stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<RoomOriginCard>,
+}
+/// A reference to the original thread, not a second copy of its messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomOriginCard {
+    pub room: String,
+    pub thread: String,
+    pub message: String,
+    pub at: u64,
+}
+
+/// `vault.rooms.thread_join.requests`'s input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequestsRequest {
+    /// The private thread's root TURN, 32-hex.
+    pub thread_ref: String,
 }

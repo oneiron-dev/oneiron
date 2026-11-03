@@ -153,7 +153,7 @@ pub(super) fn apply_old_record(
             )?;
         }
         if should_deindex_stale_text {
-            crate::bm25::deindex_text(store, wtxn, &fixed.id)?;
+            crate::store::text_index::deindex_text(store, wtxn, &fixed.id)?;
         }
 
         super::super::put_staging::remove_prior_temporal_index_rows(

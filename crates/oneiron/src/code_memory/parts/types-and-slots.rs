@@ -21,7 +21,7 @@ use crate::claim::{ClaimSource, ScopedRead};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{CodeError, Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ppr::{PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};

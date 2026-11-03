@@ -6,7 +6,6 @@ use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
 use super::experiment_selection::parse_experiment_selection;
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
@@ -42,6 +41,7 @@ use crate::gate::constants::{
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::fanout_policy::{
     FanoutControls, FanoutPrecedence, FanoutScopedRow, parse_controls, parse_precedence,
     parse_scoped_rows,
@@ -158,7 +158,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) diagnostic_bounds:
         Option<crate::self_heal::tripwires::ManifestTripwireBounds>,
-    pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(in crate::gate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,

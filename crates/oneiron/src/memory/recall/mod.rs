@@ -50,10 +50,11 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, cl
 fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
     crate::batch::export::served_messagepack_json(value.clone())
 }
+use crate::claim::retrieval_scope::FacetMode;
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode};
+use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
@@ -263,7 +264,7 @@ pub struct MemoryItem {
     pub asset_ref: Option<String>,
     /// Raw per-kind evidence from each exact space, before fusion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub embedding_matches: Vec<crate::embed::EmbeddingMatchEvidence>,
+    pub embedding_matches: Vec<crate::store::embedding::EmbeddingMatchEvidence>,
     /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
@@ -642,7 +643,7 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
-        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        candidate_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
@@ -711,7 +712,7 @@ impl Memory<'_> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        candidate_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
@@ -1164,7 +1165,7 @@ impl Memory<'_> {
     fn recall_worlds(
         &self,
         scope: &RecallScope,
-    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
+    ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {
         self.room_met(self.selected_worlds(scope)?)
     }
 
@@ -1172,8 +1173,8 @@ impl Memory<'_> {
     /// they are now.
     fn room_met(
         &self,
-        requested: Option<crate::pipeline::WorldAuthoritySet>,
-    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
+        requested: Option<crate::claim::world_access::WorldAuthoritySet>,
+    ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {
         let room = match self.room_turn_now()? {
             Some(turn) => crate::context_board::scope_worlds(&turn.terms.get().worlds)?,
             None => None,
