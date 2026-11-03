@@ -18,7 +18,7 @@ use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError};
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError};
 use crate::write_envelope::WriteActor;
 
 /// The holder every host root names (`ensure_host_root_slip`).

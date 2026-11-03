@@ -367,11 +367,11 @@ impl ScopedRead<'_> {
             crate::own_rate::observe_in_txn(
                 &self.vault.store,
                 &mut txn,
-                crate::own_rate::OwnRateKind::WeaveCorrection,
+                crate::store::own_rate_record::OwnRateKind::WeaveCorrection,
                 actor,
                 0,
                 u64::try_from(own).unwrap_or(u64::MAX).saturating_add(1),
-                crate::own_rate::OwnRate {
+                crate::store::own_rate_record::OwnRate {
                     threshold: u64::try_from(limit).unwrap_or(u64::MAX),
                     window_seconds: 0,
                 },

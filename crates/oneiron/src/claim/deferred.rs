@@ -290,7 +290,7 @@ impl Vault {
                 crate::own_rate::count_in_txn(
                     &self.store,
                     txn,
-                    crate::own_rate::OwnRateKind::AutoWrite,
+                    crate::store::own_rate_record::OwnRateKind::AutoWrite,
                     actor,
                     self.store.clock.now_recorded_at(),
                     auto_write_rate,
