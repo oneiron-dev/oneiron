@@ -3,7 +3,7 @@ use crate::claim::ClaimSource;
 use crate::write_envelope::communication::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::outbound_consent::ScopedMcpCallContext;
+use crate::consent::tool_scope::ScopedMcpCallContext;
 
 use super::ceiling::{PolicyApprovalCeiling, PolicyCriticality};
 use super::constants::POLICY_SCHEMA_VERSION;

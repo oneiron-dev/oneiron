@@ -10,7 +10,7 @@ use super::super::document_candidate_types::{
 use super::super::tree::{OriginTreeFile, read_tree_files};
 use super::{Held, MODE_GITLINK};
 use crate::EntityId;
-use crate::code_document::{CodeFileMetadataEdit, CodeFilePresence};
+use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
 use crate::code_revision::{CodeRevision, CodeTreeBlob, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};

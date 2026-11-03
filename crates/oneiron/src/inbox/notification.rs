@@ -20,9 +20,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState,
     BUDGET_HOLD_ACTOR,
 };
+use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -197,7 +198,7 @@ pub fn decode_notification_body(raw: &[u8]) -> Result<NotificationBody> {
 
 /// The row id a producer's event lands under.
 pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         NOTIFICATION_ID_DOMAIN,
         &[source.producer.as_bytes(), source.event.as_bytes()],
     )
