@@ -91,13 +91,14 @@ pub(crate) fn context_entity_matches_read_snapshot(
 /// a binary of its bytes.
 pub(crate) fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
     use rmpv::Value;
-    let rest = |body: &ClaimBody| ClaimBody {
-        value: Value::Nil,
-        confidence: 0.0,
-        salience: None,
-        evidence: None,
-        scope: None,
-        ..body.clone()
+    let rest = |body: &ClaimBody| {
+        let mut cloned = body.clone();
+        cloned.value = Value::Nil;
+        cloned.confidence = 0.0;
+        cloned.salience = None;
+        cloned.evidence = None;
+        cloned.scope = None;
+        cloned
     };
     let same_option = |left: Option<&Value>, right: Option<&Value>| match (left, right) {
         (Some(left), Some(right)) => same_value(left, right),

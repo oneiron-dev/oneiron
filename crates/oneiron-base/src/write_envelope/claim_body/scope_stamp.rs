@@ -1,7 +1,7 @@
 //! Stable CLAIM scope identifiers and their MessagePack representation.
 use super::ClaimSubject;
 use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
-use crate::{EntityId, error::{Error, Result}};
+use crate::{entity_id::EntityId, error::{Error, Result}};
 use rmpv::Value;
 
 /// Reserved value for base reality. Defined in `oneiron-contracts`.
@@ -20,13 +20,13 @@ pub fn substrate_facet_id(person: EntityId) -> Result<EntityId> {
 /// earlier one, and claims sync, so every device reads the same default.
 pub const PREDICATE_VAULT_DEFAULT_FACET: &str = "vault.default_facet";
 
-pub(crate) fn subject_facet(subject: ClaimSubject) -> Result<EntityId> {
+pub fn subject_facet(subject: ClaimSubject) -> Result<EntityId> {
     substrate_facet_id(match subject {
         ClaimSubject::Entity(id) => id,
         ClaimSubject::Edge { source, .. } => source,
     })
 }
-pub(crate) fn scope_id(value: &Value) -> Result<EntityId> {
+pub fn scope_id(value: &Value) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
         return Err(Error::InvalidClaimBody("scope id must be binary"));
     };
@@ -38,6 +38,6 @@ pub(crate) fn scope_id(value: &Value) -> Result<EntityId> {
     )
     .map_err(|_| Error::InvalidClaimBody("invalid scope id"))
 }
-pub(crate) fn id_value(id: EntityId) -> Value {
+pub fn id_value(id: EntityId) -> Value {
     Value::Binary(id.as_bytes().to_vec())
 }

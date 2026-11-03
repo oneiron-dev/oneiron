@@ -4,17 +4,17 @@ use crate::error::{Error, Result};
 use rmpv::Value;
 
 pub(crate) const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
-pub(crate) const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_source";
+pub const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_source";
 /// Scope key carrying the GATE-05 evidence-taint class stamped by the
 /// promotion writer when a consolidation meet lands at/below `tool_output`
 /// (engine-owned scope-map pattern, like `federated_original_source`).
-pub(crate) const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
-pub(crate) const CLAIM_SCOPE_DEMOTION_RUNG_KEY: &str = "demotion_rung";
+pub const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
+pub const CLAIM_SCOPE_DEMOTION_RUNG_KEY: &str = "demotion_rung";
 /// Scope key carrying a claim's initial ClaimOf weight. It sits in the
 /// candidate's canonical body scope, so a MACHINE birth signs it with the
 /// rest of the body (OF-023 B2: a curator revert stands its copy at the
 /// target's prior weight).
-pub(crate) const CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY: &str = "initial_claim_of_weight";
+pub const CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY: &str = "initial_claim_of_weight";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ClaimDemotionRung {
@@ -32,11 +32,11 @@ pub enum ClaimDemotionAction {
 
 /// The one change a claim successor may make to its predecessor's body.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum ClaimSuccession {
+pub enum ClaimSuccession {
     /// A lower confidence, stamped with the `weakened` rung.
     Weakening { confidence: f32 },
     /// The same claim under another facet; `stamp` adds its `facet_of` edge.
-    Fork { facet: crate::EntityId, stamp: bool },
+    Fork { facet: crate::entity_id::EntityId, stamp: bool },
 }
 
 /// One demotion step's result: the rung now carried and the claim that
@@ -45,7 +45,7 @@ pub(crate) enum ClaimSuccession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimDemotion {
     pub rung: ClaimDemotionRung,
-    pub claim: crate::EntityId,
+    pub claim: crate::entity_id::EntityId,
 }
 
 /// Provenance inheritance floor (ONE-1645, P3/V2): the band an UNSTAMPED
@@ -60,13 +60,13 @@ pub struct ClaimDemotion {
 /// leaving them visible to the OWNER in persona compiles
 /// (`TIER_A_MIN_SENSITIVITY_BAND` = 3). Private means not-disclosed-to-others,
 /// not invisible-to-self.
-pub(crate) const UNSTAMPED_CLAIM_SENSITIVITY_BAND: u8 = 2;
+pub const UNSTAMPED_CLAIM_SENSITIVITY_BAND: u8 = 2;
 
 /// Lookup outcome for ONE recognized key in an engine-owned scope map.
 /// `Duplicate` is kept distinct from `Present`: an ambiguous stamp is never
 /// silently resolved to one of its values — each reader decides its own
 /// fail-closed answer.
-pub(crate) enum MapValue<'a> {
+pub enum MapValue<'a> {
     Missing,
     Present(&'a Value),
     Duplicate,
@@ -74,7 +74,7 @@ pub(crate) enum MapValue<'a> {
 
 /// The single duplicate-aware scope-map lookup. Shared with
 /// the recognized provenance/taint/sensitivity entries of the opaque map.
-pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
+pub fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
     let mut found = None;
     for (key, value) in entries {
         if key.as_str() == Some(needle) {
@@ -90,7 +90,7 @@ pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) 
 /// Reads the demotion rung recorded in a claim's scope map. `None` means the
 /// claim carries no rung (no scope map, or no rung key); a duplicate or
 /// malformed rung is a fail-closed [`Error::InvalidClaimBody`].
-pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>> {
+pub fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>> {
     let Some(scope) = &body.scope else {
         return Ok(None);
     };
@@ -114,7 +114,7 @@ pub(crate) fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemoti
 /// an existing claim's scope onto another claim. The weight is the copied
 /// claim's own birth fact, so the new claim is born at the default. A map the
 /// strip leaves empty is no scope, as if the entry had never been written.
-pub(crate) fn without_initial_weight(scope: Option<Value>) -> Option<Value> {
+pub fn without_initial_weight(scope: Option<Value>) -> Option<Value> {
     match scope {
         Some(Value::Map(mut entries)) => {
             let before = entries.len();
@@ -133,7 +133,7 @@ pub(crate) fn without_initial_weight(scope: Option<Value>) -> Option<Value> {
 ///   floor. Unrecorded provenance reads private at every disclosure surface.
 /// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
 ///   merely unstamped; consumers clamp harder on `None` than on the floor.
-pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
+pub fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     let Some(Value::Map(entries)) = &body.scope else {
         return Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND);
     };
@@ -147,7 +147,7 @@ pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
 
 /// Parses a MessagePack number as a finite `f32` in `[0, 1]`. Shared with
 /// the provenance module so `conf` and `confidence` validate identically.
-pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
+pub fn unit_interval_f32(value: &Value) -> Option<f32> {
     let parsed = match value {
         Value::F32(v) => f64::from(*v),
         Value::F64(v) => *v,
@@ -167,7 +167,7 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
     Some(parsed as f32)
 }
 
-pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
+pub fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
     if let Some(raw) = value.as_u64() {
         return u8::try_from(raw).ok();
     }

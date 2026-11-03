@@ -23,7 +23,7 @@ thread_local! {
 /// omitted (absent means `false` on decode). Encoding performs no
 /// validation — every write path re-validates the encoded bytes through
 /// [`crate::claim::decode_claim_body`], the single validator.
-pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
+pub fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     let mut entries: Vec<(Value, Value)> = Vec::with_capacity(CLAIM_BODY_KEYS.len());
     entries.push((Value::from(KEY_PRED), Value::from(body.predicate.as_str())));
     entries.push((Value::from(KEY_VAL), body.value.clone()));

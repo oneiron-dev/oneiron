@@ -19,6 +19,10 @@ sync = ["oneiron-contracts/sync"]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+schemars = "=0.8.22"
+serde = { workspace = true }
 tiktoken-rs = "0.12.0"
 tokio = { version = "1", features = ["net", "sync", "time"] }
 tracing = { version = "0.1" }

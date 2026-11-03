@@ -21,6 +21,7 @@ pub mod posterior;
 pub mod retrieval_quality;
 pub mod tokenizer;
 pub mod work_line;
+pub mod write_envelope;
 
 pub fn unix_seconds_now() -> u64 {
     SystemTime::now()

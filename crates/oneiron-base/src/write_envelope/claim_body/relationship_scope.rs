@@ -62,7 +62,7 @@ pub fn relationship_scope_transcript(rel: Option<&BTreeSet<EntityId>>) -> Vec<u8
 
 /// The on-disk `scopeRelationshipId` value: `all`, or an array of every id
 /// in set order (`[]` for the empty set).
-pub(crate) fn encode_relationship_scope(rel: Option<&BTreeSet<EntityId>>) -> Value {
+pub fn encode_relationship_scope(rel: Option<&BTreeSet<EntityId>>) -> Value {
     rel.map_or_else(
         || Value::from("all"),
         |ids| Value::Array(ids.iter().map(|id| scope_stamp::id_value(*id)).collect()),
@@ -71,7 +71,7 @@ pub(crate) fn encode_relationship_scope(rel: Option<&BTreeSet<EntityId>>) -> Val
 
 /// Decode `scopeRelationshipId`: `all`, or an array of 16-byte ids of any
 /// length, `[]` included.
-pub(crate) fn decode_relationship_scope(value: &Value) -> Result<RelationshipScope> {
+pub fn decode_relationship_scope(value: &Value) -> Result<RelationshipScope> {
     if value.as_str() == Some("all") {
         return Ok(None);
     }
