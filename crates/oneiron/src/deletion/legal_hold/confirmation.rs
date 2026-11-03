@@ -265,7 +265,7 @@ impl Vault {
         self.note_backup_hold_recheck();
         self.finish_redaction_erases_logged();
         let memory = self.memory(settled.actor, EdgeActorClass::Human);
-        let hard = crate::memory::SafeDeleteReason::UserHardDelete;
+        let hard = crate::deletion::SafeDeleteReason::UserHardDelete;
         let now = self.store.clock.now_recorded_at();
         let mut statuses = Vec::with_capacity(records.len());
         let mut failed = false;

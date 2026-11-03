@@ -11,9 +11,11 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::recovery::{
-    KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, PieceHome, RestoredKitSecret, join_kept_piece, restore_kit,
+use crate::{
+    store::recovery_kit::{KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    recovery::KitPieceStore,
+    store::recovery_kit::{KitSecretKind, PieceHome, RestoredKitSecret},
+    recovery::{join_kept_piece, restore_kit},
 };
 
 use super::keystore_error;

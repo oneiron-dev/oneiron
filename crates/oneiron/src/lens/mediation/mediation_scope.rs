@@ -2,7 +2,8 @@
 
 use super::LensRenderFrame;
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadResult};
-use crate::pipeline::{WorldAuthoritySet, WorldScope};
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::pipeline::WorldScope;
 use crate::{EntityId, Error, Result};
 
 impl LensRenderFrame {

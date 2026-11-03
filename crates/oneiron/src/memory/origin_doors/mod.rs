@@ -42,7 +42,7 @@ pub use workbench_types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
-use crate::checkout::lease::{CheckoutError, CheckoutLeaseAct};
+use crate::{store::checkout_lease::CheckoutError, checkout::lease::CheckoutLeaseAct};
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::git_wire::GitWire;
