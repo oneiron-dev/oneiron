@@ -64,8 +64,8 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyPermitPieces, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
-    custody_recipient_set, custody_recipients_encoded_len,
+    CustodyPermitPieces, CustodyPermitSet, CustodyRecipientPermit, CustodyRecipientPermits,
+    CustodyRequestAuthority, custody_recipient_set, custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
 pub use self::import_mark::{
@@ -327,13 +327,13 @@ pub enum OwnerWorkBody {
     /// `recipients` is empty as the entry carries it, and the fold fills it
     /// from the [`CustodyPermitPiece`] rows in the request's causal past.
     /// Every request the fold keeps on one joined set shares its permits
-    /// ([`CustodyRecipientPermits`], FIX 12281).
+    /// ([`CustodyPermitSet`], FIX 12281, 12370).
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
-        recipients: CustodyRecipientPermits,
+        recipients: CustodyPermitSet,
         pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },
@@ -570,7 +570,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             *generation,
             *input,
             *holder,
-            (recipients.as_slice(), *pieces),
+            (recipients, *pieces),
             *authority,
         ),
         OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),
