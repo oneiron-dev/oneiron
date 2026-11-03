@@ -25616,6 +25616,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerExcludedConversations"
+     ],
+     "path": "src/dreamer_consolidation/excluded_conversations.rs",
+     "purpose": "Operator-set conversations that stay out of Dreamer consolidation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25887,7 +25901,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 31,
-      "mod": 4,
+      "mod": 5,
       "re-export": 25
      }
     },
@@ -41907,8 +41921,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 193,
-      "re-export": 83
+      "mod": 192,
+      "re-export": 84
      }
     },
     {
@@ -76651,6 +76665,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_work_line.rs",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
      "surface": {
@@ -81921,26 +81945,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LineCrossing",
-      "LineObserver",
-      "LinePermit",
-      "TaskWorkTurn",
-      "WaitTimedOut",
-      "WorkLine"
-     ],
-     "path": "src/work_line.rs",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
-     "surface": {
-      "const": 2,
-      "fn": 21,
-      "struct": 4,
-      "trait": 2
-     }
-    },
-    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -85611,7 +85615,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86443,6 +86447,13 @@
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
+    "task_work_line": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
+    },
     "team": {
      "files": 15,
      "impl_vault": false,
@@ -86583,13 +86594,6 @@
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
-    "work_line": {
-     "files": 1,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
-    },
     "workspace_roster": {
      "files": 125,
      "impl_vault": true,
@@ -86614,7 +86618,7 @@
    },
    "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5878,
+   "source_files": 5879,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87608,7 +87612,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 12
+      "mod": 13
      }
     },
     {
@@ -87681,6 +87685,26 @@
       "enum": 1,
       "fn": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LineCrossing",
+      "LineObserver",
+      "LinePermit",
+      "TaskWorkTurn",
+      "WaitTimedOut",
+      "WorkLine"
+     ],
+     "path": "src/work_line.rs",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
+     "surface": {
+      "const": 2,
+      "fn": 19,
+      "struct": 4,
+      "trait": 2
      }
     }
    ],
@@ -87768,11 +87792,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
+    },
+    "work_line": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     }
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 0
   },
   "oneiron-bench": {
@@ -108381,7 +108412,7 @@
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
