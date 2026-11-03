@@ -14,6 +14,7 @@ impl Memory<'_> {
         run: &str,
         approve: bool,
         now: u64,
+        members: &[EntityId],
     ) -> MemoryResult<crate::store::GateDecisionRecord> {
         let mut record = crate::memory::authorship::decision(
             actor,
@@ -28,20 +29,15 @@ impl Memory<'_> {
             review.review_id.as_bytes().to_vec(),
             now,
         );
-        // FIX 7500: the answer to the reviewed run. Its members are not
-        // bound to this receipt, so no member's read context is kept.
-        record.context = crate::store::GateDecisionContext::linked(
-            crate::store::GateLoopLink::action(
-                crate::store::GateLoopSource::Runner,
-                Some(run.to_owned()),
-                None,
-                crate::store::GateLoopOrigin::Unresolved,
-            ),
-            None,
-        );
-        self.vault()
-            .store
-            .append_gate_decision_in_txn(txn, &record)?;
+        // FIX 11002: the outcome answers every Claim/Edge member with its
+        // newest kept read context; the member refs couple their erases here.
+        crate::gate::append_reviewed_run_decision_in_txn(
+            self.vault(),
+            txn,
+            &mut record,
+            run,
+            members,
+        )?;
         anchor_reviewed_run_in_txn(self.vault(), txn, run, &record)?;
         Ok(record)
     }
