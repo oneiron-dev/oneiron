@@ -11,6 +11,7 @@ use oneiron_organ_protocol::{Hash32, TypedBody, Value};
 
 use crate::budget::Kept;
 use crate::receipt::CallReceipt;
+use crate::resource_memory::FloorLease;
 
 /// What an organ proposed, checked by the host. Nothing here is in the vault
 /// yet: the caller lands it through the write gate, or drops it.
@@ -40,11 +41,11 @@ pub struct OrganOutput {
 /// A lease of the machine's memory an output's bytes hold until they drop.
 pub(crate) struct Leased {
     /// Never read: it goes back as the bytes drop.
-    _held: Mutex<Box<dyn Send>>,
+    _held: Mutex<Box<dyn FloorLease>>,
 }
 
 impl Leased {
-    pub(crate) fn new(held: Box<dyn Send>) -> Self {
+    pub(crate) fn new(held: Box<dyn FloorLease>) -> Self {
         Self {
             _held: Mutex::new(held),
         }

@@ -22,8 +22,8 @@ pub const MAX_STEPS: usize = 256;
 pub const MAX_OVERLAYS: usize = 1024;
 /// The most points one freehand overlay may carry.
 pub const MAX_POINTS: usize = 16_384;
-/// The most freehand points one body may carry, so a body stays well inside
-/// the protocol's per-frame value bound (a point is five values).
+/// The most freehand points one body may carry under the image body's
+/// render-work policy.
 pub const MAX_TOTAL_POINTS: usize = 131_072;
 /// The widest stroke, in canvas pixels.
 pub const MAX_STROKE_WIDTH: f32 = 1024.0;
@@ -92,7 +92,7 @@ pub struct Size {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Step {
     Crop { x: u32, y: u32, w: u32, h: u32 },
     Resize { w: u32, h: u32, filter: Filter },
@@ -115,7 +115,7 @@ pub struct Overlay {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Shape {
     /// An outline, not a fill.
     Rect {
