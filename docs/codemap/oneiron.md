@@ -47,11 +47,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/affect/annotation.rs` | src | s | 12 crate-vis | — | Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers |
 | `src/affect/annotation_as.rs` | src | s | 2 fn | — | A turn's or a message's VAD annotation, written as the caller who made it (FIX 8222) |
 | `src/affect/claim_vad.rs` | src | s | 3 struct · 1 const · 4 crate-vis | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
-| `src/affect/consolidation.rs` | src | m | 6 fn · 5 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
+| `src/affect/consolidation.rs` | src | m | 6 fn · 6 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
 | `src/affect/consolidation/entity_vad.rs` | src | s | 3 crate-vis | — | The turn and message VAD annotation door: write, guard and read one entity's annotation |
 | `src/affect/consolidation/reappraisal.rs` | src | s | 3 crate-vis | — | A claim-VAD reappraisal's exposure (FIX 9553, 11251) |
 | `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const · 3 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | Coping outcomes: which strategy a person used and how their affect moved |
-| `src/affect/mod.rs` | src | s | 3 mod · 3 re-export · 4 crate-vis | — | Affect facade: VAD annotations, claim VAD, triggers and coping outcomes |
+| `src/affect/mod.rs` | src | s | 3 mod · 4 re-export · 5 crate-vis | — | Affect facade: VAD annotations, claim VAD, triggers and coping outcomes |
+| `src/affect/processed.rs` | src | s | 1 fn · 1 const · 1 crate-vis | — | Processed marks on memories: the `affect.processed` state claim the engine writes once a memory is worked… |
 | `src/affect/state_index.rs` | src | m | 3 struct · 4 fn · 3 const · 2 crate-vis | ModeGateInputs, StateIndex, StateIndexEvidence | Provenance-carrying composite state for mode selection, never a diagnostic label |
 | `src/affect/state_index/tests.rs` | test | s | — | — | — |
 | `src/affect/state_inputs.rs` | src | s | 1 struct · 3 crate-vis | StateWindow | The composite state index's inputs, measured from the subject's own records (OF-335) |
