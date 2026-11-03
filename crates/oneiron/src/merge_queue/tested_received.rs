@@ -8,12 +8,12 @@
 use std::collections::BTreeMap;
 
 use super::{CodePushSourceLink, MergeQueue, QueueExportHold, QueueExportHoldReason};
-use crate::store::code_document_values::CodeDocumentFrontier;
-use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::store::code_revision_record::{CodePathRetirement, CodeRevision, CodeTreeInventory};
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire};
 use crate::repo_mutation::proposal::RepoProposal;
+use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::code_revision_record::{CodePathRetirement, CodeRevision, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
 
 type Held<T> = std::result::Result<T, QueueExportHold>;
 

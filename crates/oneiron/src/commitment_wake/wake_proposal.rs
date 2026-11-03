@@ -6,13 +6,13 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord};
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use crate::dreamer_runner::{DreamerAdmittedAttempt};
+use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::derived_domains::COMMITMENT_WAKE_PROPOSAL;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 

@@ -9,7 +9,6 @@ pub(crate) const GENERATION_LEN: usize = 24;
 
 const KEEP_SLOTS: u64 = SEALED_BUNDLE_KEEP as u64;
 
-
 /// The bundle's size step: every bundle is a positive multiple of it.
 pub const SEALED_BUNDLE_PAD_STEP_BYTES: usize = 64 * 1024 * 1024;
 /// One upload per vault in each fixed UTC slot of this length, changed or not.

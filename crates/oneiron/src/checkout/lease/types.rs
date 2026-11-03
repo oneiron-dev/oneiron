@@ -1,11 +1,18 @@
 //! Checkout lease record and repository operations requiring an attempt binding.
 
 use super::attempt_binding::CheckoutAttemptBinding;
-use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
+use crate::store::code_snapshot::RepoRef;
 
 pub use crate::store::checkout_lease::{
-    CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_SETTLEMENT_KEY_PREFIX, CHECKOUT_TOMBSTONE_KEY_PREFIX, CHECKOUT_RESULT_ID_DOMAIN, CheckoutId, GitOid, CheckoutLeaseState, CheckoutHolder, CheckoutFactMutation, CheckoutFactSink, CheckoutLivenessPulse, CheckoutLiveness, CheckoutClaimRequest, CheckoutLeaseGrant, CheckoutLeaseFence, CheckoutSettlementDisposition, CheckoutSettlementRequest, CheckoutSettlementReceipt, PushedHeadReceipt, CheckoutTeardownOutcome, CheckoutRetainReason, CheckoutError, CheckoutResult, CheckoutTeardownInspection, TeardownReceiptMatch, CheckoutMaterializationOptions, CheckoutTaskClass,
+    CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN,
+    CHECKOUT_SETTLEMENT_KEY_PREFIX, CHECKOUT_TOMBSTONE_KEY_PREFIX, CheckoutClaimRequest,
+    CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutHolder, CheckoutId,
+    CheckoutLeaseFence, CheckoutLeaseGrant, CheckoutLeaseState, CheckoutLiveness,
+    CheckoutLivenessPulse, CheckoutMaterializationOptions, CheckoutResult, CheckoutRetainReason,
+    CheckoutSettlementDisposition, CheckoutSettlementReceipt, CheckoutSettlementRequest,
+    CheckoutTaskClass, CheckoutTeardownInspection, CheckoutTeardownOutcome, GitOid,
+    PushedHeadReceipt, TeardownReceiptMatch,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

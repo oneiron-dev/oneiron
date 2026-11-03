@@ -12,15 +12,15 @@ use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
 use crate::code_sandbox::source::{PreparedSource, prepare_source};
+use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
+use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
 use crate::{
+    code_sandbox::SandboxProposalWrite,
     store::{
         sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier},
         sandbox_path::SandboxMountTable,
     },
-    code_sandbox::SandboxProposalWrite,
 };
-use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
-use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteEnvelope, WriteProvenance};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

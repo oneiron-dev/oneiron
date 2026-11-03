@@ -1,6 +1,6 @@
 //! Browser workflow resolution and candidate counters read by the Coach.
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// The domain a candidate program's input fingerprint is hashed in (CUA E8,
 /// CALLS row "candidate dedup"), for the Coach's seen marker.
@@ -34,7 +34,6 @@ pub struct ProgramSeen {
     pub job: Option<EntityId>,
     pub generation: u64,
 }
-
 
 /// Where a program's ref leads now.
 #[derive(Debug, Clone, PartialEq, Eq)]

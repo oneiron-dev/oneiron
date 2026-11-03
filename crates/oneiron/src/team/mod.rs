@@ -15,8 +15,6 @@
 pub mod spawn_need;
 pub mod team_shape;
 pub(crate) use crate::claim::dispatch_input as widen_record;
-pub mod spawn_override;
-pub mod task_exposure;
 mod choice_learning;
 mod door_reads;
 pub mod doors;
@@ -29,7 +27,9 @@ pub mod receipt;
 pub mod run;
 pub mod run_binding;
 mod spawn_intent;
+pub mod spawn_override;
 pub mod stack;
+pub mod task_exposure;
 
 pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};
 pub use doors::{

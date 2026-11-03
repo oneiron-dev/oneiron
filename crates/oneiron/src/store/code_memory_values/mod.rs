@@ -1,14 +1,14 @@
 //! Symbol-anchored memory values, deterministic union rules and row codecs.
 
-use std::collections::{BTreeMap, BTreeSet};
-use sha2::{Digest, Sha256};
-use oneiron_contracts::claim::ClaimSource;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{CodeError, Error, Result};
 use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::store::code_document_values::CodeSpanAnchor;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::claim::ClaimSource;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Width of the actor-scoped dedupe digest (SHA-256, matching the
 /// code-symbol module's digest convention).
@@ -49,7 +49,8 @@ pub const CODE_MEMORY_MAX_PULL_LIMIT: usize = 256;
 /// Named code-memory slot holding the live (possibly conflicting) values
 /// recorded against one code symbol. Key: id16 "\x00" string. Never decomposed
 /// back into its parts, so it stays the opaque `Vec<u8>` [`SideKey`] shape.
-pub(crate) const SLOT: SideTable<Vec<u8>, CodeMemorySlot, Raw> = SideTable::new(&side_table::CODE_MEMORY_SLOT);
+pub(crate) const SLOT: SideTable<Vec<u8>, CodeMemorySlot, Raw> =
+    SideTable::new(&side_table::CODE_MEMORY_SLOT);
 /// Durable L2 attachment row binding a code-symbol slot value to a
 /// note/claim payload. Key: id16 "\x00" string "\x00" u8 id16 (opaque).
 pub(crate) const ATTACHMENT: SideTable<Vec<u8>, (CodeMemoryLocator, EntityId), Raw> =

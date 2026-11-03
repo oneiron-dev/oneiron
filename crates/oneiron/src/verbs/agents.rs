@@ -1,15 +1,15 @@
 //! Typed custom AGENT_DEF authoring. Authorship is the caller's, never input.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_def::{
-    AgentDefinition,
-};
+use crate::agent_def::AgentDefinition;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};
 
-pub use crate::code_run::workflow_operations::{AgentSkillInput, AgentMcpInput, AgentScopeInput, AgentCeilingInput, AgentDefinitionSpec};
+pub use crate::code_run::workflow_operations::{
+    AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

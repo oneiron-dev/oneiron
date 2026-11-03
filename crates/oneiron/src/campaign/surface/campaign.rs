@@ -15,8 +15,8 @@ use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
 pub use crate::memory::campaign_records::CAMPAIGN_SCHEMA_VERSION;
-pub use crate::memory::campaign_records::CampaignLifecycle;
 pub use crate::memory::campaign_records::CampaignDefinition;
+pub use crate::memory::campaign_records::CampaignLifecycle;
 pub use crate::memory::campaign_records::CampaignRecord;
 pub use crate::memory::campaign_records::CreateCampaignRequest;
 pub use crate::memory::campaign_records::UpdateCampaignRequest;

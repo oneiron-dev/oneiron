@@ -22,9 +22,7 @@
 //! or none, is unknown, warned and never a refusal.
 
 use getrandom::SysRng;
-use oneiron_crypto::backup::{
-    HostHoldsBinding, SealedHostHolds, seal_host_holds,
-};
+use oneiron_crypto::backup::{HostHoldsBinding, SealedHostHolds, seal_host_holds};
 use serde::{Deserialize, Serialize};
 
 use super::HostOrderHolds;

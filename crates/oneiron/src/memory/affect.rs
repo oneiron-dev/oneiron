@@ -2,9 +2,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, CommitReceipt, Memory, MemoryError, MemoryResult, ScopedClaimInput};
-use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_TURN;
+use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};
 /// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -88,8 +88,12 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("annotation requires a TURN"));
         }
         let annotation = VadAnnotation::new(input.vad.vad()?, input.source, input.annotated_at)?;
-        let body = crate::write_envelope::vad_annotation::vad_annotation_claim_body(&turn, &annotation)?;
-        let id = crate::write_envelope::vad_annotation::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+        let body =
+            crate::write_envelope::vad_annotation::vad_annotation_claim_body(&turn, &annotation)?;
+        let id = crate::write_envelope::vad_annotation::vad_annotation_claim_id(
+            ENTITY_TYPE_TURN,
+            &turn,
+        )?;
         self.claim_upsert_scoped(&ScopedClaimInput {
             id: Some(id.to_hex()),
             predicate: body.predicate,

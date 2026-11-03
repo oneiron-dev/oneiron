@@ -8,4 +8,3 @@ pub(crate) struct GateWriteMode {
     pub(crate) can_resolve_pending_consent: bool,
     pub(crate) include_source_in_gate_input: bool,
 }
-

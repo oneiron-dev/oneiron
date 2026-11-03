@@ -73,7 +73,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::RosterActor;
 use std::collections::BTreeMap;
 
-pub(crate) use crate::store::conversation_body::{ROOM_THREAD_AUDIENCE_KEY};
+pub(crate) use crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 
 /// The domain of an erased person's stand-in in a root's audience edits
 /// (FIX 5640).

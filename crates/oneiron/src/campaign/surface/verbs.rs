@@ -12,23 +12,23 @@ use super::parse::{
 use super::{campaign_record_to_json, saved_query_record_to_json};
 use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_PROGRAM_VERBS;
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_SELF_VERBS;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_MEMBERS;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_READ;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_UPDATE;
-pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_MEMBERS;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_EVALUATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_MEMBERS;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_READ;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_UPDATE;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_MEMBERS;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_EVALUATE;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_CREATE;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_READ;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_UPDATE;
-pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::CAMPAIGN_PROGRAM_VERBS;
-pub use crate::memory::campaign_records::verb_names::CAMPAIGN_SELF_VERBS;
 
 /// A parsed surface verb.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

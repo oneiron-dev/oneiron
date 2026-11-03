@@ -5,8 +5,8 @@ use crate::{
     contract_oracle::{invalid, safe_path},
     error::{CodeError, Error, Result},
     git_wire::{GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv},
-    store::repo_mutation_record::RepoMutationOperation,
     repo_mutation::RepoMutationRequest,
+    store::repo_mutation_record::RepoMutationOperation,
     store::repo_mutation_record::RepoMutationStatus,
 };
 use std::collections::BTreeSet;

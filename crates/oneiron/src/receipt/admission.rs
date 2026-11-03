@@ -9,11 +9,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{Memory, verify_actor_binding_in_txn};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
-use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::verb_invocation::InvocationId;
 use crate::work_line::LineObserver;
 use crate::{EdgeActorClass, EntityId, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -188,9 +188,11 @@ impl AdmissionTracker {
             Ok(value) => AdmissionStatus::Completed {
                 result_digest: super::call_json_digest(value),
             },
-            Err((oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK, reason)) => AdmissionStatus::Held {
-                reason: Some(reason.to_owned()),
-            },
+            Err((oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK, reason)) => {
+                AdmissionStatus::Held {
+                    reason: Some(reason.to_owned()),
+                }
+            }
             Err((code, reason)) => AdmissionStatus::Refused {
                 code: code.to_owned(),
                 reason: reason.to_owned(),

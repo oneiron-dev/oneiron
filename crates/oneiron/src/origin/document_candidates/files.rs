@@ -10,11 +10,11 @@ use super::super::document_candidate_types::{
 use super::super::tree::{OriginTreeFile, read_tree_files};
 use super::{Held, MODE_GITLINK};
 use crate::EntityId;
-use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
-use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::store::code_revision_record::{CodeRevision, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
+use crate::store::code_revision_record::{CodeRevision, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::repo_proposal_record::received_file_operation;
 
 fn presence(blob: Option<&CodeTreeBlob>) -> CodeFilePresence {

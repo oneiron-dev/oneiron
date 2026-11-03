@@ -1,6 +1,8 @@
 //! Project identifiers and normalized paths in code snapshot manifests.
 
-use super::snapshot::{CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_PROJECT_ID_MAX_BYTES, validate_bounded_text};
+use super::snapshot::{
+    CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_PROJECT_ID_MAX_BYTES, validate_bounded_text,
+};
 use crate::error::{CodeError, Error, Result};
 
 pub(crate) fn validate_project_id(project_id: &str) -> Result<()> {

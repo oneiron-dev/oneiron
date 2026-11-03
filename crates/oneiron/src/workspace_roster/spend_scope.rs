@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::attempt_queue::AttemptId;
 use crate::claim::dispatch_input::invalid;
+use serde::{Deserialize, Serialize};
 
 /// A spend scope's id. A root scope's id is its launch id; a child scope's id
 /// is the child's attempt id, in lowercase hex.

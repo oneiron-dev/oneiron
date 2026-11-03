@@ -251,8 +251,6 @@ impl ThreadMask {
         self.facet_ref = Some(facet_ref);
         self
     }
-
-
 }
 
 /// One inbound message, already canonicalized, waiting for a thread.
@@ -405,11 +403,9 @@ pub enum StickyMaskDecision {
     },
 }
 
-
 pub(crate) fn is_thread_claim_predicate(predicate: &str) -> bool {
     matches!(
         predicate,
         PREDICATE_THREAD_PASSPORT | PREDICATE_THREAD_ALIAS
     )
 }
-

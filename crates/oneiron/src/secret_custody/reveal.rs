@@ -159,7 +159,10 @@ impl RevealAsker {
     }
 
     /// This asker with the code-mode step its call is, as the host bound it.
-    pub(crate) fn with_step(mut self, step: Option<crate::store::verb_invocation::InvocationId>) -> Self {
+    pub(crate) fn with_step(
+        mut self,
+        step: Option<crate::store::verb_invocation::InvocationId>,
+    ) -> Self {
         self.step = step;
         self
     }

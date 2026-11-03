@@ -225,7 +225,7 @@ pub(super) struct SourceBatch {
     pub(super) more: bool,
 }
 
-pub use crate::consent::settlement_fact::{SettledOutcome, SettlementKind, SettledFact};
+pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
 /// The settlement feed's row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
