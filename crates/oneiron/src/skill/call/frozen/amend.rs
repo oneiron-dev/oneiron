@@ -102,7 +102,7 @@ pub fn amend_callable_case(
                                 &vault.store,
                                 &rtxn,
                                 &record,
-                            )?,
+                            ),
                             None => None,
                         },
                         None => None,
