@@ -79,6 +79,9 @@ pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUpl
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
 
+/// A caller's final admission check, run immediately before each backend dispatch.
+pub(crate) type MediaDispatchRelease<'a> = Option<&'a (dyn Fn() -> LlmResult<()> + Sync)>;
+
 /// A media rung's own side: the media wire it sends through, and the row
 /// that says what it serves.
 #[derive(Clone)]
@@ -386,8 +389,21 @@ impl MediaRuntime {
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
+        self.run_in_released(request, voices, payer, sources, None)
+            .await
+    }
+
+    async fn run_in_released(
+        &self,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
-        self.run_admitted(&run, request, voices, None).await
+        self.run_admitted_released(&run, request, voices, None, release)
+            .await
     }
 
     /// Job `id`, held here or kept in the vault. A kept job that has not

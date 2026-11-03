@@ -576,14 +576,24 @@ impl RuntimeMediaEmbedder {
             release(&[row])?;
         }
         let request = self.admit(part, name_width)?;
-        let response = self
-            .ai
-            .model_runtime()
-            .media()
+        let media = self.ai.model_runtime().media();
+        let response = if let Some((release, row)) = release {
+            let dispatch_release = || -> oneiron::LlmResult<()> {
+                release(&[row]).map_err(|error| {
+                    FatalLlmError::InvalidRequestDetail {
+                        message: error.to_string(),
+                    }
+                    .into()
+                })
+            };
             // The rows the part was read from are not known here whole.
-            .run(request, self.payer.clone(), None)
-            .await
-            .map_err(MediaEmbedRefusal::Call)?;
+            media
+                .run_released(request, self.payer.clone(), None, Some(&dispatch_release))
+                .await
+        } else {
+            media.run(request, self.payer.clone(), None).await
+        }
+        .map_err(MediaEmbedRefusal::Call)?;
         let mark = self.answer_mark(&response.usage.raw_provider);
         let mut vectors = response.parts.into_iter().filter_map(|part| match part {
             MediaPart::Embedding { vector } => Some(vector),

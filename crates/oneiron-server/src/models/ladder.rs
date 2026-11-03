@@ -51,7 +51,7 @@ use super::cooldown::{
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
-use super::media::{HeldJob, MediaAnswer, MediaRung, RetryHint, RungVoices};
+use super::media::{HeldJob, MediaAnswer, MediaDispatchRelease, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::source_admission::{self, SourceAdmission};
@@ -1510,7 +1510,19 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by(run, request, selector, voices, self.host_wait())
+        self.media_released(run, request, selector, voices, None)
+            .await
+    }
+
+    pub(super) async fn media_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+        voices: Option<&RungVoices>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaAnswer> {
+        self.media_by_released(run, request, selector, voices, self.host_wait(), release)
             .await
     }
 
@@ -1526,6 +1538,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
+        release: MediaDispatchRelease<'a>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1557,6 +1570,7 @@ impl OfferLadder {
                                 deadline,
                                 false,
                                 voices,
+                                release,
                             )
                             .await;
                         if fell.is_err() {
@@ -1575,7 +1589,10 @@ impl OfferLadder {
                         return Err(self.ended(call, walk));
                     }
                     sent[index] = true;
-                    if let Some(answer) = self.send_media(call, index, &request, &mut walk).await? {
+                    if let Some(answer) = self
+                        .send_media(call, index, &request, &mut walk, release)
+                        .await?
+                    {
                         return Ok(answer);
                     }
                 }
@@ -1592,6 +1609,7 @@ impl OfferLadder {
         index: usize,
         request: &MediaRequest,
         walk: &mut Walk,
+        release: MediaDispatchRelease<'_>,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1643,6 +1661,12 @@ impl OfferLadder {
         let gate = call
             .run
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+        if let Some(release) = release
+            && let Err(error) = release()
+        {
+            settle_failed(permit);
+            return Err(error);
+        }
         let operation = request.operation;
         if operation.is_job() {
             let requested_video_ms = super::media::requested_video_ms(&bound);
