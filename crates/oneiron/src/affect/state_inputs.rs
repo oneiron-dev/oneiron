@@ -25,27 +25,7 @@ use crate::{EdgeKind, EntityId, Error, Result, TimeRange, Vault};
 
 const DAY_SECS: u64 = 86_400;
 
-/// The owner's targets for one window. They describe this person's own
-/// pace, not a clinical or population norm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StateWindow {
-    pub window_secs: u64,
-    pub expected_goal_completions: u32,
-    pub expected_engaged_days: u32,
-}
-
-impl StateWindow {
-    pub(crate) fn validate(&self) -> Result<()> {
-        if self.window_secs == 0
-            || self.expected_goal_completions == 0
-            || self.expected_engaged_days == 0
-        {
-            return Err(invalid());
-        }
-        Ok(())
-    }
-}
+pub use crate::memory::state_index::StateWindow;
 
 impl Vault {
     /// Measures the subject's window and refreshes its composite index in
@@ -291,8 +271,4 @@ fn put_signal_in_txn(
         vault.put_claim_in_txn(txn, &id, &body, window, window.end)?;
     }
     Ok(id)
-}
-
-fn invalid() -> Error {
-    Error::InvalidClaimBody("invalid state index window")
 }

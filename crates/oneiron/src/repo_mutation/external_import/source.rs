@@ -30,7 +30,7 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::{EntityId, TimeRange, Vault};
 
 /// The import's immutable source claim.
-pub(crate) const EXTERNAL_IMPORT_SOURCE_PREDICATE: &str = "repo.external_import_source";
+pub(crate) use crate::store::repo_import_predicate::EXTERNAL_IMPORT_SOURCE_PREDICATE;
 /// One immutable send intent.
 pub(crate) const EXTERNAL_IMPORT_DISPATCH_PREDICATE: &str = "repo.external_import_dispatch";
 /// One immutable observed fact.

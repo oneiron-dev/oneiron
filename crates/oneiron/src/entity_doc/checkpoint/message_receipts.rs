@@ -19,8 +19,8 @@ use super::hex_id;
 use super::loro::STAMP_ACTOR;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::provenance::made_by::{MadeByClass, MadeByInput, MadeByTrigger};
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::write_envelope::provenance::made_by::{MadeByClass, MadeByInput, MadeByTrigger};
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::loro::{Split, SplitValue};
 use crate::store::checkpoint_payload::rows;
 

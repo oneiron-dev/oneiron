@@ -11,8 +11,11 @@
 use std::collections::HashSet;
 
 use super::{AgentHealthCard, AgentHealthOutcome, CARD_REF_PREFIX, CARDS, card_ref};
-use crate::agent_inbox_lens::{
-    AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+use crate::{
+    agent_inbox_lens::AgentInboxConcern,
+    inbox::view_values::AgentInboxItemKind,
+    agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::{AgentInboxParticipant, InboxImpact},
 };
 use crate::{EntityId, Result, Vault};
 

@@ -46,8 +46,22 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+pub mod dispatch_target;
+pub(crate) mod dispatch_input;
+pub(crate) use dispatch_input as widen_record;
+pub mod retrieval_scope;
+pub mod consult_payload_ref;
 mod aging_profiles;
+pub mod code_instruction;
+mod authorship;
+pub(crate) use authorship::claim_author;
+pub mod learning_predicate;
+pub mod learning_evidence;
+pub mod maintenance_kind;
+pub mod learning_estimate;
 mod core_types;
+pub mod corpus_scope;
+pub mod served_lifecycle;
 mod decay;
 mod deferred;
 mod demotion;
@@ -84,6 +98,7 @@ pub(crate) use projection_index::{
 };
 mod put;
 mod read;
+pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
 mod scoped_read;
@@ -92,6 +107,7 @@ pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
 mod write_target;
+pub mod world_access;
 
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;
@@ -112,7 +128,8 @@ pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
 pub use scope_stamp::{
-    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+    ClaimRecordScope, PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id,
+    substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
 pub use scoped_read::*;
@@ -123,3 +140,7 @@ pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
 mod tests;
+
+pub mod reaction_record;
+#[cfg(feature = "sync")]
+pub mod selector_world;

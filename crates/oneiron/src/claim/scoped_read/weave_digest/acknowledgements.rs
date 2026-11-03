@@ -26,12 +26,12 @@ use super::WEAVE_DIGEST_NOTIFICATION_PRODUCER;
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis};
 use crate::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 
 /// The verb a covering Grant must list and admit at the notice's position
 /// (CALLS `FIX 5778 WEAVE_OWNER_ACK_VERB`): the served mark operation.
