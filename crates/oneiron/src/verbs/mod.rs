@@ -504,7 +504,18 @@ pub use self::web_connector::*;
 pub use self::wire_health::*;
 pub use self::workflows::*;
 pub use self::workspace::*;
-pub use crate::task_verb::fanout_batch::*;
+pub use crate::task_verb::fanout_batch::{
+    FanoutChildInput,
+    FanoutBatchInput,
+    FanoutSlotState,
+    FanoutSlotTerminal,
+    FanoutLeaseView,
+    FanoutSlotAttempt,
+    FanoutChildSlot,
+    FanoutSharedAccounting,
+    FanoutBatchView,
+    fanout_batch_rows,
+};
 pub use crate::task_verb::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
