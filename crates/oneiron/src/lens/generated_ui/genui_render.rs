@@ -14,8 +14,8 @@ use crate::lens::validate::{
     validate_required_lens_text,
 };
 use crate::lens::wire_ids::{LensAtomId, LensHandleRef, LensRenderId};
-use crate::llm::ContentPart;
 use crate::{Error, Result};
+use oneiron_model::llm::ContentPart;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::{HashMap, HashSet};
 

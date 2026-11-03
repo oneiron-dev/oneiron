@@ -19,7 +19,7 @@ use super::{
     GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireOperation,
     GitWireRepo, GitWireResult,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 
 /// The bare store's directory inside an ingress's own directory.
 const PROJECTION_INGRESS_REPO: &str = "repo.git";

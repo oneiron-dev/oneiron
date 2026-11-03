@@ -48,21 +48,7 @@ use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::world_strength::{full_strength, read_under, world_meet};
 use super::*;
 
-/// Where a world may be read, after every live edit is met.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveRead {
-    Everywhere,
-    MyMachines,
-    OneMachine(EntityId),
-    /// Concurrent one-machine picks named different machines: readable
-    /// nowhere until the owner re-picks from one of them.
-    Conflicted {
-        contenders: BTreeSet<EntityId>,
-    },
-}
+pub use crate::machine_destination::EffectiveRead;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
@@ -106,12 +92,7 @@ impl EffectiveWorldPrivacy {
     }
 }
 
-/// A machine a world's rows may go to, or one nobody proved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Destination {
-    Machine(EntityId),
-    Unknown,
-}
+pub use crate::machine_destination::Destination;
 
 /// One world's folded settings.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

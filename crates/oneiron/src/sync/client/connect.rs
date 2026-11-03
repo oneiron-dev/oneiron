@@ -11,9 +11,8 @@ use crate::sync::{
     FederationAdmissionRole, SyncClient, SyncClientConfig, SyncSelector, SyncSelectorWorld,
     WindowManager,
 };
-use crate::task_verb::sdk::{
-    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined, ConnectWindow,
-};
+use crate::authority::ConnectWindow;
+pub use crate::connect_delivery::{ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined};
 use crate::{EntityId, Error, Result};
 
 fn refused() -> Error {

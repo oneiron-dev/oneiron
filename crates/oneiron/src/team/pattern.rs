@@ -13,14 +13,21 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::{SpawnNeed, TeamPlan};
+use crate::agent_dispatch::{ TeamPlan};
+use crate::team::spawn_need::SpawnNeed;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::claim::learning_estimate::EstimateValue;
+use crate::claim::learning_estimate::Prior;
+use crate::claim::learning_estimate::PriorOrigin;
+use crate::receipt::task_type_ref::TypeRef;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::learning::{
-    EstimateValue, LearningCell, LearningPredicate, Prior, PriorOrigin, TypeRef, put_cell_prior,
+    LearningCell, put_cell_prior,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::skill::{LoadedSkillPack, SkillRole};
+use crate::write_envelope::skill_record::{SkillRole};
+use crate::skill::{LoadedSkillPack};
 use crate::write_envelope::WriteActor;
 
 /// Pattern skills, by skill entity.
