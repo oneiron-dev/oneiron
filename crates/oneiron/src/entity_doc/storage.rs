@@ -7,8 +7,8 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
+use crate::store::row_birth::RowBirth;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};

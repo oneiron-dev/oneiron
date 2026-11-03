@@ -484,7 +484,7 @@ fn insert_ready_row<R: Read + Seek>(
             }
             if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
+            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -1166,7 +1166,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 ClaimSubject::Entity(id) => vec![id],
                 ClaimSubject::Edge { source, target, .. } => vec![source, target],
             };
-            if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+            if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
             if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
@@ -1299,7 +1299,7 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
     let body = decode_claim_body(bytes, true)?;
     if crate::subject_model::is_subject_model_predicate(&body.predicate) {
         crate::subject_model::imported_subject_body(&body)
-    } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+    } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)

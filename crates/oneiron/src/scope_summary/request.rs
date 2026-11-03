@@ -620,7 +620,7 @@ fn composed_summary_id(attempt: AttemptId) -> EntityId {
     hasher.update(attempt.as_bytes());
     let mut raw = [0_u8; 16];
     raw.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    crate::commitment_wake::entity_id_from_digest_prefix(raw)
+    crate::entity_id::entity_id_from_digest_prefix(raw)
 }
 
 fn class_name(class: EdgeActorClass) -> &'static str {
