@@ -7,13 +7,13 @@ use super::{
     GrantAskedRow, hex_opt, hex_ref, unix_ms,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
-use crate::federation::Scope;
 use crate::memory::{Memory, MemoryResult};
+use oneiron_authority::federation::Scope;
 
 /// Policy hook (CALLS "OF-1379 ask authority", open): the authority an ask
 /// requests is the read of the resource it names, never the whole vault.
 fn requested_authority_scope() -> Scope {
-    crate::federation::scope_codec::read_preset()
+    oneiron_authority::federation::scope_codec::read_preset()
 }
 
 /// `self.grants.asked`'s page size when the caller names none, and its most.
@@ -91,7 +91,7 @@ impl Memory<'_> {
         let requests = requests
             .into_iter()
             .filter_map(|request| {
-                let scope = crate::verbs::grant_requested_scope(&request.grant.scope)?;
+                let scope = super::grant_requested_scope(&request.grant.scope)?;
                 Some(GrantAskedRow {
                     request: request.id.to_hex(),
                     asker: request.grant.principal_ref.to_hex(),

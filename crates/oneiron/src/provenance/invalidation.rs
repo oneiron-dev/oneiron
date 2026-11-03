@@ -262,5 +262,5 @@ fn stamp_in_txn(
     ppr::invalidate_ppr_for_edge(store, txn, &subject.source, &subject.target)?;
     // The stamp moves edge bytes outside any edge write's own bump, as in
     // RETRACT.
-    ppr::increment_graph_version(store, txn)
+    crate::store::graph_version::increment_graph_version(store, txn)
 }

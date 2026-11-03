@@ -389,9 +389,7 @@ pub(super) fn json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid("widen record does not encode"))
 }
 
-pub(super) fn invalid(message: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(message))
-}
+pub(super) use crate::claim::dispatch_input::invalid;
 
 /// Add only the refused explicit axes. Defaults keep their inherited meaning.
 pub(super) fn widened_parent(parent: &ContextSpec, child: &ContextSpec) -> ContextSpec {

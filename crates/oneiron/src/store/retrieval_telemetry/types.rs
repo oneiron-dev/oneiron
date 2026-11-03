@@ -466,7 +466,7 @@ pub struct RetrievalRunRecord {
     #[serde(default)]
     pub state: super::state::RetrievalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy_trace: Option<crate::pipeline::retrieval_policy::RetrievalPolicyTrace>,
+    pub policy_trace: Option<crate::store::retrieval_policy::RetrievalPolicyTrace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

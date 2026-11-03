@@ -25,7 +25,9 @@ use super::join_receipt::{
     JOINS, JoinFiling, JoinParticipation, JoinReceipt, JoinReceiptRef, READY, RecordedAnswer,
     RosterActor, intent_digest, is_join_ref, join_ref, ready_key,
 };
-use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
+use crate::agent_dispatch::{AgentDispatcher,   payer_binds_in_txn};
+use crate::workspace_roster::spend_scope::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::conversation::{
     ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, RoomHost, room_host_in_txn,
 };
