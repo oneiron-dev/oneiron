@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::error::{Error, Result, SecretError};
+use oneiron_contracts::error::{Error, Result, SecretError};
 
-pub(crate) fn refused(reason: &'static str) -> Error {
+pub fn refused(reason: &'static str) -> Error {
     Error::Secret(SecretError::WorldKeyRefused(reason))
 }
 
@@ -14,7 +14,7 @@ pub(crate) fn refused(reason: &'static str) -> Error {
 /// XOF fills it in place, and the hasher's block buffer and the reader's
 /// state, which still hold the input key's bytes, are wiped. A secret subkey
 /// never passes through a plain array on its way to its guard.
-pub(crate) fn derive_guarded(context: &str, parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
+pub fn derive_guarded(context: &str, parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
     let mut out = Zeroizing::new([0u8; 32]);
     let mut hasher = blake3::Hasher::new_derive_key(context);
     for part in parts {
@@ -28,7 +28,7 @@ pub(crate) fn derive_guarded(context: &str, parts: &[&[u8]]) -> Zeroizing<[u8; 3
 }
 
 /// Fills `buf` from the OS CSPRNG. A failure is an error, never a weaker key.
-pub(crate) fn os_fill(buf: &mut [u8]) -> Result<()> {
+pub fn os_fill(buf: &mut [u8]) -> Result<()> {
     getrandom::fill(buf).map_err(|_| refused("os entropy unavailable"))
 }
 
@@ -72,7 +72,7 @@ const MDB_CRYPTO_FAIL: i32 = -30777;
 
 /// The error of an environment opened with (`keyed`) or without a page key,
 /// in the owner's words where LMDB refused the seal.
-pub(crate) fn page_seal_open_error(error: heed::Error, keyed: bool) -> Error {
+pub fn page_seal_open_error(error: heed::Error, keyed: bool) -> Error {
     let code = match &error {
         heed::Error::Mdb(heed::MdbError::Other(code)) => Some(*code),
         // heed hands an LMDB code it has no name for over as a raw OS error.
