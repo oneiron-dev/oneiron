@@ -12,6 +12,7 @@ use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryResult};
 use crate::pipeline::{TurnFold, WorldAuthoritySet, WorldScope};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::store::StoreRead;
 
 /// The kinds one recall returns: `None` is the default, every kind but
 /// [`CONTAINER_KINDS`]; a list is sorted and unique. Local recall and the
@@ -203,6 +204,7 @@ impl Memory<'_> {
         selection: UnfacetedSelection,
         scope: &RecallScope,
         pin: Option<&RecallPin>,
+        store: &StoreRead<'_>,
     ) -> MemoryResult<RecallSelection> {
         let UnfacetedSelection(mut selection) = selection;
         if pin.and_then(RecallPin::get).is_some() {
@@ -213,7 +215,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|facet| self.resolve_ref(facet))
             .transpose()?;
-        selection.conversations = self.selected_conversations(scope)?;
+        selection.conversations = self.selected_conversations(scope, store)?;
         if let Some(pin) = pin {
             let _ = pin.selection.set(selection.clone());
         }

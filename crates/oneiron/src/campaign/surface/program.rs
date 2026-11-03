@@ -78,6 +78,10 @@ pub struct CampaignProgramOutboundSpec {
     pub payload: String,
     /// Whether the channel honors the ledger's idempotency key.
     pub idempotency_supported: bool,
+    /// Email subject (FIX 11641): `Some` on channel `email`, `None` on any
+    /// other channel. 1..=600 bytes, no control characters.
+    #[serde(default)]
+    pub subject: Option<String>,
 }
 
 /// A program's audience on the wire: the saved query whose entries enroll,
@@ -309,6 +313,7 @@ impl CampaignProgramStepSpec {
                     verb: outbound.verb.clone(),
                     payload: bytes_to_hex_lower(&outbound.payload),
                     idempotency_supported: outbound.idempotency_supported,
+                    subject: outbound.subject.clone(),
                 }),
         }
     }
@@ -321,6 +326,7 @@ impl CampaignProgramOutboundSpec {
             verb: self.verb.clone(),
             payload: payload_from_hex(&self.payload)?,
             idempotency_supported: self.idempotency_supported,
+            subject: self.subject.clone(),
         })
     }
 }
