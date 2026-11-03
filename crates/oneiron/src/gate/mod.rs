@@ -4,7 +4,7 @@
 //! through the evaluator while keeping replicated replay trust-blind.
 
 pub(crate) mod curator_proposal;
-pub mod failure_signal_delivery;
+pub(crate) mod failure_signal_delivery;
 pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
