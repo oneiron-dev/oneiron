@@ -4,7 +4,7 @@ use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::vault::{ReadMode, RevisionRef};
 

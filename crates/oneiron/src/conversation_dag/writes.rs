@@ -4,7 +4,7 @@ use super::graph::{self, CANONICAL, HEAD, actor_in_txn, chain, invalid, read_id,
 use super::migration::migrate_in_txn;
 use super::policy::{self, AppendFailure};
 use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{RecordError, Result};

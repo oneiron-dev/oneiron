@@ -9,7 +9,10 @@ use serde_json::{Value, json};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
-use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ResultFacet, ResultOccurrence};
+use crate::store::result_manifest::CodeRunRawOutput;
+use crate::code_run::CodeRunReplayRecord;
+use crate::memory::result_facet::ResultFacet;
+use crate::store::result_manifest::ResultOccurrence;
 use crate::consent::AuthenticatedOwner;
 use crate::engine_executor::is_result_output_path;
 use crate::secret_rotation::ArtifactTaintState;
@@ -213,8 +216,8 @@ impl Memory<'_> {
             blake3: crate::entity_id::bytes_to_hex_lower(&output.raw_blake3),
             bytes: output.raw_len,
             kind: match output.kind {
-                crate::code_run::CodeRunOutputKind::Text => ResultBodyKind::Text,
-                crate::code_run::CodeRunOutputKind::Binary => ResultBodyKind::Binary,
+                crate::store::result_manifest::CodeRunOutputKind::Text => ResultBodyKind::Text,
+                crate::store::result_manifest::CodeRunOutputKind::Binary => ResultBodyKind::Binary,
             },
             lines: output.lines,
             complete: output.complete,
