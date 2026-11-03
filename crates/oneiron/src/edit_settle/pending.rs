@@ -379,6 +379,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             None,
+            None,
             false,
         )
     }
@@ -393,6 +394,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        fork_base: Option<(u64, [u8; 32])>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -400,6 +402,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             None,
+            fork_base,
             true,
         )
     }
@@ -422,6 +425,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             Some((base, hold)),
+            None,
             false,
         )
     }
@@ -433,6 +437,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
+        base_override: Option<(u64, [u8; 32])>,
         authorize_content_write: bool,
     ) -> Result<PendingProposalView> {
         let body = self
@@ -466,9 +471,10 @@ impl Vault {
             crate::edit_roundtrip::read_office_package(&output.bytes)?;
         }
         let head = self.blob_artifact_head(artifact_id)?;
-        let base = match &deck {
-            Some((base, _)) => Some(*base),
-            None => head.as_ref().map(|head| (head.version, head.content_hash)),
+        let base = match (base_override, &deck) {
+            (Some(base), _) => Some(base),
+            (None, Some((base, _))) => Some(*base),
+            (None, None) => head.as_ref().map(|head| (head.version, head.content_hash)),
         };
         let row = PendingRow {
             proposal_ref: output.run_ref.clone(),

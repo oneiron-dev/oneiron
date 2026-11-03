@@ -230,7 +230,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactAppendOutcome> {
-        let version = self.with_write_txn_grouped(|wtxn| {
+        let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
             let later =
                 read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
             let content_hash = blake3::hash(bytes);
@@ -238,7 +238,28 @@ impl Vault {
                 && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                     .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
             if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
-                return Ok(None);
+                let fork_base = match fork_parent {
+                    Some(parent) => {
+                        let record =
+                            match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
+                                Some(head) if parent > 0 && parent <= head.version => {
+                                    VERSIONS.get(&self.store, wtxn, &(*artifact_id, parent))?
+                                }
+                                _ => None,
+                            };
+                        let Some(record) = record else {
+                            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                                "fork parent version does not exist",
+                            )));
+                        };
+                        if record.version != parent {
+                            return Err(Error::CorruptedIndex("blob artifact fork parent"));
+                        }
+                        Some((parent, record.content_hash))
+                    }
+                    None => None,
+                };
+                return Ok((None, fork_base));
             }
             let version = match made_by {
                 Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
@@ -263,7 +284,7 @@ impl Vault {
                     fork_parent,
                 )?,
             };
-            Ok(Some(version))
+            Ok((Some(version), None))
         })?;
         if let Some(version) = version {
             return Ok(BlobArtifactAppendOutcome::Landed(version));
@@ -282,8 +303,15 @@ impl Vault {
             report: serde_json::json!({}),
             made_by: made_by.cloned(),
         };
-        self.propose_native_output_with_write_grant(artifact_id, &output, reader, actor, learned_at)
-            .map(BlobArtifactAppendOutcome::Proposed)
+        self.propose_native_output_with_write_grant(
+            artifact_id,
+            &output,
+            reader,
+            actor,
+            learned_at,
+            fork_base,
+        )
+        .map(BlobArtifactAppendOutcome::Proposed)
     }
 
     /// Appends one version to the artifact's append-only chain.
