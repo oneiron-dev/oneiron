@@ -5,29 +5,14 @@ use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
-use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
+use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
-use rmpv::Value;
 
 pub(crate) fn authority_denied(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
 }
 
-pub(crate) fn claim_author(body: &ClaimBody) -> Option<EntityId> {
-    let Value::Map(entries) = body.evidence.as_ref()? else {
-        return None;
-    };
-    let mut matches = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY));
-    let (_, Value::Binary(bytes)) = matches.next()? else {
-        return None;
-    };
-    if matches.next().is_some() {
-        return None;
-    }
-    EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
-}
+pub(crate) use crate::claim::claim_author;
 
 pub(super) fn verify_live_actor(
     vault: &Vault,

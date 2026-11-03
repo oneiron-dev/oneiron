@@ -17,7 +17,7 @@ pub(super) fn audit_and_stage_body(
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &super::admission::Dispatch,
     body_changed: bool,
-    previous_skill_record: &Option<crate::skill::SkillRecord>,
+    previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     markers: StagedMarkers,
 ) -> Result<()> {
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {

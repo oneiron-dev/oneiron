@@ -147,8 +147,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
-            Value::from(crate::failure_signals::policy::POLICY_KEY),
-            crate::failure_signals::policy::default_row(),
+            Value::from(crate::gate::failure_signal_policy::POLICY_KEY),
+            crate::gate::failure_signal_policy::default_row(),
         ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -185,7 +185,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),
@@ -285,7 +285,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from("goal_limits"),
-            crate::workspace_roster::GoalLimits::default().encode(),
+            crate::policy_model::goal_limits::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -468,7 +468,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                        Value::from(crate::write_envelope::voice_segment::PREDICATE_VOICE_SEGMENT),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -1361,7 +1361,7 @@ fn compilation_route(
 /// The vault-wide search policy ships as data, not a Rust threshold or
 /// hard-coded stagnation branch. The manifest resolver composes edits by scope.
 fn default_experiment_selection_rows() -> Value {
-    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+    let rows: Vec<crate::gate::experiment_selection_policy::SelectionPolicyRow> =
         serde_json::from_str(include_str!(
             "../autoreason_campaign/selection_defaults.json"
         ))

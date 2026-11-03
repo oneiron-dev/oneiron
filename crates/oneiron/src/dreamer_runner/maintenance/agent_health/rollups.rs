@@ -28,7 +28,7 @@ use super::trend_policy::{SECONDS_PER_DAY, TrendPeriods};
 use super::{
     COACH_AGENT_HEALTH_FACET, Dispatched, WAIT_PERSON, covered, entity, read_dials, settled,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};

@@ -27,7 +27,7 @@ use super::store_keys::{
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
-use crate::provenance::made_by::MadeBy;
+use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // The version chain's reads: the head, the tree, one version's metadata
@@ -193,7 +193,7 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if header.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -576,9 +576,9 @@ impl Vault {
                 &self.store,
                 wtxn,
                 artifact_id,
-                &crate::provenance::birth::RowBirth {
+                &crate::store::row_birth::RowBirth {
                     made_by: record.made_by.clone(),
-                    content_hash: crate::provenance::birth::RowBirth::content_hash_of(&[
+                    content_hash: crate::store::row_birth::RowBirth::content_hash_of(&[
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),

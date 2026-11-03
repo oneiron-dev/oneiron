@@ -5,7 +5,7 @@
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
-use crate::skill_hub::HubFile;
+use crate::write_envelope::skill_source::HubFile;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::store::GateDecisionId;
 

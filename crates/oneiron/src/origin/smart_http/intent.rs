@@ -23,7 +23,8 @@ use crate::origin::lfs::{
 };
 use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use heed::{RoTxn, RwTxn};

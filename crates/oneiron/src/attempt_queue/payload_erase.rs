@@ -45,9 +45,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rmpv::Value;
 
 use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
-    decode_agent_dispatch_input, record_dispatch_input,
+    AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
 };
 use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
 use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
@@ -55,8 +55,9 @@ use crate::dispatch_byoa::{
     BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
     RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
+    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

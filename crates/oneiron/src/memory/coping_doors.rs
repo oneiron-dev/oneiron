@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, Memory, MemoryError, MemoryResult, ScopedClaimInput};
-use crate::affect::coping::{
+use crate::write_envelope::coping_outcome::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
     decode_coping_outcome_claim,
 };
@@ -287,7 +287,7 @@ impl Memory<'_> {
             ));
         }
         for turn in [baseline, later] {
-            let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+            let annotation = crate::write_envelope::vad_annotation::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
             if self
                 .vault
                 .get_entity_type_in_txn(txn, &annotation)?

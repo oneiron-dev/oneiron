@@ -52,7 +52,7 @@ pub struct RecallResidence {
     #[cfg(feature = "sync")]
     #[serde(skip)]
     #[schemars(skip)]
-    selection: Option<crate::sync::residence::ResolvedRecallSelection>,
+    selection: Option<crate::memory::resolved_recall_scope::ResolvedRecallSelection>,
 }
 
 /// One reference the home holds that the local pack does not.
@@ -356,7 +356,7 @@ pub async fn complete_with_home(
 async fn ask_home(
     vault: &Vault,
     search: &crate::sync::HomeSearch,
-    selection: &crate::sync::residence::ResolvedRecallSelection,
+    selection: &crate::memory::resolved_recall_scope::ResolvedRecallSelection,
     local: &[MemoryItem],
     ask: &HomeRecallAsk,
     caller: &HomeRecallCaller,

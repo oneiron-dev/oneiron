@@ -45,7 +45,7 @@ pub struct BatchBuilder<'a> {
     /// Every source each ASSET_TEXT this batch births was written from.
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
-    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
     /// The rows `put_replicated` queued: replay's materialization provenance
@@ -138,7 +138,7 @@ impl<'a> BatchBuilder<'a> {
     pub(crate) fn made_by(
         mut self,
         id: &EntityId,
-        birth: Option<crate::provenance::birth::RowBirth>,
+        birth: Option<crate::store::row_birth::RowBirth>,
     ) -> Self {
         if let Some(birth) = birth {
             self.births.push((*id, birth));

@@ -523,7 +523,7 @@ pub(crate) fn apply_ops_session(
                 stage_edge_rows(view, wtxn, src, *kind, tgt, &value)?;
             }
             BatchOp::Text { id, fields } => {
-                crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
+                crate::store::text_index::index_text(view, wtxn, analyzer, id, fields)?;
             }
             BatchOp::Vector {
                 id,
@@ -596,7 +596,7 @@ pub(crate) fn apply_ops_session(
         }
         let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
         if changed && !texts.contains(id) {
-            crate::bm25::deindex_text(view, wtxn, id)?;
+            crate::store::text_index::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
             hide_vector_of_another_body(view, wtxn, id)?;

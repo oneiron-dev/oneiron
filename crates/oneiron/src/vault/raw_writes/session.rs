@@ -32,14 +32,15 @@ use heed::RoTxn;
 
 use super::RawEntityPut;
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
 use crate::core_write::CoreWriteLane;
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, OffRecordError};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::off_record::OffRecordSession;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};

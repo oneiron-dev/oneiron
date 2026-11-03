@@ -134,7 +134,7 @@ fn child_state(
     node: &RunTreeNode,
     by_attempt: &BTreeMap<String, (Option<EntityId>, Option<String>)>,
 ) -> Option<ChildState> {
-    if node.worker_kind != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if node.worker_kind != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
     let status = project_agent_run_status_with_park(node.status, false);
@@ -158,7 +158,7 @@ fn child_state(
         role: if node
             .children
             .iter()
-            .any(|child| child.worker_kind == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE)
+            .any(|child| child.worker_kind == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE)
         {
             AGENT_ROLE_LEAD
         } else {
@@ -304,11 +304,11 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
 /// The AGENT_DEF actor an agent-dispatch attempt runs as; `None` for any
 /// other attempt, or one whose payload does not decode.
 pub(crate) fn dispatched_actor(record: &AttemptRecord) -> Option<EntityId> {
-    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+    if record.kind != crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }
     let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
     let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input).ok()?;

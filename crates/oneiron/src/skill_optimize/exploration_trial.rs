@@ -76,8 +76,8 @@ const MAX_PROJECT_LINEAGE: usize = 256;
 /// Hours an unanswered overrun ask waits on the role it went to before it
 /// climbs to the next role up its chain: the ask's reminder. At the chain's
 /// top it waits on, until [`EXPLORATION_ASK_LAPSE_HOURS`].
-pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "exploration.ask.climb_hours",
         min: 1.0,
         max: 720.0,
@@ -87,8 +87,8 @@ pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSp
 /// Hours an unanswered overrun ask waits at the top of its chain, counted
 /// from its last climb, before it lapses as a decline: the trial closes and
 /// its routed runs are measured. Checked once the climb window has passed too.
-pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "exploration.ask.lapse_hours",
         min: 1.0,
         max: 2160.0,

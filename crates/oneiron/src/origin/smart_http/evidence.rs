@@ -12,7 +12,7 @@ use super::paths::{now_secs, serve_failed};
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::store::code_snapshot::RepoRef;
-use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
+use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};

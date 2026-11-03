@@ -1,6 +1,10 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
 pub mod tagging;
+pub(crate) mod bm25;
+pub mod community_graph;
+pub mod context_spec;
+pub mod retrieval_affect;
 pub use oneiron_base::config::failure_signals;
 
 use std::path::PathBuf;
@@ -57,7 +61,7 @@ pub struct VaultConfig {
     /// Affect-weighted retrieval availability (OF-423): arousal-stretched
     /// aging, the critical/aroused sensitivity floor and emotion congruence.
     /// Every dial defaults off; validated when a run starts.
-    pub affect_retrieval: crate::pipeline::AffectRetrievalPolicy,
+    pub affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy,
     /// Default-off community prior for Uniform (`expand_ppr`) retrieval only.
     pub ppr_community: PprCommunityConfig,
     /// Capture retrieval-run telemetry for ordinary searches. Disabled by default;
@@ -190,7 +194,7 @@ pub struct VaultConfig {
     /// off the operating system. A phone holds no sealed copy of the vault.
     /// Both presets declare a computer; a phone's host sets
     /// [`crate::authority::MachineDeviceClass::Phone`].
-    pub machine_device_class: crate::authority::MachineDeviceClass,
+    pub machine_device_class: oneiron_authority::authority::MachineDeviceClass,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal ([`crate::world_keys::unlock_page_seal`]), and a new one
@@ -228,7 +232,7 @@ pub struct VaultConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[must_use = "a rank profile only affects scoring when passed to a query"]
 pub struct Bm25RankProfile {
-    formula: crate::bm25::Bm25Formula,
+    formula: crate::config::bm25::Bm25Formula,
     weight_overrides: Vec<(crate::analyzer::AnalyzerChannel, f64)>,
     b_overrides: Vec<(crate::analyzer::AnalyzerChannel, f64)>,
 }
@@ -239,7 +243,7 @@ impl Default for Bm25RankProfile {
     /// CjkNgram 0.45/0.30 per the ARCH-0031 channel table).
     fn default() -> Self {
         Self {
-            formula: crate::bm25::Bm25Formula::Okapi,
+            formula: crate::config::bm25::Bm25Formula::Okapi,
             weight_overrides: Vec::new(),
             b_overrides: Vec::new(),
         }
@@ -250,7 +254,7 @@ impl Bm25RankProfile {
     /// Selects the BM25 scoring formula. `Okapi` is the contract default;
     /// `Plus { delta }` is the BM25+ option (`delta` must be finite and
     /// `> 0.0`; the contract opt-in value is `delta: 1.0`).
-    pub fn with_formula(mut self, formula: crate::bm25::Bm25Formula) -> Self {
+    pub fn with_formula(mut self, formula: crate::config::bm25::Bm25Formula) -> Self {
         self.formula = formula;
         self
     }
@@ -279,9 +283,9 @@ impl Bm25RankProfile {
     /// Validates the profile and lowers it onto the internal scoring
     /// config. Fail-closed: any invalid parameter is a typed
     /// [`StoreError::InvalidRankProfile`], never a clamp or a silent skip.
-    pub(crate) fn to_bm25_config(&self) -> Result<crate::bm25::Bm25Config, crate::error::Error> {
+    pub(crate) fn to_bm25_config(&self) -> Result<crate::config::bm25::Bm25Config, crate::error::Error> {
         use crate::analyzer::AnalyzerChannel;
-        use crate::bm25::{Bm25Config, Bm25Formula};
+        use crate::config::bm25::{Bm25Config, Bm25Formula};
         use crate::error::Error;
 
         fn scored_slot(
@@ -355,7 +359,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
-            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
+            affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 1024,
@@ -363,7 +367,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
-            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            call_mode_deadline: crate::request_limits::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
@@ -376,7 +380,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
-            machine_device_class: crate::authority::MachineDeviceClass::Computer,
+            machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }
@@ -389,7 +393,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
-            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
+            affect_retrieval: crate::config::retrieval_affect::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 4096,
@@ -397,7 +401,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
-            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            call_mode_deadline: crate::request_limits::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.
@@ -412,7 +416,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
-            machine_device_class: crate::authority::MachineDeviceClass::Computer,
+            machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }

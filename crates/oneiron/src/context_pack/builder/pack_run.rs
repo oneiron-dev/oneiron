@@ -8,7 +8,7 @@ use crate::disclosure::DisclosureContext;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::RetrievalWithTelemetry;
+use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::serialize::SerializeConfig;
 use crate::store::{RetrievalRunFinalize, RetrievalRunId, Store};
 

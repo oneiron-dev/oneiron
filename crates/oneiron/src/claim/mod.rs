@@ -48,7 +48,12 @@
 
 mod aging_profiles;
 pub mod code_instruction;
+mod authorship;
+pub(crate) use authorship::claim_author;
+pub mod learning_estimate;
 mod core_types;
+pub mod corpus_scope;
+pub mod served_lifecycle;
 mod decay;
 mod deferred;
 mod demotion;
@@ -94,6 +99,7 @@ pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
 mod write_target;
+pub mod world_access;
 
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;

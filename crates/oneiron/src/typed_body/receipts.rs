@@ -16,8 +16,8 @@ use super::{DOCS, HEADS, invalid, load, made_by_names, names_no_actor, require_l
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::made_by::MadeBy;
-use crate::provenance::text_commit::TextCommitReceipt;
+use crate::write_envelope::provenance::made_by::MadeBy;
+use crate::write_envelope::provenance::text_commit::TextCommitReceipt;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;

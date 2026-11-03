@@ -130,7 +130,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         if section == Section::Skill
             && let Ok(body) = row.body.to_bytes()
-            && let Ok(record) = crate::skill::decode_skill_record(&body)
+            && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&body)
         {
             let mut key = super::bundle_validation::skill_name_key(&record.skill_id);
             key.extend_from_slice(id.as_bytes());
@@ -188,7 +188,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 return Err(invalid("invalid edge value layout"));
             }
             if let Some(vad) = edge.vad {
-                let vad = crate::affect::Vad {
+                let vad = oneiron_contracts::affect::Vad {
                     valence: vad[0],
                     arousal: vad[1],
                     dominance: vad[2],

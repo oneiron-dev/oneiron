@@ -5,7 +5,7 @@ use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
-use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+use crate::write_envelope::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
 
@@ -160,7 +160,7 @@ impl Vault {
     /// Bindings call THIS; they never call `put_entity`, `batch().put`, or any
     /// other storage mutation directly.
     #[doc(hidden)]
-    pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
+    pub fn ensure_embedded_owner_actor(&self) -> oneiron_contracts::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
         // FIX 11664: an owner PERSON already there comes back with no writer
         // taken; the write below decides every other case, as before.
@@ -192,7 +192,7 @@ impl Vault {
     /// `PERSON` is a typed refusal, never a retype, and a hard-deleted
     /// principal is not brought back. A PERSON may act as class `agent`.
     #[doc(hidden)]
-    pub fn ensure_agent_principal(&self, name: &str) -> crate::memory::MemoryResult<EntityId> {
+    pub fn ensure_agent_principal(&self, name: &str) -> oneiron_contracts::memory::MemoryResult<EntityId> {
         if name.trim().is_empty() {
             return Err(Error::InvalidClaimBody("agent principal name").into());
         }
