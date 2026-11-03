@@ -12,7 +12,7 @@ use super::companion_identity::{
 use super::entities::take_injected_batch_commit_failure;
 use super::entities::{committed_entity_state_matches, set_remat_marker_logged};
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchOp;
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;

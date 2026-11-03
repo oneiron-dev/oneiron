@@ -24,10 +24,11 @@ use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{
-    DurableStepContext, DurableStepError, LlmResponse, StepOutcome, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ComposedSummary, ScopeSummaryPlan, SummaryLineSpan};
+use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeMap;
 
 /// The identity a paged sitting's composition is known by.

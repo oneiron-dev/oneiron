@@ -13,7 +13,7 @@ use super::stored_body_is;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
-use crate::result_body::ResultBodyPin;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::store::asset_file_in_txn;
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::transport::{

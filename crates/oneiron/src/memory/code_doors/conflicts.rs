@@ -3,7 +3,7 @@
 //! `memory::code_doors::conflict_types` defines the records these return.
 
 use super::*;
-use crate::repo_mutation::RepoConflictClaim;
+use crate::store::repo_mutation_record::RepoConflictClaim;
 
 impl Memory<'_> {
     pub fn code_conflict_record_as(
