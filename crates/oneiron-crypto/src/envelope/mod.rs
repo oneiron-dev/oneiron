@@ -6,6 +6,8 @@ mod seal;
 
 pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
 
+use std::io::Write;
+
 use crate::codec::{Reader, check_len, put_lp8};
 use crate::error::{Error, Result};
 use crate::keys::{Argon2Cost, MLKEM1024_CIPHERTEXT_LEN};
