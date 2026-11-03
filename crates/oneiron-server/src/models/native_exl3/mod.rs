@@ -44,7 +44,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, SchedulingReceipt,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
     SegmentManifest, WorkerBuildEvidence, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
@@ -127,7 +127,12 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
-        Box::pin(execute(route, body, segments, context, lease))
+        let engine_model = body
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.http.engine_models.get(wire))
+            .cloned();
+        Box::pin(execute(route, body, segments, context, lease, engine_model))
     }
 
     fn stream<'a>(
@@ -141,6 +146,11 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
+        let engine_model = body
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.http.engine_models.get(wire))
+            .cloned();
         Ok(Box::pin(futures_util::stream::unfold(
             Streaming::Start {
                 route,
@@ -148,6 +158,7 @@ impl OpenAiCompatTransport for NativeExl3Transport {
                 segments,
                 context,
                 lease: lease.clone(),
+                engine_model,
             },
             Streaming::step,
         )))
@@ -302,6 +313,7 @@ async fn begin(
         Some(lease),
         session,
         Some(&schedule),
+        Some(route.worker.spec().worker_id.as_str()),
     )
     .await;
     let refused = matches!(
@@ -323,6 +335,7 @@ async fn begin(
             Some(lease),
             None,
             Some(&schedule),
+            Some(route.worker.spec().worker_id.as_str()),
         )
         .await;
     }
@@ -381,6 +394,7 @@ async fn execute(
     segments: Option<Arc<SegmentManifest>>,
     context: WorkContext,
     lease: &BudgetLease,
+    engine_model: Option<ModelId>,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
@@ -405,12 +419,15 @@ async fn execute(
         }
     };
     report(&route, &last);
+    stamp_physical(&mut last, sent.physical);
     // The final's receipt, done or error, is this call's final one; the
     // Failed settlement records what its lease observed (FIX 9297).
-    if let Some(receipt) = record_receipt(&route, &sent, &last) {
+    if let Some(mut receipt) = record_receipt(&route, &sent, &last) {
+        if let Some(model) = &engine_model {
+            receipt.model = Some(model.clone());
+        }
         publisher.finish(receipt);
     }
-    stamp_physical(&mut last, sent.physical);
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
 
@@ -649,6 +666,7 @@ pub(super) async fn qualify(
         None,
         None,
         None,
+        None,
     )
     .await
     .map_err(|start| match start {
@@ -682,6 +700,7 @@ enum Streaming {
         segments: Option<Arc<SegmentManifest>>,
         context: WorkContext,
         lease: BudgetLease,
+        engine_model: Option<ModelId>,
     },
     Live(Box<Live>),
     Done,
@@ -692,6 +711,7 @@ struct Live {
     route: NativeRoute,
     sent: Sent,
     publisher: InferencePublisher,
+    engine_model: Option<ModelId>,
     target: Option<String>,
     id: String,
     created: u64,
@@ -711,6 +731,7 @@ impl Streaming {
                 segments,
                 context,
                 lease,
+                engine_model,
             } => {
                 let target = body
                     .get("model")
@@ -720,7 +741,7 @@ impl Streaming {
                     Ok(Begun::Sent(sent)) => {
                         // One physical request, observed from its send (FIX 9297).
                         let publisher = InferencePublisher::begin(&lease);
-                        Box::new(Live::over(route, sent, target, publisher))
+                        Box::new(Live::over(route, sent, target, publisher, engine_model))
                             .next()
                             .await
                     }
@@ -742,11 +763,13 @@ impl Live {
         sent: Sent,
         target: Option<String>,
         publisher: InferencePublisher,
+        engine_model: Option<ModelId>,
     ) -> Self {
         Self {
             route,
             sent,
             publisher,
+            engine_model,
             model: target.clone().map_or(JsonValue::Null, JsonValue::String),
             target,
             id: format!("chatcmpl-native-{}", transport::next_request_id()),
@@ -802,12 +825,15 @@ impl Live {
                 Ok(Event::Final(mut last)) => {
                     self.finished = true;
                     report(&self.route, &last);
+                    stamp_physical(&mut last, self.sent.physical);
                     // The final's receipt, done or error, is this call's
                     // final one; a cut stream keeps its progress (FIX 9297).
-                    if let Some(receipt) = record_receipt(&self.route, &self.sent, &last) {
+                    if let Some(mut receipt) = record_receipt(&self.route, &self.sent, &last) {
+                        if let Some(model) = &self.engine_model {
+                            receipt.model = Some(model.clone());
+                        }
                         self.publisher.finish(receipt);
                     }
-                    stamp_physical(&mut last, self.sent.physical);
                     self.finish(last);
                 }
                 Err(Cut(error)) => {
