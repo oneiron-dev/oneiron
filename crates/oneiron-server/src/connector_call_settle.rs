@@ -167,6 +167,13 @@ fn settle_connector_calls(
     backoffs
         .0
         .retain(|call_ref, _| pending.iter().any(|call| call.call_ref == *call_ref));
+    // The tries map's keys are the input rows the pending listing leaves
+    // out: prune it against those rows, or it grows for the whole run
+    // (FIX 10551). A failed read keeps the map, never resets a try count.
+    match vault.undecided_connector_input_refs() {
+        Ok(refs) => backoffs.1.retain(|call_ref, _| refs.contains(call_ref)),
+        Err(error) => tracing::warn!(%error, "connector call resume tries not pruned"),
+    }
     let now = Instant::now();
     // A call a budget window paces waits for the window, and goes in the
     // first pass after it opens, whatever its backoff (FIX 8686).
