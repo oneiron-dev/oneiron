@@ -10,6 +10,7 @@ use crate::api::{
     Sha256Digest, SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
 };
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
+use crate::memory::MemoryLedger;
 
 use super::super::{cms, pdf, tsp};
 use super::dss::append_dss;
@@ -153,11 +154,16 @@ async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
 ) -> Result<Option<tsp::ValidatedToken>, SealError> {
-    let anchors = trust_anchors(ctx.config)?;
+    let memory: Arc<MemoryLedger> = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
+    let anchors = trust_anchors(ctx.config, &memory)?;
     for endpoint in &ctx.config.timestamp_authorities {
         let mut nonce = [0u8; 16];
         rsa::rand_core::OsRng.fill_bytes(&mut nonce);
-        let req_der = tsp::build_request(imprint, &nonce)?;
+        let req_der = tsp::build_request(imprint, &nonce, &memory)?;
         let response = ctx
             .fetcher
             .fetch(FetchRequest {
@@ -183,9 +189,14 @@ async fn fetch_timestamp_token(
             endpoint.expected_policy_oid.as_deref(),
             &anchors,
             ctx.clock_ms,
+            &memory,
         );
-        if let Ok(token) = validated {
-            return Ok(Some(token));
+        // Only an ordinary response failure moves to the next authority; a
+        // memory refusal is the operation's error, never a failover.
+        match validated {
+            Ok(token) => return Ok(Some(token)),
+            Err(err) if err.is_retryable() => return Err(err),
+            Err(_) => continue,
         }
     }
     Ok(None)
@@ -268,13 +279,23 @@ async fn try_capacity(
         code: FatalCode::PdfInvariantFailed,
     })?;
     let content_digest = pdf::hash_byte_range(&draft.bytes, br)?;
-    let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der)?;
+    let memory: Arc<MemoryLedger> = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
+    let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der, &memory)?;
     let attrs = vec![
-        cms::attr_content_type_data(),
-        cms::attr_message_digest(&content_digest),
-        cms::attr_signing_cert_v2(&identity.signer_certificate_der, &issuer, &serial),
+        cms::attr_content_type_data(&memory)?,
+        cms::attr_message_digest(&content_digest, &memory)?,
+        cms::attr_signing_cert_v2(&identity.signer_certificate_der, &issuer, &serial, &memory)?,
     ];
-    let (wire, signing) = cms::assemble_signed_attrs(attrs);
+    let (wire, signing) = cms::assemble_signed_attrs(attrs, &memory)?;
+    // The request below clones the wire attributes for the backend; the
+    // clone is admitted here, the original was admitted where assembled.
+    memory
+        .admit_len::<u8>(wire.len())
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
     let request = SignRevisionRequest {
         operation_id: sub_operation_id(operation_id, input_sha, "sign", capacity),
         revision_id,
@@ -288,7 +309,7 @@ async fn try_capacity(
     if target >= PadesProfile::BaselineT {
         let imprint = cms::sha256(&signature);
         if let Some(t) = fetch_timestamp_token(ctx, &imprint).await? {
-            unsigned.push(cms::attr_ts_token(&t.content_info_der));
+            unsigned.push(cms::attr_ts_token(&t.content_info_der, &memory)?);
             token = Some(t);
         }
     }
@@ -299,7 +320,7 @@ async fn try_capacity(
         serial_der: &serial,
         chain_ders: &identity.certificate_chain_der,
     };
-    let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned);
+    let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned, &memory)?;
     ctx.limits
         .observed
         .note(Counter::ContentsBytes, cms_der.len());
