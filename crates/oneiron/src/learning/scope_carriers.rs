@@ -233,7 +233,7 @@ pub(crate) fn erase_review_scope_in_txn(
         };
         let mut named_here = false;
         let mut critic_touched = false;
-        let mut critic_opaque = None;
+        let mut critic_opaque: Option<String> = None;
         if let Some(rmpv::Value::Array(artifacts)) = field_mut(&mut review, "artifacts") {
             for artifact in artifacts {
                 let mut artifact_named = false;
