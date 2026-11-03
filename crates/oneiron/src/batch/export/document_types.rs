@@ -41,6 +41,11 @@ pub struct WholeVaultDocumentManifest {
     /// Whether this archive carries custody secret values (the default for
     /// the owner's own archive) or each custody record as its handle only.
     pub secrets_included: bool,
+    /// FIX 12066: the custody secrets the exporting install's fold proves an
+    /// install holds but that have no row there, so this archive carries no
+    /// handle of theirs: each comes as its export secret supplement. Ids,
+    /// lowercase hex.
+    pub fold_only_secrets: Vec<String>,
     /// OF-370: embedding setup the nulling pass withheld from this archive.
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
     /// FIX 2768: side rows this archive holds out, and why.
@@ -353,6 +358,10 @@ pub struct WholeVaultImportReceipt {
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
+    /// FIX 12066: the fold-only custody secrets the archive's manifest names
+    /// that have no record here after the import: each is owed through its
+    /// export secret supplement.
+    pub owed_secrets: Vec<crate::EntityId>,
     /// What the archive's embedding setup did here (OF-370).
     pub embedding_setup: EmbeddingSetupImport,
     /// FIX 2768: side rows written, and those already here unchanged.
