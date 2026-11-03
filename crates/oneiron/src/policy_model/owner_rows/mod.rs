@@ -29,8 +29,9 @@ pub use world_privacy_will::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowChange;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
 use crate::{EntityId, Vault};
+use oneiron_contracts::memory::MemoryResult;
 
 fn denied() -> Error {
     Error::InvalidConfig("a live policy-power holder is required".to_owned())

@@ -2,17 +2,19 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
+use oneiron_authority::federation::Scope;
 use std::collections::BTreeSet;
 
 mod backup_signer;
 mod connect;
 mod connect_lifecycle;
-pub use connect_lifecycle::ConnectRescopeOffer;
+pub use connect_lifecycle::{
+    ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+};
 mod courtesy;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;

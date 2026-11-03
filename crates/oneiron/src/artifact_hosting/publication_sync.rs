@@ -125,7 +125,7 @@ pub(super) fn mark_publication_in_txn(
 }
 
 fn publication_entity_id(channel: ArtifactPointerChannel, artifact: &str) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         PUBLICATION_ID_DOMAIN,
         &[&[channel.key_byte()], artifact.as_bytes()],
     )
@@ -247,7 +247,9 @@ impl Vault {
                         pointer,
                         owner: found.code_artifact_id,
                         rows: ExportWire::Code {
-                            snapshot: crate::codebase::encode_codebase_snapshot(&found.snapshot)?,
+                            snapshot: crate::store::code_snapshot::encode_codebase_snapshot(
+                                &found.snapshot,
+                            )?,
                         },
                     })
                 })
@@ -364,7 +366,7 @@ impl Vault {
         snapshot: &[u8],
     ) -> Result<ArtifactPublicationOutcome> {
         use ArtifactPublicationOutcome::Refused;
-        let Ok(snapshot) = crate::codebase::decode_codebase_snapshot(snapshot) else {
+        let Ok(snapshot) = crate::store::code_snapshot::decode_codebase_snapshot(snapshot) else {
             return Ok(Refused);
         };
         // The fork hash is recomputed from the manifest, never taken on trust.
@@ -404,7 +406,7 @@ impl Vault {
             return Ok(Staged);
         };
         if body.class != CodeArtifactClass::Artifact
-            || crate::codebase::RepoRef::parse(&body.repo_ref)
+            || crate::store::code_snapshot::RepoRef::parse(&body.repo_ref)
                 .ok()
                 .as_ref()
                 != Some(&snapshot.repo_ref)

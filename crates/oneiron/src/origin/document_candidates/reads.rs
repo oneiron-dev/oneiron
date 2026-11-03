@@ -14,7 +14,7 @@ use super::super::publication::OriginPublicationStatus;
 use super::candidate_digest;
 use crate::error::{Error, Result};
 use crate::merge_queue::CodePushSourceLink;
-use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::store::repo_proposal_record::RepoProposalStatus;
 use crate::{EntityId, Vault};
 
 impl Vault {

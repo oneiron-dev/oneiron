@@ -22,10 +22,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::critic::LensCatalog;
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::RepoProposalReview;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::critic_lens::LensCatalog;
 use crate::{EntityId, Vault};
 
 /// What a vault with no review policy does with its queue work.

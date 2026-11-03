@@ -6,8 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-pub use crate::code_revision::{CodeImportAcceptance, CodeImportAnchor};
 use crate::memory::codebase_doors::CodeSnapshotFile;
+pub use crate::{
+    code_revision::CodeImportAcceptance, store::code_import_manifest::CodeImportAnchor,
+};
 
 /// One import of a served repository's chosen commit.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

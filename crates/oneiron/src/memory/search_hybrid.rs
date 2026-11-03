@@ -152,7 +152,7 @@ impl Memory<'_> {
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)
             .gate_candidates(&gate)
-            .boost_recency(crate::pipeline::DEFAULT_RECENCY_HALF_LIFE_DAYS)
+            .boost_recency(crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS)
             .boost_salience()
             .boost_confidence()
             .boost_gravity()

@@ -6,8 +6,9 @@ use std::time::Instant;
 use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::{RetrievalWithTelemetry, WorldScope};
+use crate::pipeline::WorldScope;
 use crate::serialize::{SerializeConfig, serialize_pack_with_telemetry};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
 
 use super::super::edge_walk::{EdgeWalkOptions, EdgeWalkResult, load_entity_edges, walk_edges};
 use super::super::empty_pack::{
@@ -41,7 +42,7 @@ const DEFAULT_CONTEXT_PACK_DEADLINE: std::time::Duration = std::time::Duration::
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
     pub(crate) embedding_matches:
-        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        std::collections::HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     /// Only the handle returned by successful post-filter finalization.
     pub(crate) run_id: Option<crate::store::RetrievalRunId>,
     /// Whether the vector channel completed.
@@ -70,9 +71,9 @@ impl<'a> ContextPackBuilder<'a> {
     /// The profile section, admitted and read in one snapshot.
     fn psych_profile_section(
         &self,
-        key: &crate::psych_profile::PsychProfileKey,
+        key: &crate::write_envelope::profile_snapshot::PsychProfileKey,
     ) -> Result<PsychProfilePackSection> {
-        let id = crate::psych_profile::psych_profile_entity_id(key);
+        let id = crate::write_envelope::profile_snapshot::psych_profile_entity_id(key);
         if let Some(reader) = self.l2_summary_reader {
             reader.persist_grant_clock()?;
         }
@@ -821,7 +822,7 @@ impl<'a> ContextPackBuilder<'a> {
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
-            budget: self.token_budget,
+            budget: self.effective_token_budget(),
             allocation: self.token_allocation,
             include_stats: self.include_stats,
             merge_neighbors: self.merge_neighbors,

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use super::CheckPhase;
 use crate::EntityId;
-use crate::code_revision::CodeRevision;
-use crate::repo_mutation::RepoForkHash;
+use crate::store::code_revision_record::CodeRevision;
+use crate::store::repo_fork::RepoForkHash;
 
 /// One bound checker receipt a tested revision stands on. The receipt on
 /// the checker's work row keeps the inputs, action, output and attempt; the

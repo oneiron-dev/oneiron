@@ -274,7 +274,7 @@ pub enum ConsentReceipt {
     CodeWaitSettled {
         decision_id: GateDecisionId,
         links: CodeWaitReceiptLinks,
-        outcome: crate::code_run::CodeConsentSettleOutcome,
+        outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome,
     },
     /// A code run consumed a settled wait's reply into its replay
     /// (DOOR-079): it names the settlement it consumed.
@@ -347,7 +347,9 @@ impl CodeWaitReceiptLinks {
             ConsentReceipt::CodeWaitSettled {
                 decision_id: record.decision_id,
                 links,
-                outcome: crate::code_run::CodeConsentSettleOutcome::from_tag(kind & 0x0f)?,
+                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
+                    kind & 0x0f,
+                )?,
             }
         };
         (record.content_kind == CONSENT_CONTENT_KIND

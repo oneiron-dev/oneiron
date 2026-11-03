@@ -15,9 +15,9 @@
 //! chain whose own seal consumed a push completely takes that push's
 //! incoming tip as its parent too (FIX 7540). Every other revision keeps
 //! the export's own immediate-parent rule, unchanged.
-use crate::code_revision::CodeRevision;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::store::code_revision_record::CodeRevision;
 use crate::{EntityId, Vault};
 
 impl Vault {

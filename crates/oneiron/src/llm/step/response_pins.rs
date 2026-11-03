@@ -19,7 +19,10 @@
 //!
 //! A replica's copy of a step claim was filed by no write here, so no row of
 //! the table names it: its teardown takes the pin its own value names, the
-//! exact artifact, version and content hash (FIX 8500).
+//! exact artifact, version and content hash (FIX 8500). A teardown's
+//! elsewhere check reads a replica's carried pin the same way, so a version
+//! a retained replica claim still pins is never released under it
+//! (FIX 12122).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,18 +118,31 @@ fn carried_pin_in_txn(
     let Some(raw) = store.port_entity_raw(txn, claim)? else {
         return Ok(None);
     };
+    Ok(carried_pin_in_raw(&raw))
+}
+
+/// [`carried_pin_in_txn`] over a stored row already read. Most claims are
+/// not a step's: their bodies are never decoded here (as
+/// `response_bodies::step_claim_carriage` reads them).
+fn carried_pin_in_raw(raw: &[u8]) -> Option<StepResponseRef> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
-        return Ok(None);
+        return None;
     }
-    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
-        return Ok(None);
-    };
+    let encoded = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let predicate = super::types::DREAMER_STEP_PREDICATE.as_bytes();
+    if !encoded
+        .windows(predicate.len())
+        .any(|window| window == predicate)
+    {
+        return None;
+    }
+    let body = crate::claim::decode_claim_body(encoded, true).ok()?;
     if body.predicate != super::types::DREAMER_STEP_PREDICATE {
-        return Ok(None);
+        return None;
     }
-    Ok(super::step_claim::decode_step_claim_value(&body.value)
+    super::step_claim::decode_step_claim_value(&body.value)
         .ok()
-        .and_then(|decoded| decoded.response_ref))
+        .and_then(|decoded| decoded.response_ref)
 }
 
 /// One pin of `claim`'s teardown: the bytes' descriptors are read before
@@ -179,7 +195,10 @@ fn release_pin_in_txn(
 
 /// Whether a retained claim other than `claim` pins the exact version `pin`
 /// names. Every pin row is read, none skipped: a closed historical claim
-/// still holds its recorded answer.
+/// still holds its recorded answer. The pin a replica's copy carries in its
+/// own value holds the version the same way (FIX 12122): no pin row names
+/// it, so the claim type index is walked for it, one carried pin at a time.
+/// A claim with a pin row was judged by the walk above.
 fn pinned_elsewhere_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -190,6 +209,21 @@ fn pinned_elsewhere_in_txn(
         let (other, pins) = row?;
         if other != *claim
             && pins.contains(pin)
+            && row_retained(store, txn, &other, ENTITY_TYPE_CLAIM)?
+        {
+            return Ok(true);
+        }
+    }
+    for entry in store.type_index.prefix_iter(txn, &[ENTITY_TYPE_CLAIM])? {
+        let (key, _) = entry?;
+        let other = crate::vault::entity_id_from_type_index_key(&key)?;
+        if other == *claim || PINS.get(store, txn, &other)?.is_some() {
+            continue;
+        }
+        let Some(raw) = store.port_entity_raw(txn, &other)? else {
+            continue;
+        };
+        if carried_pin_in_raw(&raw) == Some(*pin)
             && row_retained(store, txn, &other, ENTITY_TYPE_CLAIM)?
         {
             return Ok(true);
