@@ -42,6 +42,8 @@ checkpoint or its pages checked again before each; any other copies at
 once, as before. The snapshot format and the publication are the same
 either way.
 """
+import hashlib
+import json
 import time
 
 import torch
@@ -68,17 +70,44 @@ IDENTITY_FIELDS = ("model", "tokenizer", "template", "runtime")
 HEADER_FIELDS = frozenset(("checkpoint", "compatibility", "kv", "state", "tensors", "token_count"))
 
 
+def attention_digest(cache):
+    """The attention and position settings a snapshot depends on, as a hex
+    digest, or None when they cannot be named: per-layer kinds and window
+    sizes plus the recurrent state class, all static config of the cache
+    the snapshot was built from."""
+    try:
+        layers = []
+        for key in sorted(cache.layers, key=repr):
+            layer = cache.layers[key]
+            entry = {"kind": type(layer).__name__}
+            module = getattr(layer, "module", None)
+            for field in ("sliding_window", "kv_state_size"):
+                value = getattr(module, field, None)
+                if value is not None:
+                    entry[field] = int(value)
+            layers.append(entry)
+        recurrent = getattr(cache, "recurrent_state_cls", None)
+        doc = {"layers": layers, "recurrent": getattr(recurrent, "__name__", None)}
+        return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+    except Exception:
+        return None
+
+
 def compatibility(identity, generator):
     """What an imported snapshot must match on this worker, or None when it
-    cannot write or rebuild one: the identity less its epoch, the KV layout
-    and the recurrent state kind."""
+    cannot write or rebuild one: the identity less its epoch, the KV layout,
+    the recurrent state kind, and the attention digest."""
     if identity is None or not snapshot.hostable():
         return None
     record = identity.record(None)
     kv, kind = snapshot.kv_layout(generator.cache), state.portable_kind(generator.cache)
     if kv is None or kind is None or any(record.get(field) is None for field in IDENTITY_FIELDS):
         return None
-    return dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+    compat = dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+    attention = attention_digest(generator.cache)
+    if attention is not None:
+        compat["attention"] = attention
+    return compat
 
 
 def kv_extent(frontier):
@@ -113,9 +142,11 @@ class SessionLayer(Registry):
     def capability(self):
         if self.compatibility is None:
             return {"minor": SCHEMA_MINOR, "ops": list(OPS)}
-        return {"minor": SNAPSHOT_MINOR, "ops": list(OPS + SNAPSHOT_OPS),
-                "snapshot": {"schema": snapshot.SCHEMA, "encoding": snapshot.ENCODING, "hash": snapshot.HASH,
-                             "state_kinds": [self.compatibility["state"]]}}
+        snapshot_caps = {"schema": snapshot.SCHEMA, "encoding": snapshot.ENCODING, "hash": snapshot.HASH,
+                         "state_kinds": [self.compatibility["state"]]}
+        if self.compatibility.get("attention") is not None:
+            snapshot_caps["attention"] = self.compatibility["attention"]
+        return {"minor": SNAPSHOT_MINOR, "ops": list(OPS + SNAPSHOT_OPS), "snapshot": snapshot_caps}
 
     def answer(self, op, body, conversation):
         """The answer body of session op `op` (not `session.generate`; for

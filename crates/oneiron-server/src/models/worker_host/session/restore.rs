@@ -117,13 +117,16 @@ fn turn_authority(turn: &ManifestDigest) -> Option<Arc<dyn CheckpointAuthority>>
         .and_then(Weak::upgrade)
 }
 
-/// The newest kept snapshot of `vault` the turn keyed by `key` may restore.
+/// The newest kept snapshot of `vault` the turn keyed by `key` may restore:
+/// only its conversation's rows are read (FIX 11286).
 async fn candidate(vault: &Arc<Vault>, key: &SessionKey) -> Option<SnapshotRecord> {
     let reading = Arc::clone(vault);
-    let records = tokio::task::spawn_blocking(move || reading.inference_snapshot_records())
-        .await
-        .ok()?
-        .ok()?;
+    let conversation = key.anchor.conversation;
+    let records =
+        tokio::task::spawn_blocking(move || reading.inference_snapshot_records_for(&conversation))
+            .await
+            .ok()?
+            .ok()?;
     let wanted = identity_part(&key.identity, &key.conditioning);
     records
         .into_iter()

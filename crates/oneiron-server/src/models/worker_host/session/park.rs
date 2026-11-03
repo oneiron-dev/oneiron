@@ -238,6 +238,9 @@ async fn park(candidate: Candidate) {
                 })
         {
             session.phase = Phase::Ready;
+            // A skip parks again only on its next commit, which installs a
+            // fresh basis; the retained authority is dead weight from here.
+            session.basis = None;
         }
     }
 }
@@ -510,9 +513,11 @@ fn manifest(candidate: &Candidate, compatibility: SnapshotCompatibility) -> Snap
 
 /// The part of a snapshot's compatibility a turn names before any import:
 /// the worker's identity less its epoch, and its execution mode, or where
-/// the identity names none (a session worker's hello does not, the mode
-/// being the call's) the digest of the call's conditioning, its template
-/// arguments and tool definitions.
+/// the identity names none (a session worker's hello does not) the digest
+/// of the call's conditioning, its template arguments and tool definitions.
+/// The host fill is deliberate: the worker's execution mode is per-call
+/// (server settings plus template arguments) and not hello-nameable, while
+/// its varying parts already sit inside the conditioning.
 pub(super) fn identity_part(
     identity: &CacheIdentity,
     conditioning: &ConditioningDigest,
@@ -527,16 +532,21 @@ pub(super) fn identity_part(
 
 /// What the snapshot was computed with: [`identity_part`], then from the
 /// snapshot's own header the KV layout and quantization, the state kind,
-/// and the schema. The worker names no attention or position settings
-/// apart: the digest of its whole snapshot compatibility, which fixes them
-/// with the weights and the layout, stands for them. `None` when the
-/// header does not read or a field is left unnamed.
+/// and the schema. The attention digest is the worker's own where its
+/// header names one (FIX 11284), else the legacy digest of its whole
+/// snapshot compatibility, which fixes the settings with the weights and
+/// the layout. `None` when the header does not read or a field is left
+/// unnamed.
 fn compatibility(key: &SessionKey, snapshot: &[u8]) -> Option<SnapshotCompatibility> {
     let header = header(snapshot)?;
     let worker = header.get("compatibility")?;
     let mut compatibility = identity_part(&key.identity, &key.conditioning);
     compatibility.quant = json_digest(b"oneiron.snapshot.quant.v1\0", worker.get("kv")?);
-    compatibility.attention = json_digest(b"oneiron.snapshot.attention.v1\0", worker);
+    compatibility.attention = worker
+        .get("attention")
+        .and_then(JsonValue::as_str)
+        .and_then(|named| CacheDigest::new(named).ok())
+        .or_else(|| json_digest(b"oneiron.snapshot.attention.v1\0", worker));
     compatibility.state_schema = u32::try_from(SNAPSHOT_SCHEMA).ok();
     compatibility.state_kinds = Some(vec![worker.get("state")?.as_str()?.to_owned()]);
     compatibility.complete().then_some(compatibility)
