@@ -75,9 +75,9 @@ impl AgentPackFacets {
     }
 
     /// The projection a travelling pack's whole folder holds, `None` for
-    /// the native facets. Each skill's SKILL.md must name the skill and
-    /// version its `skills.json` row pins, so the skill the common door
-    /// installs is the one the agent depends on.
+    /// the native facets. Each skill's format, native metadata and source
+    /// hash revalidate against its `skills.json` row, so the common door
+    /// installs the skill the agent depends on (FIX 3276).
     pub(super) fn travel(&self, files: &[HubFile]) -> Result<Option<AgentPackTravelProjection>> {
         let policy = files
             .iter()

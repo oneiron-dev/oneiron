@@ -486,6 +486,33 @@ impl From<AgentPackSkillCall> for SkillCallContract {
     }
 }
 
+/// A reference-free skill dependency: its id and version floor, never an
+/// entity ref (FIX 3276).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackSkillDependency {
+    pub skill_id: String,
+    pub min_version: Option<String>,
+}
+
+impl From<&SkillDependency> for AgentPackSkillDependency {
+    fn from(dependency: &SkillDependency) -> Self {
+        Self {
+            skill_id: dependency.skill_id.clone(),
+            min_version: dependency.min_version.clone(),
+        }
+    }
+}
+
+impl From<AgentPackSkillDependency> for SkillDependency {
+    fn from(dependency: AgentPackSkillDependency) -> Self {
+        Self {
+            skill_id: dependency.skill_id,
+            min_version: dependency.min_version,
+        }
+    }
+}
+
 /// One `skills.json` row: a skill dependency and the native metadata its
 /// receiver needs, pinned by content hash (FIX 3276).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -500,6 +527,7 @@ pub struct AgentPackSkillRef {
     pub desc: String,
     pub role: AgentPackSkillRole,
     pub call: Option<AgentPackSkillCall>,
+    pub dependencies: Vec<AgentPackSkillDependency>,
 }
 
 /// One skill the agent depends on, with its body and native metadata.
@@ -514,6 +542,7 @@ pub struct AgentPackSkill {
     pub desc: String,
     pub role: AgentPackSkillRole,
     pub call: Option<AgentPackSkillCall>,
+    pub dependencies: Vec<AgentPackSkillDependency>,
     /// The skill's files, path-sorted, relative to its folder.
     pub files: Vec<HubFile>,
 }
@@ -530,6 +559,7 @@ impl AgentPackSkill {
         desc: String,
         role: AgentPackSkillRole,
         call: Option<AgentPackSkillCall>,
+        dependencies: Vec<AgentPackSkillDependency>,
     ) -> Result<Self> {
         files.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
         let content_hash = tree_hash(&files)?;
@@ -542,6 +572,7 @@ impl AgentPackSkill {
             desc,
             role,
             call,
+            dependencies,
             files,
         };
         skill.validate()?;
@@ -577,6 +608,7 @@ impl AgentPackSkill {
             package.record.desc.clone(),
             package.record.role.into(),
             package.record.call.as_ref().map(Into::into),
+            package.record.dependencies.iter().map(Into::into).collect(),
         )
     }
 
@@ -592,6 +624,7 @@ impl AgentPackSkill {
             desc: self.desc.clone(),
             role: self.role,
             call: self.call.clone(),
+            dependencies: self.dependencies.clone(),
         }
     }
 
@@ -609,19 +642,16 @@ impl AgentPackSkill {
             0.5,
             false,
             true,
-            Vec::new(),
-            rmpv::Value::Map(vec![(
-                rmpv::Value::from("source"),
-                rmpv::Value::from("hub-folder"),
-            )]),
+            self.dependencies
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            crate::skill_hub::hub_folder_provenance(&self.files),
         )
         .with_role(self.role.into(), self.call.clone().map(Into::into))
         .with_content_hash(SkillContentHash::parse_hex(&self.content_hash)?);
-        crate::skill_hub::folder::package_from_source(
-            &record,
-            self.files.clone(),
-            self.format.into(),
-        )
+        crate::skill_hub::package_from_source(&record, self.files.clone(), self.format.into())
     }
 
     fn validate(&self) -> Result<()> {
@@ -637,6 +667,15 @@ impl AgentPackSkill {
         }
         if (self.role == AgentPackSkillRole::Callable) != self.call.is_some() {
             return Err(invalid("a callable skill needs its call contract"));
+        }
+        if self.dependencies.iter().any(|dependency| {
+            dependency.skill_id.trim().is_empty()
+                || dependency
+                    .min_version
+                    .as_deref()
+                    .is_some_and(|version| version.trim().is_empty())
+        }) {
+            return Err(invalid("a skill dependency needs an id and version floor"));
         }
         if let Some(file) = self
             .files
@@ -922,6 +961,7 @@ impl AgentPackTravelProjection {
                 reference.desc,
                 reference.role,
                 reference.call,
+                reference.dependencies,
             )?;
             if skill.content_hash != reference.content_hash {
                 return Err(invalid("a skill's files do not match its content hash"));
