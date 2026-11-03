@@ -285,7 +285,8 @@ impl Vault {
     }
 
     /// Keeps the travel receipt `vault.artifacts.export` keeps (OF-491) for
-    /// a copy a download door served: the copy, its digest and who took it.
+    /// a copy a download door served: the copy, the digest of the bytes
+    /// actually served and who took it (FIX 1372).
     /// No born-with text leaves a download, so it is never gated on this.
     ///
     /// # Errors
@@ -298,7 +299,7 @@ impl Vault {
         self.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,
-            hash_hex(&file.content_hash),
+            hash_hex(blake3::hash(&file.bytes).as_bytes()),
             by,
             &crate::share_travel::BornWith::new(),
         )

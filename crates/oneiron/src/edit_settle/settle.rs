@@ -116,7 +116,6 @@ impl Vault {
                 "a deck proposal answering a thread settles only under that thread's brief",
             )));
         }
-        let deck_limits = deck.map(|_| self.docedit_package_limits()).transpose()?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -310,6 +309,12 @@ impl Vault {
                 } else {
                     None
                 };
+                // Deck replay ceilings resolve in this txn's snapshot, beside the
+                // DOCX/PPTX policy reads: a narrowing committed before this write
+                // applies to the replay (FIX 318).
+                let deck_limits = deck
+                    .map(|_| self.docedit_package_limits_in_txn(wtxn))
+                    .transpose()?;
                 let mut checked_deck = None;
                 if let Some(limits) = pptx_limits {
                     if proposal.base_version != Some(base.version) {

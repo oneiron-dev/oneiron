@@ -78,7 +78,11 @@ pub struct ArtifactExportFile {
     pub kind: ArtifactKind,
     pub name: String,
     pub media_type: String,
+    /// The stored version's digest.
     pub content_hash: String,
+    /// The digest of `content_base64`'s decoded bytes, after any masking or
+    /// author-token projection (FIX 1372).
+    pub bytes_hash: String,
     pub born_with: BornWith,
     pub content_base64: String,
 }
@@ -500,10 +504,11 @@ impl Memory<'_> {
         };
         let born_with = travel.project(text);
         let content_hash = super::hash_hex(&file.content_hash);
+        let bytes_hash = super::hash_hex(blake3::hash(&file.bytes).as_bytes());
         vault.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,
-            content_hash.clone(),
+            bytes_hash.clone(),
             &self.actor(),
             &born_with,
         )?;
@@ -514,6 +519,7 @@ impl Memory<'_> {
             name: file.name,
             media_type: file.media_type,
             content_hash,
+            bytes_hash,
             born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
         }))
