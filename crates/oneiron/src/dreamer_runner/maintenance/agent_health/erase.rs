@@ -229,11 +229,7 @@ pub(crate) fn erase_sources_in_txn(
 /// body goes, so its kind reads there; a kind that no longer reads, or a
 /// row that no longer parses, cannot rule either out and scrubs too, as an
 /// unreadable row names an actor for the actor scrubs (FIX 8908).
-fn widened_scrub_owed(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+fn widened_scrub_owed(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {
         return Ok(true);
     };
@@ -249,8 +245,9 @@ fn widened_scrub_owed(
 /// Whether the live card standing under `card`'s key holds its Coach draft
 /// erased (FIX 10432): a saved Weave copy's serve-time recheck asks it for
 /// a draft that predates `source_rows`, whose sources no tombstone check
-/// can name. `false` when no live card stands there, or its draft reads
-/// unerased: only a positive erase signal clears the copy's text.
+/// can name. `false` when no live card stands there, the row does not parse,
+/// or its draft reads unerased: only a positive erase signal clears the
+/// copy's text (L07-A's FIX 10432 condition).
 pub(crate) fn live_coach_draft_erased_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -258,7 +255,9 @@ pub(crate) fn live_coach_draft_erased_in_txn(
 ) -> Result<bool> {
     let key = card_key(card.subject, card.signal, card.task);
     Ok(CARDS
-        .get(store, txn, &key)?
+        .get(store, txn, &key)
+        .ok()
+        .flatten()
         .is_some_and(|live| live.coach_draft_erased()))
 }
 
