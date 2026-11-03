@@ -1,9 +1,11 @@
 //! The authenticated NOTE state envelope (FIX 2401; OF-073): every NOTE
 //! text-plane frame names its head, its head sequence, the seal its
-//! authority holds and the NOTE's own overrides, before the document bytes.
-//! A seal never moves once written, so each frame carries the one seal or
-//! none, and a replica installs it with the state it froze; the overrides
-//! land in the same write (FIX 3819). Window carriers never carry a seal.
+//! authority holds, the NOTE's own overrides and, on the owner lane, its
+//! pending fork/proposal workflows, before the document bytes. A seal
+//! never moves once written, so each frame carries the one seal or none,
+//! and a replica installs it with the state it froze; the overrides and
+//! workflows land in the same write (FIX 3819, FIX 7787). Window carriers
+//! never carry a seal.
 
 use crate::error::Result;
 use crate::note::NoteSeal;
@@ -19,6 +21,9 @@ const SEAL_LEN: usize = 4;
 /// Bytes of the overrides length field. A zero length carries none.
 const OVERRIDES_LEN: usize = 4;
 
+/// Bytes of the workflows length field. A zero length carries no section.
+const WORKFLOWS_LEN: usize = 4;
+
 /// The largest overrides section a frame carries: four small policy
 /// members encode far below this; anything larger is not our frame.
 const MAX_OVERRIDES_LEN: usize = 1024;
@@ -29,19 +34,23 @@ pub(crate) struct NoteStateEnvelope<'a> {
     pub(crate) seq: u64,
     pub(crate) seal: Option<NoteSeal>,
     pub(crate) overrides: &'a [u8],
+    pub(crate) workflows: &'a [u8],
     pub(crate) document: &'a [u8],
 }
 
 /// The payload of `note`'s frame at `head` (its head document and head
 /// sequence) over `document`, with the seal and the NOTE's own overrides
-/// read in the export's own `txn`. Its sealer reads as no one where this
-/// vault erased it; a NOTE with no overrides carries an empty set.
+/// read in the export's own `txn`, and its owner-lane `workflows` section
+/// (empty off that lane and on an unchanged update). Its sealer reads as
+/// no one where this vault erased it; a NOTE with no overrides carries an
+/// empty set.
 pub(super) fn payload(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     (head, seq): (EntityId, u64),
     document: &[u8],
+    workflows: &[u8],
 ) -> Result<Vec<u8>> {
     let seal = match crate::note::note_seal_in_txn(&vault.store, txn, note)? {
         Some(mut seal) => {
@@ -54,6 +63,8 @@ pub(super) fn payload(
     let overrides = crate::note::encode_frame_overrides_in_txn(vault, txn, &note)?;
     let overrides_len =
         u32::try_from(overrides.len()).map_err(|_| invalid("NOTE overrides encode"))?;
+    let workflows_len =
+        u32::try_from(workflows.len()).map_err(|_| invalid("NOTE workflows encode"))?;
     Ok([
         head.as_bytes().as_slice(),
         &seq.to_be_bytes(),
@@ -61,6 +72,8 @@ pub(super) fn payload(
         &seal,
         &overrides_len.to_be_bytes(),
         &overrides,
+        &workflows_len.to_be_bytes(),
+        workflows,
         document,
     ]
     .concat())
@@ -69,8 +82,8 @@ pub(super) fn payload(
 impl<'a> NoteStateEnvelope<'a> {
     /// `payload`, a frame of `note`, read back. A seal must name `note`,
     /// decode to its one canonical spelling and hold a frontier. The
-    /// overrides section is length-checked here and decoded where it
-    /// installs; an empty set carries none.
+    /// overrides and workflows sections are length-checked here and
+    /// decoded where they install; an empty set carries none.
     pub(crate) fn decode(note: EntityId, payload: &'a [u8]) -> Result<Self> {
         let malformed = || invalid("NOTE frame head");
         let (head, rest) = payload
@@ -90,7 +103,11 @@ impl<'a> NoteStateEnvelope<'a> {
         if overrides_len > MAX_OVERRIDES_LEN {
             return Err(malformed());
         }
-        let (overrides, document) = rest.split_at_checked(overrides_len).ok_or_else(malformed)?;
+        let (overrides, rest) = rest.split_at_checked(overrides_len).ok_or_else(malformed)?;
+        let (workflows_len, rest) = rest.split_at_checked(WORKFLOWS_LEN).ok_or_else(malformed)?;
+        let workflows_len = u32::from_be_bytes(workflows_len.try_into().map_err(|_| malformed())?);
+        let workflows_len = usize::try_from(workflows_len).map_err(|_| malformed())?;
+        let (workflows, document) = rest.split_at_checked(workflows_len).ok_or_else(malformed)?;
         let seal = if seal.is_empty() {
             None
         } else {
@@ -111,6 +128,7 @@ impl<'a> NoteStateEnvelope<'a> {
             seq,
             seal,
             overrides,
+            workflows,
             document,
         })
     }

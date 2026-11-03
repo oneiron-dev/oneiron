@@ -95,6 +95,7 @@ pub(crate) fn import_note_from_authority(
         seq,
         seal: carried,
         overrides: carried_overrides,
+        workflows: carried_workflows,
         document: bytes,
     } = NoteStateEnvelope::decode(id, bytes)?;
     vault.with_write_txn_grouped(|txn| {
@@ -132,6 +133,9 @@ pub(crate) fn import_note_from_authority(
         // The NOTE's own overrides ride its frames (FIX 3819): they
         // decode, validate and land with the state in this same write.
         super::overrides::install_frame_overrides_in_txn(vault, txn, &id, carried_overrides)?;
+        // Its pending forks and proposal membership ride the same frame
+        // and land in this same write (FIX 7787).
+        super::owner_workflows::install_frame_workflows_in_txn(vault, txn, id, carried_workflows)?;
         // The imported document is measured as a load is (rule 5, FIX
         // 10342): a crossing raises a check and the import goes on.
         if let Err(error) = super::scan::measure_document(

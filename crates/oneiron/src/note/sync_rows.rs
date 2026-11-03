@@ -39,6 +39,11 @@ pub(super) const SYNC_QN_E: SideTable<HexPair, Vec<u8>, Raw> =
 pub(super) const SYNC_AD_E: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_AD_E);
 
+/// Per-admission NOTE workflow floor (`ad:nf:`); swept wholesale here, never
+/// decoded.
+pub(super) const SYNC_AD_NF: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_AD_NF);
+
 /// Durable applied/rejected NOTE-operation receipt (`nc:e:`); swept wholesale
 /// here, never decoded.
 pub(super) const SYNC_NC_E: SideTable<Vec<u8>, serde_json::Value, LegacyJson> =

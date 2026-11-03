@@ -6,6 +6,7 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DELETION_ARCHIVE_MARKER, CONTENT),
     (&t::SYNC_AD_E, CONTENT),
+    (&t::SYNC_AD_NF, CONTENT),
     (&t::AUTH_CONTROL_KEY, LIVE),
     (&t::AUTH_REVOKED_TOKEN_JTI, LIVE),
     (&t::AUTHORITY_CACHE_GENERATION, LIVE),
@@ -88,6 +89,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_MEDIA_JOB, LIVE),
     (&t::SYNC_MESH_PATH_RECEIPT, LIVE),
     (&t::SYNC_NC_E, CONTENT),
+    (&t::NOTE_FORK_LOCAL, CONTENT),
     (&t::SYNC_NOTE_INBOX, CONTENT),
     (&t::NOTE_PROPOSAL_DOC, CONTENT),
     (&t::NOTE_RECEIPT_BY_REQUEST, CONTENT),

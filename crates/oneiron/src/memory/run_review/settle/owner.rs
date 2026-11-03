@@ -24,6 +24,17 @@ impl Memory<'_> {
         let (settlement, metrics, vad) = self.with_verified_actor_write_txn(|txn| {
             self.settle_reviewed_run_in_txn(txn, owner, input, &run, approve, now)
         })?;
+        // A settled NOTE fork changes its owner-lane workflow state even
+        // when the head did not move (FIX 7787); re-export after commit.
+        #[cfg(feature = "sync")]
+        for (member, outcome) in input.review.changes.iter().zip(&settlement.changes) {
+            if outcome.verdict != RunChangeVerdict::Waiting
+                && let RunReviewChange::Note { note_ref, .. } = member
+                && let Ok(note) = EntityId::from_hex(note_ref)
+            {
+                self.vault().notify_note_document(note);
+            }
+        }
         // A curator rung this approval landed applies now, not at the next
         // nightly pass (FIX 470); one that cannot waits for that pass.
         if approve {
