@@ -410,7 +410,7 @@ impl Masker {
             return masked_copy(data, &places).map(Some);
         }
         // A sealed file is stored as it is and left unmarked.
-        if !self.mints || is_sealed(data) {
+        if !self.mints || is_sealed(data, None) {
             return Ok(None);
         }
         let mut keys = Vec::new();
@@ -423,7 +423,7 @@ impl Masker {
             }
             Ok(())
         };
-        walk_members(data, &mut visit).map_err(container::refusal)?;
+        walk_members(data, &mut visit, None).map_err(container::refusal)?;
         if keys.is_empty() {
             return Ok(None);
         }
