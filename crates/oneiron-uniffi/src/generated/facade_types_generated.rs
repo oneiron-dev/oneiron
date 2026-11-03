@@ -61038,6 +61038,8 @@ pub struct MemberAnswer {
 /// `oneiron::office_body::consent::ProposalMember`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalMember {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
     #[serde(rename = "fork")]
     pub fork: String,
     #[serde(rename = "opener")]
@@ -61079,6 +61081,8 @@ pub struct ProposalSettlement {
 /// `oneiron::office_body::consent::ProposalAsk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalAsk {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
     #[serde(rename = "ask")]
     pub ask: String,
     #[serde(rename = "forks")]
@@ -61090,6 +61094,8 @@ pub struct ProposalAsk {
 /// `oneiron::office_body::consent::ProposalAskRefusal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalAskRefusal {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
     #[serde(rename = "forks")]
     pub forks: Vec<String>,
     #[serde(rename = "reason")]
@@ -61118,7 +61124,7 @@ pub struct OfficeBodyProposal {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub ask_refused: Option<ProposalAskRefusal>,
+    pub ask_refused: Option<Vec<ProposalAskRefusal>>,
 }
 
 /// `oneiron::office_body::consent::SettleVerdict`.
@@ -61145,8 +61151,12 @@ pub enum ApproveScope {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyReviewedFork {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
     #[serde(rename = "fork_ref")]
     pub fork_ref: String,
+    #[serde(rename = "reviewed_head")]
+    pub reviewed_head: Vec<u8>,
     #[serde(rename = "reviewed_fork")]
     pub reviewed_fork: Vec<u8>,
 }
@@ -61163,8 +61173,6 @@ pub struct OfficeBodyProposalSettleRequest {
     pub verdict: SettleVerdict,
     #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ApproveScope>,
-    #[serde(rename = "reviewed_head")]
-    pub reviewed_head: Vec<u8>,
     #[serde(rename = "reviewed")]
     pub reviewed: Vec<OfficeBodyReviewedFork>,
     #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
