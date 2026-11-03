@@ -138,7 +138,8 @@ side_tables! {
         => crate::office_body::erase_proposal_actor_in_txn;
     /// The live-edit route one holder ask group carries (FIX 596): the
     /// artifact, editor, asked owners and revision. Key: id16 (ask group).
-    OFFICE_LIVE_EDIT_ASK_GROUP: VaultMeta b"office_body:live_edit_ask_group:v1:" Named;
+    OFFICE_LIVE_EDIT_ASK_GROUP: VaultMeta b"office_body:live_edit_ask_group:v1:" Named
+        => crate::office_body::erase_live_edit_ask_group_actor_in_txn;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
     OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;

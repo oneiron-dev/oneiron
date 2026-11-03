@@ -83,16 +83,16 @@ const LIVE_EDIT_OPTIONS: [(&str, LiveEditAnswer, &str); 2] = [
 /// commit; the guard, the cut and the resolve admit nothing without it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LiveEditRoute {
-    artifact: EntityId,
-    editor: EntityId,
+pub(super) struct LiveEditRoute {
+    pub(super) artifact: EntityId,
+    pub(super) editor: EntityId,
     /// The owners asked, sorted; only their words answer.
-    owners: Vec<EntityId>,
-    revision: u64,
+    pub(super) owners: Vec<EntityId>,
+    pub(super) revision: u64,
 }
 
 /// `ask group` → the live-edit route it carries (FIX 596).
-const LIVE_EDIT_GROUPS: SideTable<EntityId, LiveEditRoute, Named> =
+pub(super) const LIVE_EDIT_GROUPS: SideTable<EntityId, LiveEditRoute, Named> =
     SideTable::new(&side_table::OFFICE_LIVE_EDIT_ASK_GROUP);
 
 impl Memory<'_> {

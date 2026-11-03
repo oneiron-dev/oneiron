@@ -859,10 +859,9 @@ pub(super) fn mint_live_edit_grant_in_txn(
 
 /// Whether an active grant already carries exactly the bound a live-edit
 /// ACCEPT would mint for `editor` on `artifact` (FIX 596, C7): the resolve
-/// skips the re-mint, so repeated ACCEPTs never churn the row. Whoever
-/// minted it counts; the pending check already fails for owner-minted
-/// covering grants, so only an editor-minted identical row reaches here —
-/// impossible today, when only owners mint and owners bypass.
+/// skips the re-mint, so repeated ACCEPTs never churn the row. Only an
+/// issuer outside the editor's lineage counts: a self-minted identical row
+/// would not cover the edit and must not wedge the ask.
 pub(super) fn identical_live_edit_grant_active_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -870,8 +869,8 @@ pub(super) fn identical_live_edit_grant_active_in_txn(
     editor: &EntityId,
 ) -> Result<bool> {
     let bound = office_bound(artifact, editor)?.digest();
-    for (grant, _) in issued_grants(vault, txn)? {
-        if grant.bound().digest() == bound {
+    for (grant, issuer) in issued_grants(vault, txn)? {
+        if issuer.is_some_and(|issuer| issuer != *editor) && grant.bound().digest() == bound {
             return Ok(true);
         }
     }

@@ -2,6 +2,7 @@
 //! Entry: `erase_in_txn`.
 //! Definitions live here; office_body forwards their original names.
 
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::*;
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
@@ -12,6 +13,11 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
+    for (group, route) in LIVE_EDIT_GROUPS.scan(store, txn)? {
+        if route.artifact == *entity {
+            LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
+        }
+    }
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }
