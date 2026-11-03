@@ -27,9 +27,7 @@ use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ActorClaimRow, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_SKILL_FIT,
 };
-use super::validate::{
-    actor_claim_lineage, edit_cost_scope_name, native_actor_source, skill_fit_scope_skill,
-};
+use super::validate::{actor_claim_lineage, native_actor_source, skill_fit_scope_skill};
 
 // ---------------------------------------------------------------------------
 // The write chokepoint
@@ -234,21 +232,16 @@ pub(super) fn write_born_actor_claim_in_txn(
 /// kind is read off ONE value rather than restated at each comparison. A row
 /// with no pair scope is a SET row and dedupes on its value; a pair-scoped row
 /// supersedes whatever head shares its pair.
-enum ConflictKey<'a> {
+enum ConflictKey {
     /// SET rows (lesson / failure_mode / scope_note): the note IS the key.
     Value,
     /// [`PREDICATE_ACTOR_SKILL_FIT`]: the `(actor, skill)` pair.
     Skill(EntityId),
-    /// [`PREDICATE_ACTOR_EDIT_COST`]: the `(actor, scope)` pair.
-    Scope(&'a str),
 }
-impl<'a> ConflictKey<'a> {
-    fn from_scope(scope: Option<&'a Value>) -> Self {
+impl ConflictKey {
+    fn from_scope(scope: Option<&Value>) -> Self {
         if let Some(skill) = skill_fit_scope_skill(scope) {
             return Self::Skill(skill);
-        }
-        if let Some(name) = edit_cost_scope_name(scope) {
-            return Self::Scope(name);
         }
         Self::Value
     }
@@ -258,7 +251,6 @@ impl<'a> ConflictKey<'a> {
         match self {
             Self::Value => head.value == *value,
             Self::Skill(skill) => skill_fit_scope_skill(head.scope.as_ref()) == Some(*skill),
-            Self::Scope(scope) => edit_cost_scope_name(head.scope.as_ref()) == Some(*scope),
         }
     }
 
