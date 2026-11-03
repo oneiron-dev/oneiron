@@ -100,6 +100,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"ramp_stats:v1:",
                 b"human_task.followup.v1\0",
                 b"edit_distance/reservoir_candidate/v1\0",
+                // The authority rows' store-order index (FIX 12369): a
+                // restore resequences it in its rebuild.
+                b"authlog:store_order",
                 b"commitment_due_rev:v1:",
                 b"commitment_series_project:v1:",
                 b"outbound_grant/principal/v1\0",
