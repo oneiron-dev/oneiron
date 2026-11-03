@@ -266,7 +266,10 @@ impl GraphFsPage {
         self.read_receipt.as_ref()
     }
 
-    pub(super) fn with_read_receipt(mut self, receipt: oneiron_contracts::claim::ScopedReadReceipt) -> Self {
+    pub(super) fn with_read_receipt(
+        mut self,
+        receipt: oneiron_contracts::claim::ScopedReadReceipt,
+    ) -> Self {
         self.read_receipt = Some(receipt);
         self
     }

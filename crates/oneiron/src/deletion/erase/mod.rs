@@ -8,7 +8,6 @@ use crate::affect::vad_annotation_delete_scope_exists_in_txn;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::deindex_lexical_query_hints_for_target;
-use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::EdgeConfirmationStatus;
 use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
@@ -26,6 +25,7 @@ use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionId;
+use crate::write_envelope::claim_body::ClaimSubject;
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
