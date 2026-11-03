@@ -8,11 +8,10 @@
 //! serving descriptor) under the artifact (FIX 10436).
 //!
 //! A version's MadeBy names its process's actor: the compartment keeps the
-//! record with the artifact in that place, and the actor is an actor part. A
-//! version record has no erased form, so a restore writes it back only when
-//! its actor opens; otherwise the version is left out, never written with a
-//! stand-in. Nothing calls this until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! record with the artifact in that place, and the actor is an actor part.
+//! The erased-producer form stays in the record with no actor part (FIX 9619);
+//! any other actor must open on restore or its version stays out. Nothing
+//! calls this until KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -20,6 +19,7 @@
 
 use heed::{RoTxn, RwTxn};
 
+use super::erase::erased_producer;
 use super::versions::{BlobArtifactVersion, HEAD, VERSIONS};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -32,7 +32,14 @@ use crate::store::checkpoint_payload::rows::{
 const PROCESS: &str = "made_by.process.actor";
 
 /// Moves the process's actor out, leaving `artifact` in its place.
-fn take_process(version: &mut BlobArtifactVersion, artifact: EntityId) -> Vec<(String, EntityId)> {
+fn take_process(
+    version: &mut BlobArtifactVersion,
+    artifact: EntityId,
+    erased: EntityId,
+) -> Vec<(String, EntityId)> {
+    if version.made_by.process.actor == erased {
+        return Vec::new();
+    }
     let actor = std::mem::replace(&mut version.made_by.process.actor, artifact);
     vec![(PROCESS.to_owned(), actor)]
 }
@@ -47,6 +54,7 @@ fn put_process(version: &mut BlobArtifactVersion, field: &str, actor: EntityId) 
 
 /// Every head and version record in `txn`, by artifact.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
+    let erased = erased_producer()?;
     let mut out = Captured::default();
     for row in rows::typed_rows(dbs, txn, HEAD, &mut out)? {
         let artifact = row.key;
@@ -55,7 +63,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             OwnerRef::entity(&artifact),
             HEAD,
             row,
-            |version| take_process(version, artifact),
+            |version| take_process(version, artifact, erased),
         )?;
     }
     for row in rows::typed_rows(dbs, txn, VERSIONS, &mut out)? {
@@ -65,7 +73,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             OwnerRef::entity(&artifact),
             VERSIONS,
             row,
-            |version| take_process(version, artifact),
+            |version| take_process(version, artifact, erased),
         )?;
     }
     out.merge(crate::artifact_hosting::checkpoint::capture(dbs, txn)?);
@@ -102,16 +110,27 @@ fn join(
     value: &[u8],
     parts: &[&ActorPart],
 ) -> Result<Option<Vec<u8>>> {
+    let erased = erased_producer()?;
     if at.in_table(HEAD.decl()) {
         if parts.is_empty() {
-            return Ok(None);
+            let head = HEAD.decode_value(value)?;
+            return if head.made_by.process.actor == erased {
+                HEAD.encode_value(&head).map(Some)
+            } else {
+                Ok(None)
+            };
         }
         let head = rows::join_actors(HEAD, value, parts, put_process)?;
         return HEAD.encode_value(&head).map(Some);
     }
     if at.in_table(VERSIONS.decl()) {
         if parts.is_empty() {
-            return Ok(None);
+            let version = VERSIONS.decode_value(value)?;
+            return if version.made_by.process.actor == erased {
+                VERSIONS.encode_value(&version).map(Some)
+            } else {
+                Ok(None)
+            };
         }
         let version = rows::join_actors(VERSIONS, value, parts, put_process)?;
         return VERSIONS.encode_value(&version).map(Some);
