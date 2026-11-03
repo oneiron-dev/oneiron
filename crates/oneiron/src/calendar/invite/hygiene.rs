@@ -7,7 +7,9 @@ use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvi
 use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFacts, ChannelIdentityShape};
-use crate::comm::{CommParties, PREDICATE_COMM_LAST_TOUCH, count_active_party_claims_in_txn};
+use crate::comm::CommParties;
+use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
+use crate::comm::count_active_party_claims_in_txn;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
