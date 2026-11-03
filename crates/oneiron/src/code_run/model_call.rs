@@ -200,6 +200,16 @@ pub struct ModelCallRecord {
     pub finish_reason: crate::FinishReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<EntityId>,
+    #[serde(default)]
+    pub produced_pending: bool,
+    #[serde(default)]
+    pub tool_rounds: bool,
+    #[serde(default)]
+    pub rounds_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_of: Option<(EntityId, u64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_rows: Vec<EntityId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -236,11 +246,6 @@ impl ModelCallRecord {
         if self.erased {
             return Err(invalid("a new model-call record cannot be erased"));
         }
-        if self.source_rows.is_empty() && self.input_parts.is_empty() {
-            return Err(invalid(
-                "model-call inputs need source rows or an explicit unknown part",
-            ));
-        }
         for part in &self.input_parts {
             match part {
                 ModelCallInputPart::NewBytes { body, .. } if body.is_empty() => {
@@ -251,6 +256,9 @@ impl ModelCallRecord {
                 }
                 _ => {}
             }
+        }
+        if self.produced_pending && !self.produced_rows.is_empty() {
+            return Err(invalid("produced refs cannot be both pending and present"));
         }
         for part in &self.reasoning {
             part.validate()?;
@@ -294,6 +302,17 @@ pub fn model_call_in_txn(
     key: &(EntityId, u64, u64),
 ) -> Result<Option<ModelCallRecord>> {
     MODEL_CALLS.get(&vault.store, txn, key)
+}
+
+/// Reads a record only when its stamped actor matches. Replay never reads
+/// another actor's no-message reasoning (L07-A condition 6).
+pub fn model_call_for_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+    actor: EntityId,
+) -> Result<Option<ModelCallRecord>> {
+    Ok(model_call_in_txn(vault, txn, key)?.filter(|record| record.actor == Some(actor)))
 }
 
 pub fn model_calls_for_attempt_in_txn(
