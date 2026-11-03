@@ -3,7 +3,6 @@
 use sha2::{Digest, Sha256};
 
 use crate::code_run::dispatcher::HostSelfDispatcher;
-use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::SelfDispatchOutcome;
 use crate::lens::RecordRef;
 use crate::memory::{CommitReceipt, MessageResultAttachment, WitnessAssertions, WitnessReceipt};
@@ -68,12 +67,10 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::MemoryWrite(result) => {
                 self.note_created_ref(RecordRef::from_id(ENTITY_TYPE_CLAIM, &result.id, None));
             }
-            SelfDispatchOutcome::MemoryEdgeWrite(result) => {
-                for id in [result.src, result.tgt] {
-                    if let Some(reference) = self.record_ref_for(id) {
-                        self.note_created_ref(reference);
-                    }
-                }
+            SelfDispatchOutcome::MemoryEdgeWrite(_) => {
+                // FIX 12220: an edge write asserts nothing. The edge has no
+                // record id and both endpoints predate the run, so noting
+                // either as created would be false provenance.
             }
             SelfDispatchOutcome::AgentVerb(answer) => match verb {
                 Some(AgentVerb::TasksCreate) => {
@@ -94,7 +91,10 @@ impl HostSelfDispatcher<'_> {
                                 .and_then(|hex| EntityId::from_hex(hex).ok())
                                 .map(|id| RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None))
                         });
-                        self.note_created_refs([claim, receipt.superseded]);
+                        // FIX 12221: only the new claim is created. The
+                        // superseded claim predates the run, so it is
+                        // dropped, not asserted.
+                        self.note_created_refs([claim]);
                     }
                 }
                 _ => {}
@@ -111,36 +111,6 @@ impl HostSelfDispatcher<'_> {
 
     fn note_created_ref(&self, reference: RecordRef) {
         self.assertions_created.borrow_mut().note(reference);
-    }
-
-    fn record_ref_for(&self, id: EntityId) -> Option<RecordRef> {
-        let kind = match &self.storage {
-            ExecutorStorage::Canonical(vault) => {
-                let txn = vault.store.env.read_txn().ok()?;
-                Self::entity_type_of(&vault.store, &txn, &id).ok()?
-            }
-            ExecutorStorage::Session(binding) => binding
-                .session
-                .read_composed(|view, txn| Self::entity_type_of(view, txn, &id))
-                .ok()?,
-        }?;
-        Some(RecordRef::from_id(kind, &id, None))
-    }
-
-    fn entity_type_of(
-        dbs: &impl crate::store::ManifestDbs,
-        txn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Option<u8>> {
-        use crate::ports::EntityStoreRead;
-        let Some(raw) = dbs.port_entity_raw(txn, id)? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("entity metadata"))?
-                .entity_type,
-        ))
     }
 
     /// Takes the refs for one witness attempt. On error the caller restores
