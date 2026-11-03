@@ -427,7 +427,8 @@ pub(crate) fn setup_models_on_open_vault(
     .map_err(crate::owner::OwnerError::Host)?;
     let tagger = crate::oneironer::build_slot_on_thread(prepared.config.oneironer.as_ref(), None)
         .map_err(crate::owner::OwnerError::Host)?;
-    std::fs::rename(&prepared.staged, &path).map_err(crate::owner::OwnerError::Host)?;
+    std::fs::rename(&prepared.staged, &path)
+        .map_err(|error| crate::owner::OwnerError::Host(error.into()))?;
     server
         .attach_first_run_slots(built.slot, tagger, built.gpu_pool)
         .map_err(crate::owner::OwnerError::Refused)?;

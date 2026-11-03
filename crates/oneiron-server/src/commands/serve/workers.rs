@@ -329,7 +329,7 @@ pub(crate) async fn start_desktop_workers(
     }
     let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
     Ok(StartedWorkers {
-        server: sync_server,
+        server: Arc::clone(&sync_server),
         artifact_app,
         questions,
         #[cfg(unix)]
