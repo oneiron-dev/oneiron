@@ -168,7 +168,7 @@ impl ConsolidationExecutor<'_> {
     /// with the latest-round bookkeeping that assignment owes under
     /// this attempt's own round
     /// (`widened_round`), in the stamp's own commit after the candidates'
-    /// (FIX 12246).
+    /// (FIX 12246). An attempt with no round of its own records nothing.
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
@@ -189,7 +189,12 @@ impl ConsolidationExecutor<'_> {
             )
             .await;
         stages.commit_ms = ms_since(started);
-        if accepted.is_ok() && !widened.is_empty() {
+        // No carrier round (an unkeyed attempt) means no assignment record
+        // at all, exactly as hold_in_txn skips dedupe-less outcomes: taken
+        // without its round's membership and latest move would suppress
+        // the turns while an older turn still holds. Unstamped, they
+        // re-enter through the usual doors.
+        if accepted.is_ok() && !widened.is_empty() && widened_round.is_some() {
             // A failed stamp never fails the commit the extraction already
             // landed; it only costs a later duplicate extraction.
             let stamped = ctx.vault.with_write_txn_grouped(|txn| {
