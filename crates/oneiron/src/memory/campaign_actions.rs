@@ -4,9 +4,9 @@
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::write_envelope::cohort_claims::{CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, EvidenceBasis, normalize_campaign_pack_token};
-use crate::campaign::stage::ExternalStageEvidenceHook;
+use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
 use crate::write_envelope::cohort_claims::ladder::StageEvidence;
-use crate::campaign::stage::StageProjectResult;
+use crate::memory::campaign_records::stage_results::StageProjectResult;
 use crate::memory::campaign_records::{
     CampaignActionProvenance, CampaignEnrollRequest, CampaignEnrollmentReceipt, CampaignEnrollmentState,
     CampaignLifecycle, CampaignMemberChannelSpec, CampaignStageEvidenceOutcome, CampaignStageEvidenceReceipt,

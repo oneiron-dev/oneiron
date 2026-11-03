@@ -5,6 +5,7 @@ pub mod consent;
 pub mod contracts;
 pub mod evaluate;
 pub mod rules;
+pub(crate) mod observations;
 
 pub use self::rules::CAMPAIGN_COMPLIANCE_PACK_ID;
 pub use self::rules::CAMPAIGN_COMPLIANCE_SEED_JSON;

@@ -280,3 +280,21 @@ pub(crate) fn proposal_boundary_index(definition: &StageLadderDefinition) -> Opt
 pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
+
+/// A typed request from an evidence source CA-04 does not own.
+///
+/// Deposit, audit/delivery, desk, and renewal inputs enter ONLY through this
+/// hook. Their source truth stays with the counterparty ledger (ONE-1542),
+/// commitments, or TASK_LIST machinery; CA-04 stores the stage and the evidence
+/// reference and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalStageEvidenceHook {
+    /// PERSON the stage is about.
+    pub party_ref: EntityId,
+    /// Campaign the stage is scoped to.
+    pub campaign_ref: EntityId,
+    /// Stage the evidence claims to earn.
+    pub target_stage: StageKey,
+    /// The evidence itself.
+    pub evidence: StageEvidence,
+}

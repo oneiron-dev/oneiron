@@ -125,6 +125,8 @@ mod backup_change;
 #[cfg(unix)]
 mod body_envelope;
 pub mod claim_descriptors;
+pub(crate) mod query_memo_codec;
+pub mod query_memos;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;

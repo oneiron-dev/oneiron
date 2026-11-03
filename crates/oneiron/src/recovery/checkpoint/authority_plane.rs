@@ -29,9 +29,7 @@ use crate::agent_def::{
     AgentCeiling, AgentModel, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::campaign::compliance::{
-    JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
-};
+use crate::gate::dispatch_compliance::observations::{JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{

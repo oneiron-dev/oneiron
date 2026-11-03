@@ -320,22 +320,7 @@ fn run_ladder_in_txn(
     })
 }
 
-/// One installed pack moving to another source, as the install door sees it.
-pub(crate) struct PackMove<'a> {
-    pub(crate) pack: &'a str,
-    pub(crate) from_version: &'a str,
-    pub(crate) to_version: &'a str,
-    /// Content hash of the installed source.
-    pub(crate) from_source: &'a str,
-    /// Content hash of the new source.
-    pub(crate) to_source: &'a str,
-    /// Predicates the installed source declared.
-    pub(crate) from_predicates: &'a BTreeSet<String>,
-    /// Predicates the new source declares.
-    pub(crate) to_predicates: &'a BTreeSet<String>,
-    /// The map the new source ships for a move from the installed one.
-    pub(crate) shipped: Option<PackMigrationMap>,
-}
+pub(crate) use crate::skill_hub::pack_catalog::predicate_rewrites::PackMove;
 
 /// The pack-update rung of the drift ladder (ARCH-0059 §4), in the install's
 /// own write transaction, so the new pack, the map it ships and the repairs
