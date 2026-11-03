@@ -32,6 +32,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::dreamer_runner::maintenance::erase_source_copies_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
+    // FIX 10460: the queue copy of a public model step's failure text.
+    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
     crate::saved_query::erase_memos_for_source_in_txn,
     // FIX 10466: every inference snapshot whose dependency set reaches it.
