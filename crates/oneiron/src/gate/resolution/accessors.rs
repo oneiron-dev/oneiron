@@ -411,7 +411,7 @@ impl PolicyManifestResolution {
     pub(crate) fn voice_ref_limits(
         &self,
         owner: &crate::EntityId,
-    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+    ) -> Option<crate::gate::voice_ref_limits::VoiceRefLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {

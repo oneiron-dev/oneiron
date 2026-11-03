@@ -1257,7 +1257,7 @@ pub(super) fn import_edge(
     }
     let vad = edge
         .vad
-        .map_or(crate::affect::Vad::NEUTRAL, |v| crate::affect::Vad {
+        .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| oneiron_contracts::affect::Vad {
             valence: v[0],
             arousal: v[1],
             dominance: v[2],

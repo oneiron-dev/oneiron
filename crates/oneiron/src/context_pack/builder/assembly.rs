@@ -70,9 +70,9 @@ impl<'a> ContextPackBuilder<'a> {
     /// The profile section, admitted and read in one snapshot.
     fn psych_profile_section(
         &self,
-        key: &crate::psych_profile::PsychProfileKey,
+        key: &crate::write_envelope::profile_snapshot::PsychProfileKey,
     ) -> Result<PsychProfilePackSection> {
-        let id = crate::psych_profile::psych_profile_entity_id(key);
+        let id = crate::write_envelope::profile_snapshot::psych_profile_entity_id(key);
         if let Some(reader) = self.l2_summary_reader {
             reader.persist_grant_clock()?;
         }

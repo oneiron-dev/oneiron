@@ -291,3 +291,5 @@ use crate::write_envelope::WriteEnvelope;
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) mod voice_ref_limits;

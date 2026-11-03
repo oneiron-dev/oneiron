@@ -18,13 +18,13 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::llm::ModelLocality;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::voice_identity::ref_bank::{
+use crate::verbs::voice_records::{
     VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
     VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
 };
-use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
+use crate::verbs::voice_records::{VoiceConsentBasis, VoiceConsentState};
 
-pub use crate::voice_identity::ref_bank::{
+pub use crate::verbs::voice_records::{
     VoiceBankInspection, VoiceClipSummary, VoiceDroppedTargetView, VoiceIdentityView,
     VoicePackSummary, VoiceReferenceFenceView, VoiceRenderConsentView, VoiceRenderEventView,
     VoiceTargetCloneView, VoiceTargetInspection, VoiceTargetRender,

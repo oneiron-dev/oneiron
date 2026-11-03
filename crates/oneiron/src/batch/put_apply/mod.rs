@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
 

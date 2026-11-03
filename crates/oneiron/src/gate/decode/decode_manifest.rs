@@ -63,7 +63,7 @@ use crate::gate::resolution::{
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
+use crate::gate::voice_ref_limits::VoiceRefLimitPolicy;
 use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
     parse_failure_rules,
