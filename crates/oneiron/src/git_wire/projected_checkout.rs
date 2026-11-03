@@ -27,11 +27,11 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutResult, CheckoutTeardownInspection,
     GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
 };
-use crate::store::code_snapshot::RepoRef;
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_projection::checkout::{
     bind_projected_checkout, retained_projected_checkout,
 };
+use crate::store::code_snapshot::RepoRef;
 
 /// One masked copy a lease checks out: the copy store pinned at the copy
 /// commit (proved present), and the canonical original it stands in for.

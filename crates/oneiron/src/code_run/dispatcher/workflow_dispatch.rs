@@ -14,9 +14,11 @@ use crate::code_run::types::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
     SelfFailedResult,
 };
+use crate::code_run::workflow_operations::{
+    WorkflowBoundDispatchRequest, WorkflowRunView, dispatch_workflow_bound_as,
+};
 use crate::error::{ArtifactError, Error, Result};
 use crate::task_verb::HostBinding;
-use crate::code_run::workflow_operations::{WorkflowBoundDispatchRequest, WorkflowRunView, dispatch_workflow_bound_as};
 use crate::{EntityId, Vault};
 
 use super::HostSelfDispatcher;

@@ -6,6 +6,7 @@
 //! of the reply (1b) stay three separate facts.
 
 use crate::Vault;
+use crate::code_run::ConnectorCallReply;
 use crate::consent::{
     AuthenticatedOwner, CodeWaitReceiptLinks, ConsentOwnerStamp, ConsentReceipt, EffectDigest,
 };
@@ -13,7 +14,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::outbound_consent::ConnectorCallOutcome;
 use crate::store::GateDecisionId;
-use crate::code_run::ConnectorCallReply;
 
 use super::binding::{put_code_consent_wait_in_txn, read_code_consent_wait_in_txn};
 use super::browser::{CODE_WAIT_TARGET_CHANGED, browser_facts_match_row};

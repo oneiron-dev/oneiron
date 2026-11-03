@@ -9,8 +9,8 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, CheckoutResult, CheckoutTeardownInspection,
     GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
 };
-use crate::store::code_snapshot::RepoRef;
 use crate::error::Error;
+use crate::store::code_snapshot::RepoRef;
 
 impl GitWire<'_> {
     /// The private, repository- and epoch-bound directory that owns one lease's
