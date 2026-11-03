@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::critic::LensCatalog;
+use crate::store::critic_lens::LensCatalog;
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::RepoProposalReview;
 use crate::side_table::{self, Named, SideTable};
