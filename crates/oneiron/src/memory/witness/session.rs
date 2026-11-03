@@ -9,6 +9,7 @@ use std::sync::Arc;
 use rmpv::Value;
 
 use crate::batch::BatchOp;
+use crate::compaction::TurnVector;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::off_record::{OffRecordSession, OverlayShellReservation};
@@ -34,6 +35,8 @@ pub(super) struct OverlaySink<'a, 'v> {
     summary: Option<(EntityId, Vec<u8>, &'a str)>,
     /// The room's one shell-staging claim, when this witness holds it.
     shell: Option<OverlayShellReservation>,
+    /// The server's pre-embedded turn vector, staged once on mint/extend.
+    turn_vector: Option<TurnVector>,
 }
 
 impl OverlaySink<'_, '_> {
@@ -99,6 +102,7 @@ impl Memory<'_> {
         session: &OffRecordSession<'_>,
         turn: &WitnessTurn,
         summary: Option<&str>,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
@@ -107,6 +111,7 @@ impl Memory<'_> {
                 summary,
                 admit: None,
                 rostered: None,
+                turn_vector,
             },
             WitnessDoor::Guest,
             || {},
@@ -132,6 +137,7 @@ impl Memory<'_> {
         session: &OffRecordSession<'_>,
         turn: &WitnessTurn,
         summary: Option<&str>,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<WitnessReceipt> {
         let refused = |message: String| {
             MemoryError::new(
@@ -185,6 +191,7 @@ impl Memory<'_> {
                 summary,
                 admit: Some(&admit),
                 rostered: None,
+                turn_vector,
             },
             WitnessDoor::Guest,
             || {},
@@ -210,6 +217,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         summary: Option<&str>,
         credential: Option<&crate::authority::VerifiedSlip>,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<WitnessReceipt> {
         let refused = || {
             MemoryError::new(
@@ -238,6 +246,7 @@ impl Memory<'_> {
                 summary,
                 admit: Some(&admit),
                 rostered: Some(room),
+                turn_vector,
             },
             WitnessDoor::Guest,
             || {},
@@ -263,6 +272,7 @@ impl Memory<'_> {
         host_turn_ref: Option<EntityId>,
         admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
@@ -271,6 +281,7 @@ impl Memory<'_> {
                 summary,
                 admit: Some(&admit),
                 rostered: None,
+                turn_vector,
             },
             host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
             || {
@@ -386,6 +397,7 @@ impl Memory<'_> {
         session: &'a OffRecordSession<'v>,
         route: &'a SessionWriteRoute,
         summary: Option<&'a str>,
+        turn_vector: Option<TurnVector>,
     ) -> MemoryResult<OverlaySink<'a, 'v>> {
         let summary = match summary {
             Some(text) => {
@@ -411,6 +423,7 @@ impl Memory<'_> {
             overlay: session.overlay(),
             summary,
             shell,
+            turn_vector,
         })
     }
 
@@ -485,6 +498,14 @@ impl Memory<'_> {
                 JournalRole::TurnOwnedArtifact,
                 edge(&plan.turn_id, EdgeKind::ChildOf, &plan.conversation_id),
             ));
+        }
+        if matches!(&admission.turn, AdmittedTurn::Mint { .. }) || admission.has_new_messages() {
+            if let Some(op) = crate::compaction::epoch_vector::turn_vector_op(
+                sink.turn_vector.as_ref(),
+                plan.turn_id,
+            ) {
+                entries.push(entry(JournalRole::TurnOwnedArtifact, op));
+            }
         }
         for ((planned, authorized), exists) in plan
             .messages
