@@ -214,6 +214,7 @@ fn supplied_draft(
     input: &[u8],
     revisions: &[PreparedRevision<'_>],
     capacity: usize,
+    limits: &SealResourceLimits,
 ) -> Result<(u32, pdf::DraftRevision), SealError> {
     let invalid = || SealError::Fatal {
         stage: SealStage::PdfIncrementalUpdate,
@@ -226,7 +227,14 @@ fn supplied_draft(
             close.checked_sub(open) == Some(2 + 2 * capacity as u64)
         })
         .ok_or_else(invalid)?;
-    let bytes = [input, revision.suffix].concat();
+    let len = input
+        .len()
+        .checked_add(revision.suffix.len())
+        .ok_or_else(invalid)?;
+    let mut bytes = pdf::admitted::vec(limits, len)
+        .map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))?;
+    bytes.extend_from_slice(input);
+    bytes.extend_from_slice(revision.suffix);
     let [start, open, close, rest] = revision.byte_range.map(|at| usize::try_from(at).ok());
     let (open, close, rest) = (open.ok_or_else(invalid)?, close.ok_or_else(invalid)?, rest);
     if start != Some(0)
@@ -265,13 +273,13 @@ async fn try_capacity(
 ) -> Result<Fit<SignedCandidate>, SealError> {
     let (revision_id, mut draft) = if revisions.is_empty() {
         let kind = pdf::RevisionKind::Signature {
-            field_name: pdf::field_name_for(operation_id),
-            date_str: pdf::pdf_date(ctx.clock_ms),
+            field_name: pdf::field_name_for(operation_id, ctx.limits)?,
+            date_str: pdf::pdf_date(ctx.clock_ms, ctx.limits)?,
         };
         let draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
         (None, draft)
     } else {
-        let (id, draft) = supplied_draft(&prepared.bytes, revisions, capacity)?;
+        let (id, draft) = supplied_draft(&prepared.bytes, revisions, capacity, ctx.limits)?;
         (Some(id), draft)
     };
     let br = draft.byte_range.ok_or(SealError::Fatal {
@@ -324,7 +332,7 @@ async fn try_capacity(
     ctx.limits
         .observed
         .note(Counter::ContentsBytes, cms_der.len());
-    match pdf::patch_contents(&mut draft, &cms_der) {
+    match pdf::patch_contents(&mut draft, &cms_der, ctx.limits) {
         Ok(()) => Ok(Fit::Signed(SignedCandidate { draft, token })),
         Err(SealError::Fatal {
             code: FatalCode::ContentsCapacityExceeded,
@@ -373,7 +381,7 @@ async fn append_doc_timestamp(
         };
         let needed = token.content_info_der.len();
         ctx.limits.observed.note(Counter::ContentsBytes, needed);
-        match pdf::patch_contents(&mut draft, &token.content_info_der) {
+        match pdf::patch_contents(&mut draft, &token.content_info_der, ctx.limits) {
             Ok(()) => return Ok(Some(draft.bytes)),
             Err(SealError::Fatal {
                 code: FatalCode::ContentsCapacityExceeded,

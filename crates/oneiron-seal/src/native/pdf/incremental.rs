@@ -433,31 +433,33 @@ pub(crate) fn hash_byte_range(bytes: &[u8], br: [u64; 4]) -> Result<[u8; 32], Se
 }
 
 /// Deterministic invisible-signature field name from the operation ID.
-pub(crate) fn field_name_for(operation_id: &str) -> String {
+pub(crate) fn field_name_for(
+    operation_id: &str,
+    limits: &SealResourceLimits,
+) -> Result<String, SealError> {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(operation_id.as_bytes());
-    let mut name = String::with_capacity(5 + 12);
-    name.push_str("Seal-");
+    let mut name = admitted::vec(limits, 17).map_err(memory_error)?;
+    name.extend_from_slice(b"Seal-");
     for &b in &digest[..6] {
-        name.push(HEX_UPPER[(b >> 4) as usize] as char);
-        name.push(HEX_UPPER[(b & 0xF) as usize] as char);
+        name.push(HEX_UPPER[(b >> 4) as usize]);
+        name.push(HEX_UPPER[(b & 0xF) as usize]);
     }
-    name
+    String::from_utf8(name).map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))
 }
 
 /// PDF date representation of a unix-time-ms clock value.
-pub(crate) fn pdf_date(unix_ms: u64) -> String {
+pub(crate) fn pdf_date(unix_ms: u64, limits: &SealResourceLimits) -> Result<String, SealError> {
     use time::format_description::well_known::Rfc3339;
     let secs = i64::try_from(unix_ms / 1000).unwrap_or(i64::MAX);
     let dt =
         time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    limits.memory.admit::<u8>(64).map_err(memory_error)?;
     // D:YYYYMMDDHHmmSSZ
     let rfc = dt.format(&Rfc3339).unwrap_or_default();
-    let mut out = String::with_capacity(17);
-    out.push_str("D:");
-    for c in rfc.chars().filter(char::is_ascii_digit).take(14) {
-        out.push(c);
-    }
-    out.push('Z');
-    out
+    let mut out = admitted::vec(limits, 17).map_err(memory_error)?;
+    out.extend_from_slice(b"D:");
+    out.extend(rfc.bytes().filter(u8::is_ascii_digit).take(14));
+    out.push(b'Z');
+    String::from_utf8(out).map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))
 }
