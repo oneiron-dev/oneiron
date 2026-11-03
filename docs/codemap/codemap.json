@@ -20032,39 +20032,15 @@
      "notable": [
       "Bm25RankProfile",
       "HnswConfig",
-      "HostingPrivacyPosture",
-      "TextAnalyzerConfig",
-      "TextIndexOptions",
-      "VaultConfig",
-      "VaultDataKeyCustody",
-      "VaultPrivacyConfig",
-      "VectorEvidenceFloors"
+      "VaultConfig"
      ],
      "path": "src/config.rs",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
      "surface": {
-      "const": 5,
       "crate-vis": 1,
-      "enum": 2,
-      "fn": 13,
-      "mod": 1,
-      "re-export": 1,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "DeploymentTier",
-      "FailureSignalConfig"
-     ],
-     "path": "src/config/failure_signals.rs",
-     "purpose": "The owner's \"Help improve Oneiron\" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)…",
-     "surface": {
-      "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 6,
+      "re-export": 2,
+      "struct": 3
      }
     },
     {
@@ -57015,23 +56991,21 @@
       "CommunityBoostReport",
       "CommunityCacheMeta",
       "CommunityEdge",
-      "CommunityError",
       "CommunityGraphInput",
       "CommunityId",
       "CommunityMembership",
       "CommunityProjection",
       "CommunityRefreshReport",
-      "PprCommunityCache",
-      "PprCommunityConfig"
+      "PprCommunityCache"
      ],
      "path": "src/ppr_community/types.rs",
      "purpose": "Community constants, error, ids, config and shared shells",
      "surface": {
-      "const": 11,
+      "const": 6,
       "crate-vis": 6,
-      "enum": 1,
-      "fn": 4,
-      "struct": 11
+      "fn": 3,
+      "re-export": 7,
+      "struct": 10
      }
     },
     {
@@ -85845,10 +85819,10 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
@@ -87058,7 +87032,7 @@
    },
    "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5914,
+   "source_files": 5913,
    "test_files": 900
   },
   "oneiron-android": {
@@ -87995,6 +87969,59 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostingPrivacyPosture",
+      "TextAnalyzerConfig",
+      "TextIndexOptions",
+      "VaultDataKeyCustody",
+      "VaultPrivacyConfig",
+      "VectorEvidenceFloors"
+     ],
+     "path": "src/config.rs",
+     "purpose": "Portable runtime configuration moved down from the engine crate",
+     "surface": {
+      "const": 5,
+      "enum": 2,
+      "fn": 7,
+      "mod": 2,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeploymentTier",
+      "FailureSignalConfig"
+     ],
+     "path": "src/config/failure_signals.rs",
+     "purpose": "The owner's \"Help improve Oneiron\" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunityError",
+      "PprCommunityConfig"
+     ],
+     "path": "src/config/ppr_community.rs",
+     "purpose": "Portable PPR community prior: the config closure moved down from the engine crate",
+     "surface": {
+      "const": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -88107,7 +88134,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 16
+      "mod": 17
      }
     },
     {
@@ -88252,6 +88279,13 @@
      "layout": "file",
      "purpose": "Multilingual analyzer subsystem"
     },
+    "config": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Portable runtime configuration moved down from the engine crate"
+    },
     "distance": {
      "files": 1,
      "impl_vault": false,
@@ -88360,7 +88394,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 19,
+   "source_files": 22,
    "test_files": 2
   },
   "oneiron-bench": {
