@@ -64,7 +64,7 @@ use serde_json::Value as JsonValue;
 pub(super) use session::open_turn;
 pub(crate) use session::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    reply_committed, rung_admitted, turn_admitted,
 };
 
 /// The process's one worker host, made when the first worker is configured

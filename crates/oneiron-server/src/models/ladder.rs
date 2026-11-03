@@ -598,6 +598,9 @@ impl OfferLadder {
             Ok(Some(digest)) => run.admit_request(run_call, &digest)?,
             Ok(None) | Err(_) => run.admit(run_call)?,
         };
+        if let Some(manifest) = call.host_segments.as_deref() {
+            super::worker_host::rung_admitted(manifest);
+        }
         Ok((call, permit))
     }
 
