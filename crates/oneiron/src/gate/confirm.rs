@@ -311,6 +311,25 @@ impl Vault {
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
+                // A lapse that reached this replica before the owner's Clear
+                // left the claim Proposed. Fold the Clear first so the answer
+                // is not lost behind that lapse (FIX 12290).
+                let repaired = body.approval == ClaimApprovalStatus::Proposed;
+                if repaired {
+                    put_preauthorized_claim_status_in_txn(
+                        self,
+                        wtxn,
+                        &binding.claim_id,
+                        &body,
+                        PreauthorizedClaimStatusGrant::FoldClear,
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
+                    )?;
+                    body.approval = ClaimApprovalStatus::Auto;
+                }
                 // The owner's Clear answers the item this confirm bound.
                 let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
                     &self.store,
@@ -320,7 +339,9 @@ impl Vault {
                     super::owner_answer::OwnerAnswer::authority_log(),
                 )?;
                 if deferred {
-                    if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
+                    if !repaired
+                        && self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?
+                    {
                         put_preauthorized_claim_status_in_txn(
                             self,
                             wtxn,
