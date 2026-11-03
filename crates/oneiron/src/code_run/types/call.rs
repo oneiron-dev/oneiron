@@ -71,7 +71,7 @@ pub enum SelfCall {
     /// `connector.answer` (ONE-2510): the run's answer to the questions a
     /// connector asked mid-call, sent through the bound door under the
     /// original call's grant and principal.
-    ConnectorAnswer(crate::task_verb::sdk::ConnectorAnswerRequest),
+    ConnectorAnswer(crate::code_run::ConnectorAnswerRequest),
     /// `vault.worlds.privacy.set` (FIX 4480): the run's agent asks to change
     /// a world's settings, within the owner's rules.
     WorldPrivacySet(crate::policy_model::WorldPrivacySetInput),
@@ -94,7 +94,7 @@ pub enum SelfCall {
     /// `self.workflows.dispatch_bound` (FIX 5316): the run's agent binds one
     /// run of a saved workflow to a TASK it owns. The actor, the parent, the
     /// run and the spend come from the host binding's live lease.
-    WorkflowDispatch(Box<crate::task_verb::sdk::WorkflowBoundDispatchRequest>),
+    WorkflowDispatch(Box<crate::code_run::workflow_operations::WorkflowBoundDispatchRequest>),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's

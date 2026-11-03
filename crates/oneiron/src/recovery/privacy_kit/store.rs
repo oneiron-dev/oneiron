@@ -30,27 +30,7 @@ const SLOT: usize = 32;
 /// A machine id's size: the install a slot is named for.
 const INSTALL: usize = 16;
 
-/// Which slot pair of this install's kit pieces (FIX 11977, 12046).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum KitPiecePair {
-    /// The piece of the kit of this kind in force.
-    Current(KitSecretKind),
-    /// The piece of the world kit with this id, drawn and not yet confirmed.
-    Pending(KitId),
-}
-
-impl KitPiecePair {
-    /// Whether `piece` belongs in this pair: a piece of its kind for a current
-    /// pair, a world kit's piece of its kit for a pending one.
-    fn holds(self, piece: &KitPiece) -> bool {
-        match self {
-            Self::Current(kind) => piece.kind() == kind,
-            Self::Pending(kit) => {
-                piece.kind() == KitSecretKind::RecoveryRoot && piece.kit_id() == kit
-            }
-        }
-    }
-}
+pub(crate) use crate::store::recovery_kit::KitPiecePair;
 
 /// This install's kit-piece slots for one vault.
 pub(crate) struct KitPieceStore {

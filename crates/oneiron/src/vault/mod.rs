@@ -2,6 +2,7 @@
 //! entity / vector / edge / text / temporal operations. Also hosts
 //! edge-record helpers kept for Vault-facing compatibility.
 
+pub(crate) mod speculative_passes;
 mod actors_memory;
 mod database_digests;
 mod doctor_manifest;
@@ -27,6 +28,7 @@ mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
+pub(crate) mod code_consent_host;
 mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
@@ -62,7 +64,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
-pub use self::raw_writes::RawEntityPut;
+pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
@@ -102,7 +104,7 @@ pub struct Vault {
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
+    pub(crate) housekeeping: std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
@@ -182,7 +184,7 @@ pub struct Vault {
     pub(crate) home_search: std::sync::Mutex<crate::sync::connection::HomeSearchSlot>,
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
-    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    pub(crate) speculative_passes: crate::vault::speculative_passes::SpeculativePasses,
     /// The room a host lends the origin for reading whole LFS manifests
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
@@ -194,10 +196,10 @@ pub struct Vault {
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
-    pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
@@ -214,7 +216,7 @@ pub struct Vault {
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
     pub(crate) code_consent_host:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>>,
     /// The served host's check that a managed vault's attested owner is its
     /// live owner, which his queued work runs under (FIX 11090), installed
     /// once per open vault ([`Vault::install_managed_owner_check`]). In
@@ -239,7 +241,7 @@ pub struct Vault {
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
-        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
+        std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

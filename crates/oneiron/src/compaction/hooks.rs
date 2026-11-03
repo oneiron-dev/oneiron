@@ -8,8 +8,10 @@
 use serde_json::{Value, json};
 
 use super::{CompactionWindowMessage, SwapPlan};
+use crate::store::verb_invocation::InvocationId;
+use crate::error::VerbHookStop;
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
+use crate::{runtime_hooks::VerbCall, store::verb_domain::VerbDomain, runtime_hooks::VerbHookPre};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EntityId, Vault};
 
@@ -49,13 +51,14 @@ impl Vault {
         &self,
         invocation: InvocationId,
         actor: EntityId,
+        reader: Option<crate::claim::ScopedReadActorKey>,
         window: &[CompactionWindowMessage],
         keep: &mut Vec<String>,
         token_ceiling: u64,
         fits: &dyn Fn(&[String]) -> bool,
     ) -> CompactHooks {
         let args = compact_args(window, keep, token_ceiling);
-        let call = compact_call(invocation, actor);
+        let call = compact_call(invocation, actor, reader);
         let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
         let check = |rewritten: &Value| added_pins(&args, rewritten, &contains, fits).map(|_| ());
         let ended = self.pre_verb_hooks(call, args.clone(), &check);
@@ -94,8 +97,14 @@ fn compact_args(window: &[CompactionWindowMessage], keep: &[String], token_ceili
     })
 }
 
-/// The `host.compact` call of one pass.
-fn compact_call(invocation: InvocationId, actor: EntityId) -> VerbCall {
+/// The `host.compact` call of one pass. `reader` is the run's verified
+/// credential-bound key, independent of the host's System write attribution,
+/// as a turn's does (REVIEW-4357 P1-1); `None` reads as the actor.
+fn compact_call(
+    invocation: InvocationId,
+    actor: EntityId,
+    reader: Option<crate::claim::ScopedReadActorKey>,
+) -> VerbCall {
     VerbCall {
         verb: HOST_COMPACT.to_owned(),
         invocation,
@@ -106,8 +115,7 @@ fn compact_call(invocation: InvocationId, actor: EntityId) -> VerbCall {
         board_epoch: None,
         turn: None,
         domain: VerbDomain::Write,
-        // A host's own call reads as its actor.
-        reader: None,
+        reader,
     }
 }
 
@@ -171,13 +179,14 @@ pub(crate) fn pre_compact_hooks_in_room(
     route: &crate::session_overlay::SessionWriteRoute,
     invocation: InvocationId,
     actor: EntityId,
+    reader: Option<crate::claim::ScopedReadActorKey>,
     window: &[CompactionWindowMessage],
     keep: &mut Vec<String>,
     token_ceiling: u64,
     fits: &dyn Fn(&[String]) -> bool,
 ) -> CompactHooks {
     let args = compact_args(window, keep, token_ceiling);
-    let call = compact_call(invocation, actor);
+    let call = compact_call(invocation, actor, reader);
     let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
     let check = |rewritten: &Value| added_pins(&args, rewritten, &contains, fits).map(|_| ());
     let how = RoomHookCall {
@@ -210,6 +219,23 @@ pub(crate) fn post_compact_hooks_in_room(
             ?error,
             "host.compact post-hooks failed on a landed keyframe"
         );
+    }
+}
+
+/// [`Vault::post_compact_hooks`] for a pass whose pre chain ran in a room but
+/// which ends without landing (a backend refusal or a pre-swap-gate
+/// rejection, REVIEW-4357 P1-2): its pre chain's records are kept in the
+/// room, and no post chain runs.
+pub(crate) fn keep_compact_hooks_in_room(
+    session: &crate::off_record::OffRecordSession<'_>,
+    route: &crate::session_overlay::SessionWriteRoute,
+    hooks: CompactHooks,
+) {
+    let Some(pre) = hooks.pre else {
+        return;
+    };
+    if let Err(error) = session.keep_verb_hooks_in_room(route, pre) {
+        tracing::warn!(%error, "an unlanded room pass's verb hook records were not kept");
     }
 }
 
@@ -292,11 +318,11 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
 pub(crate) fn host_compact_as_owner(
     memory: &crate::memory::Memory<'_>,
     owner: &crate::consent::AuthenticatedOwner,
-    input: crate::runtime_hooks::host_doors::HostCompactRequest,
+    input: crate::compaction::host_request::HostCompactRequest,
     backend: &dyn super::CompactionBackend,
     policy: &super::CompactionGatePolicy,
-) -> crate::memory::MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
-    use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
+) -> oneiron_contracts::memory::MemoryResult<crate::compaction::host_request::HostCompactResult> {
+    use oneiron_contracts::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
     let vault = memory.vault();
     if input.token_ceiling == 0 {
         return Err(MemoryError::bad_request("token_ceiling must be positive"));
@@ -385,7 +411,7 @@ pub(crate) fn host_compact_as_owner(
                     },
                     |_, _| Ok(()),
                 )?;
-                return Ok(crate::runtime_hooks::host_doors::HostCompactResult {
+                return Ok(crate::compaction::host_request::HostCompactResult {
                     epoch,
                     summary,
                     text,

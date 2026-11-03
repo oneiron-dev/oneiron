@@ -16,7 +16,6 @@ use super::{
     validate_local_skill_create, validate_replicated_authority_log_beside_for_local_vault,
     validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
 };
-use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -29,6 +28,7 @@ use crate::registry::{
 use crate::side_table::HexId;
 use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
+use crate::write_envelope::claim_body::ClaimBody;
 
 mod admission;
 mod audit;
