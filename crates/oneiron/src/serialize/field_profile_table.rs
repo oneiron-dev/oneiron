@@ -50,7 +50,7 @@ pub(super) fn fields_for_profile(
 
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::skill::SKILL_RECORD_BODY_KEYS,
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::write_envelope::skill_record::SKILL_RECORD_BODY_KEYS,
 
         // AGENT_DEF mirrors SKILL: identity-only Minimal, identity + summary in
         // Standard, and the full pinned body only at Full — the 16 KiB

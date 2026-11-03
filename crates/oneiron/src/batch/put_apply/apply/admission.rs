@@ -45,7 +45,7 @@ pub(super) struct Owners {
 /// phases. Body buffers the arms produce travel in `DispatchCarry` instead.
 pub(super) struct Dispatch {
     pub(super) is_lexical_query_hint_claim: bool,
-    pub(super) new_skill_record: Option<crate::skill::SkillRecord>,
+    pub(super) new_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
     pub(super) new_agent_definition: Option<crate::agent_def::AgentDefinition>,
     pub(super) new_workflow: Option<crate::agent_def::workflow::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,

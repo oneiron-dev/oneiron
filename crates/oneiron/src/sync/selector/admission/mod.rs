@@ -492,7 +492,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::blob_artifact::validate_blob_artifact_body_bytes(body)?;
         }
         crate::registry::ENTITY_TYPE_SKILL => {
-            crate::skill::decode_skill_record(body)?;
+            crate::write_envelope::skill_record::decode_skill_record(body)?;
         }
         crate::registry::ENTITY_TYPE_AGENT_DEF => {
             let definition = crate::agent_def::decode_agent_definition(body)?;
