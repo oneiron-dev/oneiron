@@ -119,7 +119,7 @@ pub(super) fn keep_run_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     source: &CodeFixSource,
-    (mut run, sealed): SealedRun,
+    (mut run, sealed, _): SealedRun,
 ) -> Result<CandidateRun> {
     run.export = keep_in_txn(vault, txn, source, (run.export, sealed))?;
     Ok(run)
@@ -187,7 +187,7 @@ pub(super) fn not_run(
                 engine: None,
                 grant: None,
             };
-            (run, None)
+            (run, None, None)
         })
         .collect()
 }
