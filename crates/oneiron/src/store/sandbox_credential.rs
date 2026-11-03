@@ -116,8 +116,8 @@ impl SandboxCredentialOperation {
 /// Credential-backed host call from guest code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SandboxCredentialCall {
-    pub(super) operation: SandboxCredentialOperation,
-    pub(super) credential: SandboxCredentialHandle,
+    pub(crate) operation: SandboxCredentialOperation,
+    pub(crate) credential: SandboxCredentialHandle,
     args: Value,
 }
 
@@ -175,8 +175,8 @@ impl SandboxCredentialCall {
 /// Host receipt for a credential-backed call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxCredentialOutcome {
-    pub(super) operation: SandboxCredentialOperation,
-    pub(super) credential: SandboxCredentialHandle,
+    pub(crate) operation: SandboxCredentialOperation,
+    pub(crate) credential: SandboxCredentialHandle,
 }
 
 impl SandboxCredentialOutcome {

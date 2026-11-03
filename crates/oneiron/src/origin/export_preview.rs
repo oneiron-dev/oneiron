@@ -556,3 +556,5 @@ fn changed_files(
     }
     files
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

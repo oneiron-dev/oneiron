@@ -537,3 +537,5 @@ impl MergeQueue<'_> {
         }))
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;
