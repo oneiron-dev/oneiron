@@ -328,8 +328,9 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
             let envelope = if matches!(scope_value, Value::Nil) {
                 DisclosureEnvelope::new(selectors).map_err(|_| invalid_row())?
             } else {
-                let scope = oneiron_authority::federation::scope_codec::decode_scope_value(scope_value)
-                    .map_err(|_| invalid_row())?;
+                let scope =
+                    oneiron_authority::federation::scope_codec::decode_scope_value(scope_value)
+                        .map_err(|_| invalid_row())?;
                 let envelope = DisclosureEnvelope::from_scope(scope).map_err(|_| invalid_row())?;
                 if envelope.selectors != selectors
                     || oneiron_authority::federation::scope_codec::encode_scope_value(

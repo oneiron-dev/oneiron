@@ -30,12 +30,12 @@ use crate::edit_settle::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::lens::RecordRef;
-use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
-    TypedDecision,
-};
+use crate::llm::decision::TypedDecision;
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
+};
+use crate::model_decision::{
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;

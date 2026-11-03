@@ -218,10 +218,9 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     };
     let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
-            entries,
-            "authority_scope",
-        )?)
+        authority_scope: oneiron_authority::federation::scope_codec::decode_scope_value(
+            required_value(entries, "authority_scope")?,
+        )
         .map_err(|_| invalid_grant())?,
         scope,
         capability,
