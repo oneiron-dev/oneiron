@@ -16,11 +16,30 @@ use thiserror::Error;
 /// Asked before a decode allocates.
 pub trait DecodeAdmission: Send + Sync {
     /// Admit one allocation of `bytes` bytes, made right after this returns
-    /// `Ok`. Admissions are never released: an allocation that replaces a
-    /// smaller one is admitted at its full size while the old one is still
-    /// alive, and a codec's own working state is admitted before the codec is
-    /// built.
+    /// `Ok`. An allocation that replaces a smaller one is admitted at its
+    /// full size while the old one is still alive, and a codec's own working
+    /// state is admitted before the codec is built, so the moment both are
+    /// live is admitted too.
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError>;
+
+    /// Give back `bytes` admitted before, whose allocation was replaced or
+    /// freed, for reuse by a later admission under the same owner. The
+    /// default does nothing; an owner that reuses room overrides it. This is
+    /// local reuse only: it never returns host memory.
+    fn release(&self, bytes: usize) {
+        let _ = bytes;
+    }
+
+    /// Move `bytes` admitted here to `to`: admit them there first, so the
+    /// moment both owners hold them is admitted, then give them back here.
+    /// When the destination refuses, nothing is given back.
+    fn transfer(
+        &self, bytes: usize, to: &dyn DecodeAdmission,
+    ) -> Result<(), DecodeAdmissionError> {
+        to.admit(bytes)?;
+        self.release(bytes);
+        Ok(())
+    }
 
     /// Observe the length of a finished decode's output. Never refuses.
     fn decoded(&self, _bytes: usize) {}
@@ -53,7 +72,9 @@ pub(crate) const CODEC_STATE_BYTES: usize = 64 * 1024;
 /// Make room in `buf` for `additional` more elements. When the capacity has
 /// to grow it doubles (or takes exactly what is needed, if that is more), the
 /// whole new allocation is admitted in bytes while the old one is still alive,
-/// and only then is it allocated, fallibly.
+/// and only then is it allocated, fallibly. Once the replacement allocation
+/// succeeds the old capacity's bytes go back via [`DecodeAdmission::release`];
+/// a failed allocation releases nothing.
 pub(crate) fn reserve<T>(
     admission: &dyn DecodeAdmission, buf: &mut Vec<T>, additional: usize,
 ) -> Result<(), DecodeAdmissionError> {
@@ -65,9 +86,14 @@ pub(crate) fn reserve<T>(
     let doubled = buf.capacity().saturating_mul(2).max(needed);
     let target = if layout_bytes::<T>(doubled).is_some() { doubled } else { needed };
     let bytes = layout_bytes::<T>(target).ok_or_else(unaddressable)?;
+    let old = buf.capacity();
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
-        .map_err(|_| allocator_refused(bytes))
+        .map_err(|_| allocator_refused(bytes))?;
+    if let Some(old_bytes) = layout_bytes::<T>(old) {
+        admission.release(old_bytes);
+    }
+    Ok(())
 }
 
 /// Append `bytes` to `buf`, admitting any growth first.
