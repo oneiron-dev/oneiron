@@ -9,7 +9,6 @@
 //! An ordinary text document never asserts metadata: its frontier carries
 //! none, and nothing here infers a mode, a removal or a rename from text.
 use loro::{LoroMap, LoroValue, ValueOrContainer};
-use serde::{Deserialize, Serialize};
 
 use super::codec::{invalid, validate_path};
 use super::{CodeDocumentSession, CodeEditReceipt, CodeFileEdit};
@@ -18,99 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 
-/// Whether a path holds a file, and its Git mode when it does. `present`
-/// holds exactly when `mode` is set; an absent path has no mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeFilePresence {
-    pub present: bool,
-    pub mode: Option<u32>,
-}
-
-impl CodeFilePresence {
-    /// A file at `mode`.
-    #[must_use]
-    pub fn file(mode: u32) -> Self {
-        Self {
-            present: true,
-            mode: Some(mode),
-        }
-    }
-
-    /// No file.
-    #[must_use]
-    pub fn absent() -> Self {
-        Self {
-            present: false,
-            mode: None,
-        }
-    }
-
-    /// A well-formed state: present with a kept mode, or absent with none.
-    ///
-    /// # Errors
-    /// Presence and mode that disagree, or a mode no code file keeps.
-    pub(crate) fn validate(&self) -> Result<()> {
-        match (self.present, self.mode) {
-            (true, Some(mode)) => crate::codebase::validate_code_file_mode(mode),
-            (false, None) => Ok(()),
-            _ => Err(invalid()),
-        }
-    }
-}
-
-/// One reviewed metadata change of one path: the exact state it was made
-/// against, the state it leaves, and an explicit same-document rename.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeFileMetadataEdit {
-    pub path: String,
-    pub expected: CodeFilePresence,
-    pub replacement: CodeFilePresence,
-    /// A normalized destination for a present file, never guessed.
-    pub new_path: Option<String>,
-}
-
-impl CodeFileMetadataEdit {
-    /// The edit that moves `path` from `expected` to `replacement`.
-    #[must_use]
-    pub fn between(path: &str, expected: CodeFilePresence, replacement: CodeFilePresence) -> Self {
-        Self {
-            path: path.to_owned(),
-            expected,
-            replacement,
-            new_path: None,
-        }
-    }
-
-    /// Whether this edit removes its path.
-    #[must_use]
-    pub fn removes(&self) -> bool {
-        self.expected.present && !self.replacement.present
-    }
-
-    /// CALL M (`validate_received_file_metadata`): absent and empty are
-    /// distinct, and every present state names its exact Git mode. A
-    /// rename moves a present file only; an edit that changes nothing is
-    /// refused here, on this metadata path alone.
-    ///
-    /// # Errors
-    /// A malformed state or path, or an empty change.
-    pub(crate) fn validate(&self, repo: &str) -> Result<()> {
-        validate_path(repo, &self.path)?;
-        self.expected.validate()?;
-        self.replacement.validate()?;
-        if let Some(new_path) = &self.new_path {
-            validate_path(repo, new_path)?;
-            if *new_path == self.path || !self.expected.present || !self.replacement.present {
-                return Err(invalid());
-            }
-        } else if self.expected == self.replacement {
-            return Err(invalid());
-        }
-        Ok(())
-    }
-}
+pub use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
 
 /// The metadata `meta` asserts, or `None` for a document that never
 /// asserted any. Both keys are written together; one alone is corruption.

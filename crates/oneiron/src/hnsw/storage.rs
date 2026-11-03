@@ -7,83 +7,20 @@ use heed::{RoTxn, RwTxn};
 use crate::distance::{PreparedCosine, cosine_distance};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::overlay_db::OverlayDb;
-use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, ManifestDbs, VECTOR_VERSION_KEY};
+use crate::store::ManifestDbs;
 
 use super::keys::{
-    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_EMBEDDING_MODEL_EPOCH_BYTES,
-    ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES, ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
-    ERR_VECTOR_VERSION_BYTES,
+    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES,
+    ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
 };
 use super::one_way::reconcile_removed_one_way_links;
 use super::search::score_prefix;
 use super::types::HeapEntry;
 
-pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, VECTOR_VERSION_KEY)? else {
-        return Ok(0);
-    };
-
-    let bytes: [u8; 8] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_VERSION_BYTES))?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-pub(crate) fn read_embedding_model_epoch(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, EMBEDDING_MODEL_EPOCH_KEY)? else {
-        return Ok(0);
-    };
-
-    let bytes: [u8; 8] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_EMBEDDING_MODEL_EPOCH_BYTES))?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-pub(crate) fn has_population(hnsw_meta: &OverlayDb, txn: &RoTxn<'_>) -> Result<bool> {
-    if let Some(raw) = hnsw_meta.get(txn, COUNT_KEY)? {
-        let bytes: [u8; 8] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex(ERR_COUNT_BYTES))?;
-        if u64::from_le_bytes(bytes) > 0 {
-            return Ok(true);
-        }
-    }
-
-    Ok(hnsw_meta.get(txn, ENTRY_POINT_KEY)?.is_some())
-}
-
-pub(crate) fn increment_vector_version(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<u64> {
-    let current = read_vector_version(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("vector version"))?;
-    store
-        .hnsw_meta()
-        .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
-    Ok(next)
-}
-
-pub(crate) fn increment_embedding_model_epoch(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<u64> {
-    let current = read_embedding_model_epoch(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("embedding model epoch"))?;
-    store
-        .hnsw_meta()
-        .put(wtxn, EMBEDDING_MODEL_EPOCH_KEY, &next.to_le_bytes())?;
-    Ok(next)
-}
+pub(crate) use crate::store::vector_index::{
+    has_population, increment_embedding_model_epoch, increment_vector_version,
+    read_embedding_model_epoch, read_vector_version,
+};
 
 pub(super) fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta().get(txn, COUNT_KEY)? else {

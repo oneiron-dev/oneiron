@@ -29,6 +29,7 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+pub mod body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
 mod create;

@@ -1,7 +1,8 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 

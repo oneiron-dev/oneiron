@@ -36,10 +36,10 @@ use crate::claim::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
     decode_claim_body, is_reserved_predicate,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;

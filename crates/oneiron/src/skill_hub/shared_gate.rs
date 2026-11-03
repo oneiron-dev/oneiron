@@ -5,16 +5,17 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, PairedReading,
+    Reversibility,
+};
 use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
     limit_ask::EngineLimit,
-    llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        PairedReading, Reversibility, TypedDecision,
-    },
+    llm::decision::TypedDecision,
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,

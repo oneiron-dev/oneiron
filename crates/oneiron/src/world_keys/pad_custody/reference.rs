@@ -142,7 +142,7 @@ mod window {
     use super::{PAD_CAPTURE_FAULT, PadCaptureFault, WorldPadRef, pad_reference_projection};
     use crate::entity_id::EntityId;
     use crate::error::{Error, Result};
-    use crate::sync::WindowKey;
+    use crate::window_key::WindowKey;
 
     /// The root maps a window document may hold (CALLS:
     /// PAD_PROJECTOR_WINDOW_ROOTS): any other root, or a container inside

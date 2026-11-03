@@ -11,17 +11,20 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_dispatch::{AgentDispatcher, CareLevel, CoordinationPattern, SpawnOverride};
+use crate::agent_dispatch::AgentDispatcher;
 use crate::code_run::SelfSpawnAsk;
 use crate::consent::AuthenticatedOwner;
-use crate::llm::ModelId;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::task_type::TaskTypeRef;
+use crate::team::spawn_need::CareLevel;
+use crate::team::spawn_override::SpawnOverride;
+use crate::team::team_shape::CoordinationPattern;
 use crate::team::{
     PatternLaunchRunner, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure,
     SpawnPhase,
 };
 use crate::{EntityId, Vault};
+use oneiron_model::llm::ModelId;
 
 use super::super::door_reads::{entity, plan_view};
 use super::{PlanObservation, TypeStamp};

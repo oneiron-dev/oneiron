@@ -6,8 +6,8 @@
 //! not synthetic dispatchers. Unknown extension kinds retain their own facet
 //! name at the authority-stamping door.
 
-use crate::agent_def::AgentCeiling;
-use crate::llm::ModelLocality;
+use crate::store::agent_record::AgentCeiling;
+use oneiron_model::llm::ModelLocality;
 
 /// The two base agents on the runner (ARCH-0026 #base-agents). A job that
 /// changes what the vault knows is the Dreamer's; one that changes how agents

@@ -173,7 +173,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
 const CONSTRAINT_PREDICATE_NAMESPACES: [&str; 1] = ["boundary"];
 
 /// Whether `predicate` names a claim in a constraint namespace.
-pub(super) fn constraint_predicate(predicate: &str) -> bool {
+pub(crate) fn constraint_predicate(predicate: &str) -> bool {
     predicate
         .split_once('.')
         .is_some_and(|(namespace, _)| CONSTRAINT_PREDICATE_NAMESPACES.contains(&namespace))

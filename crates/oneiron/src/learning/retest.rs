@@ -3,37 +3,15 @@
 //! divergence against ([`super::judge::judge_takeover_verdict`]).
 
 use crate::Vault;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::cell::{LearningCell, LearningPredicate, TypeRef};
+use super::cell::{LearningCell, LearningPredicate};
 use super::estimate::Estimate;
 use super::evidence::{Anchor, LearningEvidence, Observation, record_evidence};
 
-/// One of the two scores a retest compares.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RetestScore {
-    /// A pass/fail verdict.
-    Pass(bool),
-    /// A numeric score.
-    Value(f64),
-}
+pub use crate::claim::learning_evidence::RetestScore;
 
-/// One same-case retest by one scorer.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Retest {
-    /// The scorer: a judge skill, a critic lens, any scoring subject.
-    pub scorer: EntityId,
-    /// The scorer's executor at revision.
-    pub executor: String,
-    pub axis: String,
-    pub type_ref: Option<TypeRef>,
-    /// The retest receipt: one row per receipt.
-    pub receipt: String,
-    pub first: RetestScore,
-    pub second: RetestScore,
-    pub at: u64,
-}
+pub use crate::claim::learning_evidence::Retest;
 
 /// Records one retest. Two verdicts feed a Beta over disagreement; two
 /// numeric scores feed a mean of their absolute difference.

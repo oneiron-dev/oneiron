@@ -25,16 +25,19 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
-    call_as_step_checked,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
+    TierPrecedence,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -510,12 +513,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 envelope: CallEnvelope {
                     seat_effort: None,
                     // The call reads exactly the facts admitted at this band.
-                    scope: crate::llm::Scope {
+                    scope: oneiron_model::llm::Scope {
                         readable: admitted
                             .iter()
                             .map(|fact| fact.readable.clone())
                             .collect::<BTreeSet<_>>(),
-                        ..crate::llm::Scope::default()
+                        ..oneiron_model::llm::Scope::default()
                     },
                     purpose: CallPurpose::Extraction,
                     class: CallClass::BestEffort,
