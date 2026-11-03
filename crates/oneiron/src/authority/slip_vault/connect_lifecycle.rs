@@ -1,6 +1,7 @@
 //! Owner-bound doors over the existing federation lifecycle fold.
 use ed25519_dalek::Signer;
 use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 
 use super::connect::{ScopeOpeningKey, local_vault_id, offer_for, require_offer_signs};
 use super::{HostSlipIssuer, require_host};
@@ -11,10 +12,12 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::federation::{
-    Ceiling, FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
-};
+use crate::federation::GuestShareEnvelope;
 use crate::store::grant_scope_custody;
+use oneiron_authority::federation::{
+    Ceiling, FederationDirectionScope, FederationPactScope, Scope, SelectorRange,
+    encode_federation_pact_scope,
+};
 
 /// A host's signed half of a reciprocal re-scope at one fresh consent epoch.
 #[derive(Debug, Clone)]
@@ -260,9 +263,19 @@ fn nonce() -> [u8; 16] {
 
 impl HostSlipIssuer {
     /// Signs only the typed, pact-bound foreign-world delivery transcript.
-    pub fn sign_connect_window(
+    pub fn sign_connect_window(&self, body: &ConnectWindow) -> Result<String> {
+        Ok(crate::entity_id::bytes_to_hex_lower(
+            &self.signing.sign(&body.transcript()?).to_bytes(),
+        ))
+    }
+
+    /// Signs one carried world-settings leg's transcript (FIX 4702): an
+    /// agent's ask on a world a connected vault owns, or this vault's
+    /// holders' answer to one. The peer verifies it under the key its log
+    /// pinned for the pact, as it verifies a Connect window.
+    pub fn sign_foreign_world_privacy(
         &self,
-        body: &crate::task_verb::sdk::ConnectWindow,
+        body: &crate::policy_model::ForeignWorldPrivacyCarry,
     ) -> Result<String> {
         Ok(crate::entity_id::bytes_to_hex_lower(
             &self.signing.sign(&body.transcript()?).to_bytes(),
@@ -274,9 +287,9 @@ impl HostSlipIssuer {
     /// Signs a stripped guest body together with its live grant/pact context.
     pub fn sign_guest_document_envelope(
         &self,
-        context: crate::task_verb::sdk::GuestDocumentContext,
+        context: GuestDocumentContext,
         body: crate::federation::GuestShareEnvelopeBody,
-    ) -> Result<crate::task_verb::sdk::GuestDocumentEnvelope> {
+    ) -> Result<GuestDocumentEnvelope> {
         let envelope = crate::federation::sign_guest_share_envelope(body, |bytes| {
             Ok(self.signing.sign(bytes).to_bytes().to_vec())
         })?;
@@ -286,11 +299,65 @@ impl HostSlipIssuer {
             .sign(&context.transcript(&encoded)?)
             .to_bytes()
             .to_vec();
-        Ok(crate::task_verb::sdk::GuestDocumentEnvelope {
+        Ok(GuestDocumentEnvelope {
             context,
             envelope,
             signer: crate::entity_id::bytes_to_hex_lower(&self.signing.verifying_key().to_bytes()),
             signature,
         })
+    }
+}
+
+/// Filtered bytes bound by the host signature to a pact, epoch and destination.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectWindow {
+    pub pact: String,
+    pub epoch: u64,
+    pub source_vault: String,
+    pub recipient_vault: String,
+    pub world_ref: crate::EntityId,
+    pub facets: Vec<crate::EntityId>,
+    pub bands: Vec<SelectorRange>,
+    pub window_key: String,
+    pub update: Vec<u8>,
+}
+
+impl ConnectWindow {
+    /// A signature binds the admitted bytes to the disclosed axes, peer and epoch.
+    pub(crate) fn transcript(&self) -> crate::Result<Vec<u8>> {
+        rmp_serde::to_vec_named(&("oneiron/connect/window/v1", self))
+            .map_err(|_| crate::Error::InvalidConfig("Connect window encoding failed".into()))
+    }
+}
+
+/// The authority context signed together with the stripped canonical envelope body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GuestDocumentContext {
+    pub pact: String,
+    pub epoch: u64,
+    pub ceiling: Scope,
+    pub effective_scope: FederationDirectionScope,
+}
+
+/// The actual recipient update, not a summary or a server-generated expected view.
+/// `envelope.signature` signs its canonical body, as the engine envelope codec
+/// specifies. `signature` also binds the context and canonical signed envelope
+/// in a domain-separated MessagePack tuple. `signer` is the host's Ed25519
+/// public key in hex. No member roster or originating topology is included.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GuestDocumentEnvelope {
+    pub context: GuestDocumentContext,
+    pub envelope: GuestShareEnvelope,
+    pub signer: String,
+    pub signature: Vec<u8>,
+}
+
+impl GuestDocumentContext {
+    pub(crate) fn transcript(&self, envelope: &[u8]) -> crate::Result<Vec<u8>> {
+        rmp_serde::to_vec_named(&("oneiron/guest-document/v1", self, envelope))
+            .map_err(|_| crate::Error::InvalidConfig("guest document encoding failed".into()))
     }
 }

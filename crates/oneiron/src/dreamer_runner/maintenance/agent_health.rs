@@ -20,13 +20,13 @@
 use std::collections::BTreeMap;
 
 use crate::EntityId;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, agent_dispatch_actor,
-    decode_agent_dispatch_input,
-};
+use crate::agent_dispatch::AgentDispatchInput;
+use crate::agent_dispatch::agent_dispatch_actor;
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::llm::OpenTrapWait;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 
 mod apply;
 mod ask;
@@ -50,6 +50,7 @@ mod rollups;
 mod run_loop;
 mod silence;
 mod sources;
+pub mod steer;
 mod targeted;
 mod trend;
 mod trend_output;
@@ -78,7 +79,9 @@ pub use doors::{
 pub(crate) use doors::{agent_health_card_in_txn, agent_health_cards_in_txn};
 use doors::{forbidden, may_read, settle};
 pub use environment::HealthCauseSource;
-pub(crate) use erase::{erase_actor_sources_in_txn, erase_sources_in_txn};
+pub(crate) use erase::{
+    erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
+};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
@@ -201,3 +204,7 @@ fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
         _ => true,
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::call_evidence::call_receipt_accepts_masked;

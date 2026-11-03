@@ -554,7 +554,7 @@ fn open_ask_id_in_txn(
         .get(&vault.store, txn, &ask)?
         .is_some_and(|row| kept_row(&row, now) || !row.asks_as(current, &ask))
     {
-        ask = crate::codebase::entity_id_from_hash_material(
+        ask = crate::store::code_snapshot::entity_id_from_hash_material(
             FILE_REASK_DOMAIN,
             &[ask.as_bytes().as_slice()],
         )?;
@@ -724,7 +724,7 @@ fn file_ask_id(
     } else {
         &parts[..]
     };
-    crate::codebase::entity_id_from_hash_material(FILE_ASK_DOMAIN, parts)
+    crate::store::code_snapshot::entity_id_from_hash_material(FILE_ASK_DOMAIN, parts)
 }
 
 /// Delivers a granted file read in `txn`: a T1 lease per key, each receipt

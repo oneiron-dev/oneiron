@@ -314,13 +314,14 @@ impl BatchBuilder<'_> {
     /// reserved role. The materialization checks still run at apply time.
     pub(crate) fn put_task_fact(mut self, id: &EntityId, data: &[u8], at: u64) -> Self {
         if self.validation_error.is_none() {
-            self.validation_error = match crate::habit::task_role_from_body_bytes(data) {
-                Ok(crate::habit::TaskRole::AuthorityFact) => None,
-                Ok(_) => Some(Error::Record(crate::error::RecordError::InvalidTaskBody(
-                    "task fact requires AuthorityFact role",
-                ))),
-                Err(error) => Some(error),
-            };
+            self.validation_error =
+                match crate::write_envelope::task_body::task_role_from_body_bytes(data) {
+                    Ok(crate::write_envelope::task_body::TaskRole::AuthorityFact) => None,
+                    Ok(_) => Some(Error::Record(crate::error::RecordError::InvalidTaskBody(
+                        "task fact requires AuthorityFact role",
+                    ))),
+                    Err(error) => Some(error),
+                };
         }
         self.ops.push(plain_put_op(
             id,
@@ -437,7 +438,7 @@ impl BatchBuilder<'_> {
         #[cfg(feature = "sync")]
         if matches!(
             self.import_tier,
-            crate::sync::client::ImportTier::Federated(_)
+            crate::store::window_protocol::ImportTier::Federated(_)
         ) {
             self.federated_puts.push(self.ops.len());
         }

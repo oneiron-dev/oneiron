@@ -40,8 +40,7 @@ use crate::{EntityId, Vault};
 /// Every training offer ask's intent key starts so:
 /// `training_offer/<offer hex>/<digest>/<owner hex>`.
 const INTENT_PREFIX: &str = "training_offer/";
-/// The message type of the witnessed question.
-pub(crate) const OFFER_QUESTION_TYPE: &str = "training_offer_question";
+pub(crate) use crate::gate::training_ask_kind::OFFER_QUESTION_TYPE;
 /// The question message's metadata keys: the offer tuple. It locates the
 /// reservation and proves nothing by itself.
 const META_OFFER: &str = "training_offer";

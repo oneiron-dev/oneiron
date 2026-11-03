@@ -14,11 +14,11 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::dreamer_wake::{SieveSpan, SpanKind};
 use crate::error::{Error, Result};
-use crate::llm::{CacheCallUsage, Scope, ScopeResource};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{CacheCallUsage, Scope, ScopeResource};
 
 use super::log::{Log, quote_in};
 
@@ -38,6 +38,11 @@ const CHUNKS: SideTable<(SessionKey, (EntityId, EntityId), [u8; 32]), (u64, u32)
     SideTable::new(&side_table::DREAMER_FOLLOWER_CHUNK);
 pub(super) const RESULTS: SideTable<ResultKey, FollowerResult, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_RESULT);
+/// Whether a masked copy of a `DREAMER_FOLLOWER_RESULT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_follower_result_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<FollowerResult, Named>(bytes)
+}
 
 /// The try writing a session: its attempt and the lease generation within
 /// that try. One writer at a time; a publish from any other is refused.

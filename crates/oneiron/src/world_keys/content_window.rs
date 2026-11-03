@@ -2,9 +2,11 @@
 //! FIX 922): what a reader packs from a private world's window, and how a
 //! reader takes a section's window back in.
 //!
-//! The live window of a world flagged device-only never holds the world's rows
-//! (reverse rematerialization withholds them), so the reader keeps a second Loro
-//! document per sealed window, its mirror, packed with every row of the window.
+//! The live window of a world flagged device-only packs its own world's rows
+//! for live readers (reverse rematerialization withholds them from the other
+//! windows), and the reader keeps a second Loro document per sealed window,
+//! its mirror, packed with every row of the window: the mirror is what a
+//! section's packets continue.
 //! The mirror keeps its history: before each pack it takes the window's own
 //! deletes here, so a row deleted here leaves every mirror that merges it (FIX
 //! 3360). A section carries each mirror whole; taking one in merges it into the
@@ -23,16 +25,16 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::sync::WindowManager;
-use crate::sync::loro_support::{
+use crate::store::loro_document::{
     export_snapshot, import_doc, map_for_each_tombstone_value, map_get_bytes,
 };
+use crate::sync::WindowManager;
 use crate::sync::schema::create_window_doc;
-use crate::sync::types::WindowKey;
 use crate::sync::window::{
     apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize_mirror,
     load_window_from_state, reverse_rematerialize_for_sealing,
 };
+use crate::window_key::WindowKey;
 
 /// Where a mirror's deletes come from.
 enum MirrorDelete {

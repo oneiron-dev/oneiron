@@ -3,15 +3,23 @@
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::batch::{ApplyOpsGateMode, BatchOp};
-use crate::campaign::claims::{
+use crate::campaign::surface::{campaign_type_byte, owned_campaign_in_txn};
+use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource};
+use crate::consent::AuthenticatedOwner;
+use crate::memory::campaign_records::stage_results::StageProjectResult;
+use crate::memory::campaign_records::{
+    CampaignActionProvenance, CampaignEnrollRequest, CampaignEnrollmentReceipt,
+    CampaignEnrollmentState, CampaignLifecycle, CampaignMemberChannelSpec,
+    CampaignStageEvidenceOutcome, CampaignStageEvidenceReceipt, CampaignStageEvidenceRequest,
+    CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
+};
+use crate::temporal::TimeRange;
+use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
+use crate::write_envelope::cohort_claims::ladder::StageEvidence;
+use crate::write_envelope::cohort_claims::{
     CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, EvidenceBasis,
     normalize_campaign_pack_token,
 };
-use crate::campaign::stage::{ExternalStageEvidenceHook, StageEvidence, StageProjectResult};
-use crate::campaign::surface::*;
-use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource};
-use crate::consent::AuthenticatedOwner;
-use crate::temporal::TimeRange;
 use crate::{EntityId, Error};
 use std::sync::atomic::Ordering;
 
@@ -312,8 +320,8 @@ impl Memory<'_> {
             let receipt = crate::campaign::send_hygiene::apply_suppression_in_txn(
                 self.vault,
                 txn,
-                crate::campaign::send_hygiene::SuppressionCause::Unsubscribe,
-                &crate::campaign::send_hygiene::SuppressionInput {
+                crate::write_envelope::cohort_claims::suppression::SuppressionCause::Unsubscribe,
+                &crate::write_envelope::cohort_claims::suppression::SuppressionInput {
                     person_ref: person,
                     campaign_ref: Some(campaign),
                     channel: channel.clone(),

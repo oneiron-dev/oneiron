@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::honesty::HONESTY_AXIS;
 use crate::skill::SkillRecord;
+use crate::skill::learning_judge::HONESTY_AXIS;
 
 use super::gate::{
     HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts, skill_body_binding_digest,

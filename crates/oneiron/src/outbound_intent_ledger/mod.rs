@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+pub mod email_headers;
 mod payload;
 mod pinned_approval;
 mod resolution;
@@ -26,7 +27,7 @@ pub use self::types::{
     IntentLedgerResult, IntentRecoveryFailure, IntentRecoveryReport, IntentState,
     OUTBOUND_BINDING_VERSION, OutboundAuthorizationBinding, OutboundCallClass, OutboundCallRequest,
     OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome, OutboundToolDescriptor,
-    RecordedOutboundOutcome, classify_outbound_tool,
+    RecordedOutboundOutcome, SecretSendRefusal, SecretSendRefusalKind, classify_outbound_tool,
 };
 
 #[cfg(test)]

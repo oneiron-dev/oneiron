@@ -3,11 +3,16 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EVIDENCE;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::evidence::{EVIDENCE, cells_for_subject_in_txn};
+use crate::learning::LearningCell;
+use crate::learning::evidence::cells_for_subject_in_txn;
 use crate::learning::project::project_cell_in_txn;
-use crate::learning::{Anchor, EvidenceSource, LearningCell, LearningEvidence, Observation};
 use crate::receipt::ReceiptRecord;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
@@ -27,7 +32,8 @@ use super::read::{
     SkillReliabilityQuery, posterior_from_estimate, resolved_estimate_in_txn, validate_executor,
 };
 
-pub const PREDICATE_SKILL_RELIABILITY: &str = crate::learning::PREDICATE_LEARNING_RELIABILITY;
+pub const PREDICATE_SKILL_RELIABILITY: &str =
+    crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY;
 
 /// Receipt task placement: JSON {node_id, tree_version}. Missing is invalid.
 pub const FIELD_SKILL_TYPE_REF: &str = "typeRef";
@@ -301,7 +307,7 @@ pub(super) fn project_in_txn(
         let source = EvidenceSource::Anchored(anchor);
         if !source
             .admit()?
-            .feeds(crate::learning::LearningPredicate::Reliability)
+            .feeds(crate::claim::learning_predicate::LearningPredicate::Reliability)
         {
             return Err(invalid("skill reliability requires a performance anchor"));
         }
@@ -337,7 +343,7 @@ pub(super) fn project_in_txn(
     // add a second run. Other learning producers' receipt rows are untouched.
     let mut changed = BTreeSet::new();
     for row in cells_for_subject_in_txn(vault, txn, skill)? {
-        if row.cell.predicate != crate::learning::LearningPredicate::Reliability
+        if row.cell.predicate != crate::claim::learning_predicate::LearningPredicate::Reliability
             || row.cell.executor.as_deref() != Some(executor)
         {
             continue;

@@ -3,10 +3,7 @@
 use super::{EncodedFrame, TransportError, checked_encoded_frame_len};
 use crate::EntityId;
 
-/// Entity text-plane frame: `[tag][entity:16][kind:1][payload]`.
-pub const TAG_DOCUMENT: u8 = 11;
-/// Document batch: `[tag][len:4BE][document frame]...`. Nesting is forbidden.
-pub const TAG_BATCH: u8 = 12;
+pub use crate::store::document_frame_tags::{TAG_BATCH, TAG_DOCUMENT};
 
 /// The members one batch this node sends carries at most: a sender's
 /// processing quantum, never a receiver's refusal. A receiver takes every
@@ -15,24 +12,7 @@ const MAX_BATCH_DOCUMENTS: usize = 256;
 /// Maximum proposals carried by one node tick. Excess waits for its next tick.
 pub const MAX_NODE_BATCH_MEMBERS: usize = MAX_BATCH_DOCUMENTS;
 
-/// Document payload kinds. A state copy replaces the receiver's document.
-pub mod document_sub_tags {
-    pub const UPDATE: u8 = 0;
-    pub const STATE: u8 = 1;
-    /// Payload is a selector request envelope, with the peer's document VV.
-    pub const REQUEST: u8 = 2;
-    /// Receiver VV after a durable import.
-    pub const ACK: u8 = 3;
-    /// Authenticated semantic NOTE command. Actor is bound out of band.
-    pub const NOTE_OPS: u8 = 4;
-    /// Idempotent NOTE command result, sent only to the requesting connection.
-    pub const NOTE_RECEIPT: u8 = 5;
-    /// An own device's pinned artifact pointer change, with the rows that
-    /// serve it. Owner lane only; the entity names the channel and artifact.
-    pub const ARTIFACT_PUBLICATION: u8 = 6;
-    /// The sync server's answer to one publication: its digest and outcome.
-    pub const ARTIFACT_RECEIPT: u8 = 7;
-}
+pub use crate::store::document_frame_tags::document_sub_tags;
 
 /// Borrowed, validated entity-document frame.
 #[derive(Debug, PartialEq, Eq)]
