@@ -22,9 +22,9 @@ pub(super) fn fields_for_profile(
         //   Standard = pred val conf sal evid confBand confBasis
         //   Full     = pred val conf sal evid from to src world rel subj scope
         //              confBand confBasis
-        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => crate::claim::CLAIM_FIELDS_MINIMAL,
-        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => crate::claim::CLAIM_FIELDS_STANDARD,
-        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::claim::CLAIM_FIELDS_FULL,
+        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => crate::write_envelope::claim_body::CLAIM_FIELDS_MINIMAL,
+        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => crate::write_envelope::claim_body::CLAIM_FIELDS_STANDARD,
+        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::write_envelope::claim_body::CLAIM_FIELDS_FULL,
 
         (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
         (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at", "reactions"],

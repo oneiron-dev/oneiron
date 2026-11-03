@@ -6,7 +6,7 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::claim::ClaimSubject;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};

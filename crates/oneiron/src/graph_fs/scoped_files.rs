@@ -1,7 +1,8 @@
 //! The same credential-gated file projection for point reads and indexed
 //! hydration. A non-owner never receives a lifted value through raw bytes.
 use super::model::GraphFsResolver;
-use crate::claim::{PointRead, ReadRow, ScopedReadResult};
+use crate::claim::{PointRead, ReadRow};
+use crate::ports::ScopedReadResult;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::RetrievalFilter;

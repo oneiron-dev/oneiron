@@ -275,7 +275,7 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<Option<EntityId>> {
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-        let error = match crate::claim::decode_claim_body(body, true) {
+        let error = match crate::write_envelope::claim_body::decode_claim_body(body, true) {
             Ok(claim) => return Ok(claim.world),
             Err(error) => error,
         };

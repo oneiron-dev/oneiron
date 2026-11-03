@@ -1,6 +1,6 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
 use crate::{
-    claim::ClaimBody,
+    write_envelope::claim_body::ClaimBody,
     error::{Error, Result},
     receipt::ReceiptRecord,
     serialize::ExportBody,
@@ -187,6 +187,6 @@ pub(crate) fn receipt_sources_for_body(
 pub(super) fn task_receipt_refs_from_body(body: &ExportBody) -> BTreeSet<String> {
     body.to_bytes()
         .ok()
-        .and_then(|bytes| crate::claim::decode_claim_body(&bytes, true).ok())
+        .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, true).ok())
         .map_or_else(BTreeSet::new, |claim| task_receipt_refs(&claim))
 }

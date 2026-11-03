@@ -2,9 +2,8 @@
 use super::actor_erase::{ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginProofErase};
 use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, encode_claim_body};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

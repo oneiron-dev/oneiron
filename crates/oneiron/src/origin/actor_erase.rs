@@ -22,7 +22,7 @@ use super::residence::ORIGIN_ERASED_WRITER;
 use super::smart_http::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::deletion::carrier_actor_merged;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -331,7 +331,7 @@ pub(crate) fn canonical_origin_claim_in_txn(
         .get(..ENTITY_METADATA_HEADER_LEN)
         .ok_or(Error::CorruptedIndex("origin claim header"))?
         .to_vec();
-    blob.extend_from_slice(&crate::claim::encode_claim_body(&settled)?);
+    blob.extend_from_slice(&crate::write_envelope::claim_body::encode_claim_body(&settled)?);
     Ok(Some(blob))
 }
 

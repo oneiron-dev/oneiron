@@ -6,7 +6,8 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::ClaimApprovalStatus;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
@@ -189,7 +190,7 @@ fn prior_claim(
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
-    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
 }
 
 impl Vault {
