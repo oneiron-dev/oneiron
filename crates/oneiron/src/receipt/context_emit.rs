@@ -10,7 +10,7 @@ use super::{
     append_pack_manifest_fields,
 };
 use crate::EntityId;
-use crate::attempt_queue::ManifestEntry;
+use crate::store::attempt_manifest::ManifestEntry;
 use crate::memory::{
     Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
 };

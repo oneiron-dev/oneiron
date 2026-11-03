@@ -115,11 +115,11 @@ pub(crate) use tests::set_project_depth_signed_for_test;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, RecordError, Result};
-use crate::llm::Scope;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_model::llm::Scope;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

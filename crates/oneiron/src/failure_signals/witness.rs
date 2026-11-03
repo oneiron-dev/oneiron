@@ -5,8 +5,9 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{ExecutedModelWitness, ModelId};
+use crate::llm::ExecutedModelWitness;
 use crate::self_heal::tier1_source::VerifiedSourceSet;
+use oneiron_model::llm::ModelId;
 use rand_core::RngCore;
 
 #[derive(Clone)]
