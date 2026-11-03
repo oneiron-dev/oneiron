@@ -2,7 +2,8 @@
 
 use serde::ser::{self, Serialize};
 
-use super::{CodecError, Head, Reader, Serializer, Sink, Token};
+use super::{CodecError, Head, Serializer, Sink};
+use crate::codec::{Reader, Token};
 
 /// A sequence, map or struct being written: a known length puts its
 /// header out and streams what follows; an unknown one buffers it, then

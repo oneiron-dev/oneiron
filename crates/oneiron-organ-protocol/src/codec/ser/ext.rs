@@ -37,7 +37,7 @@ fn not_ext() -> CodecError {
     CodecError::Invalid("an extension is a tag and its bytes")
 }
 
-impl<'a, 'w, W: Sink> ser::Serializer for &mut ExtSerializer<'a, 'w, W> {
+impl<W: Sink> ser::Serializer for &mut ExtSerializer<'_, '_, W> {
     type Ok = ();
     type Error = CodecError;
     type SerializeSeq = ser::Impossible<(), CodecError>;
@@ -213,7 +213,7 @@ impl<'a, 'w, W: Sink> ser::Serializer for &mut ExtSerializer<'a, 'w, W> {
     }
 }
 
-impl<'a, 'w, W: Sink> ser::SerializeTuple for &mut ExtSerializer<'a, 'w, W> {
+impl<W: Sink> ser::SerializeTuple for &mut ExtSerializer<'_, '_, W> {
     type Ok = ();
     type Error = CodecError;
 
@@ -221,7 +221,7 @@ impl<'a, 'w, W: Sink> ser::SerializeTuple for &mut ExtSerializer<'a, 'w, W> {
         value.serialize(&mut **self)
     }
 
-    pub(super) fn end(self) -> Result<(), CodecError> {
+    fn end(self) -> Result<(), CodecError> {
         Ok(())
     }
 }
