@@ -4,7 +4,7 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
+    FIELD_ATTEMPT_CALLER, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
     append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
     append_task_project_field, append_task_type_fields, append_team_receipt_fields,
 };
@@ -176,6 +176,14 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     if let Some(team) = &team {
         append_team_receipt_fields(&mut receipt.fields, team);
     }
+    // FIX 12306: the caller whose agent dispatch or turn program froze
+    // callable cases under this receipt. Other attempt kinds have no caller
+    // principal to record; the amend door fails closed on their absence.
+    if let Some(caller) = attempt_calling_principal_in_txn(store, wtxn, record)? {
+        receipt
+            .fields
+            .insert(FIELD_ATTEMPT_CALLER.to_owned(), caller.to_hex());
+    }
     // FIX 8259: the lease generation it settled under. Additive; the receipt
     // id is unchanged and old rows decode without it.
     receipt.fields.insert(
@@ -184,6 +192,31 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     );
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
+}
+
+/// The principal whose agent dispatch or turn program `record` ran as, on
+/// the stamper's or reader's own snapshot (FIX 12306). `None` for every other
+/// attempt kind and for a row whose dispatch input does not decode as one.
+/// An invalid authoritative stamp or a storage error stays an error: the
+/// stamper does not seal a callerless receipt, and the amend door does not
+/// turn corruption into an authority refusal.
+pub(crate) fn attempt_calling_principal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<EntityId>> {
+    if let Some(input) = crate::agent_dispatch::record_dispatch_input(record) {
+        return Ok(Some(
+            crate::agent_dispatch::agent_dispatch_actor(&input)?.entity_ref(),
+        ));
+    }
+    if record.kind == crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+        return Ok(Some(
+            crate::dreamer_runner::program_actor_for_attempt_in_txn(store, txn, record.id)?
+                .entity_ref(),
+        ));
+    }
+    Ok(None)
 }
 
 /// Point-reads the attempt pack receipt named by `receipt_id`.
