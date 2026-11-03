@@ -1,6 +1,8 @@
-//! Flags for `oneiron secrets bind`, `unbind` and `pending` (FIX 2620,
-//! 11158): the owner's bindings of a secret to an effector, and a restore's
-//! credentials pending on their source's evidence. None reads a value.
+//! Flags for `oneiron secrets bind`, `unbind`, `pending` and
+//! `import-supplement` (FIX 2620, 11158, 12068): the owner's bindings of a
+//! secret to an effector, a restore's credentials pending on their source's
+//! evidence, and the import of an export secret supplement. None reads a
+//! value.
 
 use clap::Args;
 
@@ -68,6 +70,14 @@ pub struct SecretPendingArgs {
     #[arg(long, value_name = "WORD", requires = "keep")]
     pub confirm: Option<String>,
 
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// `oneiron secrets import-supplement` reads the supplement read's JSON
+/// from stdin: no flag names the copy.
+#[derive(Args, Clone, Debug)]
+pub struct SecretImportSupplementArgs {
     #[command(flatten)]
     pub serve: ServeArgs,
 }

@@ -47,6 +47,7 @@ rmpv = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = "0.1"
+zeroize = "1"
 
 # Core Audio process taps (macOS 14.2+). `coreaudio-rs` 0.14.2 exposes no
 # process-tap surface at all — `CATapDescription` is an Objective-C class, so

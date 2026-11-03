@@ -7923,6 +7923,7 @@ dependencies = [
  "heed",
  "icalendar",
  "icu_normalizer",
+ "im",
  "image",
  "jiff-tzdb",
  "jsonschema",
@@ -8407,6 +8408,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
