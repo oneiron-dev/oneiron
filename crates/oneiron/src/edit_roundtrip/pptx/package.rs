@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;
 
 /// One narrow operation. `thread_id` is also the exported root comment GUID.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PptxCommentPatch {
     /// Engine identities retained independently of the displayed Office author.
     #[serde(with = "entity_ref")]

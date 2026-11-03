@@ -222,7 +222,7 @@ pub struct SlideReviewUnitInput {
 /// answered), each answered unit's judgment and the comment it became, as
 /// that proposal's manifest keeps them, the units the ladder left
 /// unanswered, and those it refused.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewOutcome {
     pub proposed: Option<PendingProposalView>,
     /// Each answered unit's judgment: its decision and receipt, the managed
@@ -238,7 +238,7 @@ pub struct SlideReviewOutcome {
 
 /// A unit the review would not ask as given, and the slide unit it offers
 /// instead, if any.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
