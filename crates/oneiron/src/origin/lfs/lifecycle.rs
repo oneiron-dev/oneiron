@@ -204,10 +204,10 @@ impl Vault {
                 }
             }
             if graph {
-                crate::ppr::increment_graph_version(&self.store, txn)?;
+                crate::store::graph_version::increment_graph_version(&self.store, txn)?;
             }
             if vector {
-                crate::hnsw::increment_vector_version(&self.store, txn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, txn)?;
             }
             if rows.len() < budget {
                 GC.delete(&self.store, txn, &owner)?;

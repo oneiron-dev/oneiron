@@ -1,6 +1,6 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
-use crate::agent_def::{AgentDefinition, AgentWakeCadence};
+use crate::{agent_def::AgentDefinition, store::agent_record::AgentWakeCadence};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -110,6 +110,19 @@ pub struct AgentWakeSignals {
 }
 
 impl AgentWakePolicy {
+    /// The role `definition` wakes as under this row: its own cadence dial,
+    /// else the row's absent role. This is the agent's recorded kind: a
+    /// `Companion` is a companion, any other role a work agent.
+    #[must_use]
+    pub fn role_of(self, definition: &AgentDefinition) -> AgentWakeRole {
+        match definition.wake_cadence {
+            Some(AgentWakeCadence::Companion { .. }) => AgentWakeRole::Companion,
+            Some(AgentWakeCadence::Leader { .. }) => AgentWakeRole::Leader,
+            Some(AgentWakeCadence::Worker) => AgentWakeRole::Worker,
+            None => self.absent_role,
+        }
+    }
+
     /// Resolve role, interval and trigger permissions under a single row.
     #[must_use]
     pub fn due(
@@ -119,7 +132,7 @@ impl AgentWakePolicy {
         ordinal: u64,
         signals: AgentWakeSignals,
     ) -> bool {
-        if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off
+        if !definition.enabled || definition.dreaming_mode() == crate::store::agent_record::DreamingMode::Off
         {
             return false;
         }
@@ -610,6 +623,16 @@ impl Vault {
     pub fn dreamer_wake_policy(&self) -> Result<DreamerWakePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
+    }
+
+    /// The role `definition` wakes as under this vault's policy row, read in
+    /// `txn` ([`AgentWakePolicy::role_of`]).
+    pub(crate) fn agent_wake_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        definition: &AgentDefinition,
+    ) -> Result<AgentWakeRole> {
+        Ok(policy_in_txn(self, txn)?.agent_cadence.role_of(definition))
     }
     /// Read-only policy query. The due time is a one-shot sleep target, not a poll rate.
     pub fn evaluate_dreamer_wake(

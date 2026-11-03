@@ -16,7 +16,7 @@ use crate::error::Result;
 use crate::gate::decision::{GateDecision, GateOutcome};
 use crate::gate::input::ExternalEffectGateInput;
 use crate::gate::resolution::PolicyManifestResolution;
-use crate::outbound_intent_ledger::AdmittedApproval;
+use crate::consent::approval_proof::AdmittedApproval;
 use crate::store::{GateDecisionId, Store};
 
 /// What one admission of a two-actor mutation recorded: both actors'
