@@ -287,7 +287,7 @@ fn admitted_lease(
 }
 
 fn lease_pin(lease: &CheckoutLeaseAct) -> Result<GitOid> {
-    let crate::codebase::RepoRef::LocalFolder { commit, .. } = &lease.repo_ref else {
+    let crate::store::code_snapshot::RepoRef::LocalFolder { commit, .. } = &lease.repo_ref else {
         return Err(serve_failed(
             "a checkout lease's repo must be a local folder",
         ));

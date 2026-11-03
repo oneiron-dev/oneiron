@@ -7,10 +7,10 @@ use std::collections::BTreeSet;
 
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
-use crate::llm::Scope;
-use crate::llm::decision::EvidenceVersion;
+use crate::model_decision::EvidenceVersion;
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Vault};
+use oneiron_model::llm::Scope;
 
 use super::recipes::queue_key;
 use super::{QUEUE, SPANS, SieveRung, SieveSpan, SpanBand, SpanKind, SpanOrigin, chunks};

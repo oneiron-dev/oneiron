@@ -10,7 +10,7 @@ exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/heed/vendor/
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
-# CARGO_PROFILE_DEV_DEBUG=2 cargo ... . Release defaults are unchanged.
+# CARGO_PROFILE_DEV_DEBUG=2 cargo ... . Release adds thin LTO only (below).
 # Measurements and tradeoffs: docs/ops/build-performance.md.
 [profile.dev]
 debug = 1
@@ -31,6 +31,12 @@ opt-level = 2
 # Host-specific measurements and tradeoffs: docs/ops/build-performance.md.
 [profile.dev.package.oneiron]
 codegen-units = 256
+
+# Thin cross-crate LTO keeps hot functions inlining across the engine's crate
+# boundaries as core modules move into their own crates. Everything else in the
+# release profile stays at Cargo's defaults.
+[profile.release]
+lto = "thin"
 
 [workspace.package]
 version = "0.1.0"

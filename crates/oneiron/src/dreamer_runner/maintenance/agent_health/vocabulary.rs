@@ -11,7 +11,7 @@ use super::{
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::learning_setting::SettingSpec;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::side_table::{self, Named, SideTable};
 
 /// The review runs at all (1) or not (0).
