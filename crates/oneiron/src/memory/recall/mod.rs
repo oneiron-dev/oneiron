@@ -768,7 +768,8 @@ impl Memory<'_> {
         }
         // Only a reader past that check has its facet ref looked up: one
         // denied everything answers empty whatever the ref names (FIX 5008).
-        let selection = self.recall_faceted(unfaceted, scope, pin)?;
+        let store = lane.store_read();
+        let selection = self.recall_faceted(unfaceted, scope, pin, &store)?;
         let worlds = &selection.worlds;
         let projects = &selection.projects;
         let world_scope = selection.world_scope();

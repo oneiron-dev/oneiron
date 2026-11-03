@@ -1,4 +1,5 @@
 //! Credential-bound candidate admission, inside every speculative pass.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult};
@@ -17,6 +18,7 @@ pub(crate) struct SpeculativeReadScope {
     pub key: ScopedReadActorKey,
     pub worlds: WorldScope,
     pub corpus: CorpusScope,
+    pub conversations: Option<BTreeSet<crate::EntityId>>,
     pub facet: Option<crate::EntityId>,
     pub kinds: Option<Vec<u8>>,
 }
@@ -39,7 +41,15 @@ impl SpeculativeReadScope {
                     || !crate::memory::CONTAINER_KINDS.contains(&row.entity_type),
                     |kinds| kinds.contains(&row.entity_type),
                 );
-                Ok(wanted && lane.recall_candidate_in(txn, &policy, &filter, id)?)
+                Ok(wanted
+                    && lane.recall_candidate_in(txn, &policy, &filter, id)?
+                    && crate::memory::conversation_candidate_admits(
+                        vault,
+                        store,
+                        txn,
+                        id,
+                        &self.conversations,
+                    )?)
             };
         let mut builder = pass
             .builder(vault, deadline)
@@ -62,9 +72,27 @@ impl SpeculativeReadScope {
         vault: &crate::Vault,
         scores: Vec<ScoredEntity>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        vault
+        let scoped = vault
             .scoped_read(self.key.clone())
-            .filter_scored_entities(scores)
+            .filter_scored_entities(scores)?;
+        let txn = vault.store.env.read_txn()?;
+        let store = vault.store.read();
+        let mut value = Vec::new();
+        for score in scoped.value {
+            if crate::memory::conversation_candidate_admits(
+                vault,
+                &store,
+                &txn,
+                &score.id,
+                &self.conversations,
+            )? {
+                value.push(score);
+            }
+        }
+        Ok(ScopedReadResult {
+            value,
+            receipt: scoped.receipt,
+        })
     }
 }
 
