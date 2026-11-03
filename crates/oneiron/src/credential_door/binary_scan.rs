@@ -33,7 +33,7 @@ use super::door_types::{
 // old path still names them.
 pub(super) use super::door_types::{ReceiveBlobKind, ReceiveScanHit};
 use crate::batch::secret_scan::{scan_file_content, scan_file_content_reader};
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::origin::lfs::find_custody_credential;
 
 /// Scans one pushed blob's whole original content.

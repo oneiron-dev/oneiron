@@ -120,7 +120,6 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::CallPurpose;
 use crate::receipt::{
     FIELD_SKILL_EDIT_ACCEPTED_VERDICT, FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION,
     FIELD_SKILL_EDIT_GOAL_AXES, FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
@@ -137,6 +136,7 @@ use crate::skill::{
 use crate::skill_convert::{PROVENANCE_BIRTH_KEY, source_message_refs};
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use oneiron_model::llm::CallPurpose;
 
 mod admission;
 mod basis;
@@ -281,8 +281,7 @@ pub const HELD_OUT_RESERVE_DIVISOR: u32 = 5;
 /// drafting author's totals.
 pub const SKILL_EDIT_SCORE_CALL_PURPOSE_NAME: &str = "skill_edit_score_replay";
 
-/// Upper bound on a cycle label.
-pub const SKILL_EDIT_CYCLE_MAX_BYTES: usize = 128;
+pub use crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_MAX_BYTES;
 
 /// Domain separator of the split hash. Pinned: changing it repartitions every
 /// skill's evidence, which is a migration, not a refactor.

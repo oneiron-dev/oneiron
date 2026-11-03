@@ -1,12 +1,12 @@
 //! Phonetic candidate retrieval over canonical and session snapshots.
 use super::RetrievalIndexRead;
 use crate::entity_id::ENTITY_ID_LEN;
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-    pipeline::ScoredEntity,
-    store::ManifestDbs,
-};
+use crate::EntityId;
+use crate::Vault;
+use crate::error::Error;
+use crate::error::Result;
+use oneiron_retrieval::pipeline::ScoredEntity;
+use crate::store::ManifestDbs;
 use std::collections::HashMap;
 #[derive(Default)]
 struct Accumulator {

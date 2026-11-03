@@ -294,9 +294,10 @@ pub(super) fn pending_dreamer_vad_approvals(
                 data,
                 allow_reserved_predicate: false,
                 ..
-            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
-                (*id, crate::claim::decode_claim_body(data, false)?.approval)
-            }
+            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => (
+                *id,
+                crate::write_envelope::claim_body::decode_claim_body(data, false)?.approval,
+            ),
             BatchOp::ClaimCandidate { id, envelope, .. } => (*id, envelope.approval()),
             _ => continue,
         };

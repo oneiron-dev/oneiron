@@ -2,7 +2,7 @@
 use super::{Memory, MemoryError, MemoryResult, RecallScope};
 use crate::EntityId;
 use crate::corpus::CorpusScope;
-use crate::pipeline::WorldAuthoritySet;
+use crate::claim::world_access::WorldAuthoritySet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

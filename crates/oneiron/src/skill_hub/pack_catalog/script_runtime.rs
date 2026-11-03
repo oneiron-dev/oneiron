@@ -23,11 +23,9 @@ use crate::{
     surface_event::SurfaceEventAdmission,
 };
 use crate::{
-    code_sandbox::SandboxCredentialHandle,
-    code_sandbox::microvm::{
-        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
-    },
-    code_sandbox::{SandboxGuestTier, SandboxMountTable},
+    store::sandbox_credential::SandboxCredentialHandle,
+    code_sandbox::microvm::{CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter},
+    store::{sandbox_contract::SandboxGuestTier, sandbox_path::SandboxMountTable},
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
     surface_event::InboundSurfaceEventInput,
@@ -544,7 +542,7 @@ struct PackCredentialResolver {
 impl CredentialResolver for PackCredentialResolver {
     fn resolve_for(
         &self,
-        handle: &crate::code_sandbox::SandboxCredentialHandle,
+        handle: &crate::store::sandbox_credential::SandboxCredentialHandle,
         dest: &CredentialDestination,
     ) -> Result<Vec<u8>> {
         let (key_id, connector, secret_ref, bound_dest, agent) =
