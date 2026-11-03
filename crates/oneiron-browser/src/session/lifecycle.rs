@@ -455,11 +455,17 @@ impl BrowserSession {
         }
     }
 
-    /// The press an effect of `class` on `row` runs under, the grants read
-    /// again where the host reads them live (FIX 4613); a batch press it
-    /// takes is paid on the session (FIX 4615).
-    pub(super) fn press_for(&mut self, class: &str, row: &Row) -> Result<PressMode, BrowserError> {
-        let pressed = press_for(self.press_policy(), class, row);
+    /// The press an effect of `class` on `row` runs under, the grants
+    /// read again where the host reads them live (FIX 4613), for the
+    /// counterparty `audience` the send reports (FIX 11907); a batch press
+    /// it takes is paid on the session (FIX 4615).
+    pub(super) fn press_for(
+        &mut self,
+        class: &str,
+        row: &Row,
+        audience: Option<&str>,
+    ) -> Result<PressMode, BrowserError> {
+        let pressed = press_for(self.press_policy(audience), class, row);
         match pressed {
             Ok(PressMode::PerBatch) => self.press_paid(class),
             // A refused press ends a draft as the press would (CUA E7).
@@ -495,6 +501,7 @@ impl BrowserSession {
             target: Some(&target.row),
             class: None,
             press: PressMode::None,
+            audience: None,
             started,
         };
         let typed = self.driver.type_target(&target, entry, input.clear, &base);
@@ -608,6 +615,7 @@ impl BrowserSession {
             action,
             source_url,
             source_origin,
+            audience: effect.audience.clone(),
             source_title,
             tab,
             result_tab: Some(self.driver.front_target().to_owned()),
