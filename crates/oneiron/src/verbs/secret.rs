@@ -15,7 +15,6 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::AgentVerb;
 use crate::EntityId;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult,
@@ -303,45 +302,10 @@ fn reveal_effect(effect: HandleReveal) -> (&'static str, Option<String>, Option<
     }
 }
 
-/// The answer of a `reveal.wait` as a run's record keeps it: without the
-/// value. The guest reads the full answer; its step row and any receipt keep
-/// this one.
-#[must_use]
-pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
-    let mut kept = output.clone();
-    if let Some(fields) = kept.as_object_mut() {
-        fields.remove("value");
-        fields.remove("value_base64");
-    }
-    kept
-}
+pub use crate::code_run::kept_reveal_answer;
+pub(crate) use crate::code_run::kept_reveal_lease;
 
-/// The lease a kept `granted` answer of `reveal.wait` names: the lease a
-/// replay of its step reads the value again under (FIX 2360). `None` for any
-/// other answer.
-pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
-    if output.get("decision")?.as_str()? != "granted" {
-        return None;
-    }
-    let lease = output.get("receipt")?.get("lease")?.as_str()?;
-    EntityId::from_hex(lease).ok()
-}
-
-/// A reply to `verb` as a call receipt digests it and a verb hook reads it
-/// (OF-560): a `reveal.wait` reply, in whatever envelope its door wraps it,
-/// with each value replaced by its secret's handle, as a structured field
-/// keeps a masked secret. `None` for any other verb's reply, which is read as
-/// it is. A digest of the value itself would let a short secret be guessed
-/// offline.
-#[must_use]
-pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
-    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
-        return None;
-    }
-    let mut masked = reply.clone();
-    mask_reveal_values(&mut masked);
-    Some(masked)
-}
+pub use crate::task_verb::verb_hook_boundary::masked_reveal_reply;
 
 /// The digest a call receipt keeps of the reply bytes a door sent for
 /// `verb`: a `reveal.wait` reply's over its masked form
@@ -357,66 +321,7 @@ pub fn call_reply_digest(verb: &str, bytes: &[u8]) -> String {
     crate::receipt::call_json_digest(&reply)
 }
 
-/// The caller's view of a `reveal.wait` reply once its hooks read the masked
-/// form: where the view still holds the handle the mask left, the value goes
-/// back; a field a hook changed or dropped stays as the hook left it.
-#[must_use]
-pub fn revealed_hook_view(
-    mut view: serde_json::Value,
-    masked: &serde_json::Value,
-    reply: &serde_json::Value,
-) -> serde_json::Value {
-    if let (Some(fields), Some(masked), Some(reply)) =
-        (view.as_object_mut(), masked.as_object(), reply.as_object())
-    {
-        for key in REVEALED_FIELDS {
-            if let (Some(slot), Some(stand_in), Some(value)) =
-                (fields.get_mut(key), masked.get(key), reply.get(key))
-                && slot == stand_in
-            {
-                *slot = value.clone();
-            }
-        }
-    }
-    view
-}
-
-/// The fields of a `reveal.wait` answer that carry the value.
-const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
-
-/// Each value field in `value`, at any depth, replaced by the handle its
-/// answer's receipt names, or by null when none does. A JSON text an
-/// envelope carries (an MCP text content) is read the same way.
-fn mask_reveal_values(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            let handle = fields
-                .get("receipt")
-                .and_then(|receipt| receipt.get("handle"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-            for key in REVEALED_FIELDS {
-                if let Some(slot) = fields.get_mut(key) {
-                    *slot = handle
-                        .clone()
-                        .map_or(serde_json::Value::Null, serde_json::Value::String);
-                }
-            }
-            fields.values_mut().for_each(mask_reveal_values);
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(mask_reveal_values),
-        serde_json::Value::String(text) if text.starts_with(['{', '[']) => {
-            if let Ok(mut inner) = serde_json::from_str::<serde_json::Value>(text) {
-                let before = inner.clone();
-                mask_reveal_values(&mut inner);
-                if inner != before {
-                    *text = inner.to_string();
-                }
-            }
-        }
-        _ => {}
-    }
-}
+pub use crate::task_verb::verb_hook_boundary::revealed_hook_view;
 
 pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
     RevealReceipt {

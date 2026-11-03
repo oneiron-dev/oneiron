@@ -131,6 +131,7 @@ pub mod task_verb;
 pub mod team;
 pub mod connect_delivery;
 pub mod guest_document_share;
+pub mod verb_catalog;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
