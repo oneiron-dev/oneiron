@@ -31,10 +31,7 @@ thread_local! {
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
 
-/// Origin for a local deletion tombstone whose durable LMDB carrier is
-/// authored explicitly by the deletion TXN1, not Observer A. Observer B also
-/// skips it, preserving the tombstone-first → local-purge ordering.
-pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
+pub(crate) use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
 
 struct DeletionTombstoneObserverASuppression;
 

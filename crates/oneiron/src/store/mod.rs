@@ -143,6 +143,12 @@ pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod conversation_body;
 pub mod conversation_record;
+pub mod housekeeping_schedule;
+pub mod housekeeping_report;
+#[cfg(feature = "sync")]
+pub mod document_frame_tags;
+#[cfg(feature = "sync")]
+pub mod window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 pub mod retained_memory;

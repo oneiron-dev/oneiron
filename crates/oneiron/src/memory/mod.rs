@@ -24,6 +24,10 @@
 //! unchanged from the flat-file era.
 
 pub mod affect;
+#[cfg(feature = "sync")]
+pub mod message_presence;
+pub(crate) mod conversation_preview;
+pub mod conversation_membership;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
