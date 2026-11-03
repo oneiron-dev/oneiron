@@ -53,19 +53,19 @@ pub(crate) const KEY_OCCURRED_AT: &str = "occurred_at";
 
 pub(crate) const KEY_OPTED_OUT: &str = "opted_out";
 
-const KEY_JOINED: &str = "joined";
+pub(crate) const KEY_JOINED: &str = "joined";
 
-const KEY_REACHABLE: &str = "reachable";
+pub(crate) const KEY_REACHABLE: &str = "reachable";
 
-const KEY_REASON: &str = "reason";
+pub(crate) const KEY_REASON: &str = "reason";
 
-const KEY_SCOPE: &str = "scope";
+pub(crate) const KEY_SCOPE: &str = "scope";
 
-const KEY_SEND_REF: &str = "send_ref";
+pub(crate) const KEY_SEND_REF: &str = "send_ref";
 
-const KEY_ISSUED_AT: &str = "issued_at";
+pub(crate) const KEY_ISSUED_AT: &str = "issued_at";
 
-const KEY_VALID_TO: &str = "valid_to";
+pub(crate) const KEY_VALID_TO: &str = "valid_to";
 
 /// Synced-truth field on a comm-owned PERSON body. `PARTY_INDEX_PREFIX` caches
 /// the lookup; THIS is what the cache is a cache of.

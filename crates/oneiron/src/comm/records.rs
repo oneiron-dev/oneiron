@@ -1,12 +1,12 @@
 //! COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers.
 
 use crate::ports::EntityStoreRead;
-use super::claims::CommResult;
+use super::claims::{CommError, CommResult};
 use super::note_comm_record_family_scan;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Error;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;

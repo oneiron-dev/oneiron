@@ -9,7 +9,7 @@ use super::communication::{
     KEY_SCHEMA_VERSION, KEY_THREAD_REF,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 
 /// Longest `send_ref` a one-shot override may bind.
 pub(crate) const MAX_SEND_REF_BYTES: usize = 256;

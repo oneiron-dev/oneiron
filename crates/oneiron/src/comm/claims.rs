@@ -13,6 +13,9 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::communication::{
+    KEY_JOINED, KEY_REACHABLE, KEY_REASON, KEY_SCOPE, KEY_SEND_REF, KEY_ISSUED_AT, KEY_VALID_TO,
+};
 
 pub use crate::write_envelope::communication::COMM_SCHEMA_VERSION;
 pub use crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT;
