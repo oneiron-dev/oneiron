@@ -20,9 +20,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::*;
+use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceSessionRosterV1};
 use crate::error::RoomLiveSpeakersHold;
 use crate::interlocutor::{Interlocutor, InterlocutorSet};
-use crate::voice_identity::{VoiceAttributionEvidence, VoiceSessionRosterV1};
 
 /// Whether a live call with no stored roster holds its room's reads. While
 /// nothing in production writes a roster (FIX 3344), it does not: the call

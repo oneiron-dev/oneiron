@@ -115,9 +115,9 @@ impl Vault {
         }
         // H355: the skill must still LOAD (Active and approved), the same
         // invariant the load door applies; a rejected skill keeps no lens.
-        Ok(
-            crate::skill::skill_loadable(&crate::skill::decode_skill_record(&body)?)
-                .then_some(install),
+        Ok(crate::write_envelope::skill_record::skill_loadable(
+            &crate::write_envelope::skill_record::decode_skill_record(&body)?,
         )
+        .then_some(install))
     }
 }

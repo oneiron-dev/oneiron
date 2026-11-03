@@ -7,10 +7,10 @@ use heed::{RoTxn, RwTxn};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
+use crate::store::{ManifestDbs, Rows, Store};
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
@@ -214,7 +214,7 @@ fn publish_deferred_ppr_cache_write(
 pub(crate) fn drop_rebuildable_ppr_cache(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-) -> Result<crate::slim::HeapDropReport> {
+) -> Result<crate::heap_drop::HeapDropReport> {
     let mut ppr_cache_rows = 0_u64;
     let mut ppr_dependency_rows = 0_u64;
     let mut estimated_reclaimed_bytes = 0_u64;
@@ -239,11 +239,11 @@ pub(crate) fn drop_rebuildable_ppr_cache(
     store.ppr_cache().clear(wtxn)?;
     store.ppr_cache_deps.clear(wtxn)?;
 
-    Ok(crate::slim::HeapDropReport {
+    Ok(crate::heap_drop::HeapDropReport {
         ppr_cache_rows,
         ppr_dependency_rows,
         estimated_reclaimed_bytes,
-        ..crate::slim::HeapDropReport::default()
+        ..crate::heap_drop::HeapDropReport::default()
     })
 }
 /// Evicts `ppr_cache` rows that are stale-flagged, malformed, older than
@@ -493,16 +493,7 @@ pub(crate) fn invalidate_ppr_for_delete(
     }
     Ok(())
 }
-pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
-    let current = read_graph_version(store, &*wtxn)?;
-    let next = current
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("ppr graph version"))?;
-    store
-        .hnsw_meta
-        .put(wtxn, GRAPH_VERSION_KEY, &next.to_le_bytes())?;
-    Ok(())
-}
+pub(crate) use crate::store::graph_version::increment_graph_version;
 pub(super) fn encode_dep_key(
     entity_id: &EntityId,
     seed_hash: &[u8; SEED_HASH_LEN],
@@ -736,17 +727,8 @@ pub(super) fn encode_cache_value_with_state(
     }
     Ok(value)
 }
-pub(crate) fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    Ok(store
-        .port_index_meta_with_raw(txn, IndexMetaKey::GraphVersion, |raw| {
-            decode_u64(raw, "ppr graph version")
-        })?
-        .unwrap_or(0))
-}
-fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {
-    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
-    Ok(u64::from_le_bytes(bytes))
-}
+use crate::store::graph_version::decode_u64;
+pub(crate) use crate::store::graph_version::read_graph_version;
 fn decode_u32(raw: &[u8], context: &'static str) -> Result<u32> {
     let bytes: [u8; 4] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
     Ok(u32::from_le_bytes(bytes))

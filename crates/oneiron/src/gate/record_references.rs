@@ -45,11 +45,12 @@ use std::ops::Range;
 
 use serde_json::Value;
 
-use crate::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, Memory,
-    MemoryError, MemoryResult,
-};
+use crate::memory::Memory;
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
+use oneiron_contracts::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, MemoryError,
+    MemoryResult,
+};
 
 /// One ref a write names, at the concrete pointer of its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -571,11 +572,11 @@ fn matched_label(label: &str) -> Option<String> {
 }
 
 /// Whether `reference` is a ref a link may name: 1 to
-/// [`crate::lens::RECORD_REF_MAX_BYTES`] printable ASCII bytes with no
+/// [`crate::request_limits::RECORD_REF_MAX_BYTES`] printable ASCII bytes with no
 /// parenthesis, angle bracket, bracket, quote or backslash.
 fn record_ref_ok(reference: &[u8]) -> bool {
     !reference.is_empty()
-        && reference.len() <= crate::lens::RECORD_REF_MAX_BYTES
+        && reference.len() <= crate::request_limits::RECORD_REF_MAX_BYTES
         && reference.iter().all(|&byte| {
             byte.is_ascii_graphic()
                 && !matches!(byte, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'"' | b'\\')
@@ -644,7 +645,7 @@ fn autolink_at(text: &str, start: usize, scan_end: usize) -> Option<ProseLink> {
         .strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
     let length = target
         .iter()
-        .take(crate::lens::RECORD_REF_MAX_BYTES + 1)
+        .take(crate::request_limits::RECORD_REF_MAX_BYTES + 1)
         .position(|&byte| byte == b'>')?;
     if !record_ref_ok(&target[..length]) {
         return None;
@@ -871,7 +872,7 @@ fn link_at(text: &str, start: usize, scan_end: usize) -> Option<ProseLink> {
         .strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
     let length = target
         .iter()
-        .take(crate::lens::RECORD_REF_MAX_BYTES + 1)
+        .take(crate::request_limits::RECORD_REF_MAX_BYTES + 1)
         .position(|&byte| byte == b')')?;
     if !record_ref_ok(&target[..length]) {
         return None;

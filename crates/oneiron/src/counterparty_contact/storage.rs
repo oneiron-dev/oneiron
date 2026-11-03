@@ -11,8 +11,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use sha2::Digest;
 

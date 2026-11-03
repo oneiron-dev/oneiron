@@ -18,7 +18,8 @@ use super::super::coop_request::{
     decode, decode_self_signed_cooperative_deletion_request, envelope_signature, fields,
 };
 use super::*;
-use crate::authority::{AuthorityFold, AuthorityKey, HostSlipIssuer};
+use crate::authority::{AuthorityFold, HostSlipIssuer};
+use oneiron_authority::authority::AuthorityKey;
 
 /// What starting one claimed try found, in its writer.
 pub(super) enum TryStart {

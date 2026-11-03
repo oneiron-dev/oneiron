@@ -5,11 +5,12 @@
 use super::UnprocessedItem;
 use super::WorldPresence;
 use super::memories_projection::constraint_predicate;
-use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, processed_subjects};
+use crate::affect::processed_subjects;
 use crate::claim::{
     ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead, base_world_id, decode_claim_body,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::write_envelope::claim_vad::CLAIM_VAD_REAPPRAISAL_PREDICATE;
 use crate::{EntityId, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
