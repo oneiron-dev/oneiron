@@ -512,7 +512,7 @@ impl SyncServer {
             Ok(vector) => Some(vector),
             // The model is still loading; the worker logs its own progress.
             Err(EmbedQueryRefusal::NotReady | EmbedQueryRefusal::NotConfigured) => None,
-            Err(EmbedQueryRefusal::Failed) => {
+            Err(EmbedQueryRefusal::Failed | EmbedQueryRefusal::BudgetDenied) => {
                 tracing::debug!("recall runs sparse: the query did not embed");
                 None
             }

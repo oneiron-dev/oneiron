@@ -470,14 +470,18 @@ impl DecisionModel for BigModel {
         // payer its run binds (FIX 3574).
         // Its input is the question over the state its producer built from
         // the access-checked evidence: those rows, complete (FIX 6935).
-        let run = self
-            .models
-            .funded_run(
-                format!("{PURPOSE}:{}", EntityId::now().to_hex()),
-                crate::decision_verdict::rung_meter(&self.meter),
-                crate::decision_verdict::rung_payer(),
-            )
-            .sourced(Some(call.evidence.to_vec()));
+        // A call that carries its caller's run spends on it (FIX 10443).
+        let run = match call.run {
+            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            None => self
+                .models
+                .funded_run(
+                    format!("{PURPOSE}:{}", EntityId::now().to_hex()),
+                    crate::decision_verdict::rung_meter(&self.meter),
+                    crate::decision_verdict::rung_payer(),
+                )
+                .sourced(Some(call.evidence.to_vec())),
+        };
         // The decision's clock bounds the whole call (FIX 7792): every send,
         // wait and fallback; past it the call ends incomplete, every rung it
         // admitted settled.

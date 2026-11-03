@@ -25,8 +25,10 @@ pub(crate) mod serve;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use oneiron::ModelId;
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
+use oneiron::llm::run_admission::RunAdmission;
 use serde::Serialize;
 
 use crate::config::{EmbedderConfig, EmbedderProvider};
@@ -206,6 +208,9 @@ pub(crate) enum EmbedQueryRefusal {
     /// The provider is serving but this call failed. The cause is logged where
     /// it happened; the caller gets no detail about a remote or a device.
     Failed,
+    /// The caller's run denied the query on budget grounds. Only the exact
+    /// eval-measurement seam returns this; recall/search keep their old paths.
+    BudgetDenied,
 }
 
 /// The slot on the server: what is configured, and whether it is serving yet.
@@ -525,6 +530,71 @@ impl EmbedderSlot {
             tracing::warn!(kind = ?error.kind(), "query embedding failed");
             EmbedQueryRefusal::Failed
         })
+    }
+
+    /// Embeds a query on the slot's exact model under the caller's run.
+    ///
+    /// The eval measurement's embed leg: `model` must name this slot's
+    /// configured space, and an endpoint query is admitted and settled on
+    /// `run`, the job's own, not on a meter of its own. A local query sends
+    /// nothing and is not metered. A wrong arm reads
+    /// [`EmbedQueryRefusal::NotConfigured`], as an unserved arm does.
+    pub(crate) fn embed_query_exact(
+        &self,
+        model: &ModelId,
+        text: &str,
+        run: &RunAdmission,
+    ) -> Result<Vec<f32>, EmbedQueryRefusal> {
+        if model.as_str() != self.config.model_id {
+            return Err(EmbedQueryRefusal::NotConfigured);
+        }
+        let Some(embedder) = self.ready.get() else {
+            return Err(EmbedQueryRefusal::NotReady);
+        };
+        if !self.admitted.load(Ordering::Acquire) {
+            return Err(EmbedQueryRefusal::NotReady);
+        }
+        match self.config.provider {
+            EmbedderProvider::Local => embedder.embed_query(text).map_err(|error| {
+                tracing::warn!(kind = ?error.kind(), "query embedding failed");
+                EmbedQueryRefusal::Failed
+            }),
+            EmbedderProvider::Endpoint => {
+                let fresh = endpoint::HttpEmbedder::with_broker(&self.config, self.broker.as_ref())
+                    .map_err(|error| {
+                        tracing::warn!(kind = ?error.kind(), "query embedding failed");
+                        EmbedQueryRefusal::Failed
+                    })?;
+                // One fresh listing checks the model and populates the raw query's cache.
+                let listing = fresh.served().map_err(|error| {
+                    tracing::warn!(kind = ?error.kind(), "query embedding failed");
+                    EmbedQueryRefusal::Failed
+                })?;
+                fresh.admit(listing);
+                let locality = Embedder::locality(&*fresh);
+                let meter_text = EmbedderCommon::from_config(&self.config).query_text(text);
+                let mut vectors = admitted::send_with_run(
+                    &self.config.endpoint,
+                    locality,
+                    run,
+                    &[meter_text.as_str()],
+                    &mut || fresh.embed_query(text).map(|vector| vec![vector]),
+                )
+                .map_err(|error| {
+                    tracing::warn!(kind = ?error.kind(), "query embedding failed");
+                    if error.to_string().contains("budget denied") {
+                        EmbedQueryRefusal::BudgetDenied
+                    } else {
+                        EmbedQueryRefusal::Failed
+                    }
+                })?;
+                vectors.pop().ok_or_else(|| {
+                    tracing::warn!("query embedding failed");
+                    EmbedQueryRefusal::Failed
+                })
+            }
+            EmbedderProvider::None => Err(EmbedQueryRefusal::NotConfigured),
+        }
     }
 }
 
