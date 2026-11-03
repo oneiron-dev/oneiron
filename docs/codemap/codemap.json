@@ -14088,6 +14088,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 20,
+      "mod": 1,
       "re-export": 13
      }
     },
@@ -14157,6 +14158,16 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/relationship_predicates.rs",
+     "purpose": "Claim predicates and label bounds for member-to-person relationships",
+     "surface": {
+      "const": 3
      }
     },
     {
@@ -34600,22 +34611,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DerivationBindError",
-      "DerivationKey",
-      "DerivationKind",
-      "DerivationOwner",
-      "DerivationScope",
-      "HostedDerivationCache",
-      "SealedOutput"
-     ],
+     "notable": [],
      "path": "src/federation/derivation.rs",
-     "purpose": "Account-sealed hosted derivations",
+     "purpose": "Account-sealed hosted derivations, defined in the storage layer",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
-      "struct": 5
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -34733,7 +34734,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 20,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 20,
       "struct": 2
@@ -35085,10 +35086,10 @@
      "path": "src/federation/relationships.rs",
      "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
      "surface": {
-      "const": 3,
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -35321,10 +35322,11 @@
      "path": "src/federation/stale.rs",
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
-      "const": 3,
+      "const": 1,
       "crate-vis": 9,
       "enum": 1,
       "fn": 9,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -63677,6 +63679,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/serialize/grant_fields.rs",
+     "purpose": "Field projections of federation grant records",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/serialize/group_labels.rs",
      "purpose": "Static entity-type to section-label lookup used by every writer",
      "surface": {
@@ -63753,7 +63765,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 5
      }
     },
@@ -68486,6 +68498,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DerivationBindError",
+      "DerivationKey",
+      "DerivationKind",
+      "DerivationOwner",
+      "DerivationScope",
+      "HostedDerivationCache",
+      "SealedOutput"
+     ],
+     "path": "src/store/derivation.rs",
+     "purpose": "Account-sealed hosted derivations",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -69506,7 +69539,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 44,
-      "mod": 1,
+      "mod": 3,
       "re-export": 20
      }
     },
@@ -70153,6 +70186,16 @@
      "purpose": "One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_registration_keys.rs",
+     "purpose": "Storage keys for foreign-world registration and stale markers",
+     "surface": {
+      "const": 2
      }
     },
     {
@@ -85392,7 +85435,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86323,7 +86366,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86435,7 +86478,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 195,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86668,7 +86711,7 @@
    },
    "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5885,
+   "source_files": 5889,
    "test_files": 901
   },
   "oneiron-android": {
