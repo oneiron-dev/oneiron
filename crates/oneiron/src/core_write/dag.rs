@@ -12,7 +12,7 @@ use super::shape::{
     core_write_times, encode_core_body, entity_id, optional_entity_id, text_pairs,
 };
 use crate::WriteActor;
-use crate::conversation_dag::{
+use crate::store::conversation_record::{
     AddressMode, AppendRecord, AppendedRecord, DagReplyTarget, QuoteSpan,
 };
 use crate::memory::{Memory};

@@ -163,7 +163,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
-    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
+    pub(in crate::gate) goal_limits: Option<crate::policy_model::goal_limits::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
