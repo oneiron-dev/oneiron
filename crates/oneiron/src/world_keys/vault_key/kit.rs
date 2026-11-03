@@ -123,6 +123,7 @@ pub(super) fn open_world_kit(
 ) -> Result<HybridSecretKey> {
     let VaultKeyUnlock::WorldKit {
         vault_id: named,
+        kit,
         pieces,
         passphrase,
         keystore,
@@ -134,7 +135,7 @@ pub(super) fn open_world_kit(
         return Err(refused("the kit names another vault"));
     }
     let given: Vec<&KitPiece> = pieces.iter().collect();
-    let pending = pieces.first().map(|piece| piece.kit_id());
+    let pending = Some(*kit);
     let (kept, unreadable) = match keystore {
         Some(keystore) => kept_pieces(
             keystore,

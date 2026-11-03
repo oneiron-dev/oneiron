@@ -111,6 +111,9 @@ pub enum VaultKeyUnlock<'a> {
     /// pieces this way: a new install has no kept piece to join (FIX 11973).
     WorldKit {
         vault_id: [u8; 32],
+        /// The exact kit whose pending kept piece joins even when `pieces`
+        /// is empty, so the pre-open kept count and the open agree.
+        kit: crate::recovery::KitId,
         pieces: &'a [crate::recovery::KitPiece],
         passphrase: Option<&'a crate::recovery::KitPassphrase>,
         /// This host's keystore, as a sealed vault's pages unlock on it: the
@@ -141,11 +144,13 @@ impl<'a> VaultKeyUnlock<'a> {
             },
             Self::WorldKit {
                 vault_id,
+                kit,
                 pieces,
                 passphrase,
                 ..
             } => Self::WorldKit {
                 vault_id,
+                kit,
                 pieces,
                 passphrase,
                 keystore,
