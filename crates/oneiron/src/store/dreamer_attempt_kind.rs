@@ -130,3 +130,12 @@ pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for the private home-node designation.
 pub const DREAMER_HOME_NODE_DESIGNATION_KEYS: [&str; 4] =
     ["schema_version", "node_id", "class", "elected_at"];
+
+/// `DreamerAttemptPayload.attempt_type` for a declared scope summary: a
+/// caller named the scope, and the Dreamer writes the body (ARCH-0006a).
+/// A payload discriminator on the Micro consolidation queue.
+pub const DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE: &str = "dreamer.scope_summary";
+
+/// Attempt kind the planning step rides on the existing attempt queue: the
+/// PLAN is a task/attempt like any other, not a privileged engine phase.
+pub const WAVE_PLAN_ATTEMPT_KIND: &str = "wave.plan";

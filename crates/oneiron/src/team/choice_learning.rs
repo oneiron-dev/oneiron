@@ -24,9 +24,7 @@ use crate::claim::learning_estimate::EstimateLabels;
 use crate::claim::learning_estimate::Prior;
 use crate::claim::learning_estimate::PriorOrigin;
 use crate::claim::learning_estimate::Window;
-use crate::learning::{
-    LearningPredicate,
-};
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::learning_setting::SettingScope;
 use crate::learning_setting_choice::{ChoiceValue, SpawnChoice};
 use oneiron_model::llm::ModelId;
