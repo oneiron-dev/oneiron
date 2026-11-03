@@ -26,7 +26,9 @@ use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_runner::DreamerParkCause;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::{CallerSettledStep, DurableStepContext, settled_step_for_caller};
+use crate::llm::{ settled_step_for_caller};
+use crate::model_step_record::CallerSettledStep;
+use crate::model_step_context::DurableStepContext;
 use crate::memory::Memory;
 use crate::scope_summary::{
     ArcChildRow, ArcReduceRow, ArcStepRef, ComposedSummary, SummaryLineSources, result_digest,

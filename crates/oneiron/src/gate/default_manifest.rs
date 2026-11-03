@@ -846,7 +846,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from(POLICY_SLIDE_REVIEW_KEY),
-            crate::llm::decision::SlideReviewPolicy::default_rows(),
+            crate::model_decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
         (
@@ -1167,7 +1167,7 @@ fn teacher_probe_default_entry() -> (Value, Value) {
         Value::Map(vec![
             (
                 Value::from("probe_id"),
-                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+                Value::from(crate::teacher_probe_policy::TEACHER_PROBE_ID),
             ),
             (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
             (Value::from("holders"), Value::Array(Vec::new())),

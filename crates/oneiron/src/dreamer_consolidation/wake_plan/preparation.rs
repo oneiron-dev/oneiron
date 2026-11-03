@@ -15,7 +15,7 @@ use crate::claim::ScopedRead;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::edge::EdgeKind;
 use crate::gate::PolicyManifestResolution;
-use crate::llm::{Scope, ScopeResource};
+use oneiron_model::llm::{Scope, ScopeResource};
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};

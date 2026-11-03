@@ -47,7 +47,7 @@ use crate::context_pack::{
     PackItemAccounting, PackStats, PackTokenStats, TokenAllocation,
 };
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLease;
+use oneiron_model::llm::BudgetLease;
 use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN};
 use crate::serialize::{SerializeConfig, serialize_pack};
 
@@ -101,7 +101,7 @@ pub struct ChatOptions<'a> {
     pub composer: Option<&'a dyn ChatComposer>,
     /// The budget the owner set for chat, when one is set: composition then
     /// runs on it (FIX 9951). `None` composes as before.
-    pub budget: Option<&'a crate::llm::BudgetGuard>,
+    pub budget: Option<&'a oneiron_model::llm::BudgetGuard>,
     /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
     pub token_budget: Option<u64>,
     /// An agent definition whose memory profile sizes the rendering when

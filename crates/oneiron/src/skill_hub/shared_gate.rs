@@ -11,13 +11,15 @@ use crate::{
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
     limit_ask::EngineLimit,
-    llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        PairedReading, Reversibility, TypedDecision,
+    llm::decision::{ TypedDecision,
     },
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,
+};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, PairedReading,
+    Reversibility,
 };
 
 #[derive(Debug, Clone)]

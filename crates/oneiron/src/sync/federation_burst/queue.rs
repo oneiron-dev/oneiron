@@ -2,7 +2,7 @@
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
 use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
-use crate::llm::NormalizedBurstInputs;
+use oneiron_model::llm::NormalizedBurstInputs;
 use crate::store::Store;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::{WindowKey, encode_sync_selector};

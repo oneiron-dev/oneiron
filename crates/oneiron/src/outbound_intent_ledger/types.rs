@@ -37,7 +37,7 @@ pub enum IntentLedgerError {
     #[error("the durable step failure is not eligible for an effect")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]

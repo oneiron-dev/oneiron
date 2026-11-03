@@ -40,7 +40,7 @@ use crate::learning::{
     TakeoverVerdict, judge_takeover_verdict, learning_estimate, record_judge_conversion,
     record_retest, withdraw_judge_conversion,
 };
-use crate::llm::decision::DecisionAnswer;
+use crate::model_decision::DecisionAnswer;
 use crate::self_heal::audit::SealCheckKind;
 use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 use crate::skill_optimize::{

@@ -9,7 +9,7 @@ use crate::dreamer_consolidation::PriorHead;
 use crate::dreamer_consolidation::neighbourhood::Neighbourhood;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
-use crate::llm::{Scope, ScopeResource};
+use oneiron_model::llm::{Scope, ScopeResource};
 use crate::{EntityId, Result};
 
 /// A branch's pinned sources, prior heads and listing, borrowed.

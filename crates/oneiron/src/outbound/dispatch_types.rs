@@ -687,7 +687,7 @@ pub enum OutboundDispatchError {
     #[error("the resident failure rule makes this step result ineligible for effects")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

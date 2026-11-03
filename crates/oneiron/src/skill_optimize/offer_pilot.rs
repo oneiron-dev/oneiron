@@ -8,14 +8,15 @@ use super::{
     ComputeDestination, EvalExposure, EvalExposureKind, EvalRelease, EvalSeat, OfferCandidate,
     OfferModelPin, SufficiencyCard, SufficiencyInput, sufficiency_card,
 };
-use crate::ModelLocality;
+use oneiron_model::llm::ModelLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::limit_ask::EngineLimit;
 use crate::llm::manifest::read_manifest;
 use crate::llm::registry::ModelRegistryRow;
 use crate::side_table::{self, Named, SideTable};
 use crate::training_pack::{ComputeChoice, TrainingRun};
-use crate::{EntityId, Error, ModelId, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::ModelId;
 
 const CANDIDATES: SideTable<EntityId, OfferCandidateRecord, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_OFFER_CANDIDATE);

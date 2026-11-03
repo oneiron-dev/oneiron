@@ -12,7 +12,7 @@
 
 use std::ops::Range;
 
-use crate::llm::ScopeResource;
+use oneiron_model::llm::ScopeResource;
 use crate::note::ExtractionDefault;
 use crate::{EntityId, Result, Vault};
 

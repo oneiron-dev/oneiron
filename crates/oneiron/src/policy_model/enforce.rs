@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetLease, LlmBackend};
+use oneiron_model::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
 use super::clock::PolicyCallClock;
@@ -268,7 +268,7 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
         backend: &dyn LlmBackend,
-        budget: &crate::llm::BudgetGuard,
+        budget: &oneiron_model::llm::BudgetGuard,
     ) -> Result<PolicyModelEnforcement> {
         let clock = PolicyCallClock::start();
         let mut pass = self

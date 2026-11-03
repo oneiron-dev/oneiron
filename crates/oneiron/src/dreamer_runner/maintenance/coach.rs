@@ -21,7 +21,7 @@ use crate::actor_claims::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::feedback::COACH_FEEDBACK_DELIVERY_FACET;
-use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
+use crate::model_decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,

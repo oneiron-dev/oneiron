@@ -30,7 +30,7 @@ use crate::code_run::{DelegatedSource, ReaderJobState};
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{BudgetGuard, Scope};
+use oneiron_model::llm::{BudgetGuard, Scope};
 use crate::write_envelope::WriteActor;
 
 mod input;

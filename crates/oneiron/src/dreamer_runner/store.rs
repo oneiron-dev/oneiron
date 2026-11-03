@@ -1206,7 +1206,7 @@ pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<Dre
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND
+    kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND
         || kind == super::connector_event::CONNECTOR_EVENT_QUEUE_KIND
         || kind == super::maintenance::MAINTENANCE_QUEUE_KIND
         || kind == DREAMER_RUNNER_ATTEMPT_KIND
