@@ -474,7 +474,7 @@ fn insert_ready_row<R: Read + Seek>(
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
-            if crate::learning::is_learning_predicate(&claim.predicate) {
+            if crate::write_envelope::learning_predicate::is_learning_predicate(&claim.predicate) {
                 // Option B (FIX 11626): the row stays archive data; its cells
                 // rebuild from receipts. Mark it omitted so the edge pass
                 // skips its links and the receipt counts it with the rest.
@@ -1303,7 +1303,7 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)
-    } else if crate::learning::is_learning_predicate(&body.predicate) {
+    } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a
         // projector-only view rebuilt from its receipts after import. The row
         // stays archive data under the `learning.*` omission, which the import

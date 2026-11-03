@@ -47,6 +47,7 @@
 //! * `expression_preference` — the typed expression-preference write surface.
 
 mod aging_profiles;
+pub mod learning_estimate;
 mod core_types;
 mod decay;
 mod deferred;

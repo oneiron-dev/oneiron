@@ -55,8 +55,9 @@ use crate::dispatch_byoa::{
     BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
     RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
+    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

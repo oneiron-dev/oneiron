@@ -14,6 +14,7 @@ mod decision_asks;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
+pub mod task_type_ref;
 mod field_set;
 mod grant;
 mod guest_revoke;

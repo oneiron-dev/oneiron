@@ -651,7 +651,7 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
                 Some("actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token")
             ) {
                 Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
-            } else if predicate.is_some_and(crate::learning::is_learning_predicate) {
+            } else if predicate.is_some_and(crate::write_envelope::learning_predicate::is_learning_predicate) {
                 Some(ImportOmissionReason::LearningCellsRebuiltFromReceipts)
             } else {
                 None

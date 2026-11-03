@@ -23,7 +23,7 @@ use crate::agent_dispatch::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::llm::ReasoningEffort;
 use crate::llm::decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};

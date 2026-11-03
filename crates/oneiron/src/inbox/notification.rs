@@ -343,7 +343,7 @@ impl Vault {
             return Ok(None);
         };
         let (job_kind, origin) =
-            if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+            if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
                 let Ok(payload) =
                     crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
                 else {

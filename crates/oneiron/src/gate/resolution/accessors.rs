@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
+use crate::gate::experiment_selection_policy::SelectionPolicy;
+use crate::gate::experiment_selection_policy::SelectionPrecedence;
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
