@@ -193,16 +193,25 @@ impl Vault {
     /// with no record reads as [`EmbeddingProvenance::unknown`].
     pub fn embedding_provenance(&self, id: &EntityId) -> Result<Option<EmbeddingProvenance>> {
         let txn = self.store.env.read_txn()?;
+        self.embedding_provenance_in_txn(&txn, id)
+    }
+
+    /// [`Vault::embedding_provenance`] in the caller's read transaction.
+    pub(crate) fn embedding_provenance_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbeddingProvenance>> {
         if self
             .store
-            .port_vector_with_raw(&txn, id, |_| Ok(()))?
+            .port_vector_with_raw(txn, id, |_| Ok(()))?
             .is_none()
         {
             return Ok(None);
         }
         Ok(Some(
             EMBEDDING_DEVICE
-                .get(&self.store, &txn, id)?
+                .get(&self.store, txn, id)?
                 .unwrap_or_else(EmbeddingProvenance::unknown),
         ))
     }

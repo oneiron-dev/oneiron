@@ -137,14 +137,14 @@ pub(super) fn take_carried_vector_row(
     if space.as_deref() != Some(carried.model_id.as_str()) {
         return Ok(CarriedTake::Mismatch);
     }
-    // A transform pin is a match key only where both sides pin one.
+    // The sender's transform pin must be this vault's exact pin: an
+    // unpinned side's vectors came from the model's own transform, and
+    // silence never stands for the other side's pin.
     let receiver_pin = match read_meta(IndexMetaKey::EmbeddingTransform)? {
         Some(stored) => Some(stored),
         None => config.embedding_transform.clone(),
     };
-    if let (Some(sender_pin), Some(receiver_pin)) = (&carried.transform, &receiver_pin)
-        && sender_pin != receiver_pin
-    {
+    if carried.transform != receiver_pin {
         return Ok(CarriedTake::Mismatch);
     }
     let Ok(vector) = crate::store::decode_vector_row(&carried.row, config.dimensions) else {

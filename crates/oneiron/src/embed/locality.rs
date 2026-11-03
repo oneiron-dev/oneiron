@@ -65,14 +65,23 @@ impl Vault {
     /// vectors and pending/stale fills carry no inferred locality.
     pub fn embedding_locality(&self, id: &EntityId) -> Result<Option<EmbedderLocality>> {
         let txn = self.store.env.read_txn()?;
+        self.embedding_locality_in_txn(&txn, id)
+    }
+
+    /// [`Vault::embedding_locality`] in the caller's read transaction.
+    pub(crate) fn embedding_locality_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbedderLocality>> {
         if self
             .store
-            .port_vector_with_raw(&txn, id, |_| Ok(()))?
+            .port_vector_with_raw(txn, id, |_| Ok(()))?
             .is_none()
-            || self.store.pending_embedding_token(&txn, id)?.is_some()
+            || self.store.pending_embedding_token(txn, id)?.is_some()
         {
             return Ok(None);
         }
-        EMBEDDING_LOCALITY.get(&self.store, &txn, id)
+        EMBEDDING_LOCALITY.get(&self.store, txn, id)
     }
 }
