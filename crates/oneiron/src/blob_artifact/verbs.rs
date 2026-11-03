@@ -39,7 +39,7 @@ use crate::model_decision::{
 };
 use crate::receipt::ReceiptRecord;
 use crate::file_secret_marks::SecretSight;
-use crate::share_travel::{BornWith, TravelChoice, TravelKind};
+use oneiron_authority::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::{Memory, verify_actor_binding_in_txn};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::work_line::LineObserver;
 use crate::{EdgeActorClass, EntityId, Vault};

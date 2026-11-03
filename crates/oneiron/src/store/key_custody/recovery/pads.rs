@@ -17,7 +17,9 @@ use zeroize::Zeroizing;
 
 use super::{CustodyRequirement, CustodySourceAt, admit_recovery, refused};
 use crate::entity_id::EntityId;
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 use crate::store::Store;
 use crate::store::key_custody::head::CustodyOpener;
 use crate::store::key_custody::identity::{CustodyKind, CustodySubject};

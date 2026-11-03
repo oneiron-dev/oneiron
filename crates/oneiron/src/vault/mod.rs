@@ -195,10 +195,10 @@ pub struct Vault {
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
-    pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
