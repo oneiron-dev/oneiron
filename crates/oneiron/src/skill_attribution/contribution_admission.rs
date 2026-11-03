@@ -259,8 +259,8 @@ fn same_pair(kept: &ContributionPair, submitted: &ContributionPair) -> bool {
 /// opaque ULID in place of the target and the identity digest, which a known
 /// id would confirm, so the run's other checks stay apart. A pair whose run
 /// or outcome reference spells the id has those references rewritten to
-/// opaque erased ids, and where the run itself spells it the row moves to a
-/// fully opaque key (FIX 11359, CB2-B). The measurement and both fork
+/// opaque erased ids, and where either receipt reference spells it the row
+/// moves to a fully opaque key (FIX 11359, CB2-B). The measurement and both fork
 /// outcomes stay. A row that no longer decodes is deleted and counted.
 ///
 /// # Errors
@@ -284,6 +284,7 @@ pub(crate) fn erase_contribution_checks_in_txn(
             });
         let mut named =
             target.contains(spelled.as_str()) || run.to_ascii_lowercase().contains(&spelled_lower);
+        let mut receipt_matched = run.to_ascii_lowercase().contains(&spelled_lower);
         for pair in admission
             .matched
             .iter_mut()
@@ -300,6 +301,7 @@ pub(crate) fn erase_contribution_checks_in_txn(
                     .contains(&spelled_lower)
             {
                 named = true;
+                receipt_matched = true;
             }
             let mut ends = vec![&mut pair.skill];
             if let Some(edge) = &mut pair.edge {
@@ -338,7 +340,7 @@ pub(crate) fn erase_contribution_checks_in_txn(
                 pair.outcome_receipt.clone_from(&erased_ref);
             }
         }
-        let moved = if run.to_ascii_lowercase().contains(&spelled_lower) {
+        let moved = if receipt_matched {
             format!("erased\0{fresh}")
         } else {
             format!("{run}\0erased:{fresh}")

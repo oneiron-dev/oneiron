@@ -232,6 +232,8 @@ pub(crate) fn erase_review_scope_in_txn(
             }
         };
         let mut named_here = false;
+        let mut critic_touched = false;
+        let mut critic_opaque = None;
         if let Some(rmpv::Value::Array(artifacts)) = field_mut(&mut review, "artifacts") {
             for artifact in artifacts {
                 let mut artifact_named = false;
@@ -260,6 +262,32 @@ pub(crate) fn erase_review_scope_in_txn(
                     }
                     artifact_named = true;
                 }
+                let old_ref = field_mut(artifact, "provenance")
+                    .and_then(|provenance| field_mut(provenance, "critic_ref"))
+                    .and_then(|critic_ref| critic_ref.as_str().map(str::to_owned));
+                if old_ref.as_deref() == Some(named.as_str()) {
+                    let token = match &critic_opaque {
+                        Some(token) => token.clone(),
+                        None => {
+                            let token =
+                                crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
+                            critic_opaque = Some(token.clone());
+                            token
+                        }
+                    };
+                    if let Some(critic_ref) = field_mut(artifact, "provenance")
+                        .and_then(|provenance| field_mut(provenance, "critic_ref"))
+                    {
+                        *critic_ref = rmpv::Value::from(token.as_str());
+                    }
+                    if let Some(executor) = field_mut(artifact, "calibration")
+                        .and_then(|calibration| field_mut(calibration, "executor"))
+                        .filter(|executor| executor.as_str() == Some(named.as_str()))
+                    {
+                        *executor = rmpv::Value::from(token.as_str());
+                    }
+                    critic_touched = true;
+                }
                 named_here = named_here || artifact_named;
             }
         }
@@ -270,9 +298,11 @@ pub(crate) fn erase_review_scope_in_txn(
             *principal = rmpv::Value::from(scope.to_hex());
             named_here = true;
         }
-        if !named_here {
+        if !named_here && !critic_touched {
             continue;
         }
+        // The cached review's identity hash names its critics, so a critic
+        // match takes the same move and pointer update as the other ids.
         rename_strings(&mut review, &renamed);
         let (_, salt) = minted_pair(vault, &mut fresh)?;
         let mut hasher = blake3::Hasher::new();
