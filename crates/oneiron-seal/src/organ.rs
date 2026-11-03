@@ -61,7 +61,9 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
+use crate::memory::{
+    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -666,11 +668,19 @@ impl SealFetcher for AskedFetcher {
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
-            None => AdmittedBytes::empty(),
+            None => AdmittedBytes::shared_empty(&self.memory).map_err(FetchError::Memory)?,
+        };
+        // The answer's text is admitted before it is copied, and shared
+        // (FIX 8455): the reservation is the copy's own.
+        let content_type = match answer.content_type {
+            None => None,
+            Some(text) => Some(Arc::new(
+                AdmittedStr::copy_from(&self.memory, &text).map_err(FetchError::Memory)?,
+            )),
         };
         Ok(FetchResponse {
             body: Arc::new(body),
-            content_type: answer.content_type,
+            content_type,
         })
     }
 }
