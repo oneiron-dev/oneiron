@@ -919,17 +919,9 @@ async fn self_inbox_concern_move(
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = {
-        let is_note_move = value.get("move").and_then(|v| v.get("note")).is_some();
-        let output = facade_invoke(
-            server,
-            call,
-            actor,
-            class,
-            "self.inbox.concern.move",
-            value,
-            &producers,
-        )?;
-        if is_note_move {
+        let (output, wake) =
+            facade_invoke_concern_move(server, call, actor, class, value, &producers)?;
+        if wake {
             server.ai.turn_landed_by(server.vault(), actor, class);
         }
         output

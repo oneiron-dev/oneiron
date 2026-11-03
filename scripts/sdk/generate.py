@@ -1631,18 +1631,14 @@ def facade_dispatch(facade_rows):
         landed = ''
         if r.get('lands_turn'):
             if name == 'self.inbox.concern.move':
-                # P1 REVIEW-4395: decide the wake from the unredacted REQUEST
-                # before post hooks, not from the post-hook output view: a
-                # valid post-hook Redact of /receipt after an Applied/Note
-                # commit would otherwise suppress the note wake, unlike MCP's
-                # typed Applied-with-Note-link check. A Note input that invokes
-                # to Ok is an Applied Note commit (take() maps Note control to
-                # Note link; idempotent retry returns the stored Note receipt;
-                # key reuse with different intent errors), so input Note + Ok
-                # matches MCP exactly. Steer/AskCoach inputs never set the flag.
-                result = ('{ let is_note_move = value.get("move").and_then(|v| v.get("note")).is_some(); '
-                          f'let output = {result} '
-                          'if is_note_move { server.ai.turn_landed_by(server.vault(), actor, class); } '
+                # P1 REVIEW-4395 (L13 08:49 YES): the wake reads the COMMITTED
+                # result through facade_invoke_concern_move's row_tapped tap
+                # BEFORE post-hook redaction, never the request (a hook may
+                # rewrite Note to Steer/AskCoach or back) nor the post-hook
+                # output view (a valid Redact of /receipt would suppress the
+                # wake). MCP's typed Applied-with-Note-link check is unchanged.
+                result = ('{ let (output, wake) = facade_invoke_concern_move(server, call, actor, class, value, &producers)?; '
+                          'if wake { server.ai.turn_landed_by(server.vault(), actor, class); } '
                           'output };')
             else:
                 landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
