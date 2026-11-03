@@ -180,6 +180,17 @@ impl VaultPageSeal {
         self.vault_id
     }
 
+    /// The incarnation this seal opened, as the mirror names it (FIX 2706):
+    /// a public fact beside the vault id, since the mirror carries it in
+    /// plain and the page key still takes the data key. It names WHICH of a
+    /// mirror's candidates this seal is, so a reader holding two
+    /// environments of one vault can tell the live one from its replacement
+    /// without opening either.
+    #[must_use]
+    pub fn incarnation(&self) -> [u8; 32] {
+        self.incarnation
+    }
+
     /// The page key, for the environment builders.
     pub(crate) fn page_key(&self) -> &[u8; 32] {
         &self.page_key
@@ -504,6 +515,17 @@ fn has_data(vault_path: &Path) -> bool {
 /// public fact, read with no secret.
 pub fn page_seal_vault_id(vault_path: &Path) -> Result<[u8; 32]> {
     Ok(read_mirror(vault_path)?.vault_id)
+}
+
+/// The incarnations the mirror of the sealed vault at `vault_path` names,
+/// in the order it names them: public facts, read with no secret (FIX
+/// 2706). One for a settled vault; while a restore publishes a vault in
+/// another's place, the live one's and its replacement's, each mirror
+/// naming its own first. With [`VaultPageSeal::incarnation`] it tells two
+/// environments of one vault apart (which one a mirror's owner is, which
+/// the replacement) with no open and no write.
+pub fn page_seal_incarnations(vault_path: &Path) -> Result<Vec<[u8; 32]>> {
+    Ok(read_mirror(vault_path)?.incarnations)
 }
 
 /// The vault id and carried wraps the mirror of the sealed vault at
