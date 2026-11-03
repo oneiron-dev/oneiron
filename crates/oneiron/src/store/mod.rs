@@ -116,6 +116,13 @@ pub mod ports {
     };
 }
 
+pub mod attempt_cleanup;
+pub mod attempt_inputs;
+pub mod attempt_lease;
+pub mod attempt_manifest;
+pub mod attempt_result;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
 pub mod conversation_body;
 pub mod conversation_record;
 #[cfg(feature = "sync")]

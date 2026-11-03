@@ -292,7 +292,7 @@ pub struct HomeRecallAsk {
 impl HomeRecallAsk {
     /// The ask for `request`; `room_turn` says it runs inside a room's turn.
     #[must_use]
-    pub fn new(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool) -> Self {
+    pub fn new(request: &crate::memory::RecallRequest, room_turn: bool) -> Self {
         Self {
             query: request.query.clone(),
             limit: request
@@ -309,7 +309,7 @@ impl HomeRecallAsk {
 /// and no room's turn. A recall naming any of those keeps its local answer,
 /// marked incomplete.
 #[cfg(feature = "sync")]
-fn home_answers(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool) -> bool {
+fn home_answers(request: &crate::memory::RecallRequest, room_turn: bool) -> bool {
     request.as_of.is_none() && request.media.is_none() && !room_turn
 }
 
