@@ -27,33 +27,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 /// decodes exactly as it did before this ticket, with `None`/empty defaults.
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
-/// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 24] = [
-    "schema_version",
-    "target",
-    "agent_def",
-    "preset",
-    "definition",
-    "context_spec",
-    "context_from",
-    "depth_remaining",
-    "project_ref",
-    "spawn_intent",
-    "scope",
-    "healer_case",
-    "task_type_ref",
-    "budget",
-    "launch",
-    "origin_conversation",
-    "room",
-    "join",
-    "team",
-    "plan",
-    "objectives",
-    "comm",
-    "direct_spawn",
-    "requester",
-];
+pub use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
 
@@ -558,38 +532,8 @@ impl CareLevel {
     }
 }
 
-/// One spawn field as the parent set it (ARCH-0079 #seed-pin): a seed sets
-/// where the planner starts, with a weight counted in runs; a pin fixes the
-/// value and the planner never overrides it. Unset fields are the planner's.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum SpawnOverride<T> {
-    Seed { value: T, weight_runs: f64 },
-    Pin { value: T },
-}
+pub use crate::team::spawn_override::SpawnOverride;
 
-impl<T> SpawnOverride<T> {
-    #[must_use]
-    pub const fn value(&self) -> &T {
-        match self {
-            Self::Seed { value, .. } | Self::Pin { value } => value,
-        }
-    }
-
-    #[must_use]
-    pub const fn is_pin(&self) -> bool {
-        matches!(self, Self::Pin { .. })
-    }
-
-    /// Prior weight in runs; a pin is a seed of infinite weight.
-    #[must_use]
-    pub fn weight_runs(&self) -> f64 {
-        match self {
-            Self::Seed { weight_runs, .. } => *weight_runs,
-            Self::Pin { .. } => f64::INFINITY,
-        }
-    }
-}
 
 /// What a parent says when it spawns (ARCH-0079 #spawn): the required need,
 /// separate from the prompt, plus optional care, notes and seeded or pinned

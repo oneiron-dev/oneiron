@@ -17,7 +17,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed, SpawnOverride};
+use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed};
+use crate::team::spawn_override::SpawnOverride;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{

@@ -12,6 +12,8 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+pub mod spawn_override;
+pub mod task_exposure;
 mod choice_learning;
 mod door_reads;
 pub mod doors;

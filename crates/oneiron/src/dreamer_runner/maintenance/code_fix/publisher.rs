@@ -12,10 +12,21 @@
 use serde::{Deserialize, Serialize};
 
 use crate::code_run::shadow_runner::{
-    ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, SHADOW_PROTOCOL_VERSION,
-    ShadowArmLease, ShadowIsolation, ShadowMeterContext, ShadowRequestDigest, ShadowRunRequest,
-    ShadowRunResult, ShadowStatus, ShadowStepIdentity, ShadowUnavailable, ShadowUsage,
+
+        ShadowRunRequest,
+    ShadowRunResult, ShadowStatus,
 };
+use crate::dreamer_runner::shadow_values::ArtifactDigest;
+use crate::dreamer_runner::shadow_values::ArtifactDigestAlgorithm;
+use crate::dreamer_runner::shadow_values::EngineArtifactPin;
+use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
+use crate::dreamer_runner::shadow_values::ShadowArmLease;
+use crate::dreamer_runner::shadow_values::ShadowIsolation;
+use crate::dreamer_runner::shadow_values::ShadowMeterContext;
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
+use crate::dreamer_runner::shadow_values::ShadowUnavailable;
+use crate::dreamer_runner::shadow_values::ShadowUsage;
 use crate::compaction::output::OutputRef;
 use crate::{EntityId, Result};
 use oneiron_model::llm::{LlmInputUsage, LlmOutputUsage};

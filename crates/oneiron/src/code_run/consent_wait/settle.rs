@@ -32,10 +32,7 @@ pub(crate) const CODE_WAIT_HOST_UNBOUND: &str = "code_wait_host_unbound";
 /// The reason a wait the owner denied settles with.
 pub(crate) const CODE_WAIT_DENIED: &str = "code_wait_denied";
 
-/// The reason a wait settles with when its original caller's own credential
-/// no longer stands. No answer revives it.
-pub(crate) const CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED: &str =
-    "code_wait_original_authority_refused";
+pub(crate) use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 
 /// The wall clock, in unix ms, as the connector call's own rows keep it.
 pub(crate) fn now_ms() -> u64 {

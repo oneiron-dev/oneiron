@@ -53,7 +53,7 @@ fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS};
+use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::claim::retrieval_scope::FacetMode;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
