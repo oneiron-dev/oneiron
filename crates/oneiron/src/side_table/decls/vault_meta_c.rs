@@ -192,7 +192,8 @@ side_tables! {
     COACH_ISSUES_REDRIVE: VaultMeta b"coach:issues_redrive:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
-    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
+    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
@@ -205,7 +206,8 @@ side_tables! {
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
-    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named;
+    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's think-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
