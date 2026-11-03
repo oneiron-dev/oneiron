@@ -256,13 +256,14 @@ impl FrozenToolCall {
                 return Err(invalid_schema());
             }
         }
+        // One parameter may carry two requirements when two schema branches
+        // name its header differently (FIX 10417); the header set still keys
+        // each requirement once.
         let mut headers = std::collections::BTreeSet::new();
-        let mut parameters = std::collections::BTreeSet::new();
         for requirement in &frozen.grant_requirements {
             if requirement.data_class != ToolGrantDataClass::XMcpHeader
                 || canonical_header(&requirement.header)? != requirement.header
                 || !headers.insert(requirement.header.clone())
-                || !parameters.insert(requirement.parameter.clone())
                 || frozen.arguments.contains_key(&requirement.parameter)
                 || !frozen.headers.contains_key(&requirement.header)
             {
