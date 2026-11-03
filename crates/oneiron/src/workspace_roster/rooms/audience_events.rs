@@ -73,8 +73,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::RosterActor;
 use std::collections::BTreeMap;
 
-/// The door-owned TURN body key an audience edit rides under.
-pub(crate) const ROOM_THREAD_AUDIENCE_KEY: &str = "room_thread_audience";
+pub(crate) use crate::store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 
 /// The domain of an erased person's stand-in in a root's audience edits
 /// (FIX 5640).

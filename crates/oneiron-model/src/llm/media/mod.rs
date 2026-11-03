@@ -21,8 +21,8 @@ use serde_json::Value as JsonValue;
 
 use super::image::{ImageBackend, ImageBytes, ImageIntent, ImageResponse};
 use super::{
-    BrokerIsolation, BudgetLease, CallEnvelope, FatalLlmError, LlmError, LlmRequest, LlmResult,
-    ModelId,
+    BrokerIsolation, BudgetLease, CallEnvelope, DispatchRelease, FatalLlmError, LlmError,
+    LlmRequest, LlmResult, ModelId,
 };
 
 mod backend;

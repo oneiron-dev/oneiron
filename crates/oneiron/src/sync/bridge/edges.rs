@@ -12,7 +12,6 @@ use super::companion_identity::{
 use super::entities::take_injected_batch_commit_failure;
 use super::entities::{committed_entity_state_matches, set_remat_marker_logged};
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
@@ -23,6 +22,7 @@ use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
 use crate::{Error, Result, Vault};
+use oneiron_contracts::affect::Vad;
 
 /// The committed parent projection for one child. Read through the SAME
 /// transaction as the batch so resolver-injected removals are observable.

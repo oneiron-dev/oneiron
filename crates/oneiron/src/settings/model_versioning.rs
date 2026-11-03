@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::llm::{ModelId, ModelIdError};
+use oneiron_model::llm::{ModelId, ModelIdError};
 
 pub const DEFAULT_MODEL_STACK_CURRENT_ID: &str = "default-v2";
 pub const DEFAULT_MODEL_STACK_V1_ID: &str = "default-v1";

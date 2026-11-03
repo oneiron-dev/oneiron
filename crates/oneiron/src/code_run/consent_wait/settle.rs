@@ -6,6 +6,7 @@
 //! of the reply (1b) stay three separate facts.
 
 use crate::Vault;
+use crate::code_run::ConnectorCallReply;
 use crate::consent::{
     AuthenticatedOwner, CodeWaitReceiptLinks, ConsentOwnerStamp, ConsentReceipt, EffectDigest,
 };
@@ -13,7 +14,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::outbound_consent::ConnectorCallOutcome;
 use crate::store::GateDecisionId;
-use crate::task_verb::sdk::ConnectorCallReply;
 
 use super::binding::{put_code_consent_wait_in_txn, read_code_consent_wait_in_txn};
 use super::browser::{CODE_WAIT_TARGET_CHANGED, browser_facts_match_row};
@@ -32,10 +32,7 @@ pub(crate) const CODE_WAIT_HOST_UNBOUND: &str = "code_wait_host_unbound";
 /// The reason a wait the owner denied settles with.
 pub(crate) const CODE_WAIT_DENIED: &str = "code_wait_denied";
 
-/// The reason a wait settles with when its original caller's own credential
-/// no longer stands. No answer revives it.
-pub(crate) const CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED: &str =
-    "code_wait_original_authority_refused";
+pub(crate) use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 
 /// The wall clock, in unix ms, as the connector call's own rows keep it.
 pub(crate) fn now_ms() -> u64 {

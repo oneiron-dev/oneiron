@@ -1,6 +1,7 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use super::sdk::{RecallRequest, VAULT_RECALL_LIMIT_DEFAULT};
+use super::sdk::VAULT_RECALL_LIMIT_DEFAULT;
+use crate::memory::RecallRequest;
 use crate::memory::{Memory, MemoryResult};
 use crate::retrieval_depth::RecallQueryVectors;
 
@@ -162,7 +163,7 @@ fn recall_within_ceiling(
     // Refused before the query embeds, as every free check is.
     let query_affect = input
         .query_affect
-        .map(super::sdk::QueryAffect::vad)
+        .map(crate::memory::affect::QueryAffect::vad)
         .transpose()?;
     let host = match door.rerank {
         RecallRerank::Host(host) if effort.requires_rerank() => Some(host),

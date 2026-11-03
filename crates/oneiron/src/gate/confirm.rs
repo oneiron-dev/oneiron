@@ -161,10 +161,17 @@ impl Vault {
         &self,
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
-        self.with_write_txn_grouped(|wtxn| {
+        let resolution = self.with_write_txn_grouped(|wtxn| {
             let now = self.store.clock.now_recorded_at();
             self.settle_critical_write_confirm_in_txn(wtxn, confirm_id, now, None)
-        })?
+        })??;
+        // A settled answer can release a held hook binding at once, not at
+        // the binding cache's staleness lapse (FIX 12108): after the commit,
+        // never inside the writer, and never on an error.
+        if resolution != CriticalWriteConfirmResolution::AlreadySettled {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(resolution)
     }
 
     /// Applies the folded answer in the caller's writer. An owner ceremony
@@ -296,11 +303,11 @@ impl Vault {
                 None => crate::vault::embedded_owner_actor_id()?,
             },
         };
-        let settled = |outcome| crate::runtime_hooks::SettledFact {
+        let settled = |outcome| crate::consent::settlement_fact::SettledFact {
             proposal: binding.claim_id,
             outcome,
             settled_by,
-            kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+            kind: crate::consent::settlement_fact::SettlementKind::CriticalWriteConfirm,
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
@@ -373,7 +380,7 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    settled(crate::runtime_hooks::SettledOutcome::Approved),
+                    settled(crate::consent::settlement_fact::SettledOutcome::Approved),
                 )?;
                 Ok(Ok(CriticalWriteConfirmResolution::Cleared))
             }
@@ -419,9 +426,9 @@ impl Vault {
                     self,
                     wtxn,
                     settled(if retract {
-                        crate::runtime_hooks::SettledOutcome::Retracted
+                        crate::consent::settlement_fact::SettledOutcome::Retracted
                     } else {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }),
                 )?;
                 Ok(Ok(if retract {
