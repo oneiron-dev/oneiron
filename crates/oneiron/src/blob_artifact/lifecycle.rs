@@ -53,7 +53,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<BlobArtifactLifecycleCleanup> {
-    crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let hashes = artifact_hashes(store, wtxn, id)?;
@@ -214,7 +214,7 @@ pub(crate) fn release_response_version_in_txn(
         .get(store, wtxn, artifact)?
         .is_some_and(|head| head.version == version)
     {
-        crate::ingest::invalidate_blob_fingerprint(store, wtxn, artifact)?;
+        crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, artifact)?;
         let survivor = VERSIONS
             .iter_rev_from(store, wtxn, artifact.as_bytes())?
             .next()

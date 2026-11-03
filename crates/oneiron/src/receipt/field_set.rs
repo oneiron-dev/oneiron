@@ -16,7 +16,7 @@ use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::prompt::PromptRecompileStamp;
+use crate::receipt::prompt_stamp::PromptRecompileStamp;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";

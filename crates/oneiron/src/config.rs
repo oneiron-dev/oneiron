@@ -1,6 +1,7 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
 pub mod failure_signals;
+pub mod tagging;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -416,7 +417,7 @@ pub struct VaultConfig {
     /// by the turn and this tagger checkpoint, and the answer each marker
     /// settles on is saved as the turn's tags in its mode. `None` commits
     /// none.
-    pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
+    pub tagging: Option<crate::config::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,
     /// Maximum LMDB reader slots. Both presets ask for [`READER_SLOTS`],

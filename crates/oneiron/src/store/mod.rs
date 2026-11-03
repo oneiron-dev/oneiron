@@ -123,6 +123,7 @@ mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
 mod backup_change;
+pub mod blob_fingerprint;
 #[cfg(unix)]
 mod body_envelope;
 #[cfg(unix)]
@@ -138,6 +139,7 @@ mod credential_custody;
 mod deadline_jobs;
 pub mod diagnostic_record;
 mod diagnostics;
+pub mod document_segments;
 pub mod embedding;
 mod gate_decision;
 mod group_commit;
@@ -148,6 +150,7 @@ pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
+pub mod identity_hints;
 mod idempotency_intent;
 mod inference_snapshot_custody;
 mod invocation_claims;

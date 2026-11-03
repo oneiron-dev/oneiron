@@ -24,6 +24,7 @@ mod lens;
 mod off_device;
 mod pack_attribution;
 mod projection;
+pub mod prompt_stamp;
 mod questions;
 mod record;
 mod reference_refusal;

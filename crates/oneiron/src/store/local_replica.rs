@@ -576,9 +576,9 @@ fn remove_member(
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, txn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, txn, id)?;
     // Both read the stored row, so they run before it goes.
-    crate::ingest::reindex_identity_hints(store, txn, id, None)?;
+    crate::store::identity_hints::reindex_identity_hints(store, txn, id, None)?;
     crate::ports::reindex_named_entities(store, txn, id, None)?;
-    crate::ingest::invalidate_blob_fingerprint(store, txn, id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, txn, id)?;
     crate::claim::remove_claim_projection_index(store, txn, *id)?;
     // A demoted epoch summary keeps its place in its session's count, so a
     // local mint never numbers under it (OF-013).

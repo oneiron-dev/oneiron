@@ -440,7 +440,7 @@ impl Vault {
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
         let fingerprint =
-            crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
+            crate::store::blob_fingerprint::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
         // HEAD is the greatest version that stays; a released one (FIX 6225)
