@@ -121,7 +121,11 @@ impl Vault {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
-            self.recheck_git_push_in_txn(wtxn, push, &g1_repo, changes)?;
+            let ref_grants = self.recheck_git_push_in_txn(wtxn, push, &g1_repo, changes)?;
+            // The intent names the Grant that admitted each ref move (FIX 7138).
+            if let Some(recorded) = intent.push.as_mut() {
+                recorded.record_ref_grants(&ref_grants);
+            }
             let mark_count = record_receive_secret_marks_in_txn(
                 self,
                 wtxn,
