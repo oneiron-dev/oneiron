@@ -2,9 +2,7 @@
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding,
-};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding};
 use crate::secret_custody::{RevealAsker, SecretSight};
 use crate::task_verb::task_create_origin_in_txn;
 use crate::typed_body::LiftedSources;
@@ -137,3 +135,4 @@ impl Memory<'_> {
         .with_step(self.host_step()))
     }
 }
+

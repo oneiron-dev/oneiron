@@ -1,12 +1,10 @@
 //! Authored agent definition vocabulary and its pure core projections.
-use crate::EntityId;
-use crate::agent_def::{
-    AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef, RefusalDial,
-};
+use serde::{Deserialize, Serialize};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef, RefusalDial};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::llm::{ModelId, ModelTierRef};
 use crate::skill::SkillDependency;
-use serde::{Deserialize, Serialize};
+use crate::EntityId;
 
 /// A versioned composition reference, not an installed capability or grant.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -216,3 +214,4 @@ impl From<&AgentDefinition> for AgentDefinitionSpec {
         }
     }
 }
+

@@ -94,25 +94,18 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_coreference_status_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_COREFERENCE_SHARE_CONSENT {
         validate_coreference_share_consent_claim_structure(&body)?;
-    } else if body.predicate == crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM
-    {
+    } else if body.predicate == crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM {
         crate::write_envelope::identity_pair::validate_distinct_from_claim_structure(&body)?;
     } else if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
         crate::thread_passport::validate_thread_claim_structure(&body)?;
-    } else if crate::write_envelope::channel_identity::is_channel_identity_claim_predicate(
-        &body.predicate,
-    ) {
+    } else if crate::write_envelope::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::channel_identity_provider::is_line_chat_observation_claim_predicate(
         &body.predicate,
     ) {
         crate::channel_identity_provider::validate_line_chat_observation_claim_structure(&body)?;
-    } else if crate::write_envelope::identity_reputation::is_identity_reputation_claim_predicate(
-        &body.predicate,
-    ) {
-        crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure(
-            &body,
-        )?;
+    } else if crate::write_envelope::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
+        crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure(&body)?;
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
     {
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;

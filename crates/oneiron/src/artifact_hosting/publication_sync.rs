@@ -247,9 +247,7 @@ impl Vault {
                         pointer,
                         owner: found.code_artifact_id,
                         rows: ExportWire::Code {
-                            snapshot: crate::store::code_snapshot::encode_codebase_snapshot(
-                                &found.snapshot,
-                            )?,
+                            snapshot: crate::store::code_snapshot::encode_codebase_snapshot(&found.snapshot)?,
                         },
                     })
                 })

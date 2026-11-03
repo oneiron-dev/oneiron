@@ -362,8 +362,8 @@ pub struct RecallExecution<'a> {
     pub render_budget: Option<usize>,
 }
 
-use crate::store::RetrievalTurn;
 use serde::{Deserialize, Serialize};
+use crate::store::RetrievalTurn;
 
 /// Opt-in stage capture and the actual host turn whose retrieval is being observed.
 /// The vault's capture setting remains authoritative; this cannot turn it on.

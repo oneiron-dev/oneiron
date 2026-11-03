@@ -505,8 +505,15 @@ pub use self::wire_health::*;
 pub use self::workflows::*;
 pub use self::workspace::*;
 pub use crate::task_verb::fanout_batch::{
-    FanoutBatchInput, FanoutBatchView, FanoutChildInput, FanoutChildSlot, FanoutLeaseView,
-    FanoutSharedAccounting, FanoutSlotAttempt, FanoutSlotState, FanoutSlotTerminal,
+    FanoutChildInput,
+    FanoutBatchInput,
+    FanoutSlotState,
+    FanoutSlotTerminal,
+    FanoutLeaseView,
+    FanoutSlotAttempt,
+    FanoutChildSlot,
+    FanoutSharedAccounting,
+    FanoutBatchView,
     fanout_batch_rows,
 };
 pub use crate::task_verb::recall_door::{
