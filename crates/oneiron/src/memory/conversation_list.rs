@@ -25,9 +25,10 @@ use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
 use crate::conversation::{
-    ConversationBody, ConversationKind, LatestMessage, MembershipWindow, PreviewCandidates,
+    LatestMessage, MembershipWindow, PreviewCandidates,
     snippet, turn_text,
 };
+use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};

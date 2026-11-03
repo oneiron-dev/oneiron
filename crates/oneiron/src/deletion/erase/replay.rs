@@ -158,7 +158,7 @@ impl Vault {
             let (existed, had_vector, ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, id, false)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
@@ -451,7 +451,7 @@ impl Vault {
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
         use crate::error::{ArtifactError, SecretError, SyncError};
-        use crate::identity_topology::IdentityTopologyRejection;
+        use oneiron_contracts::identity_topology::IdentityTopologyRejection;
         use crate::secret_custody::CUSTODY_SEAL_REASON;
         matches!(
             error,

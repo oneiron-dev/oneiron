@@ -1,6 +1,6 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
@@ -303,7 +303,7 @@ pub(crate) struct PolicyManifestResolution {
     /// The trusted rows behind `diagnostic_bounds` and the fields they state
     /// (FIX 10096): carried for the tripwire receipt, never consulted to admit.
     pub(crate) diagnostic_bounds_origin: Option<crate::self_heal::tripwires::TripwireBoundsOrigin>,
-    pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(crate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     /// The trusted residence rows met so far, whose resolution is
     /// `residence_operation_budgets` (FIX 8783).
@@ -313,9 +313,9 @@ pub(crate) struct PolicyManifestResolution {
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
     pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
-    pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
-    pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
-    pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) goal_limits: Option<crate::policy_model::goal_limits::GoalLimits>,
+    pub(crate) voice_ref_defaults: Option<crate::gate::voice_ref_limits::VoiceRefLimitPolicy>,
+    pub(crate) voice_ref_limits: crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) sheet_answer_default_max_count: Option<u64>,
@@ -336,7 +336,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
-    pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+    pub(crate) judge_calibration: Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(crate) sync_world_default: Option<bool>,

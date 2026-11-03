@@ -354,10 +354,10 @@ fn hard_erase_token_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, token: &EntityId
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(&vault.store, wtxn, token)?;
     crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, token, &neighbors)?;
     if graph {
-        crate::ppr::increment_graph_version(&vault.store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(&vault.store, wtxn)?;
     }
     if vector {
-        crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(&vault.store, wtxn)?;
     }
     let erased_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     crate::deletion::stage_engine_row_hard_erasure_in_txn(

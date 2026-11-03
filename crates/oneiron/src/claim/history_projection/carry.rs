@@ -137,7 +137,7 @@ impl Vault {
                     kind: crate::edge::EdgeKind::FacetOf,
                     tgt: original.scope_facet,
                     weight: 1.0,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 },
             ],
             self.text_index_trusted

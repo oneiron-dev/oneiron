@@ -13,7 +13,7 @@ use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::retained_reasons::RetainedReasons;
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
 use crate::federation::git_push::GitPushStamp;

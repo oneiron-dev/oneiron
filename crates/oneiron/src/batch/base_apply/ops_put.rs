@@ -107,7 +107,7 @@ pub(super) fn apply_put_arm(
             facet,
             1.0,
             learned_at,
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;

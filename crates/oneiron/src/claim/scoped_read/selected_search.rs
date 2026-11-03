@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
-use crate::sync::residence::ResolvedRecallSelection;
+use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
 
 impl ScopedRead<'_> {
     /// [`Self::search_text`] narrowed by `scope` before its cut, returning
@@ -54,9 +54,9 @@ impl ScopedRead<'_> {
             Some(worlds) => WorldScope::WorldSet(worlds.clone()),
         };
         let corpus = if scope.project_ids.is_empty() {
-            crate::corpus::CorpusScope::All
+            crate::claim::corpus_scope::CorpusScope::All
         } else {
-            crate::corpus::CorpusScope::AnyOf(scope.project_ids.clone())
+            crate::claim::corpus_scope::CorpusScope::AnyOf(scope.project_ids.clone())
         };
         let kinds = crate::memory::RecallKinds::new(scope.kinds.clone());
         let read = match worlds {

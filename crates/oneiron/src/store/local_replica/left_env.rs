@@ -257,10 +257,10 @@ pub(crate) fn purge_left_shared_env_in_txn(
     }
     sweep_side_tables(store, txn, &kept, &held, &mut budget, &mut report)?;
     if graph {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if report.entities > 0 || report.edges > 0 {
-        crate::ppr::increment_graph_version(store, txn)?;
+        crate::store::graph_version::increment_graph_version(store, txn)?;
     }
     report.complete = !budget.spent;
     Ok(report)

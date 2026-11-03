@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

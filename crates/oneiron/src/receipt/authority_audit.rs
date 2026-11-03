@@ -39,7 +39,8 @@ use oneiron_authority::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp,
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 mod agent_grant_act;

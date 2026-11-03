@@ -210,7 +210,7 @@ pub(crate) fn validate_machine_history_put(
             // A superseded history leaves the live row to its same-id
             // successor, an ordinary claim of the actor that superseded it.
             Ok(projection)
-                if projection.admits_successor_by(crate::memory::claim_author(incoming))
+                if projection.admits_successor_by(crate::claim::claim_author(incoming))
                     && !crate::authority::machine_claim_needs_history(store, txn, incoming)? => {}
             Ok(_) => {
                 return Err(Error::Claim(
@@ -745,7 +745,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
             kind: crate::edge::EdgeKind::FacetOf,
             tgt: body.scope_facet,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
     // Same txn, no second writer. A failure rolls back both controls and the

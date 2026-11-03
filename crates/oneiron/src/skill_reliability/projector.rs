@@ -27,7 +27,7 @@ use super::read::{
     SkillReliabilityQuery, posterior_from_estimate, resolved_estimate_in_txn, validate_executor,
 };
 
-pub const PREDICATE_SKILL_RELIABILITY: &str = crate::learning::PREDICATE_LEARNING_RELIABILITY;
+pub const PREDICATE_SKILL_RELIABILITY: &str = crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY;
 
 /// Receipt task placement: JSON {node_id, tree_version}. Missing is invalid.
 pub const FIELD_SKILL_TYPE_REF: &str = "typeRef";

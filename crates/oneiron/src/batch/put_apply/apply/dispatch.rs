@@ -140,7 +140,7 @@ pub(super) fn dispatch_put_type(
             fixed.own_device,
         )?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
-        crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+        crate::store::code_artifact_body::validate_code_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
@@ -226,13 +226,13 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
-        crate::psych_profile::validate_psych_profile_body_bytes(data)?;
+        crate::write_envelope::profile_snapshot::validate_psych_profile_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
-        crate::skill_hub::decode_skill_hub_record(data)?;
+        crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
         crate::comm::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {
@@ -243,7 +243,7 @@ pub(super) fn dispatch_put_type(
         crate::provenance::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
-        let decoded = crate::skill::decode_skill_record(data)?;
+        let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(
             store,
             wtxn,
@@ -283,7 +283,7 @@ pub(super) fn dispatch_put_type(
         // (`validate_child_of_batch`), which already sees this put and every
         // pair it re-judges. A second per-op rule reading half-applied state
         // could only disagree with it.
-        crate::habit::task_role_from_body_bytes(data)?;
+        crate::write_envelope::task_body::task_role_from_body_bytes(data)?;
         // STO-03: the streak counters are DERIVED, so an inbound value is
         // discarded here — at the one arm every road to a TASK body converges
         // on, for every role. The public doors already refused the keys
@@ -293,7 +293,7 @@ pub(super) fn dispatch_put_type(
         // every other role: the tail reducer visits `Habit` rows alone, so a
         // peer-minted counter on a `Task` or `HabitCheckin` row would simply
         // be stored and never overwritten.
-        task_body_without_streaks = crate::habit::strip_streak_fields(data)?;
+        task_body_without_streaks = crate::write_envelope::task_body::strip_streak_fields(data)?;
     }
     Ok(DispatchCarry {
         task_body_without_streaks,

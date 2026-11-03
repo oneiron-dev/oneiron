@@ -7,7 +7,7 @@ use super::manifest::{
     PluginInstallSource, SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver,
     SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef,
 };
-use crate::skill::{SkillLifecycle, SkillRecord};
+use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use std::collections::BTreeSet;
 
 /// Engine-defined core section names a plugin manifest may never claim.

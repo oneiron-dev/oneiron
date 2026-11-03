@@ -239,7 +239,7 @@ pub struct Vault {
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
-        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
+        std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

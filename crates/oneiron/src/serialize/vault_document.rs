@@ -74,7 +74,7 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each agent's birth-source ASSET, kept as it passes.
     birth_sources: BTreeSet<EntityId>,
     agents: Vec<ExportEntity>,
-    skills: Vec<(EntityId, crate::skill::SkillRecord)>,
+    skills: Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     knowledge: Vec<ExportEntity>,
     birth_bodies: BTreeMap<EntityId, ExportBody>,
     /// Each result body's row by digest, nulled and with its file detached.

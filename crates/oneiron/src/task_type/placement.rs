@@ -24,7 +24,7 @@ use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionRung,
     ProviderDecision, ProviderPin, Reversibility, cut_text, fit_state,
 };
-use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 
 use super::{
     ROOT_NODE_ID, SeedTaskType, TaskTypeNode, TaskTypeRef, TaskTypeTree, invalid_type_ref,

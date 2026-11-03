@@ -197,9 +197,9 @@ impl Vault {
         use crate::sync::bridge::{
             DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
         };
-        use crate::sync::loro_support::doc_version_vector;
+        use crate::store::loro_document::doc_version_vector;
         use crate::sync::schema::create_window_doc;
-        use crate::sync::types::WindowKey;
+        use crate::window_key::WindowKey;
         use crate::sync::window::{
             CarrierRemoval, apply_tombstone_to_window_doc, entity_carriers,
             export_tombstone_commit_delta, load_window_from_state, mark_removed_carriers_first,
@@ -390,7 +390,7 @@ impl Vault {
     ) {
         #[cfg(feature = "sync")]
         for window in windows {
-            let key = crate::sync::WindowKey::new(window.as_str());
+            let key = crate::window_key::WindowKey::new(window.as_str());
             if let Err(error) = crate::sync::window::publish_pending_tombstones(self, &key) {
                 match PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY {
                     PadTombstonePublishFailure::KeepPendingAndWarn => tracing::warn!(
@@ -447,7 +447,7 @@ impl Vault {
     fn notify_tombstone_publication(
         &self,
         id: &EntityId,
-        window: &crate::sync::WindowKey,
+        window: &crate::window_key::WindowKey,
         value: &TombstoneValueV2,
     ) {
         let manager = self
@@ -517,7 +517,7 @@ impl Vault {
         &self,
         id: &EntityId,
         window_ts: u64,
-        window_key: &crate::sync::WindowKey,
+        window_key: &crate::window_key::WindowKey,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -636,7 +636,7 @@ impl Vault {
 
     /// Every persisted update key of `window_key`, however many (FIX 9783).
     #[cfg(feature = "sync")]
-    fn window_update_keys(&self, window_key: &crate::sync::WindowKey) -> Result<Vec<String>> {
+    fn window_update_keys(&self, window_key: &crate::window_key::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
             crate::store::EngineScan::PackQuarantineRows,
@@ -672,7 +672,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     fn resolve_window_snapshot_mode(
         &self,
-        window_key: &crate::sync::WindowKey,
+        window_key: &crate::window_key::WindowKey,
         doc: &loro::LoroDoc,
     ) -> Result<bool> {
         let history_free = crate::sync::window::history_free_window_required(self, window_key)?
@@ -697,7 +697,7 @@ impl Vault {
             let cut = crate::sync::window::tip_window_cut(doc)?;
             Ok((cut.bytes, !cut.proved))
         } else {
-            crate::sync::loro_support::export_snapshot(doc).map(|bytes| (bytes, false))
+            crate::store::loro_document::export_snapshot(doc).map(|bytes| (bytes, false))
         }
     }
 
@@ -802,7 +802,7 @@ impl Vault {
     fn finish_crdt_tombstone_persist_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        window_key: &crate::sync::WindowKey,
+        window_key: &crate::window_key::WindowKey,
         persistence: TombstonePersistence<'_>,
     ) -> Result<()> {
         let is_hard = persistence.tombstone.reason.is_hard();
@@ -832,7 +832,7 @@ impl Vault {
             // Carriers 13–14: this window's sync state is no longer a
             // faithful delta source — mark it for a full per-window
             // resync on the next connect.
-            crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER.put(
+            crate::store::window_rows::WINDOW_FULL_RESYNC_MARKER.put(
                 &self.store,
                 wtxn,
                 &window_key.as_str().to_owned(),

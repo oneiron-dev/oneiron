@@ -35,7 +35,7 @@ use super::super::push_projection::{
 use super::super::serve::unpinned_repo_ref;
 use super::{INTENTS, ReceivePackIntentKey, push_admission, receive_pack_repo_identity_hex};
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;
