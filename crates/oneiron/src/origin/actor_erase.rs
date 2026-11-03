@@ -22,7 +22,6 @@ use super::residence::ORIGIN_ERASED_WRITER;
 use super::smart_http::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::deletion::carrier_actor_merged;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -30,6 +29,7 @@ use crate::git_wire::GitWireRepo;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 
 /// How an erase reaches an origin claim that names its actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,7 +331,9 @@ pub(crate) fn canonical_origin_claim_in_txn(
         .get(..ENTITY_METADATA_HEADER_LEN)
         .ok_or(Error::CorruptedIndex("origin claim header"))?
         .to_vec();
-    blob.extend_from_slice(&crate::write_envelope::claim_body::encode_claim_body(&settled)?);
+    blob.extend_from_slice(&crate::write_envelope::claim_body::encode_claim_body(
+        &settled,
+    )?);
     Ok(Some(blob))
 }
 

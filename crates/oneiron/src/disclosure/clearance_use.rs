@@ -12,7 +12,7 @@ use crate::Vault;
 use crate::consent::EffectDigest;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::interlocutor::InterlocutorSet;
 
 const USE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_clearance_use.v1\0";

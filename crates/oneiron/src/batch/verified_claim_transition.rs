@@ -2,12 +2,12 @@
 //! lifecycle validator checks the complete operation in its write transaction.
 //! This is not actor or Gate authorization and never crosses replicated replay.
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::write_envelope::claim_body::{ClaimBody, encode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimBody, encode_claim_body};
 
 #[derive(Debug, Clone)]
 pub(crate) struct VerifiedClaimTransition {
@@ -166,7 +166,10 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed {
             return Err(Error::InvalidClaimBody(
@@ -187,7 +190,9 @@ impl VerifiedClaimTransition {
         }
         let mut expected = prior;
         match next.approval {
-            oneiron_contracts::claim::ClaimApprovalStatus::Approved => expected.approval = next.approval,
+            oneiron_contracts::claim::ClaimApprovalStatus::Approved => {
+                expected.approval = next.approval
+            }
             oneiron_contracts::claim::ClaimApprovalStatus::Rejected => {
                 expected.approval = next.approval;
                 // A MACHINE claim's signed fold rejects without retracting.
@@ -239,7 +244,10 @@ impl VerifiedClaimTransition {
             .ok_or(Error::InvalidClaimBody(
                 "rejection predecessor is not a claim",
             ))?;
-        let prior = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed
             || prior.lifecycle != oneiron_contracts::claim::ClaimLifecycleStatus::Active
         {
@@ -284,7 +292,10 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         store
             .pending_gate_consent_in_txn(txn, id)?
@@ -315,7 +326,10 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
         let mut expected = prior.clone();
         expected.approval = oneiron_contracts::claim::ClaimApprovalStatus::Approved;
@@ -350,7 +364,10 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let prior = crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let prior = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            false,
+        )?;
         if crate::authority::machine_claim_needs_history(store, txn, &prior)? {
             return Err(Error::InvalidClaimBody(
                 "a MACHINE claim's body is owned by its signed history",

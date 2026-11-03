@@ -82,7 +82,8 @@ impl PackKindIdentity {
         // Same canonical grammar and engine-reserved namespaces as predicates;
         // this is shape vetting only and does not author a CLAIM.
         if crate::write_envelope::claim_predicate::validate_predicate(&self.pack, false).is_err()
-            || crate::write_envelope::claim_predicate::validate_predicate(&self.name, false).is_err()
+            || crate::write_envelope::claim_predicate::validate_predicate(&self.name, false)
+                .is_err()
             || !self
                 .name
                 .strip_prefix(&self.pack)

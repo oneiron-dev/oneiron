@@ -286,7 +286,7 @@ impl Memory<'_> {
                 txn,
                 creation.vault_id,
                 &self.write_actor(),
-                &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
+                &crate::federation::SharedVaultWrite::Content(oneiron_authority::federation::Scope::top()),
             )?;
         }
         Ok(())
