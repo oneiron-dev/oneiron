@@ -448,7 +448,7 @@ pub(super) fn project_in_txn(
                 .axis(axis)
                 .project(cell.project);
                 person_cell.validate()?;
-                let parents = attempt_receipt
+                let parents: Vec<crate::learning::TypeRef> = attempt_receipt
                     .fields
                     .get("typeParents")
                     .map(|raw| serde_json::from_str(raw))
