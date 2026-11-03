@@ -19,8 +19,6 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -32,6 +30,8 @@ use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 impl Vault {
     /// Validates a whole-vault archive (OF-222) and the document its records

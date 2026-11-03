@@ -6,13 +6,12 @@ use rmpv::Value;
 use super::demotion::successor_body;
 use super::{ClaimMaterialization, binding_error};
 use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::write_envelope::claim_body::{
-    ClaimBody, ClaimSuccession, decode_claim_body, encode_claim_body,
-};
-use oneiron_contracts::claim::ClaimSource;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::store::row_birth::RowBirth;
+use crate::write_envelope::claim_body::{
+    ClaimBody, ClaimSuccession, decode_claim_body, encode_claim_body,
+};
 use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
@@ -21,6 +20,7 @@ use crate::write_envelope::{
     envelope_carried_evidence, write_envelope_evidence,
 };
 use crate::{EntityId, Vault};
+use oneiron_contracts::claim::ClaimSource;
 
 /// The writer that births a claim successor. A successor is written under
 /// this writer's own authority and stamp, never its predecessor's author's:

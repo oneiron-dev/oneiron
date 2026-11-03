@@ -4,13 +4,13 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::claim::ClaimApprovalStatus;
+use crate::entity_id::EntityId;
 use crate::write_envelope::claim_body::ClaimBody;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
-use oneiron_contracts::claim::ClaimSource;
 use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::claim_body::RelationshipScope;
-use crate::entity_id::EntityId;
+use oneiron_contracts::claim::ClaimApprovalStatus;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
+use oneiron_contracts::claim::ClaimSource;
 
 pub mod carry_forward;
 pub mod claim_body;
@@ -357,7 +357,10 @@ impl ClaimCandidate {
     /// (FIX 7761); without them the stored claim carries the house band of
     /// its number.
     #[must_use]
-    pub fn with_confidence_details(mut self, details: oneiron_contracts::claim::ConfidenceDetails) -> Self {
+    pub fn with_confidence_details(
+        mut self,
+        details: oneiron_contracts::claim::ConfidenceDetails,
+    ) -> Self {
         self.confidence_details = Some(details);
         self
     }
@@ -379,7 +382,10 @@ impl ClaimCandidate {
     /// Adds typed document citations beside the candidate's other evidence
     /// (ARCH-0032, FIX 904). The write pins each one that verifies against
     /// its document in the write's own snapshot.
-    pub fn with_evidence_refs(mut self, refs: &[crate::write_envelope::claim_body::EvidenceRef]) -> crate::Result<Self> {
+    pub fn with_evidence_refs(
+        mut self,
+        refs: &[crate::write_envelope::claim_body::EvidenceRef],
+    ) -> crate::Result<Self> {
         let key = crate::write_envelope::claim_body::EVIDENCE_REFS_KEY;
         let mut entries = match self.evidence.take() {
             Some(Value::Map(entries)) => entries,
@@ -387,7 +393,10 @@ impl ClaimCandidate {
             Some(_) => return Err(crate::Error::InvalidClaimBody("evidence must be a map")),
         };
         entries.retain(|(name, _)| name.as_str() != Some(key));
-        entries.push((Value::from(key), crate::write_envelope::claim_body::public_evidence_value(refs)?));
+        entries.push((
+            Value::from(key),
+            crate::write_envelope::claim_body::public_evidence_value(refs)?,
+        ));
         self.evidence = Some(Value::Map(entries));
         Ok(self)
     }

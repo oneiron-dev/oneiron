@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND;
+use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::store::Store;
 

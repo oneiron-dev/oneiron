@@ -1,9 +1,9 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
 use crate::{
-    write_envelope::claim_body::ClaimBody,
     error::{Error, Result},
     receipt::ReceiptRecord,
     serialize::ExportBody,
+    write_envelope::claim_body::ClaimBody,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
