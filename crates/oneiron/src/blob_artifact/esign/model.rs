@@ -111,6 +111,12 @@ pub struct EsignDocument {
     pub title: String,
     pub sequential: bool,
     pub expires_at: u64,
+    /// Optional owner-selected deadline for signing and delivery links: when
+    /// set, capabilities expire at `min(token_expires_at, expires_at)`; when
+    /// unset, they expire at `expires_at`. Set on the draft alongside the
+    /// document deadline; it never moves recipient signing windows.
+    #[serde(default)]
+    pub token_expires_at: Option<u64>,
     pub items: Vec<EsignItem>,
     pub recipients: Vec<EsignRecipient>,
     pub fields: Vec<EsignField>,
