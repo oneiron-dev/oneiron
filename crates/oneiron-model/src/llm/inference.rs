@@ -26,7 +26,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use super::cache::{CacheIdentity, CachePassUsage};
 use super::media::MediaUsage;
-use super::scheduling::SchedulingReceipt;
+use super::scheduling::{SchedulingReceipt, WorkPhysical};
 use super::{LlmUsage, ModelId};
 
 /// The key in a provider's usage object that holds its inference receipts.
@@ -163,6 +163,10 @@ pub struct InferenceCallReceipt {
     /// The worker's scheduling context and executor rounds at this call's end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduling: Option<SchedulingReceipt>,
+    /// Host-stamped custody of this native physical call (FIX 11893). Absent
+    /// means Paid/unknown; worker JSON is never the source of this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical: Option<WorkPhysical>,
 }
 
 impl InferenceCallReceipt {
@@ -182,6 +186,7 @@ impl InferenceCallReceipt {
             drafts_proposed: None,
             drafts_accepted: None,
             scheduling: None,
+            physical: None,
         }
     }
 }
