@@ -213,7 +213,7 @@ pub(super) fn stage_claim_projection_indexes(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    body: &crate::claim::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
     if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
@@ -424,7 +424,7 @@ pub(super) fn stage_claim_projection(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
-    body: Option<&crate::claim::ClaimBody>,
+    body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
     if let Some(body) = body {
@@ -514,7 +514,7 @@ pub(super) fn validate_scope_carriers(
 pub(super) struct ProposedClaimObservation<'a> {
     pub(super) id: EntityId,
     pub(super) replicated: bool,
-    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) body: Option<&'a crate::write_envelope::claim_body::ClaimBody>,
     pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
     pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(super) body_changed: bool,
@@ -535,12 +535,12 @@ pub(super) fn stage_local_proposal_observation(
     } = observation;
     if !replicated
         && let Some(body) =
-            body.filter(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+            body.filter(|body| body.approval == oneiron_contracts::claim::ClaimApprovalStatus::Proposed)
         && let Some(envelope) = envelope
     {
         // The stored claim's scope, never a caller-selected policy position.
         let scope = crate::gate::policy_values::PolicyEvaluationScope {
-            world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(body.world.unwrap_or_else(oneiron_contracts::claim::base_world_id)),
             project: Some(body.scope_project),
             ..Default::default()
         };

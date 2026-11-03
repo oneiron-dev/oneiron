@@ -70,19 +70,7 @@ pub struct ScopedReadActorKey {
     pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
 }
 
-/// Where a read's caller sits relative to this device (DEC-0005). Only the
-/// host decides it, from the connection the caller reached it on; nothing the
-/// caller sends sets it. A device that forwards its caller's search to the
-/// home states it there, signed with the request (FIX 3550).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CallerLocality {
-    /// On this device: the embedded host, or a caller on its local socket or
-    /// loopback.
-    OnDevice,
-    /// Anywhere else.
-    OffDevice,
-}
+pub use crate::settings::CallerLocality;
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
 /// every lane built from it reads inside the room's Scope and roster.

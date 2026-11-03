@@ -12,7 +12,7 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimSource;
+use oneiron_contracts::claim::ClaimSource;
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

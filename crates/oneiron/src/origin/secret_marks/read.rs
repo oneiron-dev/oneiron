@@ -22,7 +22,8 @@ use rmpv::Value;
 
 use super::{REPO_SECRET_MARK_PREDICATE, RepoSecretMark, RepoSecretPlacement, RepoSecretSource};
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::credential_door::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

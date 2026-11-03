@@ -6,9 +6,8 @@ use super::{
     ApplyOpsGateMode, BaseWriteOrigin, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
     reject_overlay_member_base_write,
 };
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, decode_claim_body, encode_claim_body,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;

@@ -9,7 +9,8 @@ use super::{
     REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionAudience, RepoProjectionClaim,
     RepoProjectionPlace, RepoProjectionRecord, RepoProjectionRevealBinding, corrupt,
 };
-use crate::claim::{ClaimBody, ClaimSource};
+use crate::write_envelope::claim_body::ClaimBody;
+use oneiron_contracts::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;

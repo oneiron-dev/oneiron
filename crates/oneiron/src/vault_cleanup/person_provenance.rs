@@ -8,7 +8,7 @@
 
 use super::claim_source_is_machine_minted;
 use crate::Vault;
-use crate::claim::ClaimSource;
+use oneiron_contracts::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;

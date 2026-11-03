@@ -8041,6 +8041,7 @@ dependencies = [
  "oneiron-model",
  "oneiron-retrieval",
  "tiktoken-rs",
+ "tokio",
  "tracing",
 ]
 

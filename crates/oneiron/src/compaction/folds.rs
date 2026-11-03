@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::claim::ClaimSource;
+use oneiron_contracts::claim::ClaimSource;
 use crate::entity_id::EntityId;
 
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
