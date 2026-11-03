@@ -183,10 +183,7 @@ pub const LEGACY_SELECTOR_PROTOCOL_VERSION: u8 = 7;
 /// send the scoped-lease-capable hello.
 pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 6;
 
-/// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
-/// root-doc imports both refuse anything larger (decompression-bomb /
-/// memory-exhaustion guard).
-pub const MAX_DECODED_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+pub use crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES;
 
 /// Maximum encoded custom sync frame size produced by transport helpers.
 const MAX_ENCODED_FRAME_BYTES: usize = MAX_DECODED_PAYLOAD_BYTES;

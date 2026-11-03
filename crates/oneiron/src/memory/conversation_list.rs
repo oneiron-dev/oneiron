@@ -24,10 +24,11 @@ use super::*;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::conversation::{
-    LatestMessage, MembershipWindow, PreviewCandidates,
-    snippet, turn_text,
-};
+use crate::memory::conversation_preview::LatestMessage;
+use crate::memory::conversation_membership::MembershipWindow;
+use crate::memory::conversation_preview::PreviewCandidates;
+use crate::memory::conversation_preview::snippet;
+use crate::memory::conversation_preview::turn_text;
 use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;

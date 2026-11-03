@@ -860,7 +860,7 @@ fn withhold_unborn_projects<R: Read + Seek>(
             .entity(&id)?
             .ok_or(Error::InvariantViolation("archive index lost a room"))?;
         if let Ok(room) =
-            rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
+            rmp_serde::from_slice::<crate::store::conversation_body::ProjectRoom>(&row.body.to_bytes()?)
             && withheld.contains(&room.project_id)
         {
             archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
