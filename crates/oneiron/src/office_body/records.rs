@@ -299,9 +299,10 @@ fn merged_member(ours: &ProposalMember, theirs: &ProposalMember) -> Option<Propo
 }
 
 /// `ours` and `theirs`, two copies of one proposal, as one (FIX 2691):
-/// members union by fork, a member's decision beats its waiting, asks union
-/// by ask group, and a settled proposal beats an open one. A merge that
-/// leaves no member waiting closes the proposal at its last answer, so every
+/// members union by artifact and fork, a member's decision beats its
+/// waiting, asks union by ask group, refusals by member artifact, and a
+/// settled proposal beats an open one. A merge that leaves no member waiting
+/// closes the proposal at its last answer, so every
 /// machine closes it alike (a call; canon is silent). `Err` names why the
 /// copies diverge: another header, two decisions on one member, two
 /// settlements, or a settlement beside a member that still waits.
@@ -324,7 +325,7 @@ fn merged_proposal(
         match merged
             .members
             .iter_mut()
-            .find(|held| held.fork == member.fork)
+            .find(|held| held.artifact == member.artifact && held.fork == member.fork)
         {
             Some(held) => {
                 *held = merged_member(held, member).ok_or("two decisions on one member differ")?;
@@ -338,18 +339,29 @@ fn merged_proposal(
         }
     }
     merged.asks.sort_by_key(|ask| (ask.at, ask.ask));
-    merged.ask_refused = match (&ours.ask_refused, &theirs.ask_refused) {
-        (Some(a), Some(b)) if (b.at, &b.reason) > (a.at, &a.reason) => Some(b.clone()),
-        (a, b) => a.clone().or_else(|| b.clone()),
-    };
-    // An ask raised since the refusal clears it, as it does here.
-    if merged
-        .ask_refused
-        .as_ref()
-        .is_some_and(|refused| merged.asks.iter().any(|ask| ask.at >= refused.at))
-    {
-        merged.ask_refused = None;
+    for refusal in &theirs.ask_refused {
+        match merged
+            .ask_refused
+            .iter_mut()
+            .find(|held| held.artifact == refusal.artifact)
+        {
+            Some(held) if (refusal.at, &refusal.reason) > (held.at, &held.reason) => {
+                *held = refusal.clone();
+            }
+            Some(_) => {}
+            None => merged.ask_refused.push(refusal.clone()),
+        }
     }
+    // An ask raised since the refusal clears it for the same member artifact.
+    merged.ask_refused.retain(|refused| {
+        !merged
+            .asks
+            .iter()
+            .any(|ask| ask.artifact == refused.artifact && ask.at >= refused.at)
+    });
+    merged
+        .ask_refused
+        .sort_by_key(|refused| (refused.artifact, refused.at));
     merged.settlement = match (&ours.settlement, &theirs.settlement) {
         (Some(a), Some(b)) if a != b => return Err("two settlements differ"),
         (a, b) => a.clone().or_else(|| b.clone()),
@@ -417,16 +429,17 @@ impl OfficeBodyProposal {
 
 #[cfg(feature = "sync")]
 impl Vault {
-    /// Each office proposal on `artifact`, read in `txn`: what a window
-    /// carries beside the artifact (FIX 2691).
+    /// Each office proposal whose home is `artifact`, read in `txn`: what a
+    /// window carries beside the artifact (FIX 2691).
     pub(crate) fn office_proposals_in_txn(
         &self,
         txn: &RoTxn<'_>,
         artifact: &EntityId,
     ) -> Result<Vec<OfficeBodyProposal>> {
         Ok(consent::PROPOSALS
-            .scan_from(&self.store, txn, artifact.as_bytes())?
+            .scan(&self.store, txn)?
             .into_iter()
+            .filter(|(_, record)| record.header.artifact == *artifact)
             .map(|(_, record)| record)
             .collect())
     }
@@ -461,8 +474,8 @@ impl Vault {
         let Some(carried) = carried.clone().carried_here(self, wtxn)? else {
             return Ok(DocumentMerge::Held);
         };
-        let key = (artifact, carried.header.proposal);
-        let merged = match consent::PROPOSALS.get(&self.store, wtxn, &key)? {
+        let proposal = carried.header.proposal;
+        let merged = match consent::PROPOSALS.get(&self.store, wtxn, &proposal)? {
             None => carried,
             Some(held) => match merged_proposal(&held, &carried) {
                 Ok(merged) if merged == held => return Ok(DocumentMerge::Held),
@@ -470,7 +483,7 @@ impl Vault {
                 Err(reason) => {
                     tracing::warn!(
                         artifact = %artifact.to_hex(),
-                        proposal = %key.1.to_hex(),
+                        proposal = %proposal.to_hex(),
                         reason,
                         "a carried office proposal diverges from the one held here"
                     );
@@ -479,19 +492,28 @@ impl Vault {
             },
         };
         for member in &merged.members {
-            let joined = consent::MEMBERSHIP.get(&self.store, wtxn, &(artifact, member.fork))?;
-            if joined.is_some_and(|joined| joined != key.1) {
+            let joined = consent::MEMBERSHIP.get(
+                &self.store,
+                wtxn,
+                &(member.artifact, member.fork),
+            )?;
+            if joined.is_some_and(|joined| joined != proposal) {
                 tracing::warn!(
-                    artifact = %artifact.to_hex(),
-                    proposal = %key.1.to_hex(),
+                    artifact = %member.artifact.to_hex(),
+                    proposal = %proposal.to_hex(),
                     "a carried office proposal holds a fork another proposal here holds"
                 );
                 return Ok(DocumentMerge::Conflict);
             }
         }
-        consent::PROPOSALS.put(&self.store, wtxn, &key, &merged)?;
+        consent::PROPOSALS.put(&self.store, wtxn, &proposal, &merged)?;
         for member in &merged.members {
-            consent::MEMBERSHIP.put(&self.store, wtxn, &(artifact, member.fork), &key.1)?;
+            consent::MEMBERSHIP.put(
+                &self.store,
+                wtxn,
+                &(member.artifact, member.fork),
+                &proposal,
+            )?;
         }
         #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(
