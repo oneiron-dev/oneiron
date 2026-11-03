@@ -34,10 +34,13 @@ use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::learning::{TeamEvent, team_events_from_attempts};
 use crate::limit_ask::EngineLimit;
-use crate::llm::run_admission::LeaseUnit;
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
-use crate::{store::diagnostic_record::AgentHealthSignal, store::diagnostic_record::DiagnosticEventClass, self_heal::ENTITY_TYPE_DIAGNOSTIC, store::diagnostic_record::decode_diagnostic_event_body};
+use crate::run_budget::LeaseUnit;
+use crate::self_heal::ENTITY_TYPE_DIAGNOSTIC;
+use crate::store::diagnostic_record::{
+    AgentHealthSignal, DiagnosticEventClass, decode_diagnostic_event_body,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 

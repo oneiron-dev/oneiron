@@ -206,3 +206,10 @@ pub(crate) struct ExecutorCallSite<'h> {
 /// variants stamp host-owned actor/provenance and run per-operation gate checks
 /// before any write commits.
 pub type GatedActorWrite<'a> = HostSelfDispatcher<'a>;
+
+pub use self::connector_answer::{ConnectorAnswerRequest, ConnectorQuestionAnswer, ConnectorAnswerAction};
+
+pub use self::agent_verb::{SecretUseStatus, SecretUseAnswer, SecretUseRecord, kept_reveal_answer};
+pub(crate) use self::agent_verb::kept_reveal_lease;
+
+pub use self::workflow_dispatch::operations as workflow_operations;

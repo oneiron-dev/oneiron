@@ -12,8 +12,7 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 pub use crate::claim::relationship_predicates::{
-    MAX_RELATIONSHIP_LABEL_BYTES, PREDICATE_RELATIONSHIP_LABEL,
-    PREDICATE_RELATIONSHIP_PERSON_REF,
+    MAX_RELATIONSHIP_LABEL_BYTES, PREDICATE_RELATIONSHIP_LABEL, PREDICATE_RELATIONSHIP_PERSON_REF,
 };
 
 /// Trust class a relationship label resolves to.

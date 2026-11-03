@@ -117,6 +117,13 @@ pub mod ports {
 }
 
 pub mod agent_record;
+pub mod attempt_cleanup;
+pub mod attempt_inputs;
+pub mod attempt_lease;
+pub mod attempt_manifest;
+pub mod attempt_result;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
@@ -139,7 +146,6 @@ mod credential_custody;
 mod deadline_jobs;
 pub mod diagnostic_record;
 pub mod derivation;
-pub mod world_registration_keys;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
@@ -147,6 +153,7 @@ mod gate_decision;
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
+pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -155,6 +162,7 @@ pub(crate) mod home_handoff_custody;
 pub mod identity_hints;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
 mod key_encoding;

@@ -10,7 +10,7 @@ use crate::WriteActor;
 use crate::store::agent_record::CompactionOwnership;
 use crate::code_run::{AdmittedLiveFork, LiveCompactionFork};
 use crate::compaction::SelfCompactionUnavailable;
-use crate::llm::SelfCompactionSource;
+use oneiron_model::llm::SelfCompactionSource;
 
 impl CompactionDriver {
     /// Admits `captured`, the live fork its backend captured at the flight's

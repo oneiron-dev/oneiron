@@ -27,7 +27,7 @@ use crate::dreamer_runner::{
     DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
-use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use crate::run_budget::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use crate::{EntityId, Error, Result, Vault};
 
 /// How many local dates a boundary search walks: a skipped date (a gap)

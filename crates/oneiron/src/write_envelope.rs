@@ -14,6 +14,9 @@ use oneiron_contracts::claim::ClaimSource;
 
 pub(crate) mod actor_tokens;
 pub mod carry_forward;
+pub mod channel_identity;
+pub mod identity_pair;
+pub mod identity_reputation;
 pub mod claim_body;
 pub mod claim_predicate;
 

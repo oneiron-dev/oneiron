@@ -38,9 +38,10 @@ use crate::dreamer_runner::{
 use crate::failure_ladder::{FailureClass, HealerCase, verified_blocked_reports};
 use crate::failure_signals::CodeFixSource;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::COACH_HEAL_ROUTE;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::COACH_HEAL_ROUTE;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::self_heal::blocked_reports::{self, BlockedIssue};

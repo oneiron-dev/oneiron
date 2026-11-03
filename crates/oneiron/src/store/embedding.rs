@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::VectorEvidenceFloors;
+use oneiron_base::config::VectorEvidenceFloors;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 

@@ -15,9 +15,9 @@
 
 use crate::authority::VerifiedSlip;
 use crate::error::{Error, GateError, RecordError, Result};
-use oneiron_authority::federation::Scope;
 use crate::psych_profile::PsychProfileKey;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 use super::codec::{encode_access_grant_body, invalid_grant};
 use super::delegation::{companion_profile_position, whole_companion_bounds};

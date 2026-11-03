@@ -15,9 +15,9 @@ use crate::learning::{
     DuplicateLabeller, DuplicateWorkKind, TeamEvent, project_run_coordination,
     team_events_from_attempts,
 };
-use crate::llm::DreamerTrapKind;
-use crate::llm::run_admission::LeaseUnit;
+use crate::model_step_record::DreamerTrapKind;
 use crate::ports::EdgeDirection;
+use crate::run_budget::LeaseUnit;
 use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
