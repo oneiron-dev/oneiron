@@ -237,13 +237,37 @@ impl Replay<'_> {
                 .ok()
                 .and_then(|shown| shown.get("args").cloned());
             let check = |next: &serde_json::Value| {
+                // Restrictive verbs pin what they act on (FIX 5076): a hook's
+                // changed pin that fails the door's parse never ran — the live
+                // chain repaired it to the caller's own before admission
+                // (Landing::select). Repair the rewrite the same way before
+                // the static checks below; static rows only, as the saved
+                // input shows them.
+                let repaired;
+                let next = match &before {
+                    Some(before) => {
+                        match crate::task_verb::revoke_lands::Landing::from_snapshot(
+                            &saved.verb,
+                            before.clone(),
+                            Vec::new(),
+                        ) {
+                            Some(mut landing) => {
+                                repaired = landing.select(before, next.clone(), &|_| Ok(())).0;
+                                &repaired
+                            }
+                            None => next,
+                        }
+                    }
+                    None => next,
+                };
                 if let Some(before) = &before {
-                    // A narrowed hook's saved window holds placeholders, not
-                    // text, where its grant withheld content (an object where
-                    // the text stood): pin membership against such a window is
-                    // unevaluatable, so the host-door check is skipped — the
-                    // live chain admits against the restored window, which
-                    // replay cannot rebuild.
+                    // A narrowed hook's saved host.compact window holds
+                    // placeholders, not text, where its grant withheld content
+                    // (an object where the text stood): the immutable fields
+                    // and the append-only keep list still apply, but pin
+                    // membership in the window cannot run on placeholders and
+                    // is skipped — the live chain admits against the restored
+                    // window, which replay cannot rebuild.
                     let withheld = saved.verb == "host.compact"
                         && before
                             .get("window")
@@ -256,21 +280,29 @@ impl Replay<'_> {
                                         .is_some()
                                 })
                             });
-                    if !withheld {
+                    if withheld {
+                        crate::compaction::check_host_compact_rewrite_unverified_window(
+                            before, next,
+                        )?;
+                    } else {
                         crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
                     }
                 }
-                // The SDK table knows every SDK verb's facade shape, but a
-                // hook can save a hook flavor of the same verb
+                // The SDK table knows every SDK verb's facade shape, and the
+                // browser table its browser shape — but a host hook can save a
+                // hook flavor of a host verb that matches neither
                 // (pre_compact_hooks without session_ref, pre_wake_hooks
-                // kind/scope plus queue_head): the facade shape governs only
-                // a run the facade flavor admitted, so when the saved args
-                // themselves do not validate under it, the host-door rules
-                // above are the check, not the facade shape.
+                // kind/scope plus queue_head). Each shape governs only the
+                // flavor the saved args show: the facade shape when the saved
+                // args validate under it, else the browser shape when they
+                // validate under that, else the host-door rules above alone.
                 let facade = before.as_ref().is_some_and(|before| {
-                    crate::task_verb::sdk::input_schema(&saved.verb).is_some()
-                        && crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
+                    crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
                 });
+                let browser = !facade
+                    && before.as_ref().is_some_and(|before| {
+                        crate::task_verb::sdk::validate_browser_input(&saved.verb, before).is_ok()
+                    });
                 if facade
                     && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
                 {
@@ -280,6 +312,9 @@ impl Replay<'_> {
                     // gets its say before the row's refuses.
                     crate::task_verb::sdk::validate_browser_input(&saved.verb, next)
                         .map_err(|_| error.to_string())?;
+                } else if browser {
+                    crate::task_verb::sdk::validate_browser_input(&saved.verb, next)
+                        .map_err(|error| error.to_string())?;
                 }
                 Ok(())
             };
