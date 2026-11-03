@@ -122,7 +122,7 @@ impl MediaRuntime {
             .await
     }
 
-    async fn run_admitted_released(
+    pub(super) async fn run_admitted_released(
         &self,
         run: &RunAdmission,
         request: MediaRequest,
