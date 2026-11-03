@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use crate::gate::fanout_mode::FanoutApprovalMode as ConsultFanOutMode;
+pub(crate) use crate::gate::fanout_mode::FanoutApprovalMode as ConsultFanOutMode;
 
 /// Vault-owned approval knobs. There is no per-peer budget by default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

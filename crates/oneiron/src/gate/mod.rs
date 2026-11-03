@@ -4,8 +4,8 @@
 //! through the evaluator while keeping replicated replay trust-blind.
 
 pub(crate) mod training_ask_kind;
-pub mod consult_fanout_values;
-pub mod task_assignee;
+pub(crate) mod consult_fanout_values;
+pub(crate) mod task_assignee;
 pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
