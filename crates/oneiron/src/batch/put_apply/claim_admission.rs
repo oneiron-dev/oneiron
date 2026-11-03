@@ -1,5 +1,5 @@
 //! Claim-body and immutable-ledger admission before any put side effect.
-use crate::claim::ClaimBody;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::store::Store;
 use crate::{EntityId, Result, TimeRange, WriteEnvelope};
 

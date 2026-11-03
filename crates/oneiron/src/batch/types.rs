@@ -4,7 +4,7 @@ use heed::RwTxn;
 use rmpv::Value;
 
 use crate::affect::Vad;
-use crate::claim::ClaimSubject;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::{DecodedEdgeValue, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Result;

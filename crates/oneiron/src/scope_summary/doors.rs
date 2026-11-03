@@ -6,9 +6,9 @@ use super::codec::{
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
-};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
+use crate::write_envelope::claim_body::ClaimSubject;
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
@@ -546,7 +546,7 @@ pub(super) fn header_landed_in_txn(
         let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
             continue;
         };
-        if body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+        if body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
             && merge_summary_ref(&body)? == Some((*turn, *summary))
         {
             return Ok(true);

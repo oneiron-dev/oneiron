@@ -22,7 +22,7 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
+use crate::write_envelope::claim_body::decode_claim_body;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::Result;

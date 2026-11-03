@@ -97,7 +97,7 @@ impl Vault {
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
                 if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
-                    let claim = crate::claim::decode_claim_body(&body, true)?;
+                    let claim = crate::write_envelope::claim_body::decode_claim_body(&body, true)?;
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }

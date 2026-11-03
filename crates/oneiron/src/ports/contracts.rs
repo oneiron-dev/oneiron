@@ -4,7 +4,7 @@ use crate::attempt_queue::{
     ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
     FailAttempt, FailOutcome,
 };
-use crate::claim::ClaimBody;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;
