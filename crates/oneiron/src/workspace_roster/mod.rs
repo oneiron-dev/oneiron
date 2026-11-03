@@ -85,6 +85,7 @@ use crate::temporal::TimeRange;
 
 use crate::write_envelope::WriteActor;
 
+pub mod spend_scope;
 mod codec;
 mod companion_bind;
 mod intent;

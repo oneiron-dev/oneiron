@@ -18,8 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
+    AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer,
 };
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSubject, ScopedRead, claim_surfaceable, decode_claim_body,

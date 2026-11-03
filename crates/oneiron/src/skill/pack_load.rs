@@ -34,15 +34,7 @@ enum LoadResident {
     Attempt,
 }
 
-/// The one runtime admission invariant used by the load door and hub installs.
-#[must_use]
-pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
-    record.lifecycle_status == SkillLifecycle::Active
-        && matches!(
-            record.approval_status,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        )
-}
+pub(crate) use crate::write_envelope::skill_record::skill_loadable;
 
 impl Vault {
     /// Bind one live attempt to its executing actor (PERSON, AGENT_DEF or

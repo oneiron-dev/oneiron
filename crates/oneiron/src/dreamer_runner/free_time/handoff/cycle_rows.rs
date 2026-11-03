@@ -24,7 +24,7 @@ use super::actor_content::{
     FreeTimeSlot, Joined, Pieces,
 };
 use super::{all_keys, erased_in_txn, set_once, settled_in_txn};
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{
     HomeFence, HomeMove, HomeTable, TableAdopt, froze_home_state_in_txn,

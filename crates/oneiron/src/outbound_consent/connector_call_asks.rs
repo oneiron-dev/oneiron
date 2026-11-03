@@ -20,9 +20,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::llm::decision::{
-    AnswerContract, AskTo, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
-    HumanDecisionRequest, ProviderPin,
+use crate::llm::decision::{AskTo, HumanDecisionRequest};
+use crate::model_decision::{
+    AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 

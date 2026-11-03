@@ -5,7 +5,9 @@ use std::sync::Arc;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult};
 use crate::corpus::CorpusScope;
 use crate::error::Result;
-use crate::pipeline::{FacetMode, ScoredEntity, WorldScope};
+use crate::claim::retrieval_scope::FacetMode;
+use oneiron_retrieval::pipeline::ScoredEntity;
+use crate::pipeline::WorldScope;
 use crate::ports::EntityStoreRead;
 use crate::retrieval_depth::RetrievalDeadline;
 

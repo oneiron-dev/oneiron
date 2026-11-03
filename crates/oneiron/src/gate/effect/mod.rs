@@ -58,7 +58,7 @@ pub(crate) struct ExternalEffectBudgetTarget {
 pub(crate) enum ApprovalContext {
     Observe,
     FirstAdmission,
-    Retry(crate::outbound_intent_ledger::AdmittedApproval),
+    Retry(crate::consent::approval_proof::AdmittedApproval),
     /// The first admission of a held effect a code consent wait owns
     /// (DOOR-079 1a): its one-shot approval is the one the wait's answer
     /// minted under the wait's binding digest, which the admission writer

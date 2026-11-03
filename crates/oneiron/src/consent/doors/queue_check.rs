@@ -10,13 +10,18 @@
 //! It holds while its owner is a live person who still owns this vault and,
 //! when a credential carried the approval, while that credential is live:
 //! it follows the credential's own expiry and revocation and has no lifetime
-//! of its own (CALL "queued-approval lifetime"). A lapse holds the work
-//! until the owner asks again for the same plan.
+//! of its own (CALL "queued-approval lifetime"). When a host action proved
+//! the owner (a self-hosted root or the local dev mode, no slip), it records
+//! that action's durable identity and holds while that action still holds:
+//! the same posture, the same install's root still live and binding this
+//! owner (FIX 7231). A lapse holds the work until the owner asks again for
+//! the same plan.
 
 use serde::{Deserialize, Serialize};
 
 use super::{AuthenticatedOwner, person_is_live_in_txn};
 use crate::Vault;
+use crate::authority::{HostActionIdentity, host_action_refused};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionId;
@@ -29,9 +34,9 @@ pub(crate) struct QueuedCheckApproval {
     decision_id: GateDecisionId,
     /// The slip that carried the approval, when a transport bound one.
     credential: Option<[u8; 32]>,
-    /// Whether a host action authenticated the owner (a self-hosted root or
-    /// the local dev mode).
-    host_action: bool,
+    /// The host action that authenticated the owner (a self-hosted root or
+    /// the local dev mode), by its durable identity.
+    host_action: Option<HostActionIdentity>,
     repo: EntityId,
     plan_digest: String,
 }
@@ -58,7 +63,10 @@ impl AuthenticatedOwner {
                 .credential
                 .as_ref()
                 .map(|credential| credential.claims().slip_id),
-            host_action: self.host_action.is_some(),
+            host_action: self
+                .host_action
+                .as_ref()
+                .map(|action| action.durable_identity(vault)),
             repo,
             plan_digest: plan_digest.to_owned(),
         })
@@ -75,8 +83,10 @@ impl QueuedCheckApproval {
     }
 
     /// Whether this approval still authorizes `repo`'s plan `plan_digest`
-    /// in `txn`: the same repository and plan, a live owner and, when a
-    /// credential carried it, that credential still live.
+    /// in `txn`: the same repository and plan, a live owner, when a
+    /// credential carried it that credential still live, and when a host
+    /// action proved the owner that action still holding. A host action's
+    /// refusal is a lapse; a failure to judge it is an error.
     ///
     /// # Errors
     /// A store failure.
@@ -99,6 +109,13 @@ impl QueuedCheckApproval {
             && !vault.capability_slip_id_is_live_in_txn(txn, slip)?
         {
             return Ok(false);
+        }
+        if let Some(action) = &self.host_action {
+            match action.holds_in(vault, txn) {
+                Ok(()) => {}
+                Err(error) if host_action_refused(&error) => return Ok(false),
+                Err(error) => return Err(error),
+            }
         }
         Ok(true)
     }

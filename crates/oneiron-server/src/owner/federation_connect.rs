@@ -10,6 +10,9 @@ use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture, Scop
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
 use oneiron::federation::{FederationDirectionScope, FederationPactScope};
+use oneiron::policy_model::{
+    ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest, WorldPrivacyRequest,
+};
 pub(crate) use oneiron::task_verb::sdk::{
     AcceptConnect, ConnectAccepted as Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant,
     Offer, OfferConnect,
@@ -327,5 +330,36 @@ pub(crate) fn rejoin(
     request: ConnectDelivery,
 ) -> OwnerResult<ConnectRejoined> {
     oneiron::sync::SyncClient::rejoin_connect_as(&server.reassert_manager, owner, request)
+        .map_err(|error| refused(server.vault(), owner, error))
+}
+
+/// The owner signs the world-settings leg a request owes its connected
+/// vault, for the owner to carry there (FIX 4702): an agent's ask on a world
+/// that vault owns, or this vault's holders' answer to one.
+pub(crate) fn world_privacy_export(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: ForeignWorldPrivacyExportRequest,
+) -> OwnerResult<ForeignWorldPrivacyDelivery> {
+    let request = entity_id("request", &request.request)?;
+    with_issuer(server, |issuer| {
+        Ok(server
+            .vault()
+            .export_foreign_world_privacy(owner, issuer, request))
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))
+}
+
+/// The owner hands in a world-settings leg a connected vault's host signed
+/// (FIX 4702): an ask files for this vault's holders, an answer settles the
+/// ask it answers.
+pub(crate) fn world_privacy_receive(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    delivery: ForeignWorldPrivacyDelivery,
+) -> OwnerResult<WorldPrivacyRequest> {
+    server
+        .vault()
+        .receive_foreign_world_privacy(owner, delivery)
         .map_err(|error| refused(server.vault(), owner, error))
 }

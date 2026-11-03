@@ -8,8 +8,11 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::runtime_hooks::{
-    BudgetHit, HOST_BUDGET_HIT, InvocationId, VerbCall, VerbDomain, VerbHookPre,
+use crate::store::verb_invocation::InvocationId;
+use crate::{
+    runtime_hooks::{BudgetHit, HOST_BUDGET_HIT, VerbCall},
+    store::verb_domain::VerbDomain,
+    runtime_hooks::VerbHookPre,
 };
 use crate::skill_hub::pack_catalog::HookActorClass;
 
@@ -157,7 +160,7 @@ impl DreamerWakeDriver<'_> {
                 )
             }
             None => (
-                crate::BudgetExhaustionPolicy::Suspend,
+                oneiron_model::llm::BudgetExhaustionPolicy::Suspend,
                 match self.store.budget(&self.budget_id) {
                     Ok(Some(record)) => json!({
                         "total_units": record.total_units,

@@ -17,11 +17,17 @@
 //! safe; never a manifest that was not proved, and never an approval.
 use std::collections::BTreeMap;
 
-use crate::code_revision::{
-    CodeImportAnchor, CodeImportManifest, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK,
-    import_snapshot_custody_in_txn, manifest_digest, manifest_id,
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::code_tree_blob::MODE_GITLINK;
+use crate::{
+    store::{
+        code_import_manifest::{CodeImportAnchor, CodeImportManifest},
+        code_revision_record::CodeTreeInventory,
+    },
+    code_revision::import_snapshot_custody_in_txn,
+    store::code_import_manifest::{manifest_digest, manifest_id},
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -327,3 +333,5 @@ impl Vault {
         })
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

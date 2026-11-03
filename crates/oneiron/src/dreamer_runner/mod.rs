@@ -4,6 +4,8 @@
 //! (queue leases, local run-tree rows, parked rows, and budget counters) stays
 //! in private LMDB rows and is not sync materialized as vault entities.
 
+pub mod shadow_values;
+pub mod step_replay;
 mod admission;
 mod claim_authoring;
 mod codec;
@@ -70,14 +72,14 @@ pub(crate) use self::program::{
 };
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
-    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
-    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
-    settled_program_step, turn_program_admission,
+    OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
+    ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView,
+    ProgramQueueView, ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest,
+    ProgramRunStateView, ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView,
+    ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
+    program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
