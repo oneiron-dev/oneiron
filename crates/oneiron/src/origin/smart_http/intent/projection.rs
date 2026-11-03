@@ -40,6 +40,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;
+use crate::origin::lfs::{LfsOid, LfsPushedPointer};
 use crate::origin::residence::OriginAuthorityStamp;
 
 /// The ingress proof id an admission's evidence names, when it names one.
@@ -218,5 +219,72 @@ impl Vault {
             return Ok(());
         }
         self.require_receive_pack_host_for(root, stamp)
+    }
+
+    /// The accepted stamp of `operation` on the physical ingress at `root`,
+    /// for the exact-forward intake (FIX 10270): `Some` only while its
+    /// ingress proof still stands for exactly this stamp at this ingress;
+    /// `None` for an ordinary operation, a missing intent, or a proof that
+    /// no longer validates, which all stay on the proposal path.
+    ///
+    /// # Errors
+    /// A store failure reading the intent.
+    pub(in crate::origin) fn forward_stamp_for_operation(
+        &self,
+        root: &Path,
+        operation: EntityId,
+    ) -> Result<Option<DoorAdmissionStamp>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(stamp) = self.receive_pack_stamp_in_txn(&txn, root, operation)? else {
+            return Ok(None);
+        };
+        if stamp.ingress_proof.is_none() {
+            return Ok(None);
+        }
+        let stands = self
+            .validated_ingress_store_in_txn(&txn, &stamp, root)
+            .is_some();
+        Ok(stands.then_some(stamp))
+    }
+
+    /// The LFS pointers the ingress outcome `provenance` observed (FIX
+    /// 10270), for the exact-forward intake: decoded exactly as the
+    /// receive-pack publication gate decodes them; empty for a push that
+    /// carried none.
+    ///
+    /// # Errors
+    /// A store failure, or outcome evidence that does not decode.
+    pub(in crate::origin) fn forward_lfs_pointers_for_outcome(
+        &self,
+        provenance: EntityId,
+    ) -> Result<Vec<LfsPushedPointer>> {
+        let txn = self.store.env.read_txn()?;
+        let body =
+            self.receive_pack_evidence_in_txn(&txn, provenance, RECEIVE_PACK_OUTCOME_PREDICATE)?;
+        receive_pack_field(&body, "lfs_pointers")?
+            .as_array()
+            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?
+            .iter()
+            .map(|value| {
+                let fields = value
+                    .as_array()
+                    .filter(|fields| fields.len() == 3)
+                    .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?;
+                Ok(LfsPushedPointer {
+                    path: fields[0]
+                        .as_str()
+                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS path"))?
+                        .to_owned(),
+                    oid: LfsOid::parse_hex(
+                        fields[1]
+                            .as_str()
+                            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS oid"))?,
+                    )?,
+                    size_bytes: fields[2]
+                        .as_u64()
+                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS size"))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()
     }
 }
