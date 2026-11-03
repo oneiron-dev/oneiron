@@ -164,6 +164,80 @@ pub(super) fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool
     (fields, quoted)
 }
 
+/// Byte-wise open-quote state for a delimited row, matching
+/// [`split_fields_open`]: `quoted` whether inside a quoted field, `fresh`
+/// whether at a field start, `pending` whether a `"` while quoted still
+/// waits for its next byte to tell an escaped `""` from a close. Fed on raw
+/// bytes: `"`, `,`/`\t` and `\n` are ASCII, so open detection equals the
+/// lossy `chars` scan; field values still decode through [`split_fields`]
+/// once on the completed row.
+#[derive(Clone, Copy)]
+pub(super) struct CsvOpen {
+    quoted: bool,
+    fresh: bool,
+    pending: bool,
+}
+
+impl CsvOpen {
+    pub(super) fn new() -> Self {
+        Self {
+            quoted: false,
+            fresh: true,
+            pending: false,
+        }
+    }
+
+    pub(super) fn feed(&mut self, bytes: &[u8], delimiter: u8) {
+        for &byte in bytes {
+            self.feed_byte(byte, delimiter);
+        }
+    }
+
+    pub(super) fn feed_byte(&mut self, byte: u8, delimiter: u8) {
+        if self.pending {
+            if byte == b'"' {
+                self.pending = false;
+                return;
+            }
+            self.pending = false;
+            self.quoted = false;
+            if byte == delimiter {
+                self.fresh = true;
+            } else {
+                self.fresh = false;
+            }
+            return;
+        }
+        if self.quoted {
+            if byte == b'"' {
+                self.pending = true;
+            }
+            return;
+        }
+        if byte == b'"' && self.fresh {
+            self.quoted = true;
+            self.fresh = false;
+        } else if byte == delimiter {
+            self.fresh = true;
+        } else {
+            self.fresh = false;
+        }
+    }
+
+    /// Resolves a trailing `"` at a physical-line end as a close: the next
+    /// logical byte is the joined `\n` or the end, never `"`.
+    pub(super) fn end_physical(&mut self) {
+        if self.pending {
+            self.pending = false;
+            self.quoted = false;
+        }
+    }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.quoted || self.pending
+    }
+}
+
 /// A `where` comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
@@ -957,22 +1031,27 @@ fn line_text(bytes: &[u8]) -> &[u8] {
 
 /// The logical row starting at `start`, read past the scan bound (FIX 1188):
 /// one physical line for JSON lines, or the quoted-field join for CSV/TSV.
-/// Its bytes, less the final newline, and the offset past it (`len` at EOF).
-/// Reads directly, outside the scan; the caller measures the unit once.
-/// Newline and EOF rules match [`LineReader`]: physical bytes keep a CR,
-/// joined with `\n`, so interior CRLFs stay and only the final terminator
-/// goes (stripped by [`line_text`] at the caller's side).
+/// Its bytes, less the final newline, and the offset past it (`len` at EOF),
+/// or `None` when the row runs past `cap` physical bytes. Reads directly,
+/// outside the scan; the caller measures the unit once on success, never on
+/// capped. Newline and EOF rules match [`LineReader`]: physical bytes keep a
+/// CR, joined with `\n`, so interior CRLFs stay and only the final terminator
+/// goes (stripped by [`line_text`] at the caller's side). Open-quote state is
+/// carried incrementally ([`CsvOpen`]), never by reparsing the prefix.
 fn complete_row(
     body: &dyn ResultBody,
     start: u64,
     delimiter: Option<u8>,
-) -> Result<(Vec<u8>, u64)> {
+    cap: u64,
+) -> Result<Option<(Vec<u8>, u64)>> {
     let len = body.len();
     let mut at = start;
     let mut logical = Vec::new();
     let mut first = true;
+    let mut open = CsvOpen::new();
     loop {
         let mut physical = Vec::new();
+        let mut physical_len = 0_u64;
         let mut offset = at;
         let phys_end = loop {
             if offset >= len {
@@ -982,34 +1061,62 @@ fn complete_row(
             if piece.is_empty() {
                 break len;
             }
-            if let Some(newline) = piece.iter().position(|byte| *byte == b'\n') {
-                physical.extend_from_slice(&piece[..newline]);
-                break offset + newline as u64 + 1;
+            let prefix_len = match piece.iter().position(|byte| *byte == b'\n') {
+                Some(newline) => newline,
+                None => piece.len(),
+            };
+            let prefix = &piece[..prefix_len];
+            if at
+                .saturating_sub(start)
+                .saturating_add(physical_len)
+                .saturating_add(prefix.len() as u64)
+                > cap
+            {
+                return Ok(None);
+            }
+            if let Some(d) = delimiter {
+                open.feed(prefix, d);
+            }
+            physical.extend_from_slice(prefix);
+            physical_len += prefix.len() as u64;
+            if prefix_len < piece.len() {
+                break offset + prefix_len as u64 + 1;
             }
             offset += piece.len() as u64;
-            physical.extend_from_slice(&piece);
         };
         if first {
             logical = physical;
             first = false;
         } else {
+            if (logical.len() as u64)
+                .saturating_add(1)
+                .saturating_add(physical_len)
+                > cap
+            {
+                return Ok(None);
+            }
             logical.push(b'\n');
             logical.extend_from_slice(&physical);
         }
         at = phys_end;
+        if at.saturating_sub(start) > cap {
+            return Ok(None);
+        }
         match delimiter {
             None => break,
             Some(d) => {
-                if !split_fields_open(&String::from_utf8_lossy(&logical), d).1 {
+                open.end_physical();
+                if !open.is_open() {
                     break;
                 }
                 if at >= len {
                     break;
                 }
+                open.feed_byte(b'\n', d);
             }
         }
     }
-    Ok((logical, at))
+    Ok(Some((logical, at)))
 }
 
 /// Picks rows out of a line table: JSON lines (`delimiter` `None`) or a
@@ -1026,6 +1133,9 @@ fn table_rows(
     bounds: &ReadBounds<'_>,
 ) -> Result<Reply> {
     let mut scan = Scan::new(bounds.scan_bytes());
+    let cap = bounds
+        .scan_bytes()
+        .saturating_add(bounds.reply_bytes as u64);
     let Some((first, rest)) = steps.split_first() else {
         return picked.finish(reference, true, None);
     };
@@ -1045,18 +1155,34 @@ fn table_rows(
                 // logical row through the same scan. A limit cut mid-row reads it
                 // past the bound (FIX 1188).
                 let mut header_bytes = bytes;
+                let mut open = CsvOpen::new();
+                open.feed(&header_bytes, delimiter);
+                open.end_physical();
                 let mut joined_done = false;
-                while !joined_done
-                    && split_fields_open(&String::from_utf8_lossy(&header_bytes), delimiter).1
-                {
+                while !joined_done && open.is_open() {
                     match lines.next(&mut scan)? {
                         Line::Row(more) => {
                             header_bytes.push(b'\n');
+                            open.feed_byte(b'\n', delimiter);
                             header_bytes.extend_from_slice(&more);
+                            open.feed(&more, delimiter);
+                            open.end_physical();
                         }
                         Line::End => break,
                         Line::Limit => {
-                            let (completed, end) = complete_row(body, 0, Some(delimiter))?;
+                            let Some((completed, end)) =
+                                complete_row(body, 0, Some(delimiter), cap)?
+                            else {
+                                let mut reply = picked.finish(
+                                    reference,
+                                    false,
+                                    Some(json!({"offset": 0, "row": 0})),
+                                )?;
+                                if let Reply::Output(reply) = &mut reply {
+                                    reply["limit"] = scan_limit();
+                                }
+                                return Ok(reply);
+                            };
                             bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
                             lines.completed_to(end);
                             limited = true;
@@ -1077,7 +1203,14 @@ fn table_rows(
                     }
                     return Ok(reply);
                 }
-                let (completed, end) = complete_row(body, 0, Some(delimiter))?;
+                let Some((completed, end)) = complete_row(body, 0, Some(delimiter), cap)? else {
+                    let mut reply =
+                        picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                    if let Reply::Output(reply) = &mut reply {
+                        reply["limit"] = scan_limit();
+                    }
+                    return Ok(reply);
+                };
                 bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
                 lines.completed_to(end);
                 limited = true;
@@ -1096,7 +1229,7 @@ fn table_rows(
     let mut row = cursor.row.unwrap_or(0);
     let mut lines = LineReader::new(body, cursor.offset.unwrap_or(body_start).max(body_start));
     let mut skipped = 0_u64;
-    let (done, next) = loop {
+    let (done, next) = 'rows: loop {
         let start = lines.at;
         let mut completed: Option<Vec<u8>> = None;
         let mut bytes = match lines.next(&mut scan)? {
@@ -1107,7 +1240,10 @@ fn table_rows(
                     limited = true;
                     break (false, Some(json!({"offset": start, "row": row})));
                 }
-                let (logical, end) = complete_row(body, start, delimiter)?;
+                let Some((logical, end)) = complete_row(body, start, delimiter, cap)? else {
+                    limited = true;
+                    break (false, Some(json!({"offset": start, "row": row})));
+                };
                 bounds
                     .watch
                     .measure(EngineLimit::CodeResultScanBytes, end - start);
@@ -1132,16 +1268,26 @@ fn table_rows(
             }
         } else if let Some(d) = delimiter {
             let mut logical = bytes.clone();
+            let mut open = CsvOpen::new();
+            open.feed(&logical, d);
+            open.end_physical();
             let mut joined_done = false;
-            while !joined_done && split_fields_open(&String::from_utf8_lossy(&logical), d).1 {
+            while !joined_done && open.is_open() {
                 match lines.next(&mut scan)? {
                     Line::Row(more) => {
                         logical.push(b'\n');
+                        open.feed_byte(b'\n', d);
                         logical.extend_from_slice(&more);
+                        open.feed(&more, d);
+                        open.end_physical();
                     }
                     Line::End => break,
                     Line::Limit => {
-                        let (done_logical, end) = complete_row(body, start, Some(d))?;
+                        let Some((done_logical, end)) = complete_row(body, start, Some(d), cap)?
+                        else {
+                            limited = true;
+                            break 'rows (false, Some(json!({"offset": start, "row": row})));
+                        };
                         bounds
                             .watch
                             .measure(EngineLimit::CodeResultScanBytes, end - start);

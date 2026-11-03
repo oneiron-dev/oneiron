@@ -4,7 +4,7 @@
 //! whole nonblank lines, so the card and `query` cannot disagree; the
 //! sniff stays uncharged.
 
-use super::query::split_fields_open;
+use super::query::{CsvOpen, split_fields_open};
 use super::{READ_PIECE_BYTES, ResultBody};
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -122,6 +122,7 @@ fn first_lines(text: &str, whole: bool) -> Vec<&str> {
 fn first_table_rows(text: &str, whole: bool, delimiter: u8) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     let mut logical = String::new();
+    let mut open = CsvOpen::new();
     let mut segments = text.split('\n').peekable();
     while let Some(segment) = segments.next() {
         if segments.peek().is_none() && !whole {
@@ -131,8 +132,11 @@ fn first_table_rows(text: &str, whole: bool, delimiter: u8) -> Vec<Vec<String>> 
             continue;
         }
         logical.push_str(segment);
-        if split_fields_open(&logical, delimiter).1 {
+        open.feed(segment.as_bytes(), delimiter);
+        open.end_physical();
+        if open.is_open() {
             logical.push('\n');
+            open.feed_byte(b'\n', delimiter);
             continue;
         }
         if logical.ends_with('\r') {
@@ -143,6 +147,7 @@ fn first_table_rows(text: &str, whole: bool, delimiter: u8) -> Vec<Vec<String>> 
             break;
         }
         logical.clear();
+        open = CsvOpen::new();
     }
     rows
 }
