@@ -6,7 +6,7 @@
 //! run row stays in the room and goes when it closes.
 
 use super::OffRecordSession;
-use crate::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::error::{Error, Result};
 use crate::session_overlay::SessionWriteRoute;
 

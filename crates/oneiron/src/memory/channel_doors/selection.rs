@@ -13,7 +13,8 @@ use crate::channel_identity_selection::{
     RelationshipContext, SelectionRuleScope, SelectionRuleWriterKind,
     resolve_channel_identity_selection,
 };
-use crate::thread_passport::ThreadMask;
+use crate::write_envelope::thread_claim::ThreadMask;
+use crate::channel_identity_selection::ThreadMaskSelectionExt;
 
 /// Authorship fields are deliberately absent. The authenticated writer and
 /// engine clock stamp the persisted row.

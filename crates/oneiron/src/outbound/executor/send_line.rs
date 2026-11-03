@@ -78,7 +78,7 @@ impl ConnectorSendLine {
             .ready_rows_in_txn(&rtxn)?
             .into_iter()
             .filter(|row| {
-                row.kind == crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND
+                row.kind == crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND
                     && row.accepts_worker(CONNECTOR_TASK_EXECUTOR_LEASE_OWNER)
                     && !self.taken.contains(&row.id)
             })

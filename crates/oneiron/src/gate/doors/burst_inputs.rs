@@ -3,8 +3,8 @@
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::GateReasonCode;
-use crate::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 use crate::store::Store;
+use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 /// Reads, never debits. Earlier receipts in the caller's transaction contribute
 /// exactly once. If that transaction rolls back, no auxiliary rate state can

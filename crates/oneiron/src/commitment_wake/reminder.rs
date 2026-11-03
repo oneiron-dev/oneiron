@@ -21,15 +21,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome,  AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::attempt_queue::AttemptId;
 use crate::commitment::{CommitmentObligorKind, CommitmentRecord, CommitmentStatus};
 use crate::consent::AuthenticatedOwner;
-use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
+use crate::config::context_spec::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::OutboundScheduleContext;
+use crate::delivery_window::OutboundScheduleContext;
 use crate::side_table::{self, Named, SideTable};
 
 use super::reminder_wording::{CommitmentReminderVoice, queue_commitment_reminder_wording};

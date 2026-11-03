@@ -22,7 +22,7 @@ use super::super::{
     MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, ScopedClaimInput,
     SessionReadContext,
 };
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimSubject};
 use crate::edge::EdgeKind;

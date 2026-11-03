@@ -113,37 +113,9 @@ impl WorldKeyPad {
     }
 }
 
-/// Why a world's keys were destroyed here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorldKeyDestroyCause {
-    /// This vault erased the world through the delete door.
-    LocalDelete,
-    /// A peer's hard tombstone for the world was applied here.
-    ReplayedTombstone,
-    /// A batch delete removed the world's row.
-    BatchDelete,
-}
+pub use crate::key_material::WorldKeyDestroyCause;
 
-/// The receipt, and permanent fact, that an erased world's keys were destroyed
-/// here. Ids only: never a key, a pad or an envelope.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorldKeyDestruction {
-    pub receipt_id: String,
-    /// The WORLD row, as hex.
-    pub world: String,
-    pub cause: WorldKeyDestroyCause,
-    /// Each key whose pad was erased, as `generation:mint` with the mint in hex.
-    pub keys: Vec<String>,
-    /// The erased pad rows, as hex. Each also has a queued hard tombstone.
-    pub pad_rows: Vec<String>,
-    /// The delete request this erasure rode, as hex, when it had one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    /// The vault's recorded-at clock when the fact was first written.
-    pub at: u64,
-}
+pub use crate::key_material::WorldKeyDestruction;
 
 fn hex(bytes: &[u8; 16]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -440,7 +412,7 @@ fn retained_world_in_txn(
     Ok(store
         .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .and_then(|raw| String::from_utf8(raw).ok())
-        .and_then(crate::sync::types::WindowKey::try_new)
+        .and_then(crate::window_key::WindowKey::try_new)
         .and_then(|key| key.world()))
 }
 

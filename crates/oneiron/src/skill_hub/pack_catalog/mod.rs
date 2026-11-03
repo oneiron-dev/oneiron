@@ -14,6 +14,7 @@ mod lenses;
 mod local;
 mod manifest;
 mod migrations;
+pub mod predicate_rewrites;
 mod organs;
 mod setup;
 mod setup_actor;

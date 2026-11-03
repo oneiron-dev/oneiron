@@ -23,7 +23,7 @@ use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::MemoryResult;
+use oneiron_contracts::memory::MemoryResult;
 
 impl Vault {
     /// [`accept_cleanup_proposal`](super::accept_cleanup_proposal), as `owner`.

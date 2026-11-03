@@ -9,10 +9,9 @@ use std::collections::BTreeSet;
 
 use super::ScopedRead;
 use crate::Vault;
-use crate::authority::{
-    Destination, FederationGrantActivation, PeerMachine, VerifiedSlip, WorldPrivacyView,
-    federation_grant_activation,
-};
+use crate::machine_destination::{Destination, PeerMachine};
+use oneiron_authority::authority::{FederationGrantActivation};
+use crate::authority::{VerifiedSlip, WorldPrivacyView, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
