@@ -116,8 +116,9 @@ impl DecisionLadder<'_> {
     }
 
     /// Several typed questions over one state, asked as one pack under one clock. The first
-    /// permitted rung reads them in one request (several in turn past the policy's
-    /// questions-per-call row), with the person question ("ask a person?")
+    /// rung in span that serves the pack reads them in one request (several in turn past
+    /// the policy's questions-per-call row), stepping past a rung with no provider or one
+    /// that cannot take them, with the person question ("ask a person?")
     /// beside them as its own typed question when the dial reaches the person. Then each
     /// answer routes on its own to its own receipt: a stronger rung starts only while work
     /// time is left, and only for a cause: a rung that abstained, or once, for the first
@@ -208,7 +209,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
-        let pack = self.open(
+        let mut pack = self.open(
             questions,
             principal,
             evidence,
@@ -225,6 +226,12 @@ impl DecisionLadder<'_> {
         if dial.first == DecisionRung::Human {
             first.extend(questions.iter().map(|_| None));
         } else {
+            // An empty rung is skipped, not a refusal: the first rung in span that serves
+            // the pack reads every chunk (FIX 12278).
+            let serving = self
+                .first_serving(dial.first, dial.ceiling, questions, images, audio)
+                .ok_or_else(|| invalid("decision provider unavailable"))?;
+            pack.dial.first = serving;
             // Past the questions-per-call row the pack goes as several requests in turn.
             let per_call = policy.questions_per_call();
             for (chunk, readings) in questions
@@ -240,7 +247,7 @@ impl DecisionLadder<'_> {
                     deadline,
                 };
                 first.extend(
-                    self.read(dial.first, &call, pack.person, readings)?
+                    self.read(serving, &call, pack.person, readings)?
                         .into_iter()
                         .map(Some),
                 );
@@ -592,10 +599,11 @@ impl DecisionLadder<'_> {
         })
     }
 
-    /// One provider request on the call's clock, one read per pack question. Routing skips
-    /// an empty slot, so only the dial's own first rung reaches here empty or unable to take
-    /// a question, and it fails even with no time left. A failure with time left still
-    /// fails the call.
+    /// One provider request on the call's clock, one read per pack question. The first read
+    /// steps past a rung with no provider, or one that cannot take the pack, onto the first
+    /// rung in span that serves it, and a step-up only reads an admitted rung, so no caller
+    /// reaches here empty or unable to take a question; the checks below stay as defense
+    /// and fail even with no time left. A failure with time left still fails the call.
     fn read(
         &self,
         rung: DecisionRung,
