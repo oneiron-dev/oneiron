@@ -155,9 +155,7 @@ impl SyncServer {
             if matches!(configured, TaggerConfigured::Refused) {
                 return None;
             }
-            if self
-                .tagger_slot()
-                .is_some_and(|slot| slot.card().is_some())
+            if self.tagger_slot().is_some_and(|slot| slot.card().is_some())
                 && let Some(admission) = admit()
             {
                 break admission;

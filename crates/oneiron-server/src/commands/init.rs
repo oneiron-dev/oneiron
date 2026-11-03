@@ -249,12 +249,16 @@ impl PreparedModelSetup {
     fn outcome(&self, path: &Path) -> ModelSetupOutcome {
         ModelSetupOutcome {
             config: path.to_path_buf(),
-            embedder: self.config.embedder.as_ref().map(|embedder| EmbedderOutcome {
-                provider: embedder.provider.as_str(),
-                model_id: embedder.model_id.clone(),
-                dimensions: embedder.dimensions,
-                device: self.device.clone(),
-            }),
+            embedder: self
+                .config
+                .embedder
+                .as_ref()
+                .map(|embedder| EmbedderOutcome {
+                    provider: embedder.provider.as_str(),
+                    model_id: embedder.model_id.clone(),
+                    dimensions: embedder.dimensions,
+                    device: self.device.clone(),
+                }),
             tagger: self
                 .config
                 .oneironer
@@ -361,7 +365,9 @@ pub(crate) fn setup_models_on_open_vault(
     answers: ModelSetupAnswers,
 ) -> Result<ModelSetupOutcome, crate::owner::OwnerError> {
     let startup = server.model_setup_config().ok_or_else(|| {
-        crate::owner::OwnerError::Refused("this server has no first-run model setup state".to_owned())
+        crate::owner::OwnerError::Refused(
+            "this server has no first-run model setup state".to_owned(),
+        )
     })?;
     let path = startup.config_path.clone().ok_or_else(|| {
         crate::owner::OwnerError::Refused(
@@ -376,7 +382,8 @@ pub(crate) fn setup_models_on_open_vault(
     let _setup = runtime.setup();
     if !server.model_slots_unconfigured() {
         return Err(crate::owner::OwnerError::Refused(
-            "model slots are already configured; live replacement is not first-run setup".to_owned(),
+            "model slots are already configured; live replacement is not first-run setup"
+                .to_owned(),
         ));
     }
     let env = EnvConfig::from_process().map_err(crate::owner::OwnerError::Host)?;
@@ -387,12 +394,15 @@ pub(crate) fn setup_models_on_open_vault(
         || current.gpu != startup.gpu
     {
         return Err(crate::owner::OwnerError::Changed(
-            "the serving vault or its sizing changed since startup; review the config again".to_owned(),
+            "the serving vault or its sizing changed since startup; review the config again"
+                .to_owned(),
         ));
     }
     let args = answers.to_init_args(&current, &path)?;
     let prepared = prepare_model_setup(&args, &path, env).map_err(|error| {
-        crate::owner::OwnerError::Invalid(format!("model setup answers were not accepted: {error:#}"))
+        crate::owner::OwnerError::Invalid(format!(
+            "model setup answers were not accepted: {error:#}"
+        ))
     })?;
     if prepared.config.vault_path != current.vault_path
         || prepared.config.dimensions != current.dimensions

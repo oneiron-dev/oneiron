@@ -89,9 +89,9 @@ impl ModelSetupRuntime {
             );
             *self.tagging.blocking_lock() = tagging;
         } else {
-            workers.extend(server.spawn_tagging_worker_admitted(PassControl::unpaused(
-                self.admission.clone(),
-            )));
+            workers.extend(
+                server.spawn_tagging_worker_admitted(PassControl::unpaused(self.admission.clone())),
+            );
         }
         *self.workers.blocking_lock() = workers;
     }

@@ -436,11 +436,7 @@ pub(crate) fn build_embedder_on_thread(
         .map(|pool| (pool.clone(), vault.derivation_scope().ok(), release));
     // The server's sink before a host chooses one: the log.
     let receipts = Arc::new(crate::models::ServerReceipts::default());
-    let slot = crate::embedder::build_slot_with_broker(
-        config.embedder.as_ref(),
-        receipts,
-        broker,
-    )?;
+    let slot = crate::embedder::build_slot_with_broker(config.embedder.as_ref(), receipts, broker)?;
     if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
         crate::embedder::route_batches_through(slot, pool, scope, release)?;
     }

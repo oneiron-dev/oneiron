@@ -646,7 +646,10 @@ impl SyncServer {
         gpu_pool: Option<crate::runtime::GpuPool>,
     ) -> Result<(), String> {
         if !self.model_slots_unconfigured() {
-            return Err("model slots are already configured; live replacement is not first-run setup".to_owned());
+            return Err(
+                "model slots are already configured; live replacement is not first-run setup"
+                    .to_owned(),
+            );
         }
         if let Some(pool) = gpu_pool {
             let _ = self.gpu_pool.set(pool);
