@@ -44,7 +44,21 @@ pub(super) fn stage_session_delete(
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     // Inbound derived rows lose their source while every edge and dependency
     // row still reads, as base's delete does (FIX 12029).
-    crate::ports::withdraw_room_dependents_of_lost_source_in_txn(view, wtxn, id)?;
+    let inbound_derived = EdgeStoreRead::port_edges(
+        view,
+        wtxn,
+        id,
+        EdgeDirection::In,
+        Some(EdgeKind::DerivedFrom),
+        None,
+    )?
+    .map(|row| row.map(|edge| edge.target))
+    .collect::<Result<Vec<_>>>()?;
+    for dependent in inbound_derived {
+        if dependent != *id {
+            crate::ports::withdraw_from_lost_source_in_session_txn(view, wtxn, &dependent, id)?;
+        }
+    }
     // The DAG pin is withdrawn while the row and its memberships still read,
     // as base's delete withdraws it before its edges go.
     let memberships = EdgeStoreRead::port_edges(
