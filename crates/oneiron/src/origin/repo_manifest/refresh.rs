@@ -16,7 +16,7 @@ use super::{BY_CODE, MANIFESTS, MINTED, RepoPortableId};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::git_wire::GitWire;
+use crate::git_wire::{GitOid, GitRefName, GitWire};
 use crate::origin::lfs::LfsOid;
 use crate::origin::publication::OriginPublicationStatus;
 use crate::origin::residence::OriginHostAuthority;
@@ -45,13 +45,16 @@ impl Vault {
         if manifest.code != code {
             return Ok(());
         }
-        let Some(origin_name) = manifest.origin_name.clone() else {
+        let Some(origin_name) = manifest.origin_name else {
             return Ok(());
         };
         let dir = crate::origin::smart_http::origin_repo_dir(self, &origin_name)?;
         if !dir.exists() {
             return Ok(());
         }
+        // The writer standing is read here and the write lands below: an
+        // authority change in between lets one stale-epoch write through,
+        // which the next mirror pass corrects.
         let epoch = match self.origin_host_authority(&origin_name)? {
             OriginHostAuthority::Held(_) => self
                 .served_origin_authority(&origin_name)?
@@ -78,8 +81,14 @@ impl Vault {
             ));
             pointers.extend(record.required_lfs_oids.iter().map(|(oid, _)| *oid));
         }
+        // Only what a peer's decode would take is stored: a publication row
+        // naming no full ref or commit id never poisons the manifest, and
+        // one name stands once.
+        refs.retain(|(name, oid)| {
+            GitRefName::parse_full(name).is_ok() && GitOid::parse_hex(oid).is_ok()
+        });
         refs.sort();
-        refs.dedup();
+        refs.dedup_by(|next, kept| next.0 == kept.0);
         let pointers: Vec<LfsOid> = pointers.into_iter().collect();
         let changed = self.with_write_txn_grouped(|txn| {
             let Some(mut current) = MANIFESTS.get(&self.store, txn, &portable.0)? else {
@@ -94,8 +103,8 @@ impl Vault {
                 return Ok(false);
             }
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            current.visible_refs = refs.clone();
-            current.lfs_pointers = pointers.clone();
+            current.visible_refs = refs;
+            current.lfs_pointers = pointers;
             current.epoch = epoch;
             // A lamport tick: a refresh inside the held copy's millisecond
             // still replaces it under rule 7's (epoch, updated_at) order.

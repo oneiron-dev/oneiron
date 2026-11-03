@@ -122,9 +122,9 @@ pub(crate) fn admit_repo_manifest_map(key: Option<&WindowKey>, map: &LoroMap) ->
 /// Writes into `doc` the standing manifest of each CODE row of `codes`
 /// the reverse pass just mirrored there, where this vault's copy replaces
 /// the window's: rule 7 order, read from the joined held copy. A held copy
-/// that does not join or decode stands: the merge doors judge it, and a
-/// later mirror writes over what they installed. The head and each part
-/// commit on their own.
+/// that does not join or decode is written over: no merge door could ever
+/// take it, so leaving it would poison the head for every later pass. The
+/// head and each part commit on their own.
 pub(crate) fn mirror_repo_manifests(
     vault: &Vault,
     doc: &LoroDoc,
@@ -142,16 +142,13 @@ pub(crate) fn mirror_repo_manifests(
         let key = manifest.portable.to_hex();
         let held = map_get_bytes(&map, &key).and_then(|bytes| decode(&bytes).ok());
         if let Some(held) = &held {
-            let Some(joined) = join_parts(&map, &held.body) else {
-                continue;
-            };
-            let Some(held_manifest) = RepoManifest::decode(&joined) else {
-                continue;
-            };
-            if held.code != manifest.code
-                || held_manifest.portable != manifest.portable
-                || held_manifest.code != manifest.code
-                || !manifest.replaces(&held_manifest)?
+            let held_manifest =
+                join_parts(&map, &held.body).and_then(|joined| RepoManifest::decode(&joined));
+            if let Some(held_manifest) = held_manifest
+                && (held.code != manifest.code
+                    || held_manifest.portable != manifest.portable
+                    || held_manifest.code != manifest.code
+                    || !manifest.replaces(&held_manifest)?)
             {
                 continue;
             }

@@ -24,13 +24,17 @@
 
 mod refresh;
 
+#[cfg(feature = "sync")]
 use std::cmp::Ordering;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
+#[cfg(feature = "sync")]
+use crate::error::Error;
+use crate::error::Result;
+#[cfg(feature = "sync")]
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
@@ -165,6 +169,7 @@ mod lfs_oids {
 impl RepoManifest {
     /// The bytes a window carries the manifest as, which rule 7's last tie
     /// compares.
+    #[cfg(feature = "sync")]
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         rmp_serde::to_vec_named(self)
             .map_err(|_| Error::InvalidConfig("a repo manifest does not encode".to_owned()))
@@ -173,6 +178,7 @@ impl RepoManifest {
     /// The manifest `bytes` carry in its one spelling, of this build's
     /// version: refs by strictly ascending name, each a full ref name and a
     /// commit id, and pointers strictly ascending. `None` for other bytes.
+    #[cfg(feature = "sync")]
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let manifest: Self = rmp_serde::from_slice(bytes).ok()?;
         let refs = &manifest.visible_refs;
@@ -190,6 +196,7 @@ impl RepoManifest {
     }
 
     /// Rule 7: whether this copy replaces `held`, a copy of the same id.
+    #[cfg(feature = "sync")]
     pub(crate) fn replaces(&self, held: &Self) -> Result<bool> {
         Ok(
             match (self.epoch, self.updated_at).cmp(&(held.epoch, held.updated_at)) {
@@ -201,12 +208,14 @@ impl RepoManifest {
     }
 
     /// Rule 3: whether this manifest stands for its CODE entity over `other`.
+    #[cfg(feature = "sync")]
     fn mints_before(&self, other: &Self) -> bool {
         (self.minted_at, self.portable) < (other.minted_at, other.portable)
     }
 }
 
 /// What merging one carried manifest did here.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepoManifestMerge {
     /// The carried copy is the one held here now.
@@ -260,7 +269,9 @@ impl Vault {
     }
 
     /// The local CODE anchor portable id `id` names, while it stands live
-    /// in `txn`; an alias names the same anchor.
+    /// in `txn`; an alias names the same anchor. Its callers are the phase
+    /// 1b hooks (federation repo access, git push, code symbols).
+    #[allow(dead_code)]
     pub(crate) fn resolve_repo_anchor_by_portable_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -333,6 +344,7 @@ impl Vault {
     /// Merges `carried`, a manifest a window brought, here: rule 7 against
     /// the copy held under its id, then rule 3 against the manifest that
     /// stands for its CODE entity. A copy already held is found by a read.
+    #[cfg(feature = "sync")]
     pub(crate) fn merge_carried_repo_manifest(
         &self,
         carried: &RepoManifest,
