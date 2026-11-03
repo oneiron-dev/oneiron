@@ -357,18 +357,23 @@ impl KnownValues {
             }
         }
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
-        for (run, decoded) in forms::base64_runs(data, self.reach(), fits) {
-            if let Some(known) = self.whole(&decoded) {
-                spelled.push(KnownSpan {
-                    span: run,
-                    custody: known.custody,
-                    handle: &known.handle,
-                });
+        // One decode: base64_runs is base64_views + fits filter, so reuse
+        // the same views for the whole-run and in-run passes (identical output).
+        let b64_views = forms::base64_views(data, self.reach());
+        for (run, view) in &b64_views {
+            if fits(view.bytes.len()) {
+                if let Some(known) = self.whole(&view.bytes) {
+                    spelled.push(KnownSpan {
+                        span: run.clone(),
+                        custody: known.custody,
+                        handle: &known.handle,
+                    });
+                }
             }
         }
         // FIX 6671: a value spelled inside a longer run, at any offset, over
         // folds, maps back through the run's own source map.
-        for (_, view) in forms::base64_views(data, self.reach()) {
+        for (_, view) in &b64_views {
             for hit in self.raw_spans(&view.bytes) {
                 if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
