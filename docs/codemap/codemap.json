@@ -388,7 +388,7 @@
      "path": "src/affect/annotation.rs",
      "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 8
      }
     },
     {
@@ -404,17 +404,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ClaimVadConsolidation",
-      "ClaimVadReappraisal",
-      "ClaimVadTurnEvidence"
-     ],
+     "notable": [],
      "path": "src/affect/claim_vad.rs",
-     "purpose": "Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types",
+     "purpose": "Claim VAD records and aggregation are defined in core write vocabulary",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "struct": 3
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -451,20 +446,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CopingOutcomeRecord",
-      "CopingOutcomeUpdate",
-      "CopingOutcomeValue",
-      "CopingStrategy"
-     ],
+     "notable": [],
      "path": "src/affect/coping.rs",
      "purpose": "Coping outcomes: which strategy a person used and how their affect moved",
      "surface": {
-      "const": 1,
       "crate-vis": 3,
-      "enum": 1,
-      "fn": 18,
-      "struct": 3
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -492,20 +480,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ModeGateInputs",
-      "StateIndex",
-      "StateIndexEvidence"
-     ],
+     "notable": [],
      "path": "src/affect/state_index.rs",
      "purpose": "Provenance-carrying composite state for mode selection, never a diagnostic label",
      "surface": {
-      "const": 3,
       "crate-vis": 2,
       "fn": 4,
-      "struct": 3
+      "re-export": 1
      }
     },
     {
@@ -519,30 +502,23 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "StateWindow"
-     ],
+     "notable": [],
      "path": "src/affect/state_inputs.rs",
      "purpose": "The composite state index's inputs, measured from the subject's own records (OF-335)",
      "surface": {
-      "crate-vis": 3,
-      "struct": 1
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AffectTriggerValue",
-      "VadDelta"
-     ],
+     "notable": [],
      "path": "src/affect/trigger.rs",
-     "purpose": "Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators",
+     "purpose": "Affect trigger values and codecs are defined in core write vocabulary",
      "surface": {
-      "const": 1,
-      "crate-vis": 6,
-      "fn": 15,
-      "struct": 2
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -2419,6 +2395,31 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ClaimCompanionTask",
+      "ClaimCompanionTaskOutcome",
+      "CompanionTask",
+      "CompanionTaskStatus",
+      "CompleteCompanionTask",
+      "CompleteCompanionTaskOutcome",
+      "EnqueueCompanionTask",
+      "EnqueueCompanionTaskOutcome",
+      "FailCompanionTask",
+      "FailCompanionTaskOutcome",
+      "RetryCompanionTask",
+      "RetryCompanionTaskOutcome"
+     ],
+     "path": "src/attempt_queue/companion_task.rs",
+     "purpose": "Companion task payload and durable queue result values",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/completion.rs",
      "purpose": "Attempt completion inside a caller-owned transaction",
@@ -2662,6 +2663,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
+      "mod": 3,
       "re-export": 10
      }
     },
@@ -2790,6 +2792,27 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/skill_edit_cycle.rs",
+     "purpose": "Skill edit cycle labels that bound their originating run identifiers",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/source_rows.rs",
+     "purpose": "Deterministic union of known source row sets",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -13797,6 +13820,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/claim/authorship.rs",
+     "purpose": "Read the actor stamped in claim evidence",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CodeInstructionHandle"
      ],
@@ -14087,7 +14120,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 13
      }
@@ -19931,20 +19964,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CompanionExpression",
-      "CompanionScope",
-      "CompanionSubject",
-      "CompanionSubjectKind",
-      "CompanionTaskKey"
-     ],
+     "notable": [],
      "path": "src/companion/model.rs",
-     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
+     "purpose": "Companion scopes and subjects are core task vocabulary",
      "surface": {
-      "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -19990,27 +20014,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ClaimCompanionTask",
-      "ClaimCompanionTaskOutcome",
-      "CompanionQueue",
-      "CompanionTask",
-      "CompanionTaskKind",
-      "CompanionTaskStatus",
-      "CompleteCompanionTask",
-      "CompleteCompanionTaskOutcome",
-      "EnqueueCompanionTask",
-      "EnqueueCompanionTaskOutcome",
-      "FailCompanionTask",
-      "FailCompanionTaskOutcome",
-      "RetryCompanionTask",
-      "RetryCompanionTaskOutcome"
+      "CompanionQueue"
      ],
      "path": "src/companion/queue.rs",
      "purpose": "Durable companion task queue over AttemptQueue with payload codec and dedupe keys",
      "surface": {
-      "enum": 6,
-      "fn": 13,
-      "struct": 8
+      "fn": 9,
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
@@ -22682,7 +22693,7 @@
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
       "crate-vis": 6,
-      "mod": 1,
+      "mod": 2,
       "re-export": 7
      }
     },
@@ -22694,6 +22705,27 @@
      "purpose": "Approve-once delivery (OF-365): the owner's `once` answer to a contact-disclosure offer discloses that…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PsychMirrorDriftAnchor",
+      "PsychMirrorDriftAnchorEvent",
+      "PsychMirrorDriftAnchorState",
+      "PsychMirrorSelectedSource",
+      "PsychMirrorSelectionScore",
+      "PsychMirrorSelectionWeights",
+      "PsychMirrorSourceCandidate"
+     ],
+     "path": "src/context_pack/profile_sources.rs",
+     "purpose": "Psych Mirror source selection scoring, entropy, and drift anchors",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 6
      }
     },
     {
@@ -22979,20 +23011,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ConversationBody",
-      "ConversationKind",
-      "RoomRole"
-     ],
+     "notable": [],
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
       "crate-vis": 4,
-      "enum": 2,
-      "fn": 8,
-      "struct": 1
+      "fn": 4,
+      "re-export": 1
      }
     },
     {
@@ -23085,6 +23112,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
       "crate-vis": 10,
+      "mod": 1,
       "re-export": 10
      }
     },
@@ -23289,6 +23317,23 @@
      "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceAttributionEvidence",
+      "VoicePrintCalibration",
+      "VoiceResolvedSegment",
+      "VoiceSessionRosterV1"
+     ],
+     "path": "src/conversation/voice_roster.rs",
+     "purpose": "Vector-free voice attribution and session roster records",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -23563,24 +23608,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AddressMode",
-      "AppendRecord",
-      "AppendedRecord",
-      "DagPage",
-      "DagPageRequest",
-      "DagReplyTarget",
-      "QuoteSpan",
-      "ResolvedScope",
-      "ScopePath",
-      "ScopeSelector"
-     ],
+     "notable": [],
      "path": "src/conversation_dag/types.rs",
-     "purpose": "Door inputs and snapshot results",
+     "purpose": "Door inputs and snapshot results, defined with the storage vocabulary",
      "surface": {
-      "enum": 3,
-      "fn": 3,
-      "struct": 7
+      "re-export": 1
      }
     },
     {
@@ -24631,7 +24663,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 37,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -24713,6 +24745,20 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SafeDeleteReason"
+     ],
+     "path": "src/deletion/safe_delete_reason.rs",
+     "purpose": "Named deletion reasons accepted by actor-facing doors",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -24856,7 +24902,20 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundScheduleContext"
+     ],
+     "path": "src/delivery_window/schedule_context.rs",
+     "purpose": "Host-supplied civil time and delivery level for an outbound schedule",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -36892,6 +36951,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/judge_calibration.rs",
+     "purpose": "Calibration limits decoded from trusted policy manifests",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
@@ -36929,7 +36998,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 69,
+      "crate-vis": 71,
       "mod": 1,
       "re-export": 8
      }
@@ -37928,6 +37997,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/voice_ref_limits.rs",
+     "purpose": "Resolved policy-manifest limits for the private render-reference bank",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "VoiceServingLimits",
       "VoiceServingPolicyReceipt"
@@ -38852,18 +38931,28 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "TaskRole"
-     ],
+     "notable": [],
      "path": "src/habit.rs",
      "purpose": "Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak…",
      "surface": {
-      "const": 1,
-      "crate-vis": 13,
-      "enum": 1,
-      "fn": 3
+      "crate-vis": 3,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeapDropReport"
+     ],
+     "path": "src/heap_drop.rs",
+     "purpose": "Counts reported by rebuildable index and window heap drops",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -41717,10 +41806,11 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 2,
       "enum": 1,
       "fn": 7,
+      "re-export": 1,
       "struct": 6
      }
     },
@@ -41953,8 +42043,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 24,
-      "mod": 205,
-      "re-export": 87
+      "mod": 207,
+      "re-export": 90
      }
     },
     {
@@ -45004,15 +45094,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 12,
       "crate-vis": 1,
-      "fn": 15
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -45341,7 +45431,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ClaimInput",
@@ -45351,18 +45441,16 @@
       "DeleteRequestState",
       "MemoryReceipt",
       "PendingWrite",
-      "RecordRefusal",
-      "RefusalReason",
-      "SafeDeleteReason"
+      "RecordRefusal"
      ],
      "path": "src/memory/claims/mod.rs",
      "purpose": "Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
-      "enum": 4,
-      "fn": 5,
-      "re-export": 1,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 3,
       "struct": 6
      }
     },
@@ -46101,10 +46189,10 @@
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export: the whole-vault archive (OF-222)",
      "surface": {
-      "const": 2,
       "crate-vis": 2,
       "enum": 2,
       "fn": 17,
+      "re-export": 1,
       "struct": 5
      }
     },
@@ -46238,7 +46326,6 @@
       "ExecutionRuntime",
       "ExtractionCaller",
       "ExtractionEncoder",
-      "ExtractionWork",
       "MoodPart",
       "NerSpan",
       "RegisterReach",
@@ -46251,8 +46338,9 @@
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
-      "enum": 7,
+      "enum": 6,
       "fn": 16,
+      "re-export": 1,
       "struct": 17,
       "trait": 1
      }
@@ -46631,8 +46719,8 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 25,
-      "mod": 27,
+      "crate-vis": 26,
+      "mod": 29,
       "re-export": 66
      }
     },
@@ -46886,9 +46974,9 @@
      "path": "src/memory/outbound/schedule.rs",
      "purpose": "Schedule-only dispatch of connector sends through the OF-327 chokepoint",
      "surface": {
-      "const": 1,
       "crate-vis": 1,
-      "fn": 5
+      "fn": 5,
+      "re-export": 1
      }
     },
     {
@@ -46946,14 +47034,13 @@
      "kind": "src",
      "notable": [
       "OutboundDraftInput",
-      "OutboundIntentReceipt",
-      "OutboundScheduleContext"
+      "OutboundIntentReceipt"
      ],
      "path": "src/memory/outbound/types.rs",
      "purpose": "Outbound schedule DTOs: context, draft input, and intent receipt",
      "surface": {
-      "crate-vis": 1,
-      "struct": 3
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -47134,10 +47221,10 @@
      "path": "src/memory/recall/call_mode.rs",
      "purpose": "Call mode (retrieval hub #call-mode): recall for live calls",
      "surface": {
-      "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 5
+      "fn": 5,
+      "re-export": 1
      }
     },
     {
@@ -47483,6 +47570,20 @@
      "purpose": "A report files evidence, not authority",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResolvedRecallSelection",
+      "ResolvedRecallWorlds"
+     ],
+     "path": "src/memory/resolved_recall_scope.rs",
+     "purpose": "The recall scope a device sends its home with a recall's search (FIX 2905): the membership its own recall…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -47887,6 +47988,23 @@
       "crate-vis": 2,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModeGateInputs",
+      "StateIndex",
+      "StateIndexEvidence",
+      "StateWindow"
+     ],
+     "path": "src/memory/state_index.rs",
+     "purpose": "Composite-state projection records and owner-authored window targets",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "struct": 4
      }
     },
     {
@@ -48508,6 +48626,23 @@
       "enum": 5,
       "fn": 7,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceBankActor",
+      "VoiceCreator",
+      "VoiceRefSubjectKind"
+     ],
+     "path": "src/memory/voice_actor.rs",
+     "purpose": "Credential-bound voice actors and their transaction-local proof values",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -50686,14 +50821,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "RetainedCharge"
-     ],
+     "notable": [],
      "path": "src/off_record/lifecycle/retained.rs",
      "purpose": "A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991)",
      "surface": {
       "fn": 1,
-      "trait": 1
+      "re-export": 1
      }
     },
     {
@@ -53542,7 +53675,7 @@
      "surface": {
       "crate-vis": 13,
       "fn": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -53609,6 +53742,16 @@
      "purpose": "Atomic send-receipt retry and terminal settlement",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/schedule_contract.rs",
+     "purpose": "Attempt kind used by schedule admission and connector execution",
+     "surface": {
+      "const": 1
      }
     },
     {
@@ -55743,6 +55886,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/goal_limits.rs",
+     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -55776,7 +55929,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 16
      }
@@ -57520,10 +57673,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/psych_profile/codec.rs",
-     "purpose": "Canonical MessagePack encode/decode and field validation helpers",
+     "purpose": "Profile snapshot codec; definitions live in the core write vocabulary",
      "surface": {
-      "crate-vis": 9,
-      "fn": 2,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -57541,35 +57693,21 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PsychProfileKey"
-     ],
+     "notable": [],
      "path": "src/psych_profile/keys.rs",
-     "purpose": "Stable Person x Facet x World addressing and entity-id derivation",
+     "purpose": "Profile snapshot keys; definitions live in the core write vocabulary",
      "surface": {
-      "fn": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PsychMirrorDriftAnchor",
-      "PsychMirrorDriftAnchorEvent",
-      "PsychMirrorDriftAnchorState",
-      "PsychMirrorSelectedSource",
-      "PsychMirrorSelectionScore",
-      "PsychMirrorSelectionWeights",
-      "PsychMirrorSourceCandidate"
-     ],
+     "notable": [],
      "path": "src/psych_profile/mirror.rs",
-     "purpose": "Psych Mirror source selection scoring, entropy, and drift anchors",
+     "purpose": "Profile source selection is core context-pack vocabulary",
      "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 8,
-      "struct": 6
+      "re-export": 1
      }
     },
     {
@@ -57596,22 +57734,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PsychProfile",
-      "PsychProfileConfidence",
-      "PsychProfileSnapshotStatus",
-      "PsychProfileSource",
-      "PsychProfileStaleReason",
-      "PsychProfileState"
-     ],
+     "notable": [],
      "path": "src/psych_profile/record.rs",
-     "purpose": "Snapshot record types, projections, and constructors/validators",
+     "purpose": "Profile snapshot record; definitions live in the core write vocabulary",
      "surface": {
-      "const": 2,
-      "crate-vis": 18,
-      "enum": 3,
-      "fn": 6,
-      "struct": 3
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -58263,7 +58391,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 3,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -58367,6 +58495,20 @@
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalReason"
+     ],
+     "path": "src/receipt/refusal_reason.rs",
+     "purpose": "Stable reasons recorded by reference-refusal receipts",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -64008,6 +64150,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/export_format.rs",
+     "purpose": "Format names for serialized vault exports",
+     "surface": {
+      "const": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -64143,9 +64295,9 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -64205,6 +64357,16 @@
      "purpose": "Pack preparation: entity selection, field projection, value normalization, and the per-format split of a…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/person_identity.rs",
+     "purpose": "Pure PERSON baseline validation and JSON-compatible MessagePack decoding",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -65077,14 +65239,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill/codec.rs",
-     "purpose": "MessagePack encode and decode for SKILL bodies and dependencies",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
      "surface": {
-      "crate-vis": 3,
-      "fn": 2
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -65156,15 +65318,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SkillContentHash"
-     ],
+     "notable": [],
      "path": "src/skill/identity.rs",
-     "purpose": "Canonical skill identity: content hash, tree hash, and hub cross-check",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
      "surface": {
-      "const": 3,
-      "fn": 6,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -65180,16 +65338,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SkillGovernanceTier",
-      "SkillLifecycle"
-     ],
+     "notable": [],
      "path": "src/skill/lifecycle.rs",
-     "purpose": "SKILL lifecycle machine and governance-tier axis",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
      "surface": {
-      "crate-vis": 1,
-      "enum": 2,
-      "fn": 6
+      "re-export": 1
      }
     },
     {
@@ -65245,43 +65398,32 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SkillDependency",
-      "SkillRecord"
-     ],
-     "path": "src/skill/record.rs",
-     "purpose": "SKILL record types with pinned wire keys and size bounds",
-     "surface": {
-      "const": 5,
-      "crate-vis": 18,
-      "fn": 7,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
      "notable": [],
-     "path": "src/skill/resident.rs",
-     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "path": "src/skill/record.rs",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SkillCallContract",
-      "SkillRole"
-     ],
-     "path": "src/skill/role.rs",
-     "purpose": "Skill roles and the executable call contract",
+     "notable": [],
+     "path": "src/skill/resident.rs",
+     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
      "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/role.rs",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
+     "surface": {
+      "re-export": 1
      }
     },
     {
@@ -65315,9 +65457,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill/validate.rs",
-     "purpose": "SKILL record-shape invariants and the update gate",
+     "purpose": "Skill record vocabulary, defined below the skill behavior layer",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -66019,13 +66161,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/folder.rs",
-     "purpose": "Strict portable SKILL.md frontmatter subset used by real hub transports",
+     "purpose": "Exact source parsing, defined in the store layer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 1
      }
     },
     {
@@ -66144,7 +66286,7 @@
      "purpose": "Skill provenance and capability indexes",
      "surface": {
       "const": 1,
-      "crate-vis": 19
+      "crate-vis": 15
      }
     },
     {
@@ -66782,31 +66924,23 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HubFile",
-      "HubIndexEntry",
-      "HubPackage",
-      "SkillCapabilitySurface",
-      "SkillPackageFormat"
-     ],
+     "notable": [],
      "path": "src/skill_hub/package.rs",
-     "purpose": "Hub package and capability surface shapes",
+     "purpose": "Exact skill package values, defined in the store layer",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 8,
-      "struct": 4
+      "crate-vis": 1,
+      "re-export": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 16,
-      "fn": 2
+      "crate-vis": 13,
+      "re-export": 1
      }
     },
     {
@@ -66834,25 +66968,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HubPin",
-      "HubRef",
-      "HubSyncPolicy",
-      "SkillHubKind",
-      "SkillHubRecord",
-      "SkillHubTrustTier",
-      "TrackedHubRef"
-     ],
+     "notable": [],
      "path": "src/skill_hub/record.rs",
-     "purpose": "Hub and pinned skill reference vocabulary",
+     "purpose": "Hub references, defined in the write vocabulary",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
-      "enum": 4,
-      "fn": 14,
-      "struct": 3
+      "re-export": 1
      }
     },
     {
@@ -66944,9 +67066,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/site_folder.rs",
-     "purpose": "A site skill's folder (CUA E10): `site.json` names the skill's site by exact origins and path routes, and…",
+     "purpose": "Site source parsing, defined with the exact stored package",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 1
      }
     },
     {
@@ -66974,7 +67096,7 @@
      "path": "src/skill_hub/source_carrier.rs",
      "purpose": "Holder-bound exact source custody over ordinary replicated ASSET rows",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 5
      }
     },
     {
@@ -67008,9 +67130,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/support.rs",
-     "purpose": "Bounded hub value parsing helpers",
+     "purpose": "Hub value parsing, defined in the write vocabulary",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 1
      }
     },
     {
@@ -67455,9 +67577,9 @@
      "path": "src/skill_optimize/gate.rs",
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 14,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -67915,7 +68037,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 5,
-      "fn": 1,
+      "re-export": 1,
       "struct": 10
      }
     },
@@ -68001,7 +68123,7 @@
      "path": "src/skill_optimize/policy.rs",
      "purpose": "Calibration policy row in trusted Gate manifests",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -68311,7 +68433,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HeapDropReport",
       "InboundResumeOutcome",
       "JournaledResumeStep",
       "ShedBlocker",
@@ -68327,8 +68448,8 @@
       "enum": 6,
       "fn": 3,
       "mod": 2,
-      "re-export": 2,
-      "struct": 2
+      "re-export": 3,
+      "struct": 1
      }
     },
     {
@@ -69061,6 +69182,46 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConversationBody",
+      "ConversationKind",
+      "RoomRole"
+     ],
+     "path": "src/store/conversation_body.rs",
+     "purpose": "Conversation body vocabulary and strict body codecs",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddressMode",
+      "AppendRecord",
+      "AppendedRecord",
+      "DagPage",
+      "DagPageRequest",
+      "DagReplyTarget",
+      "QuoteSpan",
+      "ResolvedScope",
+      "ScopePath",
+      "ScopeSelector"
+     ],
+     "path": "src/store/conversation_record.rs",
+     "purpose": "Door inputs and snapshot results",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69147,6 +69308,18 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExtractionWork"
+     ],
+     "path": "src/store/extraction_work.rs",
+     "purpose": "Scheduling class carried by stored extraction markers",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -70163,15 +70336,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/loro_document.rs",
+     "purpose": "Loro byte-map operations and document codecs used by storage readers",
+     "surface": {
+      "crate-vis": 15,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 45,
-      "mod": 14,
-      "re-export": 20
+      "crate-vis": 50,
+      "mod": 18,
+      "re-export": 21
      }
     },
     {
@@ -70512,10 +70696,32 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/refinement_carrier.rs",
+     "purpose": "Raw refinement carrier framing used by value scans",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/replay_only_commits.rs",
      "purpose": "The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedCharge"
+     ],
+     "path": "src/store/retained_memory.rs",
+     "purpose": "Host-owned retained-memory accounting for in-memory storage",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -70707,6 +70913,94 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/skill_content_index.rs",
+     "purpose": "Content-hash lookup rows for stored skills and their maintenance",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_package/capability.rs",
+     "purpose": "Stored capability surface encoding",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_package/codec.rs",
+     "purpose": "Package envelope codec and source consistency validation",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_package/folder.rs",
+     "purpose": "Strict portable SKILL.md frontmatter subset used by real hub transports",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_package/mod.rs",
+     "purpose": "Exact stored skill package values, envelope codecs and source parsing",
+     "surface": {
+      "crate-vis": 6,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HubIndexEntry",
+      "HubPackage",
+      "SkillCapabilitySurface"
+     ],
+     "path": "src/store/skill_package/package.rs",
+     "purpose": "Hub package and capability surface shapes",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_package/site_folder.rs",
+     "purpose": "A site skill's folder (CUA E10): `site.json` names the skill's site by exact origins and path routes, and…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_source_carrier.rs",
+     "purpose": "Holder-bound exact skill source carrier framing",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/structural_kind_registry/mod.rs",
      "purpose": "Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, and zone validation",
      "surface": {
@@ -70805,6 +71099,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/window_rows.rs",
+     "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
+     "surface": {
+      "crate-vis": 25
      }
     },
     {
@@ -73036,14 +73340,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 26,
-      "fn": 1
+      "crate-vis": 15,
+      "re-export": 1
      }
     },
     {
@@ -73943,15 +74247,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ResolvedRecallSelection",
-      "ResolvedRecallWorlds"
-     ],
+     "notable": [],
      "path": "src/sync/residence/recall_scope.rs",
-     "purpose": "The recall scope a device sends its home with a recall's search (FIX 2905): the membership its own recall…",
+     "purpose": "Resolved recall scope and signing transcript, defined by the recall layer",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "re-export": 1
      }
     },
     {
@@ -74643,15 +74943,15 @@
       "LocalUpdate",
       "MessagePresenceScope",
       "ScopedPresenceFrame",
-      "SyncConfig",
-      "WindowKey"
+      "SyncConfig"
      ],
      "path": "src/sync/types.rs",
      "purpose": "Sync-specific types for the CRDT sync layer",
      "surface": {
-      "crate-vis": 11,
-      "fn": 12,
-      "struct": 5
+      "crate-vis": 10,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 4
      }
     },
     {
@@ -74949,9 +75249,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/window_rows.rs",
-     "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
+     "purpose": "Window/root row vocabulary, defined in the storage layer",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 1
      }
     },
     {
@@ -80501,6 +80801,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "fn": 8,
+      "mod": 1,
       "re-export": 95,
       "struct": 33
      }
@@ -81408,6 +81709,92 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VoiceConsentBasis",
+      "VoiceConsentState"
+     ],
+     "path": "src/verbs/voice_records/consent.rs",
+     "purpose": "Voice consent values and pure basis validation",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/voice_records/mod.rs",
+     "purpose": "Voice-bank record vocabulary consumed by core verbs",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceIdentity",
+      "VoiceRefFence",
+      "VoiceRefOrigin",
+      "VoiceRefPack",
+      "VoiceRegisterClip",
+      "VoiceRenderConsent",
+      "VoiceRenderDecision",
+      "VoiceRenderGrant",
+      "VoiceTargetClone",
+      "VoiceTargetRecord"
+     ],
+     "path": "src/verbs/voice_records/model.rs",
+     "purpose": "Voice reference packs, render decisions and target record values",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceDroppedTargetView",
+      "VoiceRenderConsentWrite",
+      "VoiceRenderEventReceipt",
+      "VoiceRenderEventView"
+     ],
+     "path": "src/verbs/voice_records/render_history.rs",
+     "purpose": "Render-decision receipts and metadata-only history views",
+     "surface": {
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceBankInspection",
+      "VoiceBankView",
+      "VoiceClipSummary",
+      "VoiceIdentityView",
+      "VoicePackSummary",
+      "VoiceReferenceFenceView",
+      "VoiceRenderConsentView",
+      "VoiceTargetCloneView",
+      "VoiceTargetInspection",
+      "VoiceTargetRender"
+     ],
+     "path": "src/verbs/voice_records/views.rs",
+     "purpose": "Audio-free voice-bank metadata views and record conversions",
+     "surface": {
+      "enum": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "WeaveEnqueueRequest",
       "WeaveScheduleCleared"
      ],
@@ -82114,43 +82501,24 @@
     {
      "bucket": "L",
      "kind": "src",
-     "notable": [
-      "VoiceIdentity",
-      "VoiceRefFence",
-      "VoiceRefOrigin",
-      "VoiceRefPack",
-      "VoiceRefSubjectKind",
-      "VoiceRegisterClip",
-      "VoiceRenderConsent",
-      "VoiceRenderDecision",
-      "VoiceRenderGrant",
-      "VoiceTargetClone",
-      "VoiceTargetRecord"
-     ],
+     "notable": [],
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault voice reference bank",
      "surface": {
       "crate-vis": 5,
-      "enum": 2,
-      "fn": 12,
-      "re-export": 3,
-      "struct": 9
+      "fn": 11,
+      "re-export": 5
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "VoiceBankActor",
-      "VoiceCreator"
-     ],
+     "notable": [],
      "path": "src/voice_identity/ref_bank/actor.rs",
      "purpose": "Who acts on a voice through the bank's typed doors (FIX 4393)",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 3,
+      "re-export": 1
      }
     },
     {
@@ -82166,40 +82534,23 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "VoiceBankInspection",
-      "VoiceBankView",
-      "VoiceClipSummary",
-      "VoiceIdentityView",
-      "VoicePackSummary",
-      "VoiceReferenceFenceView",
-      "VoiceRenderConsentView",
-      "VoiceTargetCloneView",
-      "VoiceTargetInspection",
-      "VoiceTargetRender"
-     ],
+     "notable": [],
      "path": "src/voice_identity/ref_bank/owner_acts.rs",
      "purpose": "The typed doors onto the voice bank (DOOR-143, e2e VOICE-02, FIX 4393)",
      "surface": {
-      "enum": 1,
       "fn": 8,
-      "struct": 9
+      "re-export": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "VoiceDroppedTargetView",
-      "VoiceRenderConsentWrite",
-      "VoiceRenderEventReceipt",
-      "VoiceRenderEventView"
-     ],
+     "notable": [],
      "path": "src/voice_identity/ref_bank/render_history.rs",
      "purpose": "A voice's render history (FIX 4396)",
      "surface": {
       "crate-vis": 4,
-      "struct": 4
+      "re-export": 1
      }
     },
     {
@@ -82236,9 +82587,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/voice_identity/ref_limits.rs",
-     "purpose": "Resolved policy-manifest limits for the private render-reference bank",
+     "purpose": "Resolved voice-reference policy limits are defined with core gate policy",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 1
      }
     },
     {
@@ -82263,10 +82614,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "VoiceAttributionEvidence",
-      "VoiceConsentBasis",
       "VoiceConsentEventV1",
-      "VoiceConsentState",
       "VoiceEmbeddingFamily",
       "VoiceEmbeddingSpaceV1",
       "VoiceEnrollmentOrigin",
@@ -82274,13 +82622,10 @@
       "VoiceEnrollmentSampleV1",
       "VoiceMatchPolicy",
       "VoiceMatchRequest",
-      "VoicePrintCalibration",
       "VoicePrintPurpose",
       "VoicePrintRecordV1",
-      "VoiceResolvedSegment",
       "VoiceRunCoverage",
       "VoiceSegmentEmbeddingInput",
-      "VoiceSessionRosterV1",
       "VoiceSpeakerDeparture",
       "VoiceWithdrawalReceipt",
       "VoiceWithdrawalRequest"
@@ -82290,9 +82635,10 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 8,
-      "fn": 20,
-      "struct": 13
+      "enum": 4,
+      "fn": 13,
+      "re-export": 4,
+      "struct": 11
      }
     },
     {
@@ -82311,11 +82657,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/voice_segment.rs",
-     "purpose": "`voice.segment` claim family — the metadata of one committed capture segment: its span, channel count…",
+     "purpose": "Voice-segment claim vocabulary is defined in the core write envelope",
      "surface": {
-      "const": 7,
       "crate-vis": 1,
-      "fn": 1
+      "re-export": 1
      }
     },
     {
@@ -82544,6 +82889,20 @@
      "path": "src/web_fetch/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowKey"
+     ],
+     "path": "src/window_key.rs",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 10,
+      "struct": 1
+     }
     },
     {
      "bucket": "L",
@@ -82919,13 +83278,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/goal/limits.rs",
-     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
+     "purpose": "Goal thresholds and their portable codecs live with policy vocabulary",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 1
      }
     },
     {
@@ -84890,9 +85249,25 @@
      "surface": {
       "crate-vis": 27,
       "fn": 27,
-      "mod": 6,
+      "mod": 18,
       "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AffectTriggerValue",
+      "VadDelta"
+     ],
+     "path": "src/write_envelope/affect_trigger.rs",
+     "purpose": "Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 15,
+      "struct": 2
      }
     },
     {
@@ -85082,6 +85457,73 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ClaimVadConsolidation",
+      "ClaimVadReappraisal",
+      "ClaimVadTurnEvidence"
+     ],
+     "path": "src/write_envelope/claim_vad.rs",
+     "purpose": "Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionExpression",
+      "CompanionScope",
+      "CompanionSubject",
+      "CompanionSubjectKind",
+      "CompanionTaskKey"
+     ],
+     "path": "src/write_envelope/companion_subject.rs",
+     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 13,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionTaskKind"
+     ],
+     "path": "src/write_envelope/companion_task_kind.rs",
+     "purpose": "Companion background task family strings",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CopingOutcomeRecord",
+      "CopingOutcomeUpdate",
+      "CopingOutcomeValue",
+      "CopingStrategy"
+     ],
+     "path": "src/write_envelope/coping_outcome.rs",
+     "purpose": "Coping outcome records and canonical claim value codec",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 16,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/write_envelope/identity_pair.rs",
      "purpose": "Symmetric identity-pair claim vocabulary and structural validation",
@@ -85111,6 +85553,292 @@
       "enum": 4,
       "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/person_identity.rs",
+     "purpose": "Identity-bearing facet classification and canonical PERSON body maps",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/codec.rs",
+     "purpose": "Canonical MessagePack encode/decode and field validation helpers",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/codec/source_pages.rs",
+     "purpose": "The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PsychProfileKey"
+     ],
+     "path": "src/write_envelope/profile_snapshot/keys.rs",
+     "purpose": "Stable Person x Facet x World addressing and entity-id derivation",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/mod.rs",
+     "purpose": "Profile snapshot records, addressing and canonical MessagePack codec",
+     "surface": {
+      "crate-vis": 5,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PsychProfile",
+      "PsychProfileConfidence",
+      "PsychProfileSnapshotStatus",
+      "PsychProfileSource",
+      "PsychProfileStaleReason",
+      "PsychProfileState"
+     ],
+     "path": "src/write_envelope/profile_snapshot/record.rs",
+     "purpose": "Snapshot record types, projections, and constructors/validators",
+     "surface": {
+      "const": 2,
+      "crate-vis": 18,
+      "enum": 3,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/admission.rs",
+     "purpose": "Pure runtime admission invariant over one stored skill record",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/codec.rs",
+     "purpose": "MessagePack encode and decode for SKILL bodies and dependencies",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillContentHash"
+     ],
+     "path": "src/write_envelope/skill_record/identity.rs",
+     "purpose": "Canonical skill identity: content hash, tree hash, and hub cross-check",
+     "surface": {
+      "const": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillGovernanceTier",
+      "SkillLifecycle"
+     ],
+     "path": "src/write_envelope/skill_record/lifecycle.rs",
+     "purpose": "SKILL lifecycle machine and governance-tier axis",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/mod.rs",
+     "purpose": "Stored skill records, canonical identity, call contracts and pure validation",
+     "surface": {
+      "crate-vis": 12,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillDependency",
+      "SkillRecord"
+     ],
+     "path": "src/write_envelope/skill_record/record.rs",
+     "purpose": "SKILL record types with pinned wire keys and size bounds",
+     "surface": {
+      "const": 5,
+      "crate-vis": 18,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/resident.rs",
+     "purpose": "Immutable resident ownership encoded in a skill record",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillCallContract",
+      "SkillRole"
+     ],
+     "path": "src/write_envelope/skill_record/role.rs",
+     "purpose": "Skill roles and the executable call contract",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/validate.rs",
+     "purpose": "SKILL record-shape invariants and the update gate",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HubFile",
+      "SkillPackageFormat"
+     ],
+     "path": "src/write_envelope/skill_source/files.rs",
+     "purpose": "Exact skill source files and their declared metadata format",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HubPin",
+      "HubRef",
+      "HubSyncPolicy",
+      "SkillHubKind",
+      "SkillHubRecord",
+      "SkillHubTrustTier",
+      "TrackedHubRef"
+     ],
+     "path": "src/write_envelope/skill_source/hub_record.rs",
+     "purpose": "Hub and pinned skill reference vocabulary",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 14,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_source/mod.rs",
+     "purpose": "Hub reference records and exact skill source file vocabulary",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_source/support.rs",
+     "purpose": "Bounded hub value parsing helpers",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskRole"
+     ],
+     "path": "src/write_envelope/task_body.rs",
+     "purpose": "TASK roles, canonical body fields, and deterministic check-in streak values",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/vad_annotation.rs",
+     "purpose": "VAD annotation claim values, stable ids, and cleanup result data",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/voice_segment.rs",
+     "purpose": "`voice.segment` claim family — the metadata of one committed capture segment: its span, channel count…",
+     "surface": {
+      "const": 7,
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -86005,7 +86733,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 64,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86145,7 +86873,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86334,7 +87062,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86355,7 +87083,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86404,14 +87132,14 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 deletion/redaction contract types"
     },
     "delivery_window": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86572,7 +87300,7 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export"
     },
     "gate": {
-     "files": 173,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86609,9 +87337,16 @@
     "habit": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak…"
+    },
+    "heap_drop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Counts reported by rebuildable index and window heap drops"
     },
     "hnsw": {
      "files": 13,
@@ -86782,7 +87517,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 323,
+     "files": 326,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86866,7 +87601,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86929,7 +87664,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86987,7 +87722,7 @@
     "psych_profile": {
      "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "PsychProfile snapshot record substrate"
     },
@@ -87006,7 +87741,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87153,7 +87888,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 32,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87265,7 +88000,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 215,
+     "files": 230,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -87447,7 +88182,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 105,
+     "files": 110,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -87472,7 +88207,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "`voice.segment` claim family — the metadata of one committed capture segment: its span, channel count…"
+     "purpose": "Voice-segment claim vocabulary is defined in the core write envelope"
     },
     "wave_orchestration": {
      "files": 2,
@@ -87495,6 +88230,13 @@
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
+    "window_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion"
+    },
     "workspace_roster": {
      "files": 125,
      "impl_vault": true,
@@ -87510,7 +88252,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
     "write_envelope": {
-     "files": 16,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -87519,7 +88261,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5951,
+   "source_files": 6018,
    "test_files": 900
   },
   "oneiron-android": {
@@ -88621,7 +89363,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 17
+      "mod": 18
      }
     },
     {
@@ -88709,6 +89451,17 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
       "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/request_limits.rs",
+     "purpose": "Request boundary limits and pure validators",
+     "surface": {
+      "const": 14,
+      "fn": 14
      }
     },
     {
@@ -88857,6 +89610,13 @@
      "layout": "file",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
+    "request_limits": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Request boundary limits and pure validators"
+    },
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
@@ -88881,7 +89641,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 22,
+   "source_files": 23,
    "test_files": 2
   },
   "oneiron-bench": {
