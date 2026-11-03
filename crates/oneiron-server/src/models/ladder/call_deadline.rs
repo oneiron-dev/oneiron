@@ -195,7 +195,7 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<MediaAnswer> {
         self.media_from(run, request, selector, deadline, true, voices, release)
             .await

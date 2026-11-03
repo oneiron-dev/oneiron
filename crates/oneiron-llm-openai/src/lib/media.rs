@@ -98,6 +98,16 @@ pub trait OpenAiMediaTransport: Send + Sync {
         lease: &'a BudgetLease,
     ) -> OpenAiMediaTransportFuture<'a>;
 
+    /// [`Self::execute`] with the caller's release, for a transport that retries.
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        _release: Option<oneiron::llm::DispatchRelease>,
+    ) -> OpenAiMediaTransportFuture<'a> {
+        self.execute(request, lease)
+    }
+
     /// Every check the transport makes before it sends, with no I/O (a
     /// broker it cannot reach, a key its custody door would refuse); `Ok`,
     /// the default, for a transport that checks nothing first.
@@ -158,9 +168,17 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         body: OpenAiMediaBody,
         lease: &BudgetLease,
     ) -> LlmResult<OpenAiMediaHttpResponse> {
+        let release = lease.dispatch_release();
+        if let Some(release) = &release {
+            release()?;
+        }
         let reply = self
             .transport
-            .execute(OpenAiMediaHttpRequest { method, path, body }, lease)
+            .execute_released(
+                OpenAiMediaHttpRequest { method, path, body },
+                lease,
+                release,
+            )
             .await?;
         match reply.refused() {
             Some(error) => Err(error),

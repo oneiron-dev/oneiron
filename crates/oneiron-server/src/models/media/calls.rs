@@ -70,7 +70,7 @@ impl MediaRuntime {
         request: MediaRequest,
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<MediaResponse> {
         self.run_in_released(request, None, payer, sources, release)
             .await
@@ -128,7 +128,7 @@ impl MediaRuntime {
         request: MediaRequest,
         voices: Option<&RungVoices>,
         replay: Option<MediaReplayKey>,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());

@@ -1520,7 +1520,7 @@ impl OfferLadder {
         request: MediaRequest,
         selector: Option<&str>,
         voices: Option<&RungVoices>,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<MediaAnswer> {
         self.media_by_released(run, request, selector, voices, self.host_wait(), release)
             .await
@@ -1538,7 +1538,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
-        release: MediaDispatchRelease<'a>,
+        release: MediaDispatchRelease,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1570,7 +1570,7 @@ impl OfferLadder {
                                 deadline,
                                 false,
                                 voices,
-                                release,
+                                release.clone(),
                             )
                             .await;
                         if fell.is_err() {
@@ -1590,7 +1590,7 @@ impl OfferLadder {
                     }
                     sent[index] = true;
                     if let Some(answer) = self
-                        .send_media(call, index, &request, &mut walk, release)
+                        .send_media(call, index, &request, &mut walk, release.clone())
                         .await?
                     {
                         return Ok(answer);
@@ -1609,7 +1609,7 @@ impl OfferLadder {
         index: usize,
         request: &MediaRequest,
         walk: &mut Walk,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1661,11 +1661,12 @@ impl OfferLadder {
         let gate = call
             .run
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
-        if let Some(release) = release
-            && let Err(error) = release()
-        {
-            settle_failed(permit);
-            return Err(error);
+        if let Some(release) = release {
+            permit.lease().attach_dispatch_release(release.clone());
+            if let Err(error) = release() {
+                settle_failed(permit);
+                return Err(error);
+            }
         }
         let operation = request.operation;
         if operation.is_job() {
@@ -1707,6 +1708,12 @@ impl OfferLadder {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
         };
+        let release_refused = |error: &LlmError| {
+            matches!(
+                error,
+                LlmError::Retryable(retry) if retry.is_not_sent_stage("media_release")
+            )
+        };
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1723,6 +1730,18 @@ impl OfferLadder {
                 let raw = std::mem::take(&mut response.usage.raw_provider);
                 response.usage.raw_provider = self.served(index, walk).stamp(raw);
                 Ok(Some(MediaAnswer::Done(response)))
+            }
+            Err(stopped) if release_refused(&stopped.error) && stopped.progress.is_empty() => {
+                settle_failed(permit);
+                Err(stopped.error)
+            }
+            Err(stopped) if release_refused(&stopped.error) => {
+                if let Err(denied) =
+                    permit.settle_interrupted_media(&stopped.progress, operation, &media.caps)
+                {
+                    tracing::error!(%denied, "an interrupted media call's settlement was refused");
+                }
+                Err(stopped.error)
             }
             // FIX 9517: what answered before the stop is settled once, on
             // its usage and receipts, never lost behind the error.

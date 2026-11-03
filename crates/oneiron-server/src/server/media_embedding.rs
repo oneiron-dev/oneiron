@@ -585,7 +585,12 @@ impl RuntimeMediaEmbedder {
             };
             // The rows the part was read from are not known here whole.
             media
-                .run_released(request, self.payer.clone(), None, Some(&dispatch_release))
+                .run_released(
+                    request,
+                    self.payer.clone(),
+                    None,
+                    Some(Arc::new(dispatch_release)),
+                )
                 .await
         } else {
             media.run(request, self.payer.clone(), None).await

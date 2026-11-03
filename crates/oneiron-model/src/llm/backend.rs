@@ -17,6 +17,9 @@ use super::{
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
 
+/// A per-call admission check shared with every backend and transport attempt.
+pub type DispatchRelease = Arc<dyn Fn() -> LlmResult<()> + Send + Sync>;
+
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
 
 pub type LlmStreamResult<'a> = LlmResult<LlmStream<'a>>;
@@ -157,6 +160,8 @@ pub struct BudgetLease {
     /// id/guard equality, hash, Debug and serde. Set once after dispatch opens;
     /// the first writer wins. WorkContext itself is never serialized.
     work_context: Arc<Mutex<Option<WorkContext>>>,
+    /// A caller's release check, shared by every physical send of this call.
+    dispatch_release: Arc<Mutex<Option<DispatchRelease>>>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -192,6 +197,7 @@ impl BudgetLease {
             guard_identity,
             observations: Arc::default(),
             work_context: Arc::default(),
+            dispatch_release: Arc::default(),
         }
     }
 
@@ -246,6 +252,28 @@ impl BudgetLease {
             .unwrap_or_else(PoisonError::into_inner);
         if slot.is_none() {
             *slot = Some(context);
+        }
+    }
+
+    /// The release attached to this call, if its caller supplied one.
+    #[must_use]
+    pub fn dispatch_release(&self) -> Option<DispatchRelease> {
+        self.dispatch_release
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Clone-then-set attachment: every backend and transport attempt of this
+    /// lease reads the same release. The first writer wins.
+    pub fn attach_dispatch_release(&self, release: DispatchRelease) {
+        let attached = self.clone();
+        let mut slot = attached
+            .dispatch_release
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(release);
         }
     }
 

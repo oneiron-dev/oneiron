@@ -40,7 +40,7 @@ use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
 use super::host_budgets::ModelHostBudgets;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
-use super::http::{KeyStyle, MediaSend, ProviderHttp};
+use super::http::{HttpReleaseError, KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, clone_connector, media_offer};
 use super::raw::funded_run;
@@ -80,7 +80,7 @@ pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUpl
 const MEDIA_RUN: &str = "ai-media";
 
 /// A caller's final admission check, run immediately before each backend dispatch.
-pub(crate) type MediaDispatchRelease<'a> = Option<&'a (dyn Fn() -> LlmResult<()> + Sync)>;
+pub(crate) type MediaDispatchRelease = Option<oneiron::llm::DispatchRelease>;
 
 /// A media rung's own side: the media wire it sends through, and the row
 /// that says what it serves.
@@ -399,7 +399,7 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
-        release: MediaDispatchRelease<'_>,
+        release: MediaDispatchRelease,
     ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
         self.run_admitted_released(&run, request, voices, None, release)
