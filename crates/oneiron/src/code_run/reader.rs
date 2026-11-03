@@ -147,10 +147,14 @@ pub fn summary_exceeds_window(tokens: u64, window_tokens: u64) -> String {
 }
 
 /// The reason a summary whose members hold `bytes`, past the `max_bytes`
-/// its window reads before any token is counted, settles with.
+/// its `window_tokens` window reads before any token is counted, settles
+/// with (FIX 2260): the bytes, their cap, and the window the cap was
+/// sized from, beside the counted reason's tokens and window.
 #[must_use]
-pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64) -> String {
-    format!("{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes}")
+pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64, window_tokens: u64) -> String {
+    format!(
+        "{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes} window_tokens={window_tokens}"
+    )
 }
 
 /// How hard one `summarize` works.

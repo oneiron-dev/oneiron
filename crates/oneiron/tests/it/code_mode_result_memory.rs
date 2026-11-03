@@ -210,6 +210,7 @@ impl JsCodeModeRuntime for Producer {
         Ok(JsCodeModeStepOutcome {
             done: false,
             observation: format!("step {} stored {RESULTS_PER_STEP} results", step.seq),
+            console: String::new(),
             outputs: (0..RESULTS_PER_STEP)
                 .map(|index| {
                     JsCodeModeOutput::new(
