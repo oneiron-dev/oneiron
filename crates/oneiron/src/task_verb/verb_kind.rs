@@ -1,5 +1,3 @@
-use crate::Vault;
-use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
 /// Shape discriminator on the typed TASK body. Absent on a schema-v1 row,
@@ -47,86 +45,7 @@ impl TaskKind {
     }
 }
 
-/// The single TASK assignee wire mint. ONE-1700 routes over this field and
-/// ONE-1708 activates the `Human` arm; neither replaces the wire.
-///
-/// Identity is the ACTOR — the connection — never a vendor, harness, or machine
-/// string. Two subscriptions of the same product under different config dirs
-/// are two actors; the harness is a display label resolved at projection time.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum TaskAssignee {
-    Dreamer,
-    AgentDef {
-        agent_def_ref: EntityId,
-    },
-    Peer {
-        actor_ref: EntityId,
-    },
-    /// An already spawned child, addressed by its authenticated actor identity.
-    Child {
-        actor_ref: EntityId,
-    },
-    Human {
-        actor_ref: EntityId,
-    },
-}
-
-impl TaskAssignee {
-    /// Stable wire token for the variant.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Dreamer => "dreamer",
-            Self::AgentDef { .. } => "agent_def",
-            Self::Peer { .. } => "peer",
-            Self::Child { .. } => "child",
-            Self::Human { .. } => "human",
-        }
-    }
-
-    /// The addressed entity, or `None` for the local dreamer.
-    #[must_use]
-    pub const fn entity_ref(self) -> Option<EntityId> {
-        match self {
-            Self::Dreamer => None,
-            Self::AgentDef { agent_def_ref } => Some(agent_def_ref),
-            Self::Peer { actor_ref } | Self::Child { actor_ref } | Self::Human { actor_ref } => {
-                Some(actor_ref)
-            }
-        }
-    }
-
-    /// Binds the assignee to a resolved entity of the right kind. A dangling
-    /// or mistyped assignee is refused here, before any write transaction.
-    pub fn validate(&self, vault: &Vault) -> Result<()> {
-        let txn = vault.store.env.read_txn()?;
-        self.validate_in(vault, &txn)
-    }
-
-    pub(super) fn validate_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        let Some(entity_ref) = self.entity_ref() else {
-            return Ok(());
-        };
-        let stored = vault.get_entity_type_in_txn(txn, &entity_ref)?;
-        let admitted = match self {
-            // An agent definition is a typed row, so its kind is checkable.
-            Self::AgentDef { .. } => stored == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
-            // A peer/human actor is whatever kind the identity plane stores it
-            // as (PERSON today); existence is the assertable invariant.
-            Self::Dreamer | Self::Peer { .. } | Self::Child { .. } | Self::Human { .. } => {
-                stored.is_some()
-            }
-        };
-        if admitted {
-            Ok(())
-        } else {
-            Err(Error::EntityNotFound)
-        }
-    }
-}
+pub use crate::gate::task_assignee::TaskAssignee;
 
 /// Absolute expiry instant. A relative duration would mean a different wall
 /// time on every replica, so the caller's clock is resolved once, here.

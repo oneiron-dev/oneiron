@@ -46,6 +46,8 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+pub mod retrieval_scope;
+pub mod consult_payload_ref;
 mod aging_profiles;
 pub mod code_instruction;
 mod authorship;

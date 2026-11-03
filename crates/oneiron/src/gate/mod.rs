@@ -3,6 +3,8 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+pub mod consult_fanout_values;
+pub mod task_assignee;
 pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;

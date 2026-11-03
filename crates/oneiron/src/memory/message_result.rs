@@ -18,7 +18,7 @@ use crate::claim::{CallerLocality, ClaimReadStatus, ScopedReadResult};
 use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
 use crate::store::result_manifest::CodeRunRawOutput;
 use crate::code_run::ExecutorStorage;
-use crate::code_run::ResultFacet;
+use crate::memory::result_facet::ResultFacet;
 use crate::code_run::ResultRead;
 use crate::code_run::result_refusal;
 use crate::code_run::unknown_handle;

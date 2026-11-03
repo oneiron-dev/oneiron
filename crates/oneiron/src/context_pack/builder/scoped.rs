@@ -41,7 +41,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn facet(
         mut self,
         facet_id: &crate::EntityId,
-        mode: crate::pipeline::FacetMode,
+        mode: crate::claim::retrieval_scope::FacetMode,
     ) -> Self {
         self.pipeline = self.pipeline.facet(facet_id, mode);
         self

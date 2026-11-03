@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::store::result_manifest::CodeRunOutputKind;
 use crate::store::result_manifest::CodeRunOutputPreview;
 use crate::store::result_manifest::CodeRunRawOutput;
-use crate::code_run::ResultFacet;
+use crate::memory::result_facet::ResultFacet;
 use crate::store::result_manifest::ResultOccurrence;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

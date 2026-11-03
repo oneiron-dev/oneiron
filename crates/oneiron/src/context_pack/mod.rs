@@ -4,6 +4,7 @@
 //! Directory module. This file carries declarations and re-exports only; each
 //! sibling file owns one concern. `builder` is the hub that composes them.
 
+pub(crate) mod turn_fold;
 mod builder;
 mod edge_walk;
 mod empty_pack;

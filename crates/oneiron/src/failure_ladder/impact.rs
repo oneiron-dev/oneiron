@@ -29,7 +29,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::self_heal::{blocked_reports, issue_evidence, issue_work};
-use crate::task_verb::{TaskTerminalDisposition, task_impact_facts_in_txn};
+use crate::task_verb::{ task_impact_facts_in_txn};
+use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::healer_case_in_txn;
