@@ -333,12 +333,16 @@ fn mark_room_stale_in_txn(
     crate::bm25::deindex_text(view, txn, id)?;
     // A room's count is advisory: base can advance after the room snapshot.
     // Reconcile it before the shared delete applies base's strict decrement.
+    // The put stages into the overlay write segment, which this view's pinned
+    // snapshot cannot see: recapture so the delete's strict decrement reads
+    // the reconciled count instead of the stale advisory one.
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
         view.hnsw_meta
             .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
     }
-    crate::hnsw::hnsw_deindex(view, txn, id)?;
+    let write_view = view.write_snapshot()?;
+    crate::hnsw::hnsw_deindex(&write_view, txn, id)?;
     view.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
     Ok(())
