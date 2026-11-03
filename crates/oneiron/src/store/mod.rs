@@ -116,6 +116,13 @@ pub mod ports {
     };
 }
 
+pub mod attempt_cleanup;
+pub mod attempt_inputs;
+pub mod attempt_lease;
+pub mod attempt_manifest;
+pub mod attempt_result;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
@@ -149,6 +156,7 @@ mod host_issuer_custody;
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
 mod key_encoding;
