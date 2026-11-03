@@ -17,11 +17,13 @@
 //! Other queue kinds retain their own terminal doors: no error string can
 //! masquerade as a T1 detector verdict.
 
+pub mod task_terminal;
 mod blocked_reports;
 mod classify;
 mod custom_review;
 mod drill;
 mod healer_case;
+pub mod healer_dispatch;
 mod impact;
 mod ladder;
 mod lineage;

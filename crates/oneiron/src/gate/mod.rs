@@ -3,6 +3,12 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+pub(crate) mod training_ask_kind;
+pub(crate) mod consult_fanout_values;
+pub(crate) mod task_assignee;
+pub(crate) mod curator_proposal;
+pub(crate) mod failure_signal_delivery;
+pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
@@ -21,7 +27,10 @@ mod constants;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
+pub(crate) mod experiment_selection_policy;
+pub(crate) mod failure_signal_policy;
 mod default_manifest;
+pub(crate) mod team_review;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.
@@ -33,6 +42,7 @@ mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
+pub(crate) mod dispatch_compliance;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
@@ -44,6 +54,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
@@ -84,6 +95,7 @@ mod skill_edit_goal_policy;
 mod skill_tradeoff_policy;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
+pub(crate) mod weave_grant;
 pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
@@ -108,9 +120,9 @@ pub use self::confirm::{
     GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub(crate) use self::confirm::{
-    claim_critical_confirm_settled_in_txn, critical_confirm_has_no_deadline,
-    critical_write_confirm_binding, pending_row_holds_critical_confirm,
-    reconcile_critical_write_confirm_on_replicated_overwrite,
+    ConfirmDemotionRetries, claim_critical_confirm_settled_in_txn,
+    critical_confirm_has_no_deadline, critical_write_confirm_binding,
+    pending_row_holds_critical_confirm, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::consolidation_readers::{
@@ -187,7 +199,8 @@ pub(crate) use self::effect::{
     record_held_external_effect_policy,
 };
 pub(crate) use self::grants::{
-    ClaimReadView, PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
+    ClaimReadPolicy, ClaimReadView, PolicyScopedGrant, claim_read_policy_allows,
+    companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_claim_allowed_with_scope, scoped_read_claim_view_allowed,
     scoped_read_grant_reads_world, scoped_read_note_allowed, scoped_read_note_world_witness,
     scoped_read_record_allowed, scoped_read_record_allowed_with_scope,
@@ -287,3 +300,5 @@ use crate::write_envelope::WriteEnvelope;
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) mod voice_ref_limits;

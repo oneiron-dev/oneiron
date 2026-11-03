@@ -16,13 +16,15 @@
 //! bundle and pad object, when the capture carries both whole, else named
 //! not carried; one only the copy keeps is retired where the source's own
 //! keep and age rule, over the generations its same read keeps, retires it,
-//! else it keeps its bytes and is named not retired. An install never stands
-//! for a pad: a world key pad lands only through `pad_custody`, and the
-//! epoch's pad debt is reconciled apart by the shared resolver. An erase's
-//! rewrite the source holds takes the place of the copy's older object, so
-//! an exact key the source's erase retired does not come back from the
-//! copy's (restricts, ruled). Every new fault keeps what the copy holds,
-//! with a value-free note: never a refusal.
+//! else it keeps its bytes and is named not retired. The copy's generations
+//! are read before the source's capture, which carries the bundles of the
+//! generations the copy does not keep and no other (FIX 11824). An install
+//! never stands for a pad: a world key pad lands only through `pad_custody`,
+//! and the epoch's pad debt is reconciled apart by the shared resolver. An
+//! erase's rewrite the source holds takes the place of the copy's older
+//! object, so an exact key the source's erase retired does not come back
+//! from the copy's (restricts, ruled). Every new fault keeps what the copy
+//! holds, with a value-free note: never a refusal.
 
 #[cfg(feature = "sync")]
 use std::collections::BTreeSet;
@@ -31,7 +33,7 @@ use super::{LiveCustody, RestoreReport, SideRestoreSource, Source};
 use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::store::UncapturedPadObjects;
-use crate::store::{PadObjectsCapture, PadObjectsLanding};
+use crate::store::{CopyGenerations, PadObjectsCapture, PadObjectsLanding};
 #[cfg(feature = "sync")]
 use crate::sync::residence::{
     CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectRefillSource,
@@ -176,19 +178,20 @@ mod kept {
 impl SideRestoreSource<'_> {
     /// The source's live custody state, read now, at a restore's start, with
     /// its home's current pad objects from the same read (PAD-1; moved here
-    /// whole from the checkpoint module).
-    pub(super) fn capture(&self) -> Result<LiveCustody> {
+    /// whole from the checkpoint module), and the bundles of the generations
+    /// `copy` does not keep (FIX 11824).
+    pub(super) fn capture(&self, copy: &CopyGenerations) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault
                 .store
-                .live_custody(|txn| capture_open_in_txn(vault, txn)),
+                .live_custody(|txn| capture_open_in_txn(vault, txn, copy)),
             Source::Disk {
                 dir,
                 first,
                 page_seal,
                 ..
             } => {
-                let live = crate::store::read_live_custody(dir, page_seal.as_ref())?;
+                let live = crate::store::read_live_custody(dir, page_seal.as_ref(), copy)?;
                 if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(
                         "the vault read as this side restore's source has changed".into(),
@@ -202,10 +205,15 @@ impl SideRestoreSource<'_> {
 
 /// The current pad objects of `vault`, open in this process, captured in
 /// `txn`, named for the vault and home that transaction reads
-/// (`PAD_SOURCE_IDENTITY`). A fault leaves them not captured, and a vault
-/// with no genesis names no vault, as a disk source in that state
+/// (`PAD_SOURCE_IDENTITY`), with the bundles of the generations `copy` does
+/// not keep. A fault leaves them not captured, and a vault with no genesis
+/// names no vault, as a disk source in that state
 /// ([`UncapturedPadObjects::SourceVaultUnfolded`], FIX 11826).
-pub(super) fn capture_open_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> PadObjectsCapture {
+pub(super) fn capture_open_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    copy: &CopyGenerations,
+) -> PadObjectsCapture {
     #[cfg(feature = "sync")]
     {
         match crate::store::PAD_SOURCE_IDENTITY {
@@ -220,15 +228,16 @@ pub(super) fn capture_open_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> PadOb
                 reason: UncapturedPadObjects::SourceVaultUnfolded,
             };
         };
-        // Every generation's bundle: a copy adopts the ones it does not keep.
-        match capture_current_pad_objects_in_txn(&vault.store, txn, vault_id, home, |_| true) {
+        // A copy adopts the generations it does not keep: their bundles alone.
+        let bundles = |generation: &_| copy.carries_bundle(generation);
+        match capture_current_pad_objects_in_txn(&vault.store, txn, vault_id, home, bundles) {
             Ok(captured) => PadObjectsCapture::Captured(captured),
             Err(error) => not_captured(UncapturedPadObjects::RowsUnread, &error),
         }
     }
     #[cfg(not(feature = "sync"))]
     {
-        let _ = (vault, txn);
+        let _ = (vault, txn, copy);
         PadObjectsCapture::NotCaptured {
             reason: crate::store::UncapturedPadObjects::NoSync,
         }

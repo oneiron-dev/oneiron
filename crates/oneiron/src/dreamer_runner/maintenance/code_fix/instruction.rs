@@ -14,10 +14,11 @@ use super::{CodeFixDecisions, CodeFixHost, CodeFixJob, PublisherCandidateKind, c
 use crate::failure_signals::{
     CodeFixReplay, CodeFixSourceSnapshot, ExactReplay, ExactReplayRequest, ExportScrubber,
     FailureSource, InventedExampleDraft, InventedMessage, InventedRole, ReplayFidelity, ReplayRun,
-    ScrubRun, ShadowRun, exact_replay,
+    ScrubRun, ShadowRun,
 };
 use crate::limit_ask::EngineLimit;
-use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 const REPRODUCED_WORDING: &str = "Does the reply fail the way the failure describes?";
 const FIXED_WORDING: &str = "The reply before failed the way the failure describes. Does the \
@@ -131,7 +132,10 @@ impl CoachReplay<'_> {
         if matches!(*self.exact.borrow(), ExactReplay::Erased) {
             return Ok(ExactReplay::Erased);
         }
-        let live = exact_replay(self.vault, &self.job.origin, self.admitted()?)?;
+        let live =
+            self.snapshot
+                .replay
+                .pinned_exact(self.vault, &self.job.origin, self.admitted()?)?;
         if matches!(live, ExactReplay::Erased) {
             *self.exact.borrow_mut() = ExactReplay::Erased;
             *self.baseline.borrow_mut() = Some(None);

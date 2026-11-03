@@ -88,6 +88,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_ESCROW_RECIPIENT,
     &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
+    &side_table::RECOVERY_KIT_UNLISTED_SWEEP,
     // The removal archives this device received, and which it imported
     // (FIX 11197): a leave is when the person reads them.
     &side_table::SHARED_ACT_REMOVAL_EXPORT,
@@ -256,10 +257,10 @@ pub(crate) fn purge_left_shared_env_in_txn(
     }
     sweep_side_tables(store, txn, &kept, &held, &mut budget, &mut report)?;
     if graph {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if report.entities > 0 || report.edges > 0 {
-        crate::ppr::increment_graph_version(store, txn)?;
+        crate::store::graph_version::increment_graph_version(store, txn)?;
     }
     report.complete = !budget.spent;
     Ok(report)

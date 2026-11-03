@@ -13,9 +13,11 @@
 //!
 //! A revert puts a copy back only while its mention still reads as it did:
 //! its turn and message stand undeleted and the span's text is the copy's.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
-use super::{ASKS, IdentityAsk, ProvisionalInverse, hints};
+use super::{ASKS, IdentityAsk, ProvisionalInverse, hints, index};
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
 use crate::vault::entity_revision::{ReadMode, RevisionRef, revision_for_mode_in_txn};
@@ -128,6 +130,10 @@ fn erase_from_ask(ask: &mut IdentityAsk, id: &EntityId) -> Option<bool> {
         ask.provisional = None;
         changed = true;
     }
+    if ask.surfaced_turn == Some(*id) {
+        ask.surfaced_turn = None;
+        changed = true;
+    }
     if ask.candidates.is_empty() && ask.provisional.is_none() {
         return None;
     }
@@ -162,14 +168,30 @@ impl ProvisionalInverse {
 /// mention in it goes, and one it was a candidate of keeps its other
 /// options, or goes when none is left.
 fn erase_asks_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    for (key, mut ask) in ASKS.scan(store, txn)? {
+    for (_, key) in index::ASK_BY_SOURCE.scan_keys(store, txn, id.as_bytes())? {
+        // A stale membership row names no ask: an extra read, never a scrub.
+        let Some(mut ask) = ASKS.get(store, txn, &key)? else {
+            continue;
+        };
+        let old = index::ask_ids(&ask);
         match erase_from_ask(&mut ask, id) {
             Some(false) => {}
-            Some(true) => ASKS.put(store, txn, &key, &ask)?,
+            Some(true) => {
+                ASKS.put(store, txn, &key, &ask)?;
+                index::sync_ask_sets(store, txn, &key, &old, &index::ask_ids(&ask))?;
+            }
             None => {
                 ASKS.delete(store, txn, &key)?;
+                index::sync_ask_sets(store, txn, &key, &old, &BTreeSet::new())?;
             }
         }
+    }
+    Ok(())
+}
+
+fn erase_cursor_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if super::CURSOR.get(store, txn, &())? == Some(*id) {
+        super::CURSOR.delete(store, txn, &())?;
     }
     Ok(())
 }
@@ -184,6 +206,7 @@ pub(crate) fn erase_sources_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     erase_asks_in_txn(store, txn, id)?;
+    erase_cursor_in_txn(store, txn, id)?;
     hints::erase_in_txn(store, txn, id)?;
     super::super::applied::erase_identity_inverses_in_txn(store, txn, id)
 }

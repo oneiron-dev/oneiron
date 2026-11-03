@@ -17,11 +17,13 @@
 //! (`batch::secret_scan::container`); in a text member a key reads as its
 //! custody handle, `[secret sc12]` (FIX 7944). A container the write door
 //! kept no keys in is still read whole before a masked reader gets it, the
-//! bytes no reader shows included (FIX 2470): one that holds a key no mark
-//! places is refused. A sealed one, which no reader here reads whole
-//! (encrypted, malformed, past the byte floor), is stored as it is (owner
-//! ruling C2): the owner and a granted agent read its bytes
-//! (`reveal::file`), and a masked reader gets
+//! bytes no reader shows included (FIX 2470). One whose only key sits in
+//! those bytes is served its copy rebuilt without them, as a marked file's
+//! copy is, once the scan reads that copy clean (FIX 11553, 12268); one that
+//! holds a key no mark places elsewhere is refused. A sealed one, which no
+//! reader here reads whole (encrypted, malformed, past the byte floor), is
+//! stored as it is (owner ruling C2): the owner and a granted agent read its
+//! bytes (`reveal::file`), and a masked reader gets
 //! [`SecretError::SealedFileWithheld`], never the raw bytes. A file a masked
 //! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
 //! scan's reason (FIX 2475).
@@ -31,19 +33,17 @@ use heed::{RoTxn, RwTxn};
 use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::federation::Sensitivity;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::vault::Vault;
+use oneiron_authority::federation::Sensitivity;
 
 /// The band a file with keys in it carries.
 pub(crate) const MASKED_FILE_BAND: Sensitivity = Sensitivity::Restricted;
 
-/// The byte a key's span reads as in a masked copy. A run of it is the
-/// door's own mask shape (`********`), never secret material.
-pub(super) const FILLER: u8 = b'*';
+pub(super) use crate::file_secret_marks::FILLER;
 
 /// One row per file the write door kept with keys in it. Key: the blake3 hash
 /// of the stored bytes, which every door that serves them holds.
@@ -73,33 +73,7 @@ pub(crate) struct MemberKeys {
     pub(crate) keys: Vec<KeySpan>,
 }
 
-/// One step from a container into a member it holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MemberStep {
-    /// A ZIP entry, by its place in the central directory.
-    Zip { entry: u32 },
-    /// A gzip file's payload: every member it chains, read as one.
-    Gzip,
-    /// A tar entry, by its place in archive order (FIX 2471).
-    Tar { entry: u32 },
-    /// An xz file's decompressed payload (FIX 2471).
-    Xz,
-    /// A PDF stream, by its object's id.
-    PdfStream { object: u32, generation: u16 },
-    /// A PDF object's text strings, each decoded, in the object's order
-    /// (FIX 2469), by the object's id.
-    PdfStrings { object: u32, generation: u16 },
-}
-
-/// Where a file's keys sit, without their records: one entry per place, the
-/// stored bytes' own (an empty path) and each member's, with its spans.
-pub(crate) type KeyPlaces = Vec<(Vec<MemberStep>, Vec<(u64, u64)>)>;
-
-/// The handle text each key in [`KeyPlaces`] stands as in a text member of a
-/// masked copy (FIX 7944), place for place and span for span; `None` where
-/// custody names no handle, and the filler stands in.
-pub(crate) type PlaceHandles = Vec<Vec<Option<String>>>;
+pub(crate) use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles};
 
 impl MaskedFile {
     /// Each place this row marks keys at.
@@ -170,30 +144,9 @@ impl MaskedFile {
     }
 }
 
-/// One key: its byte span in the stored file, or in the decoded member that
-/// holds it, and the custody record that holds its value.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct KeySpan {
-    pub(crate) start: u64,
-    pub(crate) end: u64,
-    pub(crate) custody: EntityId,
-    /// The scan's reason code: the key's kind.
-    pub(crate) reason: String,
-}
+pub(crate) use crate::file_secret_marks::KeySpan;
 
-/// How a serving door hands a file's bytes to its reader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecretSight {
-    /// The vault owner, verified at the door, and the owner's own export:
-    /// the stored bytes.
-    Owner,
-    /// Every other reader (an agent, a contact, a link): each key's span
-    /// overwritten, in the file or in the member that holds it.
-    Masked,
-    /// An agent whose standing or approve-once grant covers the file's keys,
-    /// with the read's receipt already written: the stored bytes.
-    Granted,
-}
+pub use crate::file_secret_marks::SecretSight;
 
 pub(crate) fn masked_file_in_txn(
     store: &impl SideTableDbs,
@@ -236,64 +189,23 @@ pub(crate) fn drop_masked_key_in_txn(
     MASKED_FILE.put(store, txn, hash, &file)
 }
 
-/// `bytes` with each span in `spans` overwritten by the filler.
-pub(crate) fn filled(bytes: &[u8], spans: impl IntoIterator<Item = (u64, u64)>) -> Result<Vec<u8>> {
-    let mut copy = bytes.to_vec();
-    for (start, end) in spans {
-        usize::try_from(start)
-            .ok()
-            .zip(usize::try_from(end).ok())
-            .and_then(|(start, end)| copy.get_mut(start..end))
-            .ok_or(Error::CorruptedIndex("masked file key span"))?
-            .fill(FILLER);
-    }
-    Ok(copy)
-}
-
-/// `bytes` with each span in `spans` replaced by its handle text, or by the
-/// filler at the span's length where it has none (FIX 7944): a key in a text
-/// member reads as the handle custody holds it under. `spans` in byte
-/// order; one that overlaps the span before it replaces what is left of it.
-pub(crate) fn filled_with(bytes: &[u8], spans: &[((u64, u64), Option<&str>)]) -> Result<Vec<u8>> {
-    let mut copy = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    for &((start, end), handle) in spans {
-        let (start, end) = usize::try_from(start)
-            .ok()
-            .zip(usize::try_from(end).ok())
-            .filter(|&(start, end)| start <= end && end <= bytes.len())
-            .ok_or(Error::CorruptedIndex("masked file key span"))?;
-        let start = start.max(at);
-        if end <= start {
-            continue;
-        }
-        copy.extend_from_slice(&bytes[at..start]);
-        match handle {
-            Some(text) => copy.extend_from_slice(text.as_bytes()),
-            None => copy.resize(copy.len() + (end - start), FILLER),
-        }
-        at = end;
-    }
-    copy.extend_from_slice(&bytes[at..]);
-    Ok(copy)
-}
-
-/// A serving door's refusal of a file it cannot serve masked (FIX 2475):
-/// `reason` is the scan's code (a hit, or why the walk read no further).
-pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
-    Error::Secret(SecretError::MaskedCopyWithheld { reason })
-}
+pub(crate) use crate::file_secret_marks::{filled, filled_with, masked_copy_withheld};
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
-/// the bytes no reader shows read clean to the write door. A masked copy is
-/// read by the write door's rules before it is served (FIX 2480); a file
-/// this reader cannot be served masked is
+/// the bytes no reader shows read clean to the write door; a container whose
+/// only key sits in those bytes, at any depth, is served its copy rebuilt
+/// through the whole tree without them, once that copy reads clean (FIX
+/// 11553, 12268, 12279). A masked
+/// copy is read by the write door's rules before it is served (FIX 2480); a
+/// file this reader cannot be served masked is
 /// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
 ///
 /// `digest` is the BLAKE3 of `bytes` when the caller holds one it computed
 /// from, or checked against, these exact bytes: the mark is read by it and
-/// the bytes are not hashed again (speed). `None` hashes them here.
+/// the bytes are not hashed again (speed). `None` hashes them here. The
+/// walks over an unmarked container and a marked file's rebuild take it
+/// for the root file's entry (FIX 12270).
 pub(crate) fn sighted_bytes_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -324,27 +236,38 @@ pub(crate) fn sighted_bytes_in_txn(
         }
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
-        if secret_scan::is_sealed(&bytes) {
+        if secret_scan::is_sealed(&bytes, digest) {
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::write_tree_hit(&bytes).is_some() {
-            // A hidden-only key is served the rebuilt copy, hidden bytes
-            // dropped (FIX 11553).
-            let copy =
-                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
-            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
-                return Err(masked_copy_withheld(reason));
-            }
-            return Ok(copy);
+        let Some(reason) = secret_scan::write_tree_hit(&bytes, digest) else {
+            return Ok(bytes);
+        };
+        // A key in what a reader shows is refused either way: the rebuild
+        // keeps those bytes and the rescan refuses its copy, so it is
+        // refused here, before the rebuild pays for the same answer (FIX
+        // 12280). Only the refusal's timing changes; a key no live member
+        // holds reads no hit here and takes the rebuild below unchanged.
+        if secret_scan::live_content_hit(&bytes, digest).is_some() {
+            return Err(masked_copy_withheld(reason));
         }
-        return Ok(bytes);
+        // A key only in the bytes no reader shows is gone from the copy
+        // rebuilt through the whole tree, which leaves them out at every
+        // level as a marked file's copy does: that copy is served once the
+        // write door's scan reads it clean (FIX 11553, 12268, 12279).
+        let Some(copy) = secret_scan::tree_rebuilt_copy(&bytes, digest) else {
+            return Err(masked_copy_withheld(reason));
+        };
+        if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+            return Err(masked_copy_withheld(reason));
+        }
+        return Ok(copy);
     };
     let handles = file.place_handles(store, txn)?;
-    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles)?;
-    if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles, digest)?;
+    if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
@@ -377,6 +300,20 @@ impl Vault {
     pub fn sighted_asset_bytes(&self, bytes: Vec<u8>, sight: SecretSight) -> Result<Vec<u8>> {
         let rtxn = self.store.env.read_txn()?;
         sighted_bytes_in_txn(&self.store, &rtxn, bytes, None, sight)
+    }
+
+    /// [`Self::sighted_asset_bytes`] for a caller holding `digest`, the
+    /// BLAKE3 of `bytes` computed from, or checked against, these exact
+    /// bytes: the mark is read by it and the bytes are not hashed again
+    /// (speed).
+    pub(crate) fn sighted_asset_bytes_with_digest(
+        &self,
+        bytes: Vec<u8>,
+        digest: &[u8; 32],
+        sight: SecretSight,
+    ) -> Result<Vec<u8>> {
+        let rtxn = self.store.env.read_txn()?;
+        sighted_bytes_in_txn(&self.store, &rtxn, bytes, Some(digest), sight)
     }
 
     /// [`Vault::export_blob_artifact`] for a reader at a serving door. The

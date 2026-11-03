@@ -77,7 +77,9 @@ pub(crate) use step::{
     retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
-pub(crate) use step::{erase_submissions_in_txn, submission_carriage, submission_owners};
+pub(crate) use step::{
+    erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
+};
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -203,3 +205,13 @@ pub use budget::{
 pub use step::heal_sent_markers;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::model_stream::model_stream_accepts_masked;
+pub(crate) use self::registry::llm_score_diffs_accepts_masked;
+pub(crate) use self::routing::llm_description_measurements_accepts_masked;
+pub(crate) use self::routing::llm_description_policy_accepts_masked;
+pub(crate) use self::routing::llm_routed_seat_accepts_masked;
+pub(crate) use self::seat::llm_model_description_accepts_masked;
+pub(crate) use self::step::model_step_submission_accepts_masked;

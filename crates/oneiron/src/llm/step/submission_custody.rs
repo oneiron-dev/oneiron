@@ -24,6 +24,11 @@ use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 pub(super) const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =
     SideTable::new(&side_table::MODEL_STEP_SUBMISSION);
+/// Whether a masked copy of a `MODEL_STEP_SUBMISSION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn model_step_submission_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Submission, Named>(bytes)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Submission {
@@ -105,6 +110,24 @@ pub(crate) fn submission_carriage(value: &[u8]) -> ResponseScan {
         retired: stub.len(),
         stub,
     })
+}
+
+/// Who owns the submission row at `id`'s copies, read in `txn`: none when
+/// it is gone or does not decode. The queue reads it to take its own copy
+/// of the step's failure text with the submission's (FIX 10460).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn submission_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &AttemptId,
+) -> Result<Vec<EntityId>> {
+    let Some(bytes) = SUBMISSIONS.get_bytes(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(submission_owners(&bytes))
 }
 
 /// Who owns the submission row `value`'s copies: none for a row that does

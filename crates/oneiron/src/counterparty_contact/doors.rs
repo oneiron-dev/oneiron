@@ -285,7 +285,7 @@ impl Vault {
                     kind: crate::edge::EdgeKind::ClaimOf,
                     tgt: subject,
                     weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 },
             ],
             self.text_index_trusted
@@ -366,12 +366,7 @@ impl Vault {
     ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
-        for id in contact_ids_with_live_head_in_txn(
-            &self.store,
-            &rtxn,
-            PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
-            &identity_ref.to_hex(),
-        )? {
+        for id in self.counterparty_contact_ids_for_identity_in_txn(&rtxn, identity_ref)? {
             if let Some(record) = counterparty_contact_in_claims_in_txn(self, &rtxn, &id)? {
                 records.push((id, record));
             }
@@ -388,6 +383,13 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         identity_ref: &EntityId,
     ) -> Result<Vec<EntityId>> {
+        if let Some(ids) = super::identity_index::contact_ids_for_identity_via_index_in_txn(
+            &self.store,
+            rtxn,
+            identity_ref,
+        ) {
+            return Ok(ids);
+        }
         contact_ids_with_live_head_in_txn(
             &self.store,
             rtxn,

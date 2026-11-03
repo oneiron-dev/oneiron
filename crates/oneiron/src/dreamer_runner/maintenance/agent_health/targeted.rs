@@ -32,7 +32,7 @@ use super::{
     misalignment_findings, run_loop, silent_findings, unsupported_done_findings,
     widen_denial_findings,
 };
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{
@@ -394,9 +394,13 @@ impl Vault {
     /// (FIX 7869): a wake that finds a review of that generation not yet
     /// running joins it, which reads the newest state when it runs; one that
     /// finds it running joins the review queued behind it, queuing it first
-    /// when there is none. So at most two wait per attempt and generation, a
-    /// joined wake queues nothing, and many live attempts are many parts,
-    /// never one long pass.
+    /// when there is none. A wake that finds that generation's `:next`
+    /// review still waiting, not yet running, queues nothing either
+    /// (FIX 9223): the waiter reads the newest state when it runs, so a
+    /// fresh slot-0 ahead of it would run a review the waiter already makes
+    /// redundant. The waiter itself is never dropped. So at most two wait
+    /// per attempt and generation, a joined wake queues nothing, and many
+    /// live attempts are many parts, never one long pass.
     pub(crate) fn enqueue_live_health_review_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -439,11 +443,24 @@ impl Vault {
                 )
             };
             soft(self, txn, attempt, |savepoint| {
+                // FIX 9223: this generation's `:next` review still waiting
+                // covers this wake, so no fresh slot-0 is queued ahead of
+                // it. The peek reads only; the waiter is never dropped. A
+                // `:next` already running covers nothing: this wake can carry
+                // state it did not read, so the wake stays on the path below,
+                // which queues the follow-up behind it.
+                let next = format!("{slot}:next");
+                if AttemptQueue::new(self)
+                    .pending_dedupe_in_txn(savepoint, MAINTENANCE_QUEUE_KIND, &next)?
+                    .is_some_and(|pending| !pending.state.is_running())
+                {
+                    return Ok(());
+                }
                 if let EnqueueDreamerAttemptOutcome::Existing(status) =
                     queue(savepoint, slot.clone())?
                     && status.attempt.state.is_running()
                 {
-                    queue(savepoint, format!("{slot}:next"))?;
+                    queue(savepoint, next)?;
                 }
                 Ok(())
             });
