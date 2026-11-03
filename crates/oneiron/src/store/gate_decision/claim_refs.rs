@@ -127,8 +127,9 @@ impl Store {
         UNAPPLIED_PREFLIGHT.contains(self, txn, &decision_id)
     }
 
-    /// Per-constituent discovery used ONLY by erasure; ordinary claim
-    /// receipt readers must not mistake a bundle receipt for a claim verdict.
+    /// Per-constituent discovery used by erasure and conflict receipts'
+    /// answering chains; other claim receipt readers must not mistake a
+    /// bundle receipt for a claim verdict.
     pub(crate) fn bundle_gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
