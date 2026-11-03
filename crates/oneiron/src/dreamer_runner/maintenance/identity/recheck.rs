@@ -110,8 +110,8 @@ fn uncertain_in_txn(
 fn same_question(left: &IdentityAsk, right: &IdentityAsk) -> bool {
     let set = |ask: &IdentityAsk| ask.candidates.iter().copied().collect::<BTreeSet<_>>();
     left.kind == right.kind
-        && crate::ingest::identity_hint_digest(&left.name)
-            == crate::ingest::identity_hint_digest(&right.name)
+        && crate::store::identity_hints::identity_hint_digest(&left.name)
+            == crate::store::identity_hints::identity_hint_digest(&right.name)
         && set(left) == set(right)
 }
 

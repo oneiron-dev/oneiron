@@ -10,7 +10,7 @@ use std::io::{Read, Seek};
 use super::archive_index::{IndexedArchive, Tag};
 use super::{ArchiveFiles, ArchiveRecordKind, ExportRun};
 use crate::Vault;
-use crate::code_run::StagedSinks;
+use crate::store::result_manifest::StagedSinks;
 use crate::error::Result;
 
 /// What the import's run results sink through inside its writer: an
