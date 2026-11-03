@@ -73,6 +73,7 @@ mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
