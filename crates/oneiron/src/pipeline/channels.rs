@@ -37,6 +37,18 @@ pub(super) struct TemporalScoringContext {
     pub(super) anchor_mid: u64,
     pub(super) learned_anchor: (u64, u64),
     pub(super) learned_anchor_mid: u64,
+    /// Query-constant blend weight: hoisted out of the per-row scorer (one
+    /// `exp` per query instead of one per row; value is bit-identical).
+    pub(super) alpha: f64,
+    pub(super) one_minus_alpha: f64,
+}
+
+impl TemporalScoringContext {
+    pub(super) fn blend_weights(now: u64, anchor_end: u64) -> (f64, f64) {
+        let anchor_age = now.abs_diff(anchor_end) as f64;
+        let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
+        (alpha, 1.0 - alpha)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -161,12 +173,16 @@ pub(super) fn temporal_window(
                 deadline,
                 widest,
             };
+            let (alpha, one_minus_alpha) =
+                TemporalScoringContext::blend_weights(now, config.anchor_end);
             let scoring = TemporalScoringContext {
                 sigma,
                 now,
                 anchor_mid,
                 learned_anchor,
                 learned_anchor_mid,
+                alpha,
+                one_minus_alpha,
             };
             can_grow = collect_temporal_candidates(
                 store,
@@ -216,12 +232,16 @@ pub(super) fn temporal_window(
         sigma = sigma.saturating_mul(2).max(1);
     }
 
+    let (alpha, one_minus_alpha) =
+        TemporalScoringContext::blend_weights(now, config.anchor_end);
     let window = TemporalScoringContext {
         sigma,
         now,
         anchor_mid,
         learned_anchor,
         learned_anchor_mid,
+        alpha,
+        one_minus_alpha,
     };
     let request = TemporalScoringContext {
         sigma: settled_sigma.unwrap_or(sigma),
@@ -410,10 +430,8 @@ pub(super) fn score_temporal_candidate(
     let age = scoring.now.saturating_sub(meta.learned_at) as f64;
     let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
 
-    let anchor_age = scoring.now.abs_diff(config.anchor_end) as f64;
-    let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
-
-    let score = (alpha * s_proximity + (1.0 - alpha) * s_recency) as f32;
+    let score =
+        (scoring.alpha * s_proximity + scoring.one_minus_alpha * s_recency) as f32;
     let overlap_tiebreak = match config.anchor_mode {
         TemporalAnchorMode::Learned => {
             if d_lrn == 0 {
