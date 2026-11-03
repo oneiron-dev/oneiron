@@ -9,7 +9,7 @@ use super::loro_support::{
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use super::{
-    load_window_from_state, merge_persisted_state_into_doc, persist_window_doc_in_txn,
+    load_window_from_state, merge_persisted_state_into_doc, persist_window_doc_in_txn_projected,
     prune_subsumed_window_updates_in_txn, write_window_svf_in_txn,
 };
 
@@ -426,8 +426,10 @@ fn replay_tombstone_markers(
     // after CRDT commit + snapshot persistence succeed.
     let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
+    // Project before the write transaction opens (FIX 10525).
+    let stored = super::pad_custody::persisted_window_pads(vault, window_key, &snapshot, None);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        persist_window_doc_in_txn_projected(vault, wtxn, window_key, &stored, &vv)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;

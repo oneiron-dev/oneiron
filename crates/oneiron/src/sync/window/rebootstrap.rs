@@ -32,7 +32,7 @@ use loro::{LoroDoc, LoroValue};
 use super::super::loro_support::{doc_from_snapshot, doc_version_vector, import_doc, map_delete};
 use super::super::types::WindowKey;
 use super::super::window_rows::{WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
-use super::{persist_window_doc_in_txn, write_window_svf_in_txn};
+use super::{persist_window_doc_in_txn_projected, write_window_svf_in_txn};
 use crate::Vault;
 use crate::error::{ArtifactError, Error, Result, SyncEngineContext};
 use crate::ports::{WindowAddress, WindowDeletionRows};
@@ -130,6 +130,8 @@ impl PreparedRebootstrap {
     pub(crate) fn install(self, vault: &Vault, actor: &HoldActor) -> Result<LoroDoc> {
         let window = self.key.as_str().to_owned();
         let prefix = format!("{window}:");
+        // Project before the write transaction opens (FIX 10525).
+        let stored = super::pad_custody::persisted_window_pads(vault, &self.key, &self.state, None);
         vault.with_write_txn_grouped(|wtxn| {
             let address = WindowAddress::new(&window);
             if vault
@@ -154,7 +156,7 @@ impl PreparedRebootstrap {
                 ));
             }
             self.holds.reject_held_in_txn(&vault.store, wtxn, actor)?;
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version)?;
+            persist_window_doc_in_txn_projected(vault, wtxn, &self.key, &stored, &self.version)?;
             WINDOW_UPDATE.delete_from(&vault.store, wtxn, prefix.as_bytes())?;
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
             if self.owes_compaction {

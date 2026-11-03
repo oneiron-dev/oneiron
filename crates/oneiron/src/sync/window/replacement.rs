@@ -53,7 +53,7 @@ use super::egress::{
 };
 use super::tombstones::apply_tombstone_to_indexed_window_doc;
 use super::{
-    forward_rematerialize, persist_window_doc_in_txn, reverse_rematerialize,
+    forward_rematerialize, persist_window_doc_in_txn_projected, reverse_rematerialize,
     write_window_svf_in_txn,
 };
 use crate::Vault;
@@ -238,8 +238,10 @@ pub(in crate::sync) fn prepare_bounded_replacement(
             .filter_map(Result::ok)
             .collect()
     };
+    // Project before the write transaction opens (FIX 10525).
+    let stored = super::pad_custody::persisted_window_pads(vault, key, &state, None);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
+        persist_window_doc_in_txn_projected(vault, wtxn, key, &stored, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations.
         for update in &stale_updates {

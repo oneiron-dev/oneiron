@@ -265,9 +265,12 @@ impl LoadedWindow {
         let state = export_scrubbed_window_snapshot(vault, &self.key, &self.doc)?;
         let history_free = history_free_window_required(vault, &self.key)?;
         let vv = doc_version_vector(&self.doc);
+        // Project before the write transaction opens (FIX 10525); the
+        // returned state stays the snapshot as exported.
+        let stored = pad_custody::persisted_window_pads(vault, &self.key, &state, None);
 
         vault.with_write_txn_grouped(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
+            persist_window_doc_in_txn_projected(vault, wtxn, &self.key, &stored, &vv)?;
             if history_free {
                 HISTORY_FREE_WINDOW.put(
                     &vault.store,
@@ -312,11 +315,26 @@ pub(crate) fn persist_window_doc_in_txn(
 ) -> Result<()> {
     // Its pads persist by reference where custody here holds them (FIX 7107).
     let state = pad_custody::persisted_window_pads(vault, key, state, None);
+    persist_window_doc_in_txn_projected(vault, wtxn, key, &state, vv)
+}
+
+/// [`persist_window_doc_in_txn`] for a snapshot its caller already ran
+/// through [`persisted_window_pads`] before the write transaction opened
+/// (FIX 10525): the projection reads only committed custody, so a caller
+/// holding the bytes pays its split and join outside the grouped write
+/// lock instead of inside it. `state` is written exactly as given.
+pub(crate) fn persist_window_doc_in_txn_projected(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    state: &[u8],
+    vv: &[u8],
+) -> Result<()> {
     WINDOW_SNAPSHOT.put(
         &vault.store,
         wtxn,
         &key.as_str().to_owned(),
-        &state.into_owned(),
+        &state.to_vec(),
     )?;
     WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv.to_vec())?;
     Ok(())
