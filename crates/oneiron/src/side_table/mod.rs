@@ -216,6 +216,12 @@ pub(crate) enum RefStep {
 /// that meets anything but the member it names names nothing there.
 pub(crate) type RefPath = &'static [RefStep];
 
+/// Whether a masked copy of one of a table's rows still reads as the table's own
+/// typed value, for the historical lift sweep's acceptance check (FIX 2680): the
+/// same `decodes` the side-row wall runs at a write, supplied by the table's
+/// owner module, where its value type is in scope.
+pub(crate) type MaskedAccepts = fn(&[u8]) -> bool;
+
 /// How a table that records an actor forgets one: run over its rows in the erase's own
 /// transaction (FIX 3520).
 pub(crate) type ActorScrub =
@@ -235,6 +241,9 @@ pub(crate) struct SideTableDecl {
     pub(crate) references: &'static [RefPath],
     /// The scrub an actor's erase runs over this table's rows.
     pub(crate) actor: Option<ActorScrub>,
+    /// The typed acceptance the historical lift sweep runs over a masked copy of
+    /// a row (FIX 2680); a table that names none keeps the sweep's shape check.
+    pub(crate) accepts: Option<MaskedAccepts>,
 }
 
 impl SideTableDecl {
@@ -276,7 +285,9 @@ impl SideTableDecl {
 }
 
 /// Whether `bytes` decode as a table's value, for the wall's check of a masked copy.
-fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
+/// An owner module names it, monomorphized over its own value and codec, as its
+/// table's `accepts` (FIX 2680).
+pub(crate) fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
     C::decode(bytes).is_ok()
 }
 
