@@ -76,7 +76,7 @@ pub(super) async fn facade_invocation_claim(
             // The waiter's credential is judged again once the wait is over,
             // before a reply is its (FIX 8212): a revoked or expired one gets
             // the refusal it gets anywhere.
-            if !auth.credential_is_live(server.vault()) {
+            if !auth.facade_replay_credential_is_live(&server, &parts) {
                 return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
                     .into_response();
             }
