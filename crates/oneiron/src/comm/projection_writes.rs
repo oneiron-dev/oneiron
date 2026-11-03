@@ -12,7 +12,7 @@ use super::parties::resolve_party;
 use super::records::encode_value;
 use super::thread_membership::{active_thread_refs_in_txn, matching_thread_memberships_in_txn};
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::encode_claim_body;
 use crate::counterparty_contact::normalize_channel_class;

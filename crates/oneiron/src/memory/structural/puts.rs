@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::memory::support::{
     encode_rmpv, hard_deleted_refusal, hex_string, id_from_optional_hex, json_to_rmpv,
     verify_owner_actor_binding_in_txn,

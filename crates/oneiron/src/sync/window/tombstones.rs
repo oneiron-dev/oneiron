@@ -54,42 +54,7 @@ pub(crate) fn entity_carriers(doc: &LoroDoc, ids: &[EntityId]) -> Vec<(EntityId,
         .collect()
 }
 
-/// Each local path that removes the window carrier of an id deleted here.
-/// Every one marks through [`mark_removed_carriers_first`], naming itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CarrierRemoval {
-    /// The boot replay of `pt:` markers.
-    PendingTombstoneReplay,
-    /// The `ra:` drain, live and transient.
-    ReassertDrain,
-    /// The egress scrub of a carrier whose tombstone a peer withdrew.
-    WithdrawnDeleteScrub,
-    /// The egress scrub of the carriers at an id whose stored row is a CLAIM
-    /// held back from sync, such as a soft-deleted CLAIM's shell.
-    LocalClaimScrub,
-    /// The local delete's tombstone publication, live and transient.
-    LocalPublication,
-    /// The sweep's compaction of a hard-erased id's residue.
-    HardEraseSweep,
-    /// A canonical window capture, which leaves a deleted id's carrier out
-    /// of the artifact or keeps only its shell.
-    CanonicalCapture,
-}
-
-impl CarrierRemoval {
-    /// Every path, for the check that each marks before it removes.
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 7] = [
-        Self::PendingTombstoneReplay,
-        Self::ReassertDrain,
-        Self::WithdrawnDeleteScrub,
-        Self::LocalClaimScrub,
-        Self::LocalPublication,
-        Self::HardEraseSweep,
-        Self::CanonicalCapture,
-    ];
-}
-
+pub(crate) use crate::store::window_rows::CarrierRemoval;
 /// [`crate::task_authority::mark_removed_carriers`], committed before `path`
 /// touches the document. The id is deleted here, so the fact can never be
 /// admitted: a removal that fails after the mark leaves the task reading as a

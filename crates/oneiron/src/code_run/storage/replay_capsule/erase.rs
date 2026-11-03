@@ -140,29 +140,7 @@ fn capsule_bodies(
     bodies
 }
 
-/// What an erase leaves of a capsule (FIX 6144): what the step was (its
-/// attempt, run, step and lease generation, its host, the model and
-/// locality that answered it, both request hashes and its messages digest,
-/// its exposures' skills, revisions and spans, its seed, its time, its
-/// start's ref, digest and bridge count, and the route its rung went out on,
-/// which holds the route prompt's digest only), its content Erased, naming
-/// no actor, with its route prompt cleared. Its bodies are released beside it;
-/// its fork receipts and scores stay in their own rows.
-fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
-    capsule.content = CapsuleContent::Erased;
-    if let Some(binding) = &mut capsule.binding {
-        binding.prompt = None;
-    }
-    capsule
-}
-
-/// A capsule's erased form is [`erased`]'s: the scrub writes it past the
-/// side-row wall, so no wall ever fails an erase (FIX 5718).
-impl ErasedForm for StepReplayCapsule {
-    fn into_erased(self) -> Result<Self> {
-        Ok(erased(self))
-    }
-}
+use crate::dreamer_runner::step_replay::erased;
 
 /// Every fork answer the contribution rows keep, by the capsule its fork
 /// regenerated: its body and path. A row that does not decode names none.

@@ -17,8 +17,6 @@ const MAX_DEDUPE_KEY_LEN: usize = 512;
 
 pub(in crate::attempt_queue) const MAX_FAILURE_REASON_LEN: usize = 2048;
 
-const MAX_LEASE_OWNER_LEN: usize = 128;
-
 /// Longest run id the queue admits, and deliberately not a round number.
 ///
 /// A run id is not only a queue key: `skill_optimize::proven_cycle` turns it
@@ -29,13 +27,13 @@ const MAX_LEASE_OWNER_LEN: usize = 128;
 /// was a run whose every drafted proposal died at the gate, after the author
 /// had already been paid for it.
 pub(in crate::attempt_queue) const MAX_RUN_ID_LEN: usize =
-    crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES
-        - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
+    crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_MAX_BYTES
+        - crate::attempt_queue::skill_edit_cycle::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 
 /// Same bound as a resume point's artifact reference: both name one durable
 /// artifact, so one over-long reference must not be admissible on one door and
 /// refused on the other.
-pub(in crate::attempt_queue) const MAX_RESULT_REF_LEN: usize = MAX_RESUME_ARTIFACT_REF_LEN;
+pub(in crate::attempt_queue) use crate::store::attempt_result::MAX_RESULT_REF_LEN;
 
 pub(in crate::attempt_queue) const MAX_MANIFEST_REFERENCE_LEN: usize = 512;
 
@@ -60,10 +58,6 @@ pub(in crate::attempt_queue) const ERR_FAILURE_REASON_EMPTY: &str =
     "failure reason must not be empty";
 
 const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
-
-const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
-
-const ERR_LEASE_OWNER_TOO_LONG: &str = "lease owner exceeds 128 bytes";
 
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
 
@@ -95,7 +89,7 @@ pub(super) const MAX_CANCEL_STATUS_LEN: usize = 2048;
 
 pub(super) const MAX_RESUME_MARKER_LEN: usize = 2048;
 
-pub(super) const MAX_RESUME_ARTIFACT_REF_LEN: usize = 512;
+pub(super) use crate::store::attempt_result::MAX_RESUME_ARTIFACT_REF_LEN;
 
 pub(in crate::attempt_queue) const ERR_CANCEL_ACTOR_IS_RUNTIME: &str =
     "cancel actor must not claim the reserved runtime identity";
@@ -176,12 +170,11 @@ pub(in crate::attempt_queue) const ERR_CANCEL_RECEIPT_MISSING_GROUNDS: &str =
 pub(in crate::attempt_queue) const ERR_CANCEL_RECEIPT_RESERVE_UNITS: &str =
     "cancel receipt reserve units contradict its kind";
 
-pub(super) const ERR_RESULT_REF_EMPTY: &str = "attempt result reference must not be empty";
+pub(super) use crate::store::attempt_result::ERR_RESULT_REF_EMPTY;
 
-pub(super) const ERR_RESULT_REF_TOO_LONG: &str = "attempt result reference exceeds 512 bytes";
+pub(super) use crate::store::attempt_result::ERR_RESULT_REF_TOO_LONG;
 
-pub(super) const ERR_RESULT_REF_CONTROL: &str =
-    "attempt result reference contains a control character";
+pub(super) use crate::store::attempt_result::ERR_RESULT_REF_CONTROL;
 
 pub(in crate::attempt_queue) const ERR_ABANDONED_WITHOUT_RESULT: &str =
     "abandoned attempt must name its last durable result";
@@ -268,31 +261,7 @@ pub(in crate::attempt_queue) fn validate_optional_failure_reason(
     Ok(())
 }
 
-/// Refuses a result reference no reader could resolve.
-///
-/// Control characters are rejected in addition to the length/emptiness bounds
-/// the other reference doors use: a result reference is projected onto read
-/// surfaces verbatim (the run tree renders it under its own wire key), so an
-/// embedded newline or terminal escape would be a rendering hazard carried on
-/// a durable row.
-pub(in crate::attempt_queue) fn validate_result_ref(result_ref: &str) -> Result<()> {
-    if result_ref.is_empty() {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_RESULT_REF_EMPTY,
-        )));
-    }
-    if result_ref.len() > MAX_RESULT_REF_LEN {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_RESULT_REF_TOO_LONG,
-        )));
-    }
-    if result_ref.chars().any(char::is_control) {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_RESULT_REF_CONTROL,
-        )));
-    }
-    Ok(())
-}
+pub(in crate::attempt_queue) use crate::store::attempt_result::validate_result_ref;
 
 /// Re-validates a result reference read back off a row.
 ///
@@ -395,19 +364,7 @@ pub(in crate::attempt_queue) fn validate_optional_intervention_note(
     Ok(())
 }
 
-pub(crate) fn validate_lease_owner(lease_owner: &str) -> Result<()> {
-    if lease_owner.is_empty() {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_LEASE_OWNER_EMPTY,
-        )));
-    }
-    if lease_owner.len() > MAX_LEASE_OWNER_LEN {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_LEASE_OWNER_TOO_LONG,
-        )));
-    }
-    Ok(())
-}
+pub(crate) use crate::store::attempt_lease::validate_lease_owner;
 
 pub(in crate::attempt_queue) fn validate_cleanup_leases_input(
     input: &CleanupAttemptLeases,

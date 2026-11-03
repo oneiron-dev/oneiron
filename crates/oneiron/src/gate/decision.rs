@@ -2,7 +2,7 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use crate::comm::SendOverrideMatch;
+use crate::write_envelope::communication::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 
 use super::input::ExternalEffectGateContext;

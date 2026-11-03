@@ -64,7 +64,7 @@ impl ScopedRead<'_> {
     fn records_cover_allows_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        claims: &crate::authority::SlipClaims,
+        claims: &oneiron_authority::authority::SlipClaims,
         id: &EntityId,
     ) -> bool {
         self.records_cover.0.iter().any(|artifact| {

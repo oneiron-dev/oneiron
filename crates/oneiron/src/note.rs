@@ -602,6 +602,8 @@ pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationRec
 #[cfg(feature = "sync")]
 mod replica;
 #[cfg(feature = "sync")]
+pub(crate) mod frame_envelope;
+#[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]
 pub(crate) use replica::{
