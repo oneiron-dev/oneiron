@@ -8,16 +8,7 @@ use crate::{EntityId, Error, Result};
 
 use super::BRIDGE_ORIGIN;
 
-/// A committed original or the exact source revision of a mirrored carrier.
-/// A mirror without a source is an independent, foreign local contribution.
-#[derive(Clone, Debug)]
-pub enum RevisionEvent {
-    Original(crate::vault::EntityRevisionChange),
-    Mirror {
-        entity: EntityId,
-        source_revision: Option<RevisionRef>,
-    },
-}
+pub use crate::store::materialization_event::RevisionEvent;
 
 const PREFIX: &str = "bridge:v1:";
 // entities_in_learned_range caps a pass at 100,000; cap the origin too.

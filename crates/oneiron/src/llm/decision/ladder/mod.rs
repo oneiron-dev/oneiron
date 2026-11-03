@@ -329,15 +329,4 @@ fn next_rung(rung: DecisionRung) -> DecisionRung {
         DecisionRung::Big | DecisionRung::Human => DecisionRung::Human,
     }
 }
-
-pub(super) fn validate_pin(pin: &ProviderPin, rung: DecisionRung) -> Result<()> {
-    if pin.rung != rung
-        || pin.model.trim().is_empty()
-        || pin.version.trim().is_empty()
-        || pin.model.len() > 256
-        || pin.version.len() > 256
-    {
-        return Err(invalid("invalid provider pin"));
-    }
-    Ok(())
-}
+pub(super) use crate::model_decision::validate_pin;

@@ -11,8 +11,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{COMPACTION_INTENT_NOTE_KIND, NoteBody, NoteKind, encode_note_body};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::{MadeByClass, MadeByInputRole, MadeByTrigger};
+use crate::store::row_birth::RowBirth;
+use crate::write_envelope::provenance::made_by::{MadeByClass, MadeByInputRole, MadeByTrigger};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
@@ -168,7 +168,7 @@ pub(super) fn intent_ops(
         kind,
         tgt,
         weight: edge_weight(kind),
-        vad: crate::affect::Vad::NEUTRAL,
+        vad: oneiron_contracts::affect::Vad::NEUTRAL,
     };
     let mut ops = vec![
         BatchOp::Put {

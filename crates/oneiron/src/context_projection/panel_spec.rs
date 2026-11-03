@@ -8,7 +8,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee};
+use crate::task_verb::{ConsultPayload, };
+use crate::claim::consult_payload_ref::ConsultPayloadRef;
+use crate::gate::task_assignee::TaskAssignee;
 use crate::temporal::TimeRange;
 
 /// Pinned schema version of the persisted `LeadPanelSpec` entity body.

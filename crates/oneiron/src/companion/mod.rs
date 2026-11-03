@@ -12,16 +12,7 @@ mod profile_admission;
 mod queue;
 mod vault;
 
-/// A FACET body naming `kind` `persona` or `relationship` carries identity,
-/// which belongs on PERSON. Both write-admission refusals share this shape test.
-pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
-    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) else {
-        return false;
-    };
-    entries.iter().any(|(k, v)| {
-        k.as_str() == Some("kind") && matches!(v.as_str(), Some("persona" | "relationship"))
-    })
-}
+pub(crate) use crate::write_envelope::person_identity::is_identity_facet_body;
 
 pub use self::keys::{
     COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS, COMPANION_TASK_PAYLOAD_SCHEMA_VERSION,

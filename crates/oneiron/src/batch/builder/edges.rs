@@ -4,7 +4,7 @@ use super::super::*;
 use super::BatchBuilder;
 use super::ops::capture_invalid_vector_component;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -29,7 +29,7 @@ impl BatchBuilder<'_> {
         mut self,
         id: &EntityId,
         vector: &[f32],
-        provenance: crate::embed::EmbeddingProvenance,
+        provenance: crate::store::embedding::EmbeddingProvenance,
     ) -> Self {
         capture_invalid_vector_component(&mut self.validation_error, vector);
         self.ops.push(BatchOp::Vector {
