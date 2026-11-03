@@ -16,6 +16,7 @@ impl McpCodeModeVerbs {
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
             served: std::sync::Mutex::new(Vec::new()),
+            answer_kept: std::sync::Mutex::new(None),
             run_id,
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
@@ -187,7 +188,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().flatten().copied());
         let answer = AgentVerbAnswer::new(output, listed);
-        drop(kept);
+        *self
+            .answer_kept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kept);
         Ok(Ok(answer))
     }
 
@@ -326,6 +330,17 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// A browser row's refusal words, as the run's guests kept them (FIX 6887).
     fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         self.guests.refusal_words()
+    }
+
+    /// The run recorded the replay row for the answer just given (FIX
+    /// 10633): what that answer holds is released now.
+    fn answer_recorded(&self) {
+        drop(
+            self.answer_kept
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
     }
 }
 

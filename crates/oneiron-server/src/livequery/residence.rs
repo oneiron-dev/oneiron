@@ -211,7 +211,7 @@ impl ForwardedSearchCaller {
             self.caller.caller(),
             carrier,
             self.locality,
-            crate::handler::selector_grant_scope(),
+            crate::handler::selector_scope::selector_grant_scope(),
             selector,
         )
         .map_err(|_| AppError::not_found("item", None))
@@ -497,7 +497,7 @@ fn bound_selector(
     }
     oneiron::sync::authorize_sync_selector(
         &server.vault,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         &selector,
     )
     .map_err(|_| AppError::not_found("item", None))?;
@@ -517,7 +517,7 @@ fn admitted<'v>(
         &server.vault,
         proof,
         peer,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         selector,
     )
     .map_err(|_| AppError::not_found("item", None))
