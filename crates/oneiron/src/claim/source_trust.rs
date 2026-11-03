@@ -166,20 +166,6 @@ pub(crate) fn claim_generated_origin(body: &ClaimBody) -> bool {
         || claim_federated_original_source(body) == Some(ClaimSource::Generated)
 }
 
-pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
-    if let Some(raw) = value.as_u64() {
-        return u8::try_from(raw).ok();
-    }
-
-    match value.as_str()? {
-        "public" => Some(0),
-        "private" | "internal" => Some(1),
-        "sensitive" => Some(2),
-        "restricted" => Some(3),
-        _ => None,
-    }
-}
-
 /// Exact-store claims have their own actor/class-bound reader. Even the owner
 /// must use that reader, not generic retrieval, hydration, or history projection.
 /// This is not a raw storage ACL: `Vault::get_claim` and batch APIs are unchanged.
