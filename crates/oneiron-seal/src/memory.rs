@@ -351,6 +351,31 @@ pub(crate) struct Lease {
     _held: Mutex<Box<dyn Send>>,
 }
 
+/// A sealed output's owned reservation. Clones share it; equality and the
+/// serialized PDF/report do not depend on which owner holds the bytes.
+#[derive(Clone)]
+pub(crate) struct OutputLease(Arc<Lease>);
+
+impl OutputLease {
+    pub(crate) fn new(lease: Lease) -> Self {
+        Self(Arc::new(lease))
+    }
+}
+
+impl fmt::Debug for OutputLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("OutputLease")
+    }
+}
+
+impl PartialEq for OutputLease {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for OutputLease {}
+
 /// Bytes whose memory was reserved before they were allocated, with the
 /// lease that holds the reservation (FIX 7655). The buffer and its lease
 /// drop together, so the memory goes back when the last owner lets go and
