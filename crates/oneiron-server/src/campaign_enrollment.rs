@@ -24,7 +24,7 @@ use oneiron::campaign::enrollment::{
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
 use oneiron::campaign::sender::CampaignChannelSender;
-use oneiron::channel_identity_provider::stalwart::StalwartClient;
+use oneiron::channel_identity_provider::stalwart::{StalwartClient, StalwartConfig};
 use oneiron::saved_query::{
     QueryScope, SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, read_saved_query,
     sweep_owner_read,
@@ -252,8 +252,13 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
     // FIX 11642: only the native-email branch invokes this factory. Non-email
     // sends, Gmail and Gate-held attempts never connect to Stalwart.
     let mut sender = sender.with_stalwart({
-        let server = server.clone();
-        move || campaign_stalwart_client(&server)
+        let vault = Arc::clone(server.vault());
+        let placement = server
+            .config
+            .native_mail
+            .as_ref()
+            .and_then(|native| native.stalwart().ok());
+        move || campaign_stalwart_client(&vault, placement.clone())
     });
     let now_ms = crate::runtime::wall_clock_ms();
     let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
@@ -318,15 +323,16 @@ fn hold_redrive(vault: &Vault, attempt: &AttemptRecord, approval_digest: &str) -
 /// the whole `Authorization` header or a bare bearer token, and the token
 /// bytes never leave the closure. The pump runs on a blocking thread, so
 /// the session discovery and domain read are safe here.
-fn campaign_stalwart_client(server: &SyncServer) -> Option<StalwartClient> {
-    let placement = server.config.native_mail.as_ref()?.stalwart().ok()?;
-    let secret = server
-        .vault()
+fn campaign_stalwart_client(
+    vault: &Vault,
+    placement: Option<StalwartConfig>,
+) -> Option<StalwartClient> {
+    let placement = placement?;
+    let secret = vault
         .verified_pack_connection_secret(NATIVE_MAIL_PACK, NATIVE_MAIL_CONNECTION)
         .ok()?;
     let mut connected = None;
-    server
-        .vault()
+    vault
         .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
             let value = std::str::from_utf8(value)
                 .map_err(|_| {
