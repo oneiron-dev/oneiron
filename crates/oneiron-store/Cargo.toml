@@ -1,0 +1,13 @@
+[package]
+name = "oneiron-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Store layer of the oneiron engine"
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

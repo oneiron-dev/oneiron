@@ -277,7 +277,7 @@ pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
 pub mod bundle_generations;
-pub mod connector_key_status;
+pub use oneiron_store::connector_key_status;
 pub mod file_secret_marks;
 pub(crate) mod key_material;
 pub(crate) mod receive_scan;
