@@ -16,6 +16,7 @@ use crate::store::GateDecisionId;
 use crate::task_verb::sdk::ConnectorCallReply;
 
 use super::binding::{put_code_consent_wait_in_txn, read_code_consent_wait_in_txn};
+use super::browser::{CODE_WAIT_TARGET_CHANGED, browser_facts_match_row};
 use super::ledger::{LedgerLinks, ledger_links_in_txn};
 use super::types::{
     CodeConsentAnswerInput, CodeConsentAnswerStamp, CodeConsentBinding, CodeConsentChoice,
@@ -246,6 +247,16 @@ fn answer_in_txn(
         )),
         other => other,
     })?;
+    // A browser wait's marker is minted only for the digest its kept
+    // facts still compose (FIX 11908); a row they no longer name settles
+    // refused under any answer.
+    if row.binding.pending.browser_action().is_some() && !browser_facts_match_row(&row.binding) {
+        refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
+        return Ok(Answered {
+            drive: false,
+            already_answered: true,
+        });
+    }
     let digest = EffectDigest::from_bytes(row.binding.effect_digest);
     let (decision, remembered) = match input.choice {
         CodeConsentChoice::Deny => (vault.deny_consent_in_txn(txn, owner, digest)?, None),
