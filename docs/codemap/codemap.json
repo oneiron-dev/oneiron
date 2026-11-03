@@ -28250,7 +28250,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 36,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 11,
       "re-export": 1,
       "trait": 1
@@ -28286,7 +28286,7 @@
      "path": "src/dreamer_runner/maintenance/coach/think_threshold.rs",
      "purpose": "Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "trait": 1
      }
