@@ -103,7 +103,9 @@ pub(super) enum ProduceBodyError {
     Spool(io::Error),
     /// The decoded body ran past `limit` bytes (FIX 12222): a request
     /// failure, never a destination refusal. Names only the limit.
-    TooLarge { limit: u64 },
+    TooLarge {
+        limit: u64,
+    },
 }
 
 impl fmt::Display for ProduceBodyError {
@@ -123,9 +125,7 @@ impl fmt::Debug for ProduceBodyError {
         match self {
             Self::Request(error) => f.debug_tuple("Request").field(error).finish(),
             Self::Spool(error) => f.debug_tuple("Spool").field(error).finish(),
-            Self::TooLarge { limit } => {
-                f.debug_struct("TooLarge").field("limit", limit).finish()
-            }
+            Self::TooLarge { limit } => f.debug_struct("TooLarge").field("limit", limit).finish(),
         }
     }
 }
