@@ -20,6 +20,16 @@ pub trait PressGrants: Send {
     /// The press each effect class runs under as the grants stand now; the
     /// floor (a press per send) where they cannot be read.
     fn current(&self) -> SendPolicy;
+
+    /// The press each effect class runs under for a send that reports
+    /// `audience` as its counterparty (FIX 11907): the origin of the page
+    /// the send acted on, or none where the send names none. The host's
+    /// read may then count only the grants whose audience names it; a read
+    /// that checks no audience answers as [`Self::current`].
+    fn current_for(&self, audience: Option<&str>) -> SendPolicy {
+        let _ = audience;
+        self.current()
+    }
 }
 
 /// The session's book of presses: the grants' policy as last read, the
@@ -54,10 +64,11 @@ impl PressBook {
     }
 
     /// The policy a classified send runs under now: the grants read again
-    /// where the host reads them live, less the sends already paid.
-    pub(crate) fn refresh(&mut self) -> SendPolicy {
+    /// where the host reads them live, for the counterparty `audience`
+    /// the send reports (FIX 11907), less the sends already paid.
+    pub(crate) fn refresh(&mut self, audience: Option<&str>) -> SendPolicy {
         if let Some(live) = &self.live {
-            self.granted = live.current();
+            self.granted = live.current_for(audience);
         }
         self.policy()
     }
@@ -110,9 +121,10 @@ impl BrowserSession {
     }
 
     /// The policy a classified send runs under now: the grants read again
-    /// where the host reads them live, less the sends already paid.
-    pub(super) fn press_policy(&mut self) -> &mut SendPolicy {
-        self.policy = self.presses.refresh();
+    /// where the host reads them live, for the counterparty `audience`
+    /// the send reports (FIX 11907), less the sends already paid.
+    pub(super) fn press_policy(&mut self, audience: Option<&str>) -> &mut SendPolicy {
+        self.policy = self.presses.refresh(audience);
         &mut self.policy
     }
 
