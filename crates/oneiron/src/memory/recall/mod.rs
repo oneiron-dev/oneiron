@@ -53,13 +53,13 @@ fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
 use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use crate::serialize::{SerializeConfig, serialize_pack};
+use oneiron_model::llm::BudgetLease;
 
 /// The S6 `MemoryPack` schema version.
 pub const MEMORY_PACK_VERSION: u32 = 1;

@@ -13,11 +13,11 @@ use crate::authority::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::GuestShareEnvelope;
+use crate::store::grant_scope_custody;
 use oneiron_authority::federation::{
     Ceiling, FederationDirectionScope, FederationPactScope, Scope, SelectorRange,
     encode_federation_pact_scope,
 };
-use crate::store::grant_scope_custody;
 
 /// A host's signed half of a reciprocal re-scope at one fresh consent epoch.
 #[derive(Debug, Clone)]
