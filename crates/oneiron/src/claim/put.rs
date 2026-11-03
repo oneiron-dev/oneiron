@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops, apply_ops_with_gate_mode,
 };
@@ -17,6 +16,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 impl Vault {
     /// Writes a typed CLAIM (type 0) entity with full structural validation
@@ -508,7 +508,7 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         envelope: &WriteEnvelope,
     ) -> Result<()> {
-        crate::gate::validate_write_envelope(envelope)?;
+        crate::write_envelope::validate_write_envelope(envelope)?;
         let actor = envelope.actor();
         let actor_raw = self
             .store
@@ -549,7 +549,7 @@ impl Vault {
             &id,
             crate::gate::ClaimGateWrite::plain(body, Some(envelope)),
             policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,

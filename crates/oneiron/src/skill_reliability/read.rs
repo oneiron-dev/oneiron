@@ -4,15 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::claim::learning_estimate::Estimate;
+use crate::claim::learning_estimate::EstimateValue;
+use crate::claim::learning_estimate::PriorOrigin;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::learning::project::StoredEstimateClaim;
-use crate::learning::{
-    Estimate, EstimateValue, LearningCell, LearningPredicate, LearningRead, PriorOrigin, TypeRef,
-};
+use crate::learning::{LearningCell, LearningRead};
 use crate::ports::EntityStoreRead;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
@@ -190,7 +193,7 @@ pub(super) fn resolved_estimate_in_txn(
             continue;
         }
         let estimate = StoredEstimateClaim::from_value(&body.value)?.estimate;
-        if estimate.ver != crate::learning::ESTIMATOR_VERSION {
+        if estimate.ver != crate::claim::learning_estimate::ESTIMATOR_VERSION {
             continue;
         }
         if resolved
