@@ -752,7 +752,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn live_window(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
     ) -> Option<(
         std::sync::Arc<crate::sync::window::LoadedWindow>,
         std::sync::Arc<crate::sync::bridge::Materializer>,
@@ -843,7 +843,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn while_window_closed<T>(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let attached = self

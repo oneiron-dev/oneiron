@@ -11,7 +11,7 @@
 use super::arc_sources::ArcSources;
 use super::codec::{invalid, parse_scope};
 use super::request::{ScopeSummaryPlan, ScopeSummaryRequest, ScopeSummaryTarget};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::dreamer_consolidation::ScopeSummaryEvidence;
 use crate::error::Result;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};

@@ -121,7 +121,7 @@ pub(crate) fn import_note_from_authority(
         let staged = match kind {
             document_sub_tags::STATE => loro::LoroDoc::new(),
             document_sub_tags::UPDATE => {
-                crate::sync::loro_support::doc_from_snapshot(&previous.snapshot()?)?
+                crate::store::loro_document::doc_from_snapshot(&previous.snapshot()?)?
             }
             _ => return Err(invalid("invalid NOTE authority frame")),
         };

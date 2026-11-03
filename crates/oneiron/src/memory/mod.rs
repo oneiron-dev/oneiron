@@ -390,3 +390,6 @@ pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+
+#[cfg(feature = "sync")]
+pub(crate) mod resolved_recall_scope;

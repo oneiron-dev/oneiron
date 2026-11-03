@@ -98,7 +98,7 @@ impl RecallSelection {
 
     /// This selection as the device sends it to its home (FIX 2905).
     #[cfg(feature = "sync")]
-    pub(crate) fn resolved(&self) -> crate::sync::residence::ResolvedRecallSelection {
+    pub(crate) fn resolved(&self) -> crate::memory::resolved_recall_scope::ResolvedRecallSelection {
         let mut project_ids = match &self.projects {
             CorpusScope::All => Vec::new(),
             CorpusScope::Unscoped => vec![crate::claim::default_project_id()],
@@ -107,9 +107,9 @@ impl RecallSelection {
         };
         project_ids.sort_unstable();
         project_ids.dedup();
-        crate::sync::residence::ResolvedRecallSelection {
+        crate::memory::resolved_recall_scope::ResolvedRecallSelection {
             worlds: self.worlds.as_ref().map(|worlds| {
-                crate::sync::residence::ResolvedRecallWorlds {
+                crate::memory::resolved_recall_scope::ResolvedRecallWorlds {
                     include_base: worlds.include_base(),
                     world_ids: worlds.worlds().iter().copied().collect(),
                 }

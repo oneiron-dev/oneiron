@@ -62,6 +62,9 @@ pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
 pub mod slim;
+pub mod heap_drop;
+#[cfg(feature = "sync")]
+pub mod window_key;
 pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;

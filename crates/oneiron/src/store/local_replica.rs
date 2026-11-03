@@ -52,13 +52,13 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::sync::WindowKey;
+use crate::window_key::WindowKey;
 use crate::sync::bridge::format_edge_key;
 use crate::sync::loro_support::{
-    TombstoneIndex, doc_from_snapshot, import_doc, map_contains_binary,
-};
+    TombstoneIndex, };
+use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
 use crate::sync::residence::residence_window_for_blob;
-use crate::sync::window_rows::{
+use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
