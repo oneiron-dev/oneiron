@@ -23,7 +23,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::offer_history::{OFFER_ROWS, OfferRow};
+use super::offer_history::{OFFER_ROWS, OfferRow, live_offer};
 use super::offer_settle::{Acceptance, Settled, Step, run_settlement};
 use super::{TURNS, invalid};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
@@ -403,7 +403,7 @@ fn mint_in_txn(
         &draft.intent_key,
     ))?;
     let draft_digest = digest(&(OFFER_ID_DOMAIN, draft))?;
-    if let Some(mut stored) = OFFERS.get(&vault.store, txn, &offer_id)? {
+    if let Some(mut stored) = live_offer(&vault.store, txn, &offer_id)? {
         if stored.draft_digest != draft_digest {
             return Err(MemoryError::bad_request(
                 "this intent_key already names a different offer",
@@ -473,7 +473,7 @@ fn mint_in_txn(
     // One card per agent per room or thread: the new one replaces it.
     let key = current_key(draft.room, draft.branch, draft.agent);
     if let Some(prior) = OFFER_CURRENT.get(&vault.store, txn, &key)?
-        && let Some(mut replaced) = OFFERS.get(&vault.store, txn, &prior)?
+        && let Some(OfferRow::Live(mut replaced)) = OFFER_ROWS.get(&vault.store, txn, &prior)?
         && matches!(replaced.card.state, OfferState::Open { .. })
     {
         replaced.card.state = OfferState::Superseded {
@@ -540,7 +540,7 @@ pub(super) fn accepts_offer_in_txn(
     else {
         return Ok(false);
     };
-    let Some(stored) = OFFERS.get(&vault.store, txn, &offer)? else {
+    let Some(OfferRow::Live(stored)) = OFFER_ROWS.get(&vault.store, txn, &offer)? else {
         return Ok(false);
     };
     let card = stored.card;

@@ -578,6 +578,11 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             handle,
             actor,
         } => {
+            // FIX 4870: a handle of an actor this vault erased stays gone,
+            // as a host pin of one does: a bare id fits no erased form.
+            if vault.carrier_actor_erased_in_txn(txn, actor)? {
+                return Ok(SideMerge::Refused(TurnMergeRefusal::ActorErased));
+            }
             let key = (*room, handle.clone());
             if HANDLES.get_lenient(store, txn, &key)? == Some(*actor) {
                 return Ok(SideMerge::Held);
@@ -585,6 +590,15 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             HANDLES.put(store, txn, &key, actor)?;
         }
         RoomSideRow::Claim { claim } => {
+            // FIX 4870: the carried claim names no one here for an actor
+            // this vault erased, as a carried turn's actor does (FIX 6543).
+            let mut carried = claim.clone();
+            if let Ok(actor) = EntityId::from_hex(&carried.actor)
+                && vault.carrier_actor_erased_in_txn(txn, &actor)?
+            {
+                carried.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
+            }
+            let claim = &carried;
             let turn = EntityId::from_hex(&claim.turn_id)?;
             if TURNS
                 .get_lenient(store, txn, &turn)?
