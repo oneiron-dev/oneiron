@@ -29,7 +29,8 @@ pub use relationship_scope::{
     relationship_scope_of, relationship_scope_transcript,
 };
 pub use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
-pub use scope::{claim_principal_id, validate_known_claim_scope_entries};
+pub use scope::claim_principal_id;
+pub(crate) use scope::validate_known_claim_scope_entries;
 pub use scope_stamp::{base_world_id, default_project_id, substrate_facet_id, PREDICATE_VAULT_DEFAULT_FACET};
 pub use source_trust::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
 pub use source_trust::*;
