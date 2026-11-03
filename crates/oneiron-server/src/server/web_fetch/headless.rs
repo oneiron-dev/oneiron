@@ -50,8 +50,10 @@ use tokio::sync::watch;
 
 use self::handler::PageRequests;
 use self::relay::HeadlessRelay;
+use crate::byte_line::ByteLine;
 use crate::config::browser::BrowserReadinessCell;
 use crate::server::HandleLine;
+use crate::wire_telemetry::LimitQuestions;
 
 /// The host's headless browser for the fetch ladder's second rung: each
 /// render starts its own guest from `guest`, charges its live handles to
@@ -62,6 +64,8 @@ pub(super) struct GuestHeadless {
     handles: HandleLine,
     vault: Arc<Vault>,
     readiness: BrowserReadinessCell,
+    retained: Arc<ByteLine>,
+    questions: Arc<LimitQuestions>,
 }
 
 impl GuestHeadless {
@@ -70,12 +74,16 @@ impl GuestHeadless {
         handles: HandleLine,
         vault: Arc<Vault>,
         readiness: BrowserReadinessCell,
+        retained: Arc<ByteLine>,
+        questions: Arc<LimitQuestions>,
     ) -> Self {
         Self {
             guest,
             handles,
             vault,
             readiness,
+            retained,
+            questions,
         }
     }
 
@@ -85,7 +93,19 @@ impl GuestHeadless {
         url: &str,
         guard: Option<Arc<HostedEgressGuard>>,
     ) -> RendererResult<HeadlessDocument> {
-        let operation = Arc::new(Operation::new(guard));
+        // The render's bodies charge the shared retained line and refuse past
+        // the host's egress bound (FIX 8638): the egress file the guest's own
+        // start reads stays the bound's source, so an unreadable file costs
+        // the render its default too.
+        let max_response_bytes = EgressConfig::from_env()
+            .unwrap_or_default()
+            .max_response_bytes;
+        let operation = Arc::new(Operation::new(
+            guard,
+            Arc::clone(&self.retained),
+            Arc::clone(&self.questions),
+            max_response_bytes,
+        ));
         let read = self.read(url, &operation);
         // The guest is gone: nothing of the render starts again, and what
         // it had in flight returns before the render answers.
@@ -243,6 +263,12 @@ struct Operation {
     settled: Condvar,
     /// Turns true when the render ends, which cancels its requests in flight.
     stop: watch::Sender<bool>,
+    /// The shared retained line the render's bodies charge (FIX 8638).
+    retained: Arc<ByteLine>,
+    /// The questions a body that runs alone past the whole line asks (FIX 8638).
+    questions: Arc<LimitQuestions>,
+    /// The host's decoded-body bound a render refuses past (FIX 8638).
+    max_response_bytes: usize,
 }
 
 /// How much of a render's work is in flight, and whether the render ended.
@@ -257,13 +283,21 @@ struct Work {
 struct Running<'a>(&'a Operation);
 
 impl Operation {
-    fn new(guard: Option<Arc<HostedEgressGuard>>) -> Self {
+    fn new(
+        guard: Option<Arc<HostedEgressGuard>>,
+        retained: Arc<ByteLine>,
+        questions: Arc<LimitQuestions>,
+        max_response_bytes: usize,
+    ) -> Self {
         Self {
             guard,
             refused: Mutex::default(),
             work: Mutex::default(),
             settled: Condvar::new(),
             stop: watch::Sender::new(false),
+            retained,
+            questions,
+            max_response_bytes,
         }
     }
 

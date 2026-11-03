@@ -36,6 +36,20 @@ pub(super) enum SpooledBody {
 }
 
 impl SpooledBody {
+    /// The body's bytes without a second full copy: an inline body hands
+    /// over its buffer; a spilled body is read back once from its file.
+    pub(super) fn into_vec(self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Inline { bytes, .. } => Ok(bytes.into_inner()),
+            Self::Spilled { mut file, .. } => {
+                file.rewind()?;
+                let mut out = Vec::new();
+                file.read_to_end(&mut out)?;
+                Ok(out)
+            }
+        }
+    }
+
     pub(super) fn len(&self) -> u64 {
         match self {
             Self::Inline { bytes, .. } => bytes.get_ref().len() as u64,
