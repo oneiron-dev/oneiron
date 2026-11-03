@@ -357,7 +357,7 @@ pub(super) fn enqueue_marker_in_txn(
     recorded_at: u64,
     work: ExtractionWork,
 ) -> Result<EnqueueOutcome> {
-    let queue = AttemptQueue::from_store(&vault.store);
+    let queue = AttemptQueue::new(vault);
     let key = dedupe_key(&turn, config);
     // A pending marker absorbs the call before any id is drawn for it.
     if let Some(pending) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
@@ -435,7 +435,7 @@ pub(super) fn retry_marker_in_txn(
     let id = free_id(vault, wtxn, MAX_RETRY_GENERATIONS, |generation| {
         derived_id(RETRY_ID_DOMAIN, &[source.as_bytes()], now, generation)
     })?;
-    let queue = AttemptQueue::from_store(&vault.store);
+    let queue = AttemptQueue::new(vault);
     queue.retry_with_id_in_txn(wtxn, input, id)?;
     let history = vault
         .config

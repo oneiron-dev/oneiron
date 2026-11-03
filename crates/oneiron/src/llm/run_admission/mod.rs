@@ -53,8 +53,8 @@ pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
 pub use receipt::{
-    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
-    RunStreamUsage, RunTokenUsage, TeacherReport,
+    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunOverageSource, RunReceipt,
+    RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
 pub use settle::CallOutcome;

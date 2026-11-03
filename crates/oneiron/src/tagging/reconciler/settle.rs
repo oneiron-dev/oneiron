@@ -250,7 +250,7 @@ impl TaggingReconciler {
     ) -> Result<()> {
         self.complete_in_txn(txn, record)?;
         self.record_in_txn(txn, trace)?;
-        AttemptQueue::from_store(&self.vault.store).prune_settled_in_txn(txn, record.id)?;
+        AttemptQueue::new(&self.vault).prune_settled_in_txn(txn, record.id)?;
         Ok(())
     }
 
@@ -270,7 +270,7 @@ impl TaggingReconciler {
         if self.vault.test_hooks().take_fail_next_tagging_settlement() {
             return Err(crate::error::Error::MapFull);
         }
-        AttemptQueue::from_store(&self.vault.store).complete_storage_in_txn(
+        AttemptQueue::new(&self.vault).complete_storage_in_txn(
             txn,
             CompleteAttempt {
                 id: record.id,
@@ -292,7 +292,7 @@ impl TaggingReconciler {
         record: &AttemptRecord,
         trace: &TaggingTrace,
     ) -> Result<()> {
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         queue.fail_storage_in_txn(
             txn,
             FailAttempt {

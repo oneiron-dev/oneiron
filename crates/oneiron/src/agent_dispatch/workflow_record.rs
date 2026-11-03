@@ -21,6 +21,12 @@ use serde::{Deserialize, Serialize};
 /// attempt. Key: the root attempt id.
 pub(super) const RECORD: SideTable<AttemptId, WorkflowRecord, LegacyJson> =
     SideTable::new(&side_table::AGENT_WORKFLOW_RECORD);
+/// Whether a masked copy of a `AGENT_WORKFLOW_RECORD` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn agent_workflow_record_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<WorkflowRecord, LegacyJson>(bytes)
+}
+
 /// Dedupe index from a caller-supplied dedupe key to the workflow root
 /// attempt id. Key: `blake3(dedupe key)`.
 pub(super) const DEDUPE: SideTable<[u8; 32], AttemptId, Raw> =

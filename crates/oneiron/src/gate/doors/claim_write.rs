@@ -31,8 +31,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
-    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_can_land_auto_with_confirm,
-    pending_row_holds_critical_confirm,
+    GATE_REASON_ALLOW_FALLBACK_CRITICALITY, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
+    critical_claim_can_land_auto_with_confirm, pending_row_holds_critical_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -457,13 +457,26 @@ fn check_claim_policy_for_write_with_record_inner(
             })
         });
         let owner_authored = critical_floor_only && owner_write.is_some();
-        let attach_critical_confirm = critical_floor_only && !owner_authored;
+        // Only a declared critical class attaches a confirmation. A predicate
+        // no policy rule names resolves Critical by fallback, and that
+        // default sets the legibility and truncation floors; it does not stop
+        // the write (ARCH-0003 §Criticality, FIX 8782). Attaching for it put a
+        // 300 s lapse on every ordinary agent claim, after which it stopped
+        // surfacing (FIX 12368). `comm.*` never reaches here:
+        // `critical_claim_can_land_auto_with_confirm` already excludes it, so
+        // it keeps its floor.
+        let declared_critical = policy.declares_predicate_critical(&body.predicate);
+        let attach_critical_confirm = critical_floor_only && !owner_authored && declared_critical;
+        let fallback_floor_only = critical_floor_only && !owner_authored && !declared_critical;
         if owner_authored {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
         } else if attach_critical_confirm {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
+        } else if fallback_floor_only {
+            decision = GateDecision::allow()
+                .with_receipt_reasons([GATE_REASON_ALLOW_FALLBACK_CRITICALITY]);
         }
 
         // ONE-1296: the host's auto checker is the LAST word on an ORDINARY

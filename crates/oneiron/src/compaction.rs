@@ -64,7 +64,7 @@ mod driver;
 mod epoch;
 mod epoch_floor;
 mod epoch_intent;
-mod epoch_vector;
+pub(crate) mod epoch_vector;
 mod fold_words;
 mod folds;
 mod gate;
@@ -104,7 +104,7 @@ pub(crate) use epoch::{
 pub(crate) use epoch_floor::{
     epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_session_epoch_floor_in_txn,
 };
-pub use epoch_vector::EpochEmbedder;
+pub use epoch_vector::{EpochEmbedder, TurnVector, room_turn_vector};
 pub(crate) use fold_words::{
     FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
     scrub_withdrawn_fold_summary_in_txn,

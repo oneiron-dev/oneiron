@@ -33,6 +33,11 @@ use crate::{EntityId, LlmRequest, Result, Vault, WriteActor};
 /// Breakpoints. Key: id16(conversation) + id16(message) + id16(generation).
 const BREAKPOINTS: SideTable<(EntityId, EntityId, EntityId), ChatBreakpoint, Named> =
     SideTable::new(&side_table::CHAT_BREAKPOINT);
+/// Whether a masked copy of a `CHAT_BREAKPOINT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn chat_breakpoint_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ChatBreakpoint, Named>(bytes)
+}
 
 /// The rung a reply's request was captured on, by ref: its provider, its
 /// place in the configured ladder, the model its wire names and the digest

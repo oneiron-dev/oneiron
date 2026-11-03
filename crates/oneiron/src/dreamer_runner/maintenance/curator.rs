@@ -40,6 +40,11 @@ pub(crate) const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
 /// Owner-set rubric dial for the memory-curator maintenance pass.
 const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
     SideTable::new(&side_table::DREAMER_CURATOR_RUBRIC);
+/// Whether a masked copy of a `DREAMER_CURATOR_RUBRIC` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_curator_rubric_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CuratorRubric, LegacyJson>(bytes)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratorTrigger {

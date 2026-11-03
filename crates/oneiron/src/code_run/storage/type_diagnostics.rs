@@ -34,6 +34,11 @@ pub(crate) type StepKey = (EntityId, u64, u64);
 /// Step feedback rows.
 const ROWS: SideTable<StepKey, StoredStepFeedback, Named> =
     SideTable::new(&side_table::CODE_RUN_TYPE_DIAGNOSTICS);
+/// Whether a masked copy of a `CODE_RUN_TYPE_DIAGNOSTICS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_type_diagnostics_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredStepFeedback, Named>(bytes)
+}
 
 /// A step's check as a row keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

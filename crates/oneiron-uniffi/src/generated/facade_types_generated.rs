@@ -13228,6 +13228,8 @@ pub struct CampaignProgramOutboundSpec {
     pub payload: String,
     #[serde(rename = "idempotency_supported")]
     pub idempotency_supported: bool,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 /// `oneiron::campaign::surface::program::CampaignProgramStepSpec`.
@@ -69287,6 +69289,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_origin: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     #[serde(
         rename = "source_title",
         default,

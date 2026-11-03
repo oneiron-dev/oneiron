@@ -2,9 +2,11 @@
 //! FIX 922): what a reader packs from a private world's window, and how a
 //! reader takes a section's window back in.
 //!
-//! The live window of a world flagged device-only never holds the world's rows
-//! (reverse rematerialization withholds them), so the reader keeps a second Loro
-//! document per sealed window, its mirror, packed with every row of the window.
+//! The live window of a world flagged device-only packs its own world's rows
+//! for live readers (reverse rematerialization withholds them from the other
+//! windows), and the reader keeps a second Loro document per sealed window,
+//! its mirror, packed with every row of the window: the mirror is what a
+//! section's packets continue.
 //! The mirror keeps its history: before each pack it takes the window's own
 //! deletes here, so a row deleted here leaves every mirror that merges it (FIX
 //! 3360). A section carries each mirror whole; taking one in merges it into the

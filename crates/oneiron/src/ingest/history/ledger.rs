@@ -18,6 +18,11 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 const LEDGER: SideTable<String, LedgerRow, Named> =
     SideTable::new(&side_table::INGEST_HISTORY_LEDGER);
+/// Whether a masked copy of a `INGEST_HISTORY_LEDGER` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn ingest_history_ledger_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<LedgerRow, Named>(bytes)
+}
 
 /// Longest native id kept in a key as is; a longer one keys by its hash.
 const MAX_KEYED_NATIVE_ID: usize = 256;

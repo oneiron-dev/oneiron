@@ -37,12 +37,29 @@ pub use readings::{DescriptionFitnessReadings, DescriptionGrading};
 
 const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
+/// Whether a masked copy of a `LLM_DESCRIPTION_POLICY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn llm_description_policy_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DescriptionPolicy, LegacyJson>(bytes)
+}
+
 const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
+/// Whether a masked copy of a `LLM_DESCRIPTION_MEASUREMENTS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn llm_description_measurements_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BTreeMap<ModelId, MeasuredDescription>, LegacyJson>(bytes)
+}
+
 const REASKS: SideTable<String, DescriptionReask, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_REASK);
 const SEATS: SideTable<String, RoutedSeat, LegacyJson> =
     SideTable::new(&side_table::LLM_ROUTED_SEAT);
+/// Whether a masked copy of a `LLM_ROUTED_SEAT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn llm_routed_seat_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<RoutedSeat, LegacyJson>(bytes)
+}
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())

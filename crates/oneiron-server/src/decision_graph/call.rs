@@ -3,10 +3,10 @@
 //! Definitions: LadderCall and call functions live here; posture helpers stay in the parent.
 
 use super::{
-    AskTo, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionProvider, DecisionQuestion,
-    DecisionRung, EdgeActorClass, EntityId, Error, HostingPrivacyPosture, LocalVisionModel,
-    LocatedDecision, Result, RetrievalDeadline, Reversibility, SyncServer, TypedDecision,
-    under_question_posture, vision_rung,
+    AskTo, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionProvider,
+    DecisionQuestion, DecisionRung, EdgeActorClass, EntityId, Error, HostingPrivacyPosture,
+    LocalVisionModel, LocatedDecision, Result, RetrievalDeadline, Reversibility, SyncServer,
+    TypedDecision, under_question_posture, vision_rung,
 };
 
 /// One call on the host's ladder, for a graph or an artifact unit.
@@ -16,6 +16,9 @@ pub(crate) struct LadderCall<'a> {
     pub(crate) question: &'a DecisionQuestion,
     pub(crate) evidence: &'a [EntityId],
     pub(crate) images: &'a [DecisionImage],
+    /// Named audio clips filling state fields of their names; empty when
+    /// the unit carries none or no rung hears them.
+    pub(crate) audio: &'a [DecisionAudio],
     pub(crate) state: &'a serde_json::Value,
     pub(crate) dial: DecisionDial,
     pub(crate) policy: &'a DecisionBandPolicy,
@@ -35,7 +38,8 @@ pub(crate) struct LadderCall<'a> {
 /// The call through the host's ladder. A call with images starts at the
 /// Local-vision rung, seated on a run of the asker's own, when the dial
 /// spans it; a rung above it that reads no image is skipped. Without that
-/// rung the call reads its state alone.
+/// rung the call reads its state alone. A call with clips starts at the
+/// first rung in the dial reading every medium it carries (FIX 11481c).
 pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result<TypedDecision> {
     let host = server.decision_host();
     let mut dial = call.dial;
@@ -60,11 +64,27 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
     ladder.ask_to = call.ask_to;
     ladder.correlation = call.correlation;
     let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
-    ladder.run_images(
+    // FIX 11481c: a call with clips starts at the first rung reading every
+    // medium it carries; clips no rung hears ride no further, as images
+    // ride no further without their rung.
+    let mut audio = call.audio;
+    if !audio.is_empty() {
+        match ladder.first_media_reader(dial.first, dial.ceiling, !call.images.is_empty(), true) {
+            Some(first) => dial.first = first,
+            None => audio = &[],
+        }
+    }
+    let images = if audio.is_empty() {
+        images
+    } else {
+        call.images
+    };
+    ladder.run_media(
         call.question,
         call.principal,
         call.evidence,
         images,
+        audio,
         call.state,
         dial,
         call.policy,

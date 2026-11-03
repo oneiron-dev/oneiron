@@ -134,6 +134,11 @@ pub(super) const SETTLED_TAG: [u8; 1] = *b"s";
 
 pub(super) const DELIVERIES: SideTable<(EntityId, EntityId, u64), WaitDelivery, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_DELIVERY);
+/// Whether a masked copy of a `CODE_RUN_WAIT_DELIVERY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_wait_delivery_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<WaitDelivery, Raw>(bytes)
+}
 
 const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);

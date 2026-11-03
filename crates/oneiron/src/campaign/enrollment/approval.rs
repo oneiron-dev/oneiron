@@ -37,6 +37,8 @@ const RETAINED_VERSION: u8 = 1;
 const RETAINED_LEN: usize = 1 + 16 * 3 + 8 + 16 * 2 + 32 + 16 + 16;
 /// The domain of the retained request's digest.
 const REQUEST_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.retained_request.v1";
+/// The additional domain separation for an email body's frozen subject.
+const EMAIL_PAYLOAD_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.email_payload.v1";
 
 /// (consequence id, call sequence, request digest) → the retained request.
 const RETAINED: SideTable<([u8; 16], u64, [u8; 32]), [u8; RETAINED_LEN], Raw> =
@@ -53,6 +55,21 @@ pub(super) struct LegAsk {
     // Read by the leg, ONE-1778 staging (see `outbound_leg.rs`).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) first_event_ref: Option<EntityId>,
+}
+
+/// The frozen body digest, with the optional email subject framed explicitly.
+/// Non-email payloads keep their existing digest byte-for-byte.
+fn outbound_payload_digest(outbound: &CampaignProgramOutbound) -> [u8; 32] {
+    let body = crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload);
+    let Some(subject) = outbound.subject.as_deref() else {
+        return body;
+    };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(EMAIL_PAYLOAD_DOMAIN);
+    hasher.update(&body);
+    hasher.update(&(subject.len() as u64).to_be_bytes());
+    hasher.update(subject.as_bytes());
+    *hasher.finalize().as_bytes()
 }
 
 /// The ask on the request `event`, `step` and `outbound` prepare for
@@ -76,7 +93,7 @@ pub(super) fn leg_ask(
         step_ref: step.step_ref,
         consequence_id: *consequence_id.as_bytes(),
         call_seq: outbound.call_seq,
-        payload_digest: crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload),
+        payload_digest: outbound_payload_digest(outbound),
     };
     let key = (
         live.consequence_id,

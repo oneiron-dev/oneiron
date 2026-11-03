@@ -110,8 +110,9 @@ impl RunPermit {
         run.settle(&self, outcome, None, provided)
     }
 
-    /// Settles a metered stream, as [`Self::settle`] settles `Used(units)`,
-    /// with the stream's admitted audio and bound on its receipt.
+    /// Settles a metered stream, as [`Self::settle`] settles
+    /// `UsedCounted(units)`, with the stream's admitted audio and bound on
+    /// its receipt.
     pub(super) fn settle_stream(
         mut self,
         units: u64,
@@ -119,7 +120,12 @@ impl RunPermit {
     ) -> Result<BudgetSettlement, RunDenied> {
         self.settled = true;
         let run = Arc::clone(&self.run);
-        run.settle(&self, CallOutcome::Used(units), Some(stream), Vec::new())
+        run.settle(
+            &self,
+            CallOutcome::UsedCounted(units),
+            Some(stream),
+            Vec::new(),
+        )
     }
 }
 

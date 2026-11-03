@@ -297,6 +297,53 @@ impl oneiron::off_record::RetainedCharge for RoomCharge {
     }
 }
 
+/// Pre-embeds one room turn's text for the witness (FIX 3817, engine ruling
+/// (a)): the server embeds before the witness verb, never under a store
+/// writer and never as an embed error, and hands the witness an optional
+/// turn vector. No server or error means `None`: the turn lands searchable
+/// by its words.
+///
+/// The text is the canonical projection — the visible, non-empty message
+/// contents in request order, one per line, the same text the engine joins
+/// (`tagging::shown_message_text` + `embed::joined_turn_text`) — with no new
+/// filtering rule.
+///
+/// The id handed to `room_turn_vector` is TRACING-ONLY on the required
+/// `OnDevice` path, where the embedder reads the payload alone: the guest
+/// overlay mint id is unknowable before the verb (it is minted inside
+/// `plan_witness`), so a fresh id is minted here. Never the staged turn's
+/// id; do not pass `turn_ref`, the actor, or the shell id.
+pub(crate) fn pre_embed_turn(
+    slot: Option<&Arc<crate::embedder::EmbedderSlot>>,
+    turn: &oneiron::memory::WitnessTurn,
+) -> Option<oneiron::compaction::TurnVector> {
+    let Some(slot) = slot else {
+        return None;
+    };
+    let text = turn
+        .messages
+        .iter()
+        .filter(|message| message.is_visible && !message.content.is_empty())
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tracing_id = oneiron::EntityId::now();
+    match oneiron::compaction::room_turn_vector(
+        slot.as_ref() as &dyn oneiron::compaction::EpochEmbedder,
+        &tracing_id,
+        &text,
+    ) {
+        Ok(vector) => vector,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "a room's turn was not embedded; it lands searchable by its words"
+            );
+            None
+        }
+    }
+}
+
 pub(crate) async fn room_witness(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -311,6 +358,9 @@ pub(crate) async fn room_witness(
     let receipt = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
+        // FIX 3817 (a): the turn's vector is embedded before the verb, on
+        // this blocking thread, never under the witness writer.
+        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &request.turn);
         vault
             .memory(actor, class)
             .at(locality)
@@ -319,6 +369,7 @@ pub(crate) async fn room_witness(
                 &request.turn,
                 request.summary.as_deref(),
                 credential.as_ref(),
+                turn_vector,
             )
             .map_err(witness_error)
     })

@@ -132,3 +132,7 @@ use crate::entity_id::EntityId;
 use std::collections::BTreeMap;
 
 pub use crate::task_verb::VaultLinearTaskStore;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::codec::linear_sync_link_accepts_masked;

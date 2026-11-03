@@ -15,16 +15,16 @@ side_tables! {
     MEMORY_TURN_WAKE_UNPERSISTED: VaultMeta b"memory:turn_wake_unpersisted:v1:" Named Engine;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
-    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
+    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
-    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored;
+    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
-    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
+    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
     /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored;
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked];
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -41,10 +41,10 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored;
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored;
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
@@ -380,7 +380,7 @@ side_tables! {
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
         => crate::llm::run_admission::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
-    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;

@@ -36,6 +36,11 @@ pub(super) const RUN_TREE: SideTable<AttemptId, DreamerRunTreeRecord, Raw> =
 /// Private paused-attempt row, keyed by attempt id.
 pub(super) const PARKED: SideTable<AttemptId, DreamerParkedAttemptRecord, Raw> =
     SideTable::new(&side_table::DREAMER_PARKED);
+/// Whether a masked copy of a `DREAMER_PARKED` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_parked_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DreamerParkedAttemptRecord, Raw>(bytes)
+}
 
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {

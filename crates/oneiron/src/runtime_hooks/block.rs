@@ -15,6 +15,12 @@ use super::outcome::BlockRequest;
 
 /// Block rows by block id. Consumed and expired rows stay as the record.
 const BLOCKS: SideTable<EntityId, HookBlock, Named> = SideTable::new(&side_table::HOOKS_BLOCK);
+/// Whether a masked copy of a `HOOKS_BLOCK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_block_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookBlock, Named>(bytes)
+}
+
 pub(super) const DEFAULT_TOKEN_CAP: u32 = 512;
 
 /// How long a block lasts.

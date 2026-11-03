@@ -75,3 +75,12 @@ pub use verb::{
     InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookPreSnapshot, VerbHookStop, hook_class,
 };
 pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::block::hooks_block_accepts_masked;
+pub(crate) use self::regen::hooks_regen_accepts_masked;
+pub(crate) use self::store::hooks_intent_accepts_masked;
+pub(crate) use self::store::hooks_memo_accepts_masked;
+pub(crate) use self::store::hooks_receipt_accepts_masked;
+pub(crate) use self::verb::hooks_verb_run_accepts_masked;

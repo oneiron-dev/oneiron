@@ -133,3 +133,7 @@ use rmpv::Value;
 
 pub(crate) use peer_wait::{resume_peer_result_steps, resume_signalled_steps};
 pub(crate) use types::StepEffectBinding;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::submission_custody::model_step_submission_accepts_masked;

@@ -50,7 +50,7 @@ impl TaggingReconciler {
         if paused() {
             return Ok(0);
         }
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         let (stale, stranded, unindexed) = {
             let txn = self.vault.store.env.read_txn()?;
             let mut stale = Vec::new();
@@ -130,7 +130,7 @@ impl TaggingReconciler {
     /// escalation stay as they were. A row this build cannot read is left
     /// to its own pass. Returns how many markers woke.
     pub fn wake_tagging_retries(&self, now: u64) -> Result<usize> {
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         let waiting = {
             let txn = self.vault.store.env.read_txn()?;
             let mut waiting = Vec::new();
@@ -170,7 +170,7 @@ impl TaggingReconciler {
     /// trace and pruned, then owed again under a derived id. One that has
     /// left the queue since the scan is let go.
     fn rehome_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: AttemptId) -> Result<()> {
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         let Some(found) = queue.get_in_write_txn(txn, id)? else {
             return Ok(());
         };
@@ -221,7 +221,7 @@ impl TaggingReconciler {
         txn: &mut heed::RwTxn<'_>,
         paused: &AttemptRecord,
     ) -> Result<()> {
-        let queue = AttemptQueue::from_store(&self.vault.store);
+        let queue = AttemptQueue::new(&self.vault);
         let now = self.stamp_in_txn(txn)?;
         let (actor, note) = paused
             .events

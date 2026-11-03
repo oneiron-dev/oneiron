@@ -24,6 +24,12 @@ use super::replay::{self, HookReplayEntry, HookReplayResult};
 
 /// One record per binding: the contract its last good body passed under.
 const REGEN: SideTable<EntityId, HookRegenRecord, Named> = SideTable::new(&side_table::HOOKS_REGEN);
+/// Whether a masked copy of a `HOOKS_REGEN` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn hooks_regen_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<HookRegenRecord, Named>(bytes)
+}
+
 /// The newest saved runs one regen replays as its golden set.
 const GOLDEN_ENTRIES: usize = 256;
 /// The `hub_ref` a vault's own pack records (`vault.packs.put`).

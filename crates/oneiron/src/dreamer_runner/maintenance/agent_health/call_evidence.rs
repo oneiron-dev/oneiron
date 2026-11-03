@@ -28,6 +28,11 @@ use crate::{EntityId, Result, Vault};
 /// The call receipt ledger, read in place.
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
     SideTable::new(&side_table::CALL_RECEIPT);
+/// Whether a masked copy of a `CALL_RECEIPT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn call_receipt_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CallReceipt, Named>(bytes)
+}
 
 /// Agents' calls by actor, each actor's oldest first.
 pub(super) type AgentCalls = BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>;

@@ -22,7 +22,7 @@ side_tables! {
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
     /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
-    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored [accepts: crate::dreamer_runner::call_receipt_accepts_masked]
         => crate::Vault::erase_call_receipt_actor_in_txn;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
@@ -72,7 +72,7 @@ side_tables! {
     /// the retained turns and summaries it was read from, by revision. Host-only; read only to
     /// reuse the prefix for the reply's Continue and Retry. Key: id16(conversation) +
     /// id16(message) + id16(stream generation).
-    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored;
+    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored [accepts: crate::conversation::chat_breakpoint_accepts_masked];
     /// Per-repository environment blueprint. Key: bytes32.
     CHECKOUT_ENV_BLUEPRINT: VaultMeta b"checkout:env_blueprint:v1:" VersionedNamed;
     /// Checkout lease act. Key: hex32.
@@ -270,7 +270,7 @@ side_tables! {
     /// predecessor, its run, the step the child starts at, the owner's approval, the approved
     /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
     /// id16(successor attempt).
-    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
+    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored [accepts: crate::code_run::code_run_continuation_accepts_masked];
     /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
     /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
     /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
@@ -317,19 +317,19 @@ side_tables! {
     CODE_RUN_READER_INDEX: VaultMeta b"code_run:reader_index:v1:" Raw;
     /// One reader child of a code run: its binding, state, generation and latest finding (JSON).
     /// Key: id16(task).
-    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw Authored;
+    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_job_accepts_masked];
     /// A code run's reader row: its children's clock, fixed at its first spawn, their spend scope
     /// and its counts (JSON). Key: id16(run).
     CODE_RUN_READER_PARENT: VaultMeta b"code_run:reader_parent:v1:" Raw;
     /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
     /// id16(set).
-    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
+    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
     /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
     /// id16(attempt) + be64(lease generation) + be64(step).
-    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored
+    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored [accepts: crate::code_run::code_run_replay_capsule_accepts_masked]
         => crate::code_run::erase_capsule_actor_in_txn;
     /// Whose reply content one code-run replay record holds (FIX 5718): the run it is (its own,
     /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
@@ -342,11 +342,11 @@ side_tables! {
     /// or the run's body holding them, the preparation note, the actor the run ran as and the
     /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +
     /// be64(invocation).
-    CODE_RUN_TYPE_DIAGNOSTICS: VaultMeta b"code_run:type_diagnostics:v1:" Named Authored
+    CODE_RUN_TYPE_DIAGNOSTICS: VaultMeta b"code_run:type_diagnostics:v1:" Named Authored [accepts: crate::code_run::code_run_type_diagnostics_accepts_masked]
         => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::code_run::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
     /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
     /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
@@ -465,7 +465,7 @@ side_tables! {
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
-    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored;
+    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored [accepts: crate::context_board::context_board_plugin_block_accepts_masked];
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
@@ -473,10 +473,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored;
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_baseline_accepts_masked];
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored;
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_verdict_accepts_masked];
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;

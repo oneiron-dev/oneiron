@@ -93,3 +93,7 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
 
 #[cfg(test)]
 mod tests;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::chat_breakpoint::chat_breakpoint_accepts_masked;

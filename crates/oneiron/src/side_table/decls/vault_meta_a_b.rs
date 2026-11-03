@@ -31,7 +31,7 @@ side_tables! {
     /// id16(attempt).
     AGENT_DISPATCH_RUN_OBJECTIVES: VaultMeta b"agent.dispatch.run_objectives.v1\0" Named Engine;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
-    AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
+    AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored [accepts: crate::agent_dispatch::agent_dispatch_widen_slice_accepts_masked];
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
         => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
@@ -45,7 +45,7 @@ side_tables! {
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw;
     /// Durable saved-composition record for one inert multi-step workflow wrapper attempt. Key: id16.
     AGENT_WORKFLOW_RECORD: VaultMeta b"agent.workflow.record.v1\0" LegacyJson Authored
-        [refs: WORKFLOW_RECORD_REFS];
+        [refs: WORKFLOW_RECORD_REFS] [accepts: crate::agent_dispatch::agent_workflow_record_accepts_masked];
     /// Binds a captured-source ASSET id back to the child agent it was birthed for. Key: id16.
     AGENT_DEF_BIRTH_ASSET_BINDING: VaultMeta b"agent_def/birth-asset-binding/v1\0" Raw;
     /// Which asset entity currently holds custody of a birthed agent's captured source. Key: id16.
@@ -308,7 +308,7 @@ side_tables! {
     /// without scanning the site-first program table. Key: id16.
     BROWSER_WORKFLOW_BY_ID: VaultMeta b"browser.workflow.by_id.v1\0" Named Engine;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
-    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
+    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_retired_accepts_masked]
         => crate::browser_library::erase_retired_actor_in_txn;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored

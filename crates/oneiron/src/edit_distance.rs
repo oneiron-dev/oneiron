@@ -80,6 +80,11 @@ use crate::write_envelope::WriteActor;
 /// Finalized proposal-text artifact and its retained document, keyed by artifact ref.
 const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
+/// Whether a masked copy of a `EDIT_DISTANCE_PROPOSAL_ARTIFACT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn edit_distance_proposal_artifact_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredProposal, Raw>(bytes)
+}
 
 /// Schema version of the persisted proposal-artifact record.
 pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;

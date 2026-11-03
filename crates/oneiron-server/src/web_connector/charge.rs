@@ -60,7 +60,7 @@ pub(super) fn admit(
 /// one keeps its reservation as spend, as the request went out.
 pub(super) fn settle(permit: RunPermit, answered: bool) {
     let outcome = if answered {
-        CallOutcome::Used(1)
+        CallOutcome::UsedCounted(1)
     } else {
         CallOutcome::Failed
     };

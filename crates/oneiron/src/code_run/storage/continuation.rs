@@ -13,6 +13,11 @@ use crate::{EntityId, Error, Result, Vault};
 /// Continuations. Key: id16(successor attempt).
 const CONTINUATIONS: SideTable<EntityId, StoredRunContinuation, Named> =
     SideTable::new(&side_table::CODE_RUN_CONTINUATION);
+/// Whether a masked copy of a `CODE_RUN_CONTINUATION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_continuation_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredRunContinuation, Named>(bytes)
+}
 
 /// One successor attempt's continuation, immutable once written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

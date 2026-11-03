@@ -29,12 +29,24 @@ use crate::{EntityId, Error, Result, Vault};
 
 /// One row per child, keyed by its task.
 const JOBS: SideTable<EntityId, ReaderJob, Raw> = SideTable::new(&side_table::CODE_RUN_READER_JOB);
+/// Whether a masked copy of a `CODE_RUN_READER_JOB` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_reader_job_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ReaderJob, Raw>(bytes)
+}
+
 /// One row per parent run.
 const PARENTS: SideTable<EntityId, ReaderParent, Raw> =
     SideTable::new(&side_table::CODE_RUN_READER_PARENT);
 /// One row per wait set.
 const WAITS: SideTable<EntityId, TaskWaitSet, Raw> =
     SideTable::new(&side_table::CODE_RUN_READER_WAIT);
+/// Whether a masked copy of a `CODE_RUN_READER_WAIT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_reader_wait_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<TaskWaitSet, Raw>(bytes)
+}
+
 /// The tagged index rows (`c`, `f`, `q`, `w`, `d`) the declaration names.
 const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::CODE_RUN_READER_INDEX);
 
