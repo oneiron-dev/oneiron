@@ -324,14 +324,20 @@ impl PipelineBuilder<'_> {
         let mut l15_gated = 0_u64;
         let mut exact_posting_matches_scope = |id: &EntityId| {
             l15_gated += 1;
-            pipeline_candidate_matches_filters_and_gate(
+            let l15_started = std::time::Instant::now();
+            let l15_outcome = pipeline_candidate_matches_filters_and_gate(
                 &self.read,
                 rtxn,
                 id,
                 inputs.filter_config,
                 stage_metadata,
                 &mut prefix_probe_claim_gate,
-            )
+            );
+            crate::stage_timing::record(
+                "pipe.text_gate",
+                u64::try_from(l15_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
+            l15_outcome
         };
         let text_query = inputs
             .hyde_expansion
