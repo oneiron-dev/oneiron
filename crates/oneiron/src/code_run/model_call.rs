@@ -5,6 +5,7 @@
 //! this row references them. Only a call that writes no message owns its
 //! Reasoning bytes here, until the agent is erased.
 
+use oneiron_model::llm::ReasoningPartKind;
 use serde::{Deserialize, Serialize};
 
 use super::replay_capsule::{CapsuleRungBinding, ReplayRoutePin};
@@ -16,15 +17,6 @@ use crate::{EntityId, Error, ModelLocality, Result, Vault};
 const SCHEMA: u8 = 1;
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReasoningPartKind {
-    Full,
-    Summary,
-    Encrypted,
-    Count,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,15 +43,24 @@ impl ModelCallReasoningPart {
         occurrence: Option<OutputRef>,
         produced_row: Option<EntityId>,
     ) -> Option<Self> {
-        let crate::ContentPart::Reasoning { text, signature } = part else {
+        let crate::ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind,
+            data,
+        } = part
+        else {
             return None;
         };
-        if occurrence.is_some() {
-            let kind = if text.is_empty() {
+        let kind = match reasoning_kind {
+            ReasoningPartKind::Full
+                if text.is_empty() && (signature.is_some() || data.is_some()) =>
+            {
                 ReasoningPartKind::Encrypted
-            } else {
-                ReasoningPartKind::Full
-            };
+            }
+            other => *other,
+        };
+        if occurrence.is_some() {
             return Some(Self {
                 kind,
                 text: None,
@@ -69,34 +70,42 @@ impl ModelCallReasoningPart {
                 produced_row,
             });
         }
-        if text.is_empty() && signature.is_none() {
-            return Some(Self {
-                kind: ReasoningPartKind::Count,
+        match kind {
+            ReasoningPartKind::Count => Some(Self {
+                kind,
                 text: None,
                 bytes: None,
                 signature: None,
                 occurrence: None,
                 produced_row,
-            });
-        }
-        if text.is_empty() {
-            return Some(Self {
-                kind: ReasoningPartKind::Encrypted,
-                text: None,
-                bytes: signature.as_ref().map(|value| value.as_bytes().to_vec()),
-                signature: None,
+            }),
+            ReasoningPartKind::Encrypted => {
+                let (bytes, signature) = if let Some(data) = data {
+                    (Some(data.as_bytes().to_vec()), signature.clone())
+                } else {
+                    (
+                        signature.as_ref().map(|value| value.as_bytes().to_vec()),
+                        None,
+                    )
+                };
+                Some(Self {
+                    kind,
+                    text: None,
+                    bytes,
+                    signature,
+                    occurrence: None,
+                    produced_row,
+                })
+            }
+            ReasoningPartKind::Full | ReasoningPartKind::Summary => Some(Self {
+                kind,
+                text: Some(text.clone()),
+                bytes: None,
+                signature: signature.clone(),
                 occurrence: None,
                 produced_row,
-            });
+            }),
         }
-        Some(Self {
-            kind: ReasoningPartKind::Full,
-            text: Some(text.clone()),
-            bytes: None,
-            signature: signature.clone(),
-            occurrence: None,
-            produced_row,
-        })
     }
 
     fn validate(&self) -> Result<()> {

@@ -4,8 +4,8 @@
 
 use super::{
     ContentPart, FatalLlmError, FinishReason, JsonValue, LlmMessage, LlmMessageRole, LlmResponse,
-    LlmResult, LlmUsage, parse_function_call, parse_responses_usage, reasoning_signature,
-    reasoning_text, responses_finish_reason,
+    LlmResult, LlmUsage, parse_function_call, parse_responses_usage, reasoning_content_text,
+    reasoning_signature, reasoning_summary_text, responses_finish_reason,
 };
 
 /// The `type` of one socket event.
@@ -65,10 +65,24 @@ pub fn parse_openai_responses_output(response: &JsonValue) -> LlmResult<LlmRespo
                 }
             }
             Some("reasoning") => {
-                let text = reasoning_text(item);
+                let summary = reasoning_summary_text(item);
+                if !summary.is_empty() {
+                    content.push(ContentPart::Reasoning {
+                        text: summary,
+                        signature: None,
+                        reasoning_kind: oneiron::ReasoningPartKind::Summary,
+                        data: None,
+                    });
+                }
+                let text = reasoning_content_text(item);
                 let signature = reasoning_signature(item, model);
                 if !text.is_empty() || signature.is_some() {
-                    content.push(ContentPart::Reasoning { text, signature });
+                    content.push(ContentPart::Reasoning {
+                        text,
+                        signature,
+                        reasoning_kind: oneiron::ReasoningPartKind::Full,
+                        data: None,
+                    });
                 }
             }
             Some("function_call") => {

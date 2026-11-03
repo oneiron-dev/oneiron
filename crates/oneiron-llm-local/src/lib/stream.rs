@@ -73,11 +73,15 @@ impl<'a> LocalEventStream<'a> {
                 part_id,
                 text,
                 signature,
+                reasoning_kind,
+                data,
             } => {
                 let part_id = self.next_part_id(part_id);
                 self.pending.push_back(Ok(LlmStreamEvent::ReasoningStart {
                     part_id: part_id.clone(),
                     signature: signature.clone(),
+                    reasoning_kind,
+                    data: data.clone(),
                 }));
                 self.pending.push_back(Ok(LlmStreamEvent::ReasoningDelta {
                     part_id: part_id.clone(),
@@ -85,8 +89,12 @@ impl<'a> LocalEventStream<'a> {
                 }));
                 self.pending
                     .push_back(Ok(LlmStreamEvent::ReasoningEnd { part_id }));
-                self.content
-                    .push(ContentPart::Reasoning { text, signature });
+                self.content.push(ContentPart::Reasoning {
+                    text,
+                    signature,
+                    reasoning_kind,
+                    data,
+                });
             }
             LocalOutputPart::ToolCall {
                 part_id,

@@ -128,7 +128,16 @@ fn validate_terminal(
     if message.role != oneiron::LlmMessageRole::Assistant {
         return Err(FatalLlmError::InvalidRequest.into());
     }
-    if *reason != oneiron::FinishReason::Cancelled && (message.content.is_empty() || message.content.iter().all(|p| matches!(p, oneiron::ContentPart::Text {text} | oneiron::ContentPart::Reasoning {text,..} if text.trim().is_empty()))) {
+    if *reason != oneiron::FinishReason::Cancelled
+        && (message.content.is_empty()
+            || message.content.iter().all(|p| match p {
+                oneiron::ContentPart::Text { text } => text.trim().is_empty(),
+                oneiron::ContentPart::Reasoning { text, data, .. } => {
+                    text.trim().is_empty() && data.is_none()
+                }
+                _ => false,
+            }))
+    {
         return Err(FatalLlmError::EmptyResponse.into());
     }
     for part in &message.content {

@@ -108,9 +108,17 @@ impl OpenAiResponsesStreamAccumulator {
                 self.assembly
                     .text(&format!("text-{}-{content}", index()), delta())
             }
-            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => self
-                .assembly
-                .reasoning(&format!("reasoning-{}", index()), delta(), None),
+            "response.reasoning_summary_text.delta" => self.assembly.reasoning_with_kind(
+                &format!("reasoning-summary-{}", index()),
+                delta(),
+                None,
+                oneiron::ReasoningPartKind::Summary,
+                None,
+            ),
+            "response.reasoning_text.delta" => {
+                self.assembly
+                    .reasoning(&format!("reasoning-{}", index()), delta(), None)
+            }
             "response.function_call_arguments.delta" => {
                 let header = self
                     .tools
