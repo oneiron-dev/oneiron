@@ -348,14 +348,13 @@ async fn replace_excluded_conversations(
     let request = payload.read(&server).await?;
     let stored = blocking(move || -> OwnerResult<ExcludedConversationsView> {
         let vault = server.vault();
-        owner.revalidate(vault)?;
         let conversations = request
             .conversations
             .iter()
             .map(|conversation| entity_id("conversation", conversation))
             .collect::<OwnerResult<BTreeSet<_>>>()?;
         let setting = DreamerExcludedConversations::new(conversations);
-        vault.set_dreamer_excluded_conversations(&setting)?;
+        vault.set_dreamer_excluded_conversations(&owner, &setting)?;
         let stored = vault.dreamer_excluded_conversations()?;
         Ok(excluded_conversations_view(stored))
     })

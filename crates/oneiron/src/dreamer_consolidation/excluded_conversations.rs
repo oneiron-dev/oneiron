@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -70,7 +71,10 @@ impl DreamerExcludedConversations {
 
 impl Vault {
     /// Operator configuration seam, like the selection row. It is not an agent
-    /// verb; the live server exposes it only through its owner Dreamer route.
+    /// verb; the live server exposes it only through its owner Dreamer route,
+    /// and the owner proof is revalidated inside the write transaction, so a
+    /// credential revoked while the request queued for the writer cannot
+    /// still replace or clear the row.
     /// Replace semantics: writing an empty set clears the row, and setting the
     /// same value again rewrites the same row. Readers load it per round/pass,
     /// so it may be set any time before the first wake or resume. Turns a
@@ -78,10 +82,12 @@ impl Vault {
     /// retroactively queued if the conversation is later un-excluded.
     pub fn set_dreamer_excluded_conversations(
         &self,
+        owner: &AuthenticatedOwner,
         setting: &DreamerExcludedConversations,
     ) -> Result<()> {
         setting.validate()?;
         self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
             EXCLUDED_CONVERSATIONS.put(&self.store, txn, &(), setting)?;
             Ok(())
         })
