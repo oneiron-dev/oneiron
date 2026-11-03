@@ -66,6 +66,12 @@ world guest {
     import output-text: func(target: string, start: bool, frame: string) -> result<u64, string>;
     // @js oneiron.output.bytes @abi
     import output-bytes: func(path: string, frame: list<u8>) -> result<u64, string>;
+    // A stored result's bytes, streamed: bootstrap's own wiring behind
+    // `store` of a byte value (a Uint8Array, an ArrayBuffer or another
+    // view), the byte twin of the "store" text target above. `start` marks
+    // a value's first frame, so a second store replaces the first.
+    // @js oneiron.store.bytes @abi
+    import store-bytes: func(start: bool, frame: list<u8>) -> result<u64, string>;
     // A proposed file, streamed: bootstrap's own wiring behind propose.file.
     // `proposal-open` names the file and returns its id, `proposal-chunk`
     // appends one frame of at most one message, and `proposal-close` settles

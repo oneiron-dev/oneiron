@@ -69,13 +69,14 @@ completed step, and a later call replaces its answer.
 `writeOutput('/mnt/outputs/name', bytes)` appends to an output file, so a large
 file is written in pieces. None of them holds a result whole or charges a size
 budget: each streams to the host as it is written, through the hidden
-`output-text` and `output-bytes` imports, in frames of at most one 1 MiB
+`output-text`, `output-bytes` and `store-bytes` imports, in frames of at most one 1 MiB
 message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
 host keeps each body in the vault's result store and gives the model a handle
 and a preview.
 First-party code also gets `store(value, name?)`, which streams a value the
-same way (a string as given, anything else as its JSON) through the `store`
-target and binds it under `name` or the next free `r<n>`; it answers the
+same way (a string as given, a byte value as its bytes through the
+`store-bytes` import, anything else as its JSON) through the `store` sink
+and binds it under `name` or the next free `r<n>`; it answers the
 result's card. `describe(r)`, given a name, a handle or a card, answers that
 card again from the manifest: name, size, lines, completion, taint and a
 preview a tainted body withholds. The names live in the run's replay record,

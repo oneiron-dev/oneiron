@@ -8,6 +8,8 @@ pub(in crate::engine_executor) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &
     // The step's streamed result: console lines, the answer and its files.
     "oneiron.output.text",
     "oneiron.output.bytes",
+    // A byte value's streamed store sink (FIX 829), twin of the text store target.
+    "oneiron.store.bytes",
     "vault.agents.put",
     // The verb table at each row's SDK path, the memory rows the run answers included.
     "self.verbs.names",

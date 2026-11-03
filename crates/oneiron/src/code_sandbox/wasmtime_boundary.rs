@@ -192,6 +192,12 @@ fn link<H: bindings::GuestImports + 'static>(
                     Ok((cx.data_mut().host.output_bytes(path, frame),))
                 },
             )?,
+            "oneiron.store.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (start, frame): (bool, Vec<u8>)| {
+                    Ok((cx.data_mut().host.store_bytes(start, frame),))
+                },
+            )?,
             "oneiron.propose.open" => unary!(root, wit, proposal_open, String),
             "oneiron.propose.chunk" => root.func_wrap(
                 wit,
