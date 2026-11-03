@@ -45,11 +45,19 @@ use crate::store::install_identity::{DEVICE_PK, MACHINE_ID, MACHINE_PK};
 use crate::vault::Vault;
 
 pub(crate) use crate::store::install_identity::{
-    DeviceIdentity, InstallSigner, cache_machine_pk, load_or_mint_client_id,
-    load_or_mint_client_id_in_txn, load_or_mint_machine_id_in_txn, put_or_check_device_pk_in_txn,
-    read_client_id_from, read_client_id_in_txn, read_device_verifying_key_in_txn,
-    read_machine_id_in_txn, read_machine_verifying_key_in_store_txn,
+    DeviceIdentity,
+    InstallSigner,
+    load_or_mint_client_id_in_txn,
+    read_client_id_in_txn,
+    read_client_id_from,
+    load_or_mint_client_id,
+    put_or_check_device_pk_in_txn,
+    read_device_verifying_key_in_txn,
+    cache_machine_pk,
     read_machine_verifying_key_in_txn,
+    read_machine_verifying_key_in_store_txn,
+    load_or_mint_machine_id_in_txn,
+    read_machine_id_in_txn,
 };
 
 /// `m:client_id` sync_state row (u64 LE, 8 bytes).

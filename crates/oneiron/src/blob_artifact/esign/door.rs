@@ -32,12 +32,13 @@ use super::lane_scope::{self, EsignScope};
 use super::model::{DocumentStatus, EsignDocument};
 use super::outbound::{EsignActScope, EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
-use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::outbound::{
-    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchRequest, OutboundIntent,
-    OutboundIntentDraft,
+    OutboundDispatchActor, OutboundDispatchGate,
+    OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
 };
+use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::store::outbound_trigger::OutboundIntentTrigger;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};

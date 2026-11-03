@@ -26,6 +26,7 @@ use super::document_candidate_types::{
 use super::document_ingress::{CODE_OPERATIONS, ProvenanceRefKey};
 use super::publication::OriginPublicationStatus;
 use crate::code_revision::{CodeRevision, CodeRevisionFork};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
 use crate::ports::EntityStoreRead;
@@ -34,7 +35,6 @@ use crate::repo_mutation::proposal::RepoProposedFile;
 use crate::repo_mutation::{
     PreparedRepoProposal, ReceivedFilesProposalInput, received_proposal_id,
 };
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::{EntityId, TimeRange, Vault};
 
 mod files;

@@ -6,7 +6,9 @@
 
 use crate::error::Error;
 
-use super::types::{AttemptQueueCleanupReport, AttemptQueueRetryReason, CleanupAttemptLeases};
+use super::types::{
+    AttemptQueueCleanupReport, AttemptQueueRetryReason, CleanupAttemptLeases,
+};
 use crate::error::ArtifactError;
 
 pub(crate) use crate::store::attempt_cleanup::AttemptQueueCleanupMetrics;

@@ -1,8 +1,6 @@
 //! Production landing through immutable multi-critic proposal approvals.
 use super::{LandingPermit, MergeBatch, MergeLanding, MergeQueue, TestedBatch};
-use crate::{
-    Vault, error::Result, repo_mutation::RepoMutationOutcome, store::code_snapshot::RepoRef,
-};
+use crate::{Vault, store::code_snapshot::RepoRef, error::Result, repo_mutation::RepoMutationOutcome};
 
 /// Uses the engine's durable reviewed proposal journal, not a trusted-admin
 /// mutation door. Each merge proposal ID must name exactly one repository

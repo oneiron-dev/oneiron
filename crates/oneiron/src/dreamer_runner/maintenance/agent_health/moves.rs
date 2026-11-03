@@ -21,7 +21,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::ask::ask_coach_in_txn;
-use super::steer::{SteerReceipt, SteerRequest, steer_linked};
 use super::{
     AgentHealthCard, AgentHealthCoachAsk, AgentHealthMove, CARDS, card_ref, forbidden, may_read,
     parse_card_ref,
@@ -34,6 +33,7 @@ use crate::memory::{
     MessagePersonReceipt, MessagePersonRequest,
 };
 use crate::run_tree::RunSignalState;
+use super::steer::{SteerReceipt, SteerRequest, steer_linked};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 const BASIS_DOMAIN: &[u8] = b"oneiron.coach.agent_health.move_basis.v1";
