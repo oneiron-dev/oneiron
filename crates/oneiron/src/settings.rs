@@ -90,12 +90,23 @@ impl RawValue for PluginSuggestionsFlag {
 /// Persisted customization profile. Key: ().
 const CUSTOMIZATION_SETTINGS: SideTable<(), CustomizationSettings, Named> =
     SideTable::new(&side_table::CUSTOMIZATION_SETTINGS);
+/// Whether a masked copy of a `CUSTOMIZATION_SETTINGS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn customization_settings_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CustomizationSettings, Named>(bytes)
+}
+
 /// Monotonic sequence counter for customization change-notification events. Key: ().
 const CUSTOMIZATION_EVENT_SEQUENCE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::CUSTOMIZATION_EVENT_SEQUENCE);
 /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
 const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Named> =
     SideTable::new(&side_table::CUSTOMIZATION_EVENT);
+/// Whether a masked copy of a `CUSTOMIZATION_EVENT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn customization_event_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CustomizationSettingsChangeEvent, Named>(bytes)
+}
 
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
@@ -611,3 +622,7 @@ fn device_only_worlds_in(
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     withheld_worlds_in(vault, txn, destination)
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::models::model_owner_fallback_accepts_masked;
