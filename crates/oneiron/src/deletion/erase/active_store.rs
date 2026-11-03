@@ -80,7 +80,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+                crate::key_material::WorldKeyDestroyCause::LocalDelete,
                 request_id.copied(),
             )?;
             // An erased custody record is fenced, every key its id names

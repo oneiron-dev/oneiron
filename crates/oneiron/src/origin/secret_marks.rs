@@ -46,7 +46,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
-use crate::secret_custody::{CustodyWrite, MASKED_FILE_BAND};
+use crate::secret_record::{CustodyWrite};
+use crate::secret_custody::{MASKED_FILE_BAND};
 use crate::file_secret_marks::MemberStep;
 use crate::temporal::TimeRange;
 

@@ -122,7 +122,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
+                crate::key_material::WorldKeyDestroyCause::ReplayedTombstone,
                 decoded.request_id,
             )?;
             // A hard tombstone of one pad row retires that key's pad in

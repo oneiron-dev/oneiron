@@ -21,3 +21,16 @@ pub(crate) mod floor_keys {
     pub(crate) const ROTATION_MAX_AGE_SECS: &str = "secret.custody.rotation_max_age_secs";
     pub(crate) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
+
+pub(crate) mod admission;
+pub(crate) mod carrier_marks;
+mod write_records;
+
+pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
+pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
+pub use self::write_records::{CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled};
+pub(crate) use self::write_records::{ArchiveSameId, CustodyWrite, FoundNote, StoredValue};
+
+pub(crate) use self::write_records::{SLOT_PREFIX, custody_portable, is_cloud_registration_slot};
+
+pub(crate) use self::write_records::{RepoFileKeys, RepoFileOriginal};

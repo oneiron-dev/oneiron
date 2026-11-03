@@ -23,7 +23,8 @@ use crate::Vault;
 use crate::authority::{ActSurface, OpenedSecretSupplement, SecretSupplementImport};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::secret_custody::{ArchiveSameId, archive_same_custody_in_txn};
+use crate::secret_record::{ArchiveSameId};
+use crate::secret_custody::{archive_same_custody_in_txn};
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("secret supplement import: {reason}"))

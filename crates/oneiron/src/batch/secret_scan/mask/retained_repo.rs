@@ -44,7 +44,9 @@ use crate::ports::ShortIdStoreRead;
 use crate::repo_mutation::{
     REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
 };
-use crate::secret_custody::{CustodyWrite, KeySpan, KnownValues, MaskedFile};
+use crate::secret_record::{CustodyWrite};
+use crate::file_secret_marks::{KeySpan};
+use crate::secret_custody::{KnownValues, MaskedFile};
 use crate::file_secret_marks::MemberStep;
 use crate::secret_custody::masked_file_in_txn;
 use crate::store::Store;

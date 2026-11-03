@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result, SecretError};
 use crate::secret_record::{CustodyClass, CustodyTier, SecretBinding};
-use crate::secret_custody::SecretCustodyAdmission;
+use crate::secret_record::SecretCustodyAdmission;
 use crate::secret_record::{SecretCustodyFloor, SecretCustodyStatus};
 
 // ---------------------------------------------------------------------------

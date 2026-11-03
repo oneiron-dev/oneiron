@@ -742,9 +742,9 @@ fn restore_secrets_in_txn<R: Read + Seek>(
                 &existing,
                 &record,
             ) {
-                crate::secret_custody::ArchiveSameId::Same => unchanged += 1,
-                crate::secret_custody::ArchiveSameId::Pending => skipped += 1,
-                crate::secret_custody::ArchiveSameId::Different => {
+                crate::secret_record::ArchiveSameId::Same => unchanged += 1,
+                crate::secret_record::ArchiveSameId::Pending => skipped += 1,
+                crate::secret_record::ArchiveSameId::Different => {
                     return Err(invalid(
                         "import ID collides with a different custody record",
                     ));

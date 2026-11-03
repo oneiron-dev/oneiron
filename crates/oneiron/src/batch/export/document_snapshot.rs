@@ -696,7 +696,7 @@ fn archive_custody_secret(
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
-            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
+            && !crate::secret_record::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {

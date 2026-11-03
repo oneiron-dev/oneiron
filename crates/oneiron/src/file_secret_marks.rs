@@ -1,6 +1,9 @@
 //! Value-free file-mask paths, read visibility, and byte-span transformations.
 
-use crate::error::{Error, Result, SecretError};
+use crate::entity_id::EntityId;
+use rmpv::Value;
+
+use crate::error::{Error, GateError, Result, SecretError};
 
 /// The byte a key's span reads as in a masked copy. A run of it is the
 /// door's own mask shape (`********`), never secret material.
@@ -100,3 +103,84 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
     Error::Secret(SecretError::MaskedCopyWithheld { reason })
 }
 
+
+/// One key: its byte span in the stored file, or in the decoded member that
+/// holds it, and the custody record that holds its value.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct KeySpan {
+    pub(crate) start: u64,
+    pub(crate) end: u64,
+    pub(crate) custody: EntityId,
+    /// The scan's reason code: the key's kind.
+    pub(crate) reason: String,
+}
+
+/// The text form a mask leaves in a span, `[secret sc12]`, before the
+/// handle. The claim-restore proof recomputes the restored body with it
+/// (FIX 11882).
+pub(crate) const HANDLE_TEXT_OPEN: &str = "[secret ";
+
+/// [`unmasked_body`] over one decoded value: whether anything changed. The
+/// claim-restore proof recomputes a restored claim body with it (FIX 11882).
+pub(crate) fn unmask_value(
+    tree: &mut Value,
+    handle: &str,
+    text_form: &str,
+    value: &[u8],
+) -> Result<bool> {
+    let restored = match &*tree {
+        Value::String(text) => match text.as_str() {
+            Some(text) => unmasked_text(text, handle, text_form, value)?,
+            None => None,
+        },
+        Value::Binary(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) => unmasked_text(text, handle, text_form, value)?,
+            Err(_) => None,
+        },
+        _ => None,
+    };
+    if let Some(restored) = restored {
+        *tree = restored;
+        return Ok(true);
+    }
+    let mut changed = false;
+    match tree {
+        Value::Array(items) => {
+            for item in items {
+                changed |= unmask_value(item, handle, text_form, value)?;
+            }
+        }
+        Value::Map(fields) => {
+            for (key, member) in fields.iter_mut() {
+                changed |= unmask_value(key, handle, text_form, value)?;
+                changed |= unmask_value(member, handle, text_form, value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(changed)
+}
+
+/// One string of a body with the value back: the whole of it when it is the
+/// handle a credential field keeps, each span's text form within it
+/// otherwise.
+fn unmasked_text(text: &str, handle: &str, text_form: &str, value: &[u8]) -> Result<Option<Value>> {
+    if text == handle {
+        return Ok(Some(match std::str::from_utf8(value) {
+            Ok(value) => Value::from(value),
+            Err(_) => Value::Binary(value.to_vec()),
+        }));
+    }
+    if text.contains(text_form) {
+        return Ok(Some(Value::from(text.replace(text_form, as_text(value)?))));
+    }
+    Ok(None)
+}
+
+pub(crate) fn as_text(value: &[u8]) -> Result<&str> {
+    std::str::from_utf8(value).map_err(|_| {
+        Error::Gate(GateError::InvalidConsentBound(
+            "the key is not text, so it cannot go back into the record's text",
+        ))
+    })
+}

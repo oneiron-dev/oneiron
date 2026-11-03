@@ -144,16 +144,7 @@ impl MaskedFile {
     }
 }
 
-/// One key: its byte span in the stored file, or in the decoded member that
-/// holds it, and the custody record that holds its value.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct KeySpan {
-    pub(crate) start: u64,
-    pub(crate) end: u64,
-    pub(crate) custody: EntityId,
-    /// The scan's reason code: the key's kind.
-    pub(crate) reason: String,
-}
+pub(crate) use crate::file_secret_marks::KeySpan;
 
 pub use crate::file_secret_marks::SecretSight;
 

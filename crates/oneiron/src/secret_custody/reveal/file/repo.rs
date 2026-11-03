@@ -40,7 +40,6 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::git_wire::GitOid;
 use crate::secret_custody::reveal::{
     RevealAsker, checked_text, covering_grant, project_selector, reveal_class,
 };
@@ -55,32 +54,9 @@ const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
 /// The handle a repo file's opaque residue is read as, in place of keys'.
 const REPO_SEALED_HANDLE: &str = "sealed repo file";
 
-/// One marked repo file as its door pinned it: the ORIGINAL, never a copy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoFileOriginal {
-    /// The repo the file is read from.
-    pub(crate) repo: EntityId,
-    /// The canonical store identity the blob is kept in.
-    pub(crate) store: String,
-    /// The snapshot the read is pinned to, when its door names one.
-    pub(crate) snapshot: Option<EntityId>,
-    /// The file's path in the repo.
-    pub(crate) path: String,
-    /// The stored blob.
-    pub(crate) blob: GitOid,
-    /// The import source the repo came from, when it has one.
-    pub(crate) source: Option<EntityId>,
-    /// Every readable mark on the blob, sorted.
-    pub(crate) marks: Vec<EntityId>,
-}
+pub(crate) use crate::secret_record::RepoFileOriginal;
 
-/// The keys a repo file's marks hold, value-free: each placed key's custody
-/// record, and whether residue no span isolates is marked.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RepoFileKeys {
-    pub(crate) custody: Vec<EntityId>,
-    pub(crate) opaque: bool,
-}
+pub(crate) use crate::secret_record::RepoFileKeys;
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
