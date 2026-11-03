@@ -392,7 +392,11 @@ impl Vault {
                         (writer.actor_ref, &writer_effect),
                     ],
                 );
-                return Ok((LinearEffectAdmission::Held(hold), [None, None]));
+                return Ok((
+                    LinearEffectAdmission::Held(hold),
+                    [None, None],
+                    writer.actor_ref,
+                ));
             };
             if !previously_authorized {
                 self.store.vault_meta.put(txn, &key, &digest)?;
@@ -403,9 +407,10 @@ impl Vault {
             Ok((
                 LinearEffectAdmission::Admitted { gate_ref },
                 pair.spent_presses,
+                writer.actor_ref,
             ))
         });
-        let (admission, spent) = match admitted {
+        let (admission, spent, writer) = match admitted {
             Err(LinearSyncError::Waiting(LinearWait::RateWindow {
                 next_eligible_at: 0,
             })) => {
@@ -418,7 +423,13 @@ impl Vault {
             admitted => admitted?,
         };
         // FIX 6424 part 2a: the presses it spent, kept once it committed.
-        super::approval::keep_spent_presses(self, request.operation_id, spent)?;
+        super::approval::keep_spent_presses(
+            self,
+            request.operation_id,
+            (request.scheduler_actor, writer),
+            request.task_ref,
+            spent,
+        )?;
         Ok(admission)
     }
 

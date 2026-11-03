@@ -244,3 +244,97 @@ fn keep(
         }
     }
 }
+
+/// The typed key one raw retained row names, for the erases that scan the
+/// table raw so a row that does not decode is passed over, never an error.
+fn retained_key(bytes: &[u8]) -> Option<([u8; 16], u64, [u8; 32])> {
+    if bytes.len() != 16 + 8 + 32 {
+        return None;
+    }
+    Some((
+        bytes.get(..16)?.try_into().ok()?,
+        u64::from_be_bytes(bytes.get(16..24)?.try_into().ok()?),
+        bytes.get(24..)?.try_into().ok()?,
+    ))
+}
+
+/// FIX 6835: drops every retained request `drop` names, in `wtxn`, after the
+/// scan: a retained press authorizes nothing once the Gate's own rows for
+/// what it names are erased, and a missing one only re-asks. A row that does
+/// not decode is passed over: nothing reads it back as a live request, and
+/// the damage report owns it, as in the ledger scrub.
+fn drop_retained_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    drop: impl Fn(&([u8; 16], u64, [u8; 32]), &CampaignLegFacts, &EntityId, &EntityId) -> bool,
+) -> crate::error::Result<()> {
+    let mut dropped = Vec::new();
+    for row in RETAINED.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, value) = row?;
+        let Some(key) = retained_key(&key) else {
+            continue;
+        };
+        let Ok(value) = <[u8; RETAINED_LEN]>::try_from(value.as_slice()) else {
+            continue;
+        };
+        let Some((facts, event_ref)) = decode(&key, &value) else {
+            continue;
+        };
+        let Some(sender_ref) = value
+            .get(121..137)
+            .and_then(|bytes| bytes.try_into().ok())
+            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+        else {
+            continue;
+        };
+        if drop(&key, &facts, &sender_ref, &event_ref) {
+            dropped.push(key);
+        }
+    }
+    for key in dropped {
+        RETAINED.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// FIX 6835: this table's actor scrub (FIX 3520): an erase of `actor` drops
+/// every retained request naming it — as sender, recipient, query,
+/// campaign, program, step, event row, or the consequence in its key — in
+/// the erase's writer.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_enrollment_ask_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    drop_retained_in_txn(vault, wtxn, |key, facts, sender_ref, event_ref| {
+        key.0 == *actor.as_bytes()
+            || *sender_ref == *actor
+            || facts.query_ref == *actor
+            || facts.campaign_ref == *actor
+            || facts.entity_ref == *actor
+            || facts.program_ref == *actor
+            || facts.step_ref == *actor
+            || *event_ref == *actor
+    })
+}
+
+/// FIX 6835: drops every retained request of one consequence's call, in the
+/// per-call erase's writer: that erase owns the whole call, so the drop is
+/// by key prefix and does not decode.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn drop_enrollment_asks_of_call_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::error::Result<()> {
+    let mut prefix = attempt_id.as_bytes().to_vec();
+    prefix.extend_from_slice(&call_seq.to_be_bytes());
+    RETAINED.delete_from(&vault.store, wtxn, &prefix)?;
+    Ok(())
+}

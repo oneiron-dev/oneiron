@@ -128,6 +128,19 @@ pub(crate) fn keep_pinned_approval_in_txn(
     Ok(())
 }
 
+/// FIX 6835: drops the press kept beside ledger row `intent_id`, in the
+/// erase's own writer ([`super::store::put_erased_record`], the funnel both
+/// erase paths share). A kept press authorizes nothing without its ledger
+/// row, and a missing one only re-asks, so the delete is unconditional.
+pub(crate) fn drop_pinned_approval_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent_id: &IntentId,
+) -> crate::error::Result<()> {
+    PINNED_APPROVAL.delete(&vault.store, wtxn, intent_id)?;
+    Ok(())
+}
+
 /// The press `intent_id`'s first admission spent, kept for a retry whose
 /// live `effect` pins the same family. `None` for none kept, another family,
 /// or a row that does not read: that retry stays on its existing path.
