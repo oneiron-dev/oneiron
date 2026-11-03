@@ -21,7 +21,8 @@ use super::actor_content::{
     FreeTimeSlot, Joined, Pieces,
 };
 use super::{all_keys, erased_in_txn, free_time_item_waits_unstarted, invalid, settled_in_txn};
-use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use crate::agent_dispatch::{AgentDispatcher};
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{HomeFence, HomeMove, HomeTable, TableAdopt};

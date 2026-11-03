@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
 use super::provisional;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::memory::extraction::{ExtractionWork, MoodPart, SpeakerTarget};

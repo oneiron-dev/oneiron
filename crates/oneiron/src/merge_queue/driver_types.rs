@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{CheckPhase, QueueExportHold, QueueRevisionLink, QueueSealTarget};
 use crate::EntityId;
-use crate::repo_mutation::RepoForkHash;
+use crate::store::repo_fork::RepoForkHash;
 
 /// One pass of the checker drain, as the driver reads it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
