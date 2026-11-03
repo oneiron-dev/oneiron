@@ -38,6 +38,7 @@
 //! 2722, [`KnownValues::growing`]).
 
 mod forms;
+pub(crate) mod l15s_bench;
 mod rolling;
 mod writer_index;
 

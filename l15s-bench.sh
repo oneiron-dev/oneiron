@@ -13,10 +13,10 @@ case "$stage" in
     echo "## BUILD rc=0 head=$head secs=$(( $(date +%s) - start ))"
     for i in 1 2 3; do "$CARGO_TARGET_DIR/release/examples/l15s_fusion_bench" l15s-inputs/claims.tsv 60; done
     ;;
-  oneiron)
+  bm25|hydrate|temporal|secret)
     cargo build --locked --release -p oneiron --bin l15s_bench || exit 1
     echo "## BUILD rc=0 head=$head secs=$(( $(date +%s) - start ))"
-    for i in 1 2 3; do "$CARGO_TARGET_DIR/release/l15s_bench" "${2:?substage}"; done
+    for i in 1 2 3; do "$CARGO_TARGET_DIR/release/l15s_bench" "$stage"; done
     ;;
   *) echo "unknown stage $stage"; exit 2;;
 esac
