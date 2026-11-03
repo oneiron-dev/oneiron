@@ -246,6 +246,37 @@ pub(super) fn broker_backend(
 }
 
 impl BrokerBackend {
+    pub(super) fn openai_config(&self) -> Option<&OpenAiCompatConfig> {
+        match &self.wire {
+            Wire::OpenAi(config) => Some(config),
+            Wire::Anthropic(_) => None,
+        }
+    }
+
+    pub(super) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub(super) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(super) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub(super) fn client(&self) -> &BrokerClient {
+        &self.client
+    }
+
+    pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
+        &self.keys
+    }
+
+    pub(super) fn secret(&self) -> &str {
+        &self.secret
+    }
+
     /// The call frame's header and the exact body bytes it carries, checked
     /// as the broker will check them. `call` is the broker's call id; the
     /// digest does not cover it.
@@ -388,6 +419,34 @@ pub(super) async fn call_with_key(
         })?;
     connection
         .call(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens one streaming call with its key read at the door, leaving the reply
+/// stream to the caller. Nothing reads the key before the broker is reached.
+pub(super) async fn open_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .open(header, body, key)
         .await
         .map_err(broker_error)
 }
