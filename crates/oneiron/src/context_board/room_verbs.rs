@@ -161,7 +161,7 @@ impl Memory<'_> {
     pub(crate) fn reading_defaults(
         &self,
         actors: &[EntityId],
-    ) -> MemoryResult<Vec<crate::pipeline::WorldAuthoritySet>> {
+    ) -> MemoryResult<Vec<crate::claim::world_access::WorldAuthoritySet>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         Ok(reading_defaults_in(vault, &txn, actors)?)
@@ -334,7 +334,7 @@ impl Vault {
     pub fn room_world_set(
         &self,
         members: &[EntityId],
-    ) -> crate::Result<Option<crate::pipeline::WorldAuthoritySet>> {
+    ) -> crate::Result<Option<crate::claim::world_access::WorldAuthoritySet>> {
         let txn = self.store.env.read_txn()?;
         let defaults = reading_defaults_in(self, &txn, members)?;
         super::scope_worlds(&room_worlds(&defaults)?)
@@ -381,7 +381,7 @@ fn reading_defaults_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actors: &[EntityId],
-) -> crate::Result<Vec<crate::pipeline::WorldAuthoritySet>> {
+) -> crate::Result<Vec<crate::claim::world_access::WorldAuthoritySet>> {
     let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, txn)?;
     // Folded once, and only when some member is under world-access law.
     let fold = std::cell::OnceCell::new();

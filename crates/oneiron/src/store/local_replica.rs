@@ -233,10 +233,10 @@ pub(crate) fn remove_local_replica_window_in_txn(
         remove_member(store, txn, &edges, id, &mut report)?;
     }
     if report.vectors > 0 {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if !report.removed.is_empty() {
-        crate::ppr::increment_graph_version(store, txn)?;
+        crate::store::graph_version::increment_graph_version(store, txn)?;
     }
     if report.remaining == 0 {
         remove_window_rows(store, txn, window, &mut report)?;
@@ -538,7 +538,7 @@ fn remove_member(
     // Thread meta reads the RepliesTo edges, so it is marked dirty first.
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, txn, *id)?;
     crate::task_verb::index_owner_fact(store, txn, id, None)?;
-    crate::bm25::deindex_text(store, txn, id)?;
+    crate::store::text_index::deindex_text(store, txn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(store, txn, id)?;
     crate::batch::delete_from_phonetic_postings(store, txn, id)?;
     crate::code_symbol::delete_code_symbol_manifest_in_txn(store, txn, id)?;

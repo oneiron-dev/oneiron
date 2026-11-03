@@ -134,6 +134,12 @@ pub mod retained_memory;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub mod dreamer_attempt_kind;
+pub mod consolidation_scope;
+pub mod setting_seed;
+pub mod snapshot_lock_result;
+pub mod snapshot_key;
+
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
@@ -159,7 +165,19 @@ mod credential_custody;
 mod deadline_jobs;
 pub mod derivation;
 mod diagnostics;
+pub(crate) mod graph_version;
+pub(crate) mod l2_evidence;
+pub mod retrieval_deadline;
+pub(crate) mod text_index;
+pub(crate) mod vector_index;
 mod gate_decision;
+mod scan_kind;
+mod scan_kind_table;
+mod scan_checks;
+
+pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
+pub use scan_checks::ScanCheck;
+pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
@@ -190,6 +208,11 @@ mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
 mod retrieval_telemetry;
+pub mod retrieval_values;
+pub mod result_manifest;
+pub(crate) mod reader_fold_receipt;
+pub(crate) mod task_body_checks;
+pub mod retrieval_policy;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;

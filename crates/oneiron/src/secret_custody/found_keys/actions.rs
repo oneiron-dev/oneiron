@@ -589,7 +589,7 @@ fn restore_text_in_txn(
         return Ok(());
     };
     *text = text.replace(&text_form, as_text(value)?);
-    crate::bm25::deindex_text(&vault.store, txn, record)?;
+    crate::store::text_index::deindex_text(&vault.store, txn, record)?;
     let fields = fields
         .iter()
         .map(|(name, text)| (name.as_str(), text.as_str()))

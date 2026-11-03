@@ -62,12 +62,12 @@ impl Vault {
         if prior.scope != super::super::history_store::machine_history_scope_bytes(&original)? {
             return Err(bad());
         }
-        let signature = crate::authority::AuthoritySignature {
+        let signature = oneiron_authority::authority::AuthoritySignature {
             suite: prior.signer.suite(),
             public_key: prior.signer.clone(),
             signature: prior.signature.to_vec(),
         };
-        if !crate::authority::verify_authority_signature(
+        if !oneiron_authority::authority::verify_authority_signature(
             &signature,
             &prior.transcript().map_err(|_| bad())?,
         ) {

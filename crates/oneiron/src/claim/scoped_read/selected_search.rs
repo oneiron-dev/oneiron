@@ -5,7 +5,8 @@
 //! does, inside this read's own authority. It grants nothing.
 
 use super::*;
-use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::pipeline::{FacetMode, WorldScope};
 use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
 
 impl ScopedRead<'_> {
@@ -54,9 +55,9 @@ impl ScopedRead<'_> {
             Some(worlds) => WorldScope::WorldSet(worlds.clone()),
         };
         let corpus = if scope.project_ids.is_empty() {
-            crate::corpus::CorpusScope::All
+            crate::claim::corpus_scope::CorpusScope::All
         } else {
-            crate::corpus::CorpusScope::AnyOf(scope.project_ids.clone())
+            crate::claim::corpus_scope::CorpusScope::AnyOf(scope.project_ids.clone())
         };
         let kinds = crate::memory::RecallKinds::new(scope.kinds.clone());
         let read = match worlds {

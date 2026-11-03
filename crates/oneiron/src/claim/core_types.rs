@@ -14,7 +14,7 @@ use crate::write_envelope::{
     affect_trigger::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure},
     coping_outcome::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
 };
-use crate::context_pack::FieldProfile;
+use crate::serialize::pack_format::FieldProfile;
 use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::temporal::TimeRange;
@@ -116,7 +116,7 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::subject_model::validate_person_substrate_claim_structure(&body)?;
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::validate_imported_reliability(&body)?;
-    } else if crate::learning::is_learning_predicate(&body.predicate) {
+    } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         crate::learning::validate_learning_claim_structure(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;

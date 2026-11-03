@@ -13,7 +13,8 @@ use crate::error::{Error, RecordError, Result};
 use crate::write_envelope::task_body::TaskRole;
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -135,7 +136,7 @@ pub(super) fn validate_public_raw_put(
             // wrong. Both doors run it: an engine settle body is coherent by
             // construction, so this costs the internal path nothing and
             // closes the raw path completely.
-            crate::task_verb::reject_incoherent_task_terminal(data)?;
+            crate::store::task_body_checks::reject_incoherent_task_terminal(data)?;
             // A deadline already past is a task born expired, and the facade
             // refuses one. The PUBLIC raw door joins that invariant, against
             // the same clock the row is stamped with — the facade compares
@@ -149,7 +150,7 @@ pub(super) fn validate_public_raw_put(
             // invariant, and the board derives `Expired`, which is the truth
             // about that row.
             if door == RawPutDoor::Public {
-                crate::task_verb::reject_born_expired_task_deadline(data, learned_at)?;
+                crate::store::task_body_checks::reject_born_expired_task_deadline(data, learned_at)?;
             }
         }
         _ => {}
@@ -414,7 +415,7 @@ pub(super) fn materialize_lexical_query_hint_text_if_target_ready(
             )?;
             *text_indexing.manifest_checked = true;
         }
-        crate::bm25::index_text(
+        crate::store::text_index::index_text(
             store,
             wtxn,
             text_indexing.analyzer,

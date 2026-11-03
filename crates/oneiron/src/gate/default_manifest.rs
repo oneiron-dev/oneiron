@@ -147,8 +147,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
-            Value::from(crate::failure_signals::policy::POLICY_KEY),
-            crate::failure_signals::policy::default_row(),
+            Value::from(crate::gate::failure_signal_policy::POLICY_KEY),
+            crate::gate::failure_signal_policy::default_row(),
         ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -1361,7 +1361,7 @@ fn compilation_route(
 /// The vault-wide search policy ships as data, not a Rust threshold or
 /// hard-coded stagnation branch. The manifest resolver composes edits by scope.
 fn default_experiment_selection_rows() -> Value {
-    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+    let rows: Vec<crate::gate::experiment_selection_policy::SelectionPolicyRow> =
         serde_json::from_str(include_str!(
             "../autoreason_campaign/selection_defaults.json"
         ))

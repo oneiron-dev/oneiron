@@ -23,14 +23,7 @@ use crate::write_envelope::{WriteActor, WriteEnvelope};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GateWriteMode {
-    pub(crate) record_decision: bool,
-    pub(crate) persist_pending_consent: bool,
-    pub(crate) resolve_pending: bool,
-    pub(crate) can_resolve_pending_consent: bool,
-    pub(crate) include_source_in_gate_input: bool,
-}
+pub(crate) use crate::store::GateWriteMode;
 
 pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) body: &'a ClaimBody,
@@ -85,13 +78,7 @@ impl<'a> ClaimGateWrite<'a> {
     }
 }
 
-pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
-    if matches!(envelope.provenance().value(), &Value::Nil) {
-        return Err(Error::InvalidClaimBody("write envelope missing provenance"));
-    }
-
-    Ok(())
-}
+pub(crate) use crate::write_envelope::validate_write_envelope;
 
 /// The claim value an auto-check candidate carries (ONE-1296), or `None` when
 /// it does not fit the preview bound.

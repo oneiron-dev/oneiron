@@ -17,7 +17,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
@@ -794,7 +795,7 @@ impl Vault {
                     owner_authored: None,
                 },
                 &policy,
-                crate::gate::GateWriteMode {
+                crate::store::GateWriteMode {
                     record_decision: true,
                     persist_pending_consent: false,
                     resolve_pending: true,

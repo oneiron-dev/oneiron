@@ -37,7 +37,7 @@ pub(super) fn apply_claim_candidate(
         write_policy,
         owner_authored,
     } = request;
-    crate::gate::validate_write_envelope(envelope)?;
+    crate::write_envelope::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();
@@ -49,7 +49,7 @@ pub(super) fn apply_claim_candidate(
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
 
     let subject = candidate.subject();
-    if candidate.predicate() == crate::pipeline::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+    if candidate.predicate() == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
         && subject != crate::write_envelope::claim_body::ClaimSubject::Entity(actor.entity_ref())
     {
         return Err(Error::InvalidClaimBody(

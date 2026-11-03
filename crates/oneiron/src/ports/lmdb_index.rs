@@ -7,7 +7,7 @@ use crate::batch::{
 use crate::deletion::{HydratedShortIdDeletion, HydratedShortIdDeletionSource, TombstoneValueV2};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ShortIdAliasTarget;
 use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
@@ -37,7 +37,7 @@ impl Vault {
         skip_rescore: bool,
         (private_note_ids, admission): (
             Option<&crate::claim::ScopedDiaryCandidates>,
-            Option<&crate::hnsw::Admission<'_>>,
+            Option<&crate::store::vector_index::Admission<'_>>,
         ),
     ) -> Result<Vec<ScoredEntity>> {
         let admits = |txn: &RoTxn<'_>, id: &EntityId| -> Result<bool> {
@@ -113,7 +113,7 @@ impl Vault {
         skip_rescore: bool,
         (staged, admits): (
             crate::session_overlay::StagedRows,
-            &crate::hnsw::Admission<'_>,
+            &crate::store::vector_index::Admission<'_>,
         ),
     ) -> Result<StagedVectors> {
         let mut ids = std::collections::HashSet::with_capacity(staged.rows.len());
@@ -432,7 +432,7 @@ impl super::RetrievalIndexMaintenance for Vault {
         txn: &mut RwTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
-        crate::bm25::deindex_text(&self.store, txn, id)
+        crate::store::text_index::deindex_text(&self.store, txn, id)
     }
 
     fn port_retrieval_clear_phonetic_for_soft_erase(

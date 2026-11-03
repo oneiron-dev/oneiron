@@ -580,11 +580,11 @@ pub(crate) struct RecallCandidateGate<'p, 'v> {
     filter: &'p ResolvedRetrievalFilter,
 }
 
-impl crate::pipeline::CandidateGate for RecallCandidateGate<'_, '_> {
+impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '_> {
     fn in_txn<'t>(
         &'t self,
         txn: &'t heed::RoTxn<'t>,
-    ) -> Box<crate::pipeline::SnapshotCandidateFilter<'t>> {
+    ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
         let held = HeldAuthority::default();
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
@@ -603,11 +603,11 @@ pub(super) struct PlanGate<'p, 'v> {
     excluded: &'p RequestExclusions,
 }
 
-impl crate::pipeline::CandidateGate for PlanGate<'_, '_> {
+impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
     fn in_txn<'t>(
         &'t self,
         txn: &'t heed::RoTxn<'t>,
-    ) -> Box<crate::pipeline::SnapshotCandidateFilter<'t>> {
+    ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
         let held = HeldAuthority::default();
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {

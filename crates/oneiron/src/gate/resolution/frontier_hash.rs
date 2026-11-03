@@ -145,7 +145,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "failure_signal_policy");
         hash_len(hasher, resolution.failure_signal_policy.len());
         for row in &resolution.failure_signal_policy {
-            use crate::failure_signals::policy::{Precedence, Scope};
+            use crate::gate::failure_signal_policy::Precedence;
+            use crate::gate::failure_signal_policy::Scope;
             match row.scope {
                 Scope::Default => hash_str(hasher, "default"),
                 Scope::Vault => hash_str(hasher, "vault"),
