@@ -605,6 +605,12 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,
+        // Empty adds no narrowing; with `person_ref`, only conversations
+        // selected by both axes remain.
+        conversation_refs: scope.conversation_refs.unwrap_or_default(),
+        // A PERSON selects conversations with at least one live MESSAGE
+        // AuthoredBy them, never conversations that merely mention them.
+        person_ref: scope.person_ref,
         ..Default::default()
     })
 }

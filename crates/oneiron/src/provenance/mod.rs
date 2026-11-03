@@ -146,6 +146,8 @@ pub mod birth;
 pub mod body;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
+mod conversation_sources;
+pub(crate) use conversation_sources::claim_conversation_sources_in;
 mod derived_attachment;
 pub(crate) use derived_attachment::support_project;
 mod edge_ref;
