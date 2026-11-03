@@ -16,9 +16,17 @@ mod lookup;
 mod orcb;
 mod read_items;
 mod retention;
+mod retention_policy;
 mod retention_scope;
+mod write_mode;
+
 #[cfg(test)]
 pub(crate) use super::key_custody::arm_before_retire_lock;
+pub(crate) use retention_policy::{
+    GateDecisionRetentionPolicy, GateRetentionContext, GateRetentionOverrideCeiling,
+    GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
+};
+pub(crate) use write_mode::GateWriteMode;
 mod sidecar;
 mod types;
 mod vet;

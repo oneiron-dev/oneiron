@@ -10,7 +10,6 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
@@ -22,6 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
+use oneiron_contracts::affect::Vad;
 
 use super::conflict_value::{
     RepoConflictOpenValue, RepoConflictResolutionValue, decode_repo_conflict_open_value,

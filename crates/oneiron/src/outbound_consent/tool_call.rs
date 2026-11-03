@@ -13,33 +13,8 @@ pub use self::headers::header_parameters;
 
 use self::headers::{canonical_header, declared_headers, dynamic_header};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolGrantDataClass {
-    Arguments,
-    XMcpHeader,
-}
-impl ToolGrantDataClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Arguments => "arguments",
-            Self::XMcpHeader => "x_mcp_header",
-        }
-    }
-    pub(crate) fn valid_grant_set(classes: &[Self]) -> bool {
-        matches!(
-            classes,
-            [Self::Arguments] | [Self::XMcpHeader] | [Self::Arguments, Self::XMcpHeader]
-        )
-    }
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "arguments" => Some(Self::Arguments),
-            "x_mcp_header" => Some(Self::XMcpHeader),
-            _ => None,
-        }
-    }
-}
+pub use crate::consent::tool_scope::ToolGrantDataClass;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeaderGrantRequirement {

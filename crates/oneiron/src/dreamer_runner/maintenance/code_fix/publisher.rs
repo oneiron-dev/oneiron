@@ -11,13 +11,21 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::code_run::shadow_runner::{
-    ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, SHADOW_PROTOCOL_VERSION,
-    ShadowArmLease, ShadowIsolation, ShadowMeterContext, ShadowRequestDigest, ShadowRunRequest,
-    ShadowRunResult, ShadowStatus, ShadowStepIdentity, ShadowUnavailable, ShadowUsage,
-};
+use crate::code_run::shadow_runner::{ShadowRunRequest, ShadowRunResult, ShadowStatus};
 use crate::compaction::output::OutputRef;
-use crate::{EntityId, LlmInputUsage, LlmOutputUsage, Result};
+use crate::dreamer_runner::shadow_values::ArtifactDigest;
+use crate::dreamer_runner::shadow_values::ArtifactDigestAlgorithm;
+use crate::dreamer_runner::shadow_values::EngineArtifactPin;
+use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
+use crate::dreamer_runner::shadow_values::ShadowArmLease;
+use crate::dreamer_runner::shadow_values::ShadowIsolation;
+use crate::dreamer_runner::shadow_values::ShadowMeterContext;
+use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
+use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
+use crate::dreamer_runner::shadow_values::ShadowUnavailable;
+use crate::dreamer_runner::shadow_values::ShadowUsage;
+use crate::{EntityId, Result};
+use oneiron_model::llm::{LlmInputUsage, LlmOutputUsage};
 
 /// What a publisher candidate is: an instruction the replay adds to the
 /// failing agent's own, or a pinned engine the host's shadow runner runs in

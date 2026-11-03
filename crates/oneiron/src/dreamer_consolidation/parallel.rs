@@ -25,9 +25,6 @@ use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_camp
 use crate::autoreason_campaign::beam_promotion::default_strategy;
 use crate::autoreason_campaign::research::bound_research_roots;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::critic::{
-    CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict, LensCatalog,
-};
 use crate::dreamer_runner::{
     DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringGateDecision,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore,
@@ -40,12 +37,16 @@ use crate::dreamer_tournament::{
 use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
-use crate::llm::{
-    DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_effect::StepEffectBinding;
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{Result, Vault};
+use crate::{
+    critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
+    store::critic_lens::LensCatalog,
+};
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
