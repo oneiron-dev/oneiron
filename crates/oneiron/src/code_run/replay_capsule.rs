@@ -44,7 +44,7 @@ use crate::attempt_queue::AttemptId;
 use crate::llm::ReasoningEffort;
 use crate::vault::VaultId;
 use crate::{
-    EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, ModelTierRef, Result,
+    ContentPart, EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, ModelTierRef, Result,
     Vault, WriteActor,
 };
 
