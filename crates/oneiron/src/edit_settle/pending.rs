@@ -373,7 +373,35 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, reader, (actor, retained_at), None)
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            None,
+            false,
+        )
+    }
+
+    /// [`Self::propose_native_output`] for a direct AgentRun append that did
+    /// not settle: the proposal and the caller's live content-write authority
+    /// commit under one check (FIX 8208).
+    pub(crate) fn propose_native_output_with_write_grant(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
+        actor: WriteActor,
+        retained_at: u64,
+    ) -> Result<PendingProposalView> {
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            None,
+            true,
+        )
     }
 
     /// Offers a deck export as a waiting proposal pinned to `base`, the
@@ -394,6 +422,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             Some((base, hold)),
+            false,
         )
     }
 
@@ -404,6 +433,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
+        authorize_content_write: bool,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -413,7 +443,7 @@ impl Vault {
                 "a native output must export the artifact's own media type",
             )));
         }
-        if output.bytes.is_empty() || output.name.trim().is_empty() {
+        if (!authorize_content_write && output.bytes.is_empty()) || output.name.trim().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "a native output needs a file name and non-empty bytes",
             )));
@@ -429,8 +459,10 @@ impl Vault {
             )));
         }
         crate::batch::secret_scan::scan_metadata_field(&output.name)?;
-        if OfficeFormat::from_media_type(&output.media_type).is_ok() {
-            // An office export must at least open as a package before it waits.
+        if !authorize_content_write && OfficeFormat::from_media_type(&output.media_type).is_ok() {
+            // An organ's office export must at least open as a package before
+            // it waits. A direct append keeps the append door's byte acceptance
+            // (FIX 8208): its authorized Keep reaches the same core append.
             crate::edit_roundtrip::read_office_package(&output.bytes)?;
         }
         let head = self.blob_artifact_head(artifact_id)?;
@@ -453,7 +485,11 @@ impl Vault {
                 report,
             },
         };
-        self.put_pending(artifact_id, &row, reader)
+        if authorize_content_write {
+            self.put_pending_with_content_write_grant(artifact_id, &row, reader, actor)
+        } else {
+            self.put_pending(artifact_id, &row, reader)
+        }
     }
 
     /// The proposals waiting beside one artifact, oldest ref hash first.
@@ -695,6 +731,27 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             // A named envelope is admitted in the transaction that keeps it
             // (FIX 1229).
+            if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
+                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
+            }
+            self.put_pending_in_txn(wtxn, artifact_id, row)
+        })?;
+        Ok(row.view(*artifact_id))
+    }
+
+    /// [`Self::put_pending`] with the direct append door's shared content-write
+    /// check in the same transaction as the retained proposal (FIX 8208).
+    fn put_pending_with_content_write_grant(
+        &self,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+        reader: Option<MadeByReader<'_>>,
+        actor: WriteActor,
+    ) -> Result<PendingProposalView> {
+        let lane =
+            admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
+        self.with_write_txn_grouped(|wtxn| {
+            self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, &actor)?;
             if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
                 admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
             }
