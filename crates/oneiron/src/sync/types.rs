@@ -176,8 +176,9 @@ pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
 }
 
 /// The ledger-plane partition axis: only CLAIM and WORLD_KEY_PAD bodies and a
-/// world's key wrap entries name a world. Other entity families, a world's
-/// settings entries included, remain in the shared base window.
+/// world's side entries (its key wraps and the joins over its side leaves)
+/// name a world. Other entity families, a world's settings entries included,
+/// remain in the shared base window.
 pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     // ITEM11_LIVE_PAD_CARRIER: a live pad rides its world's month windows. A
@@ -188,9 +189,9 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     let header =
         EntityMetadataHeader::parse(raw).ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        // A world's key wraps ride its month windows, to its readers only (FIX
-        // 3871). An entry that does not decode stays in the base window.
-        return Ok(authority_wrap_world(raw));
+        // A world's side entries ride its month windows, to its readers only
+        // (FIX 3871). An entry that does not decode stays in the base window.
+        return Ok(authority_side_entry_world(raw));
     }
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
@@ -198,10 +199,14 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world)
 }
 
-/// The world whose key wraps the AUTHORITY_LOG row `raw` carries
-/// (`authority::side_world`); `None` for any other row, a world's settings
-/// entry included, and for an entry that does not decode.
-pub(crate) fn authority_wrap_world(raw: &[u8]) -> Option<crate::EntityId> {
+/// The world of the AUTHORITY_LOG row `raw` when the row is one of that
+/// world's side entries (`authority::side_world`), which places the row in
+/// the world's month windows, to its readers only. It covers both kinds of
+/// side entry: the world's key wraps (FIX 3871), and the joins a carrier
+/// stages over the world's side leaves (FIX 11868). `None` for any other
+/// row, a world's settings entry included, and for an entry that does not
+/// decode.
+pub(crate) fn authority_side_entry_world(raw: &[u8]) -> Option<crate::EntityId> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     if EntityMetadataHeader::parse(raw)?.entity_type != crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         return None;

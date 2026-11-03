@@ -50,8 +50,10 @@ pub struct CustodyPermitPiece {
     pub index: u32,
     /// The place in the set of its first permit.
     pub first: u32,
-    /// Its run of the set, ascending by machine, one each.
-    pub permits: Vec<CustodyRecipientPermit>,
+    /// Its run of the set, ascending by machine, one each: one shared,
+    /// immutable run ([`CustodyRecipientPermits`], FIX 12310), so a clone of
+    /// the piece copies no permit.
+    pub permits: CustodyRecipientPermits,
 }
 
 impl CustodyPermitPiece {
@@ -139,10 +141,12 @@ pub(in crate::authority) fn decode_custody_permit_piece(
         commitment: decode_permit_pieces(required(entries, "commitment")?)?,
         index: decode_u32(entries, "index")?,
         first: decode_u32(entries, "first")?,
-        permits: permits
-            .iter()
-            .map(decode_permit)
-            .collect::<Result<Vec<_>>>()?,
+        permits: CustodyRecipientPermits::from(
+            permits
+                .iter()
+                .map(decode_permit)
+                .collect::<Result<Vec<_>>>()?,
+        ),
     };
     piece.validate()?;
     Ok(AuthorityOp::CustodyPermitPiece(piece))
