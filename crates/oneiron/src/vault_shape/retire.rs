@@ -15,8 +15,10 @@ use crate::channel_identity_lifecycle::{
     ChannelIdentityLifecycleRequest, ReleaseIntent,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::ports::EdgeDirection;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::deletion::{DeleteReason, DeletionGateContext, GatedDeletion};
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
@@ -78,6 +80,56 @@ impl Vault {
             GatedDeletion::new(context, &reverify),
         )?;
         Ok(outcome.receipt_id.unwrap_or(id).to_hex())
+    }
+
+    /// Retires the world `world` as `owner`, and with it every live facet
+    /// the world holds that no one wears (FIX 11508): a retired world
+    /// otherwise leaves its world facets orphaned, live FACET entities
+    /// whose `in_world` edge survives the soft delete while no shape row
+    /// reads them. Each orphan goes through the same owner-gated user
+    /// delete as its world; a facet anyone wears (one `has_facet` edge or
+    /// more) stays, so retiring a world never unwears a mask. Returns
+    /// the world's delete receipt; every orphan keeps its own receipt
+    /// on its tombstone.
+    pub(super) fn retire_shape_world(
+        &self,
+        owner: &AuthenticatedOwner,
+        world: EntityId,
+    ) -> Result<String> {
+        let orphans = {
+            let txn = self.store.env.read_txn()?;
+            let mut orphans = Vec::new();
+            for facet in self.filtered_edge_peers(
+                &txn,
+                EdgeDirection::In,
+                &world,
+                EdgeKind::InWorld,
+                Some(ENTITY_TYPE_FACET),
+            )? {
+                let LiveEntityRow::Live { .. } =
+                    live_entity_row_in_txn(&self.store, &txn, &facet)?
+                else {
+                    continue;
+                };
+                if self
+                    .filtered_edge_peers(
+                        &txn,
+                        EdgeDirection::In,
+                        &facet,
+                        EdgeKind::HasFacet,
+                        None,
+                    )?
+                    .is_empty()
+                {
+                    orphans.push(facet);
+                }
+            }
+            orphans
+        };
+        for orphan in orphans {
+            self.delete_shape_entity(owner, orphan)?;
+        }
+        self.delete_shape_entity(owner, world)
     }
 
     /// Retires the channel identity `item` names, as `owner`, after checking
