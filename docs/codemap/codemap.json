@@ -423,7 +423,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -473,9 +473,21 @@
      "path": "src/affect/mod.rs",
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
-      "re-export": 3
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/affect/processed.rs",
+     "purpose": "Processed marks on memories: the `affect.processed` state claim the engine writes once a memory is worked…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -7382,7 +7394,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -22522,7 +22534,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 66,
+      "fn": 69,
       "struct": 1
      }
     },
@@ -22742,7 +22754,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 5,
       "struct": 9
@@ -60369,7 +60381,7 @@
      "path": "src/result_body/files.rs",
      "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71405,7 +71417,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/bundle/publication.rs",
@@ -84034,7 +84046,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultPageSeal"
@@ -84043,7 +84055,7 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 11,
       "re-export": 2,
       "struct": 1
@@ -84067,7 +84079,7 @@
      "path": "src/world_keys/page_seal/mirror_rewrite.rs",
      "purpose": "The page-seal mirror's rewrite at a sealed open and after a wrap change, kept off the disk when the mirror…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -85230,7 +85242,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86770,9 +86782,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 111,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5886,
+   "source_files": 5887,
    "test_files": 902
   },
   "oneiron-android": {
@@ -107568,7 +107580,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/tasks_response.rs",
@@ -117060,7 +117072,7 @@
      "path": "src/oneironer/endpoint.rs",
      "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -120460,7 +120472,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
