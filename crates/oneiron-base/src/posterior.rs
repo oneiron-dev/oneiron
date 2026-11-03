@@ -2,4 +2,4 @@
 //! `oneiron::posterior` path is unchanged.
 
 pub use oneiron_contracts::posterior::Posterior;
-pub(crate) use oneiron_contracts::posterior::{beta_mean, beta_std_dev};
+pub use oneiron_contracts::posterior::{beta_mean, beta_std_dev};
