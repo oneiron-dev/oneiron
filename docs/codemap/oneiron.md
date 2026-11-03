@@ -4376,7 +4376,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/builder_capture.rs` | src | s | 7 fn · 8 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 4 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | m | 9 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
-| `src/pipeline/channels.rs` | src | L | 16 crate-vis | — | — |
+| `src/pipeline/channels.rs` | src | L | 17 crate-vis | — | — |
 | `src/pipeline/corpus_filter.rs` | src | s | 9 crate-vis | — | — |
 | `src/pipeline/criticality.rs` | src | s | 2 crate-vis | — | Narrow-only manifest criticality selection at candidate admission, and the critical claims a pack's… |
 | `src/pipeline/decay_tests.rs` | test | m | — | — | ONE-1402 · read-side memory decay at the pipeline seam |

@@ -55161,7 +55161,7 @@
      "path": "src/pipeline/channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
