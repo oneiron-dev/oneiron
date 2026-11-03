@@ -197,9 +197,11 @@ pub fn sealed_keeps_kit_piece(
 /// (FIX 11976, FIX 12055): a sealed vault's machine id is read only once its
 /// pages open, so the slots read are those of each install a device wrap in
 /// `carried` names, then of the install the vault id alone names as keeping
-/// a piece of this kind, when no carried wrap names it (FIX 12054, FIX
-/// 12055), each one's current pair, and for a recovery-root kit `pending`
-/// names, its pending pair too: a data-key kit has no pending pair (FIX
+/// a current piece of this kind, when no carried wrap names it (FIX 12054,
+/// FIX 12055). For a recovery-root kit `pending` names, its per-kit pending
+/// install name joins that discovery too, so a crash-left pending pair is
+/// found even with no wrap or current name. Each install's current pair and
+/// that pending pair are read: a data-key kit has no pending pair (FIX
 /// 12046). And whether a slot held a piece or a name that did not read: it
 /// is logged and left out.
 fn kept_pieces(

@@ -113,8 +113,8 @@ impl SlotKind {
 }
 
 /// Which slot of this machine's kit pieces: the kit kind, the current pair or
-/// one drawn kit's pending pair, then the piece's first 32 bytes (head) or the
-/// rest (tail).
+/// one drawn kit's pending pair, the piece's first 32 bytes (head) or rest
+/// (tail), or an install-name slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KitPieceSlot {
     /// The data-key kit's piece, its first 32 bytes.
@@ -153,7 +153,7 @@ pub enum KitPieceSlot {
 impl KitPieceSlot {
     /// Stable name in the backend, as [`SlotKind::label`]. A pending slot's
     /// name carries its kit's id: `kit-piece-recovery-root-pending-<kit id
-    /// hex>-head|tail`.
+    /// hex>-head|tail|install`.
     #[must_use]
     pub fn label(self) -> Cow<'static, str> {
         let (kit, half) = match self {
