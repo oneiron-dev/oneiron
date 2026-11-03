@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
 use crate::{Result, Vault};
 
