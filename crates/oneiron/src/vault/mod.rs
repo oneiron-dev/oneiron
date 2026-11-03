@@ -118,6 +118,13 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// The page-seal mirror read the last settle fused with its file
+    /// identity, consumed by the next ready check instead of a second
+    /// under-lease mirror read (FIX 12272). Set only by the settle's write
+    /// path, taken (never retained) by the check, and honored only while
+    /// this process holds the writer lease and the file's identity still
+    /// matches the capture — otherwise the check re-reads as before.
+    pub(crate) page_seal_mirror_carry: std::sync::Mutex<Option<crate::world_keys::CapturedMirror>>,
     /// Posture/custody pairing this handle was opened under, retained from the
     /// validated config so the honest read-only description below cannot drift
     /// from what the opener actually accepted. Private: callers read it through

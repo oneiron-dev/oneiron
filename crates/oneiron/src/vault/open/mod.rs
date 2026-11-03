@@ -550,6 +550,7 @@ impl Vault {
             config,
             analyzer,
             writer_lease: None,
+            page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
