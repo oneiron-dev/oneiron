@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `benches/agent_verb_rows_replay.rs` | src | s | — | — | FIX 837 speed bench: cold full-record reads versus warm cached repeated reads |
 | `benches/sync_memory.rs` | src | m | — | — | yrs memory benchmark for Oneiron sync GO/NO-GO gate |
 | `examples/feedback_queue.rs` | src | s | — | — | Seed a real receiving-vault queue and export its evidence for a host triage agent |
 | `examples/meeting_audio_evaluate.rs` | src | s | — | — | Offline recorded-output evaluator |
@@ -619,12 +620,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/request.rs` | src | s | 16 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
 | `src/batch/secret_scan.rs` | src | L | 1 enum · 1 re-export · 46 crate-vis | SecretScanMode | Secret detection and custody filtering at batch and release boundaries |
-| `src/batch/secret_scan/container.rs` | src | m | 18 crate-vis | — | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
+| `src/batch/secret_scan/container.rs` | src | m | 19 crate-vis | — | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 3 crate-vis | — | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 crate-vis | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
 | `src/batch/secret_scan/container/pdf.rs` | src | m | 3 crate-vis | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
 | `src/batch/secret_scan/container/projection_edit.rs` | src | s | 3 crate-vis | — | An agent's edit of a masked container copy, replayed member by member onto its ORIGINAL (FIX 7608 slice… |
-| `src/batch/secret_scan/container/retained_iterative.rs` | src | m | 4 crate-vis | — | The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held… |
+| `src/batch/secret_scan/container/retained_iterative.rs` | src | m | 5 crate-vis | — | The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held… |
 | `src/batch/secret_scan/container/tar.rs` | src | s | 3 crate-vis | — | A tar archive's members: each regular file in archive order, read whole against its declared length under… |
 | `src/batch/secret_scan/container/xz.rs` | src | s | 2 crate-vis | — | An xz file's payload: the stream decoded whole, its checks verified and nothing left after the last stream… |
 | `src/batch/secret_scan/lift_history/attempts.rs` | src | s | 4 crate-vis | — | The attempt records (`job_records`), with the intake events their rows carry |
@@ -1342,12 +1343,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/payload/observations.rs` | src | s | 3 crate-vis | — | The replay codec of the observations a verb's answer carries beside its output (FIX 2135): each frame the… |
 | `src/code_run/payload/request.rs` | src | s | 4 crate-vis | — | Canonical request values used by code-run replay |
 | `src/code_run/payload/session_hooks.rs` | src | s | 2 crate-vis | — | The replay codec of a `vault.search` outcome and what each verb hook bound to it did in a room (WILL L11-01… |
-| `src/code_run/read_set.rs` | src | s | 1 fn | — | Read-set witnesses a resident attempt's replay record can prove (FIX 7020) |
+| `src/code_run/read_set.rs` | src | s | 1 fn · 1 crate-vis | — | Read-set witnesses a resident attempt's replay record can prove (FIX 7020) |
 | `src/code_run/reader.rs` | src | L | 21 struct · 8 enum · 1 trait · 19 fn · 6 const · 12 crate-vis | ClaimOutcome, DelegatedSource, ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState +22 | Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and… |
 | `src/code_run/reader_brief.rs` | src | s | 1 fn | — | The task text a reader child's run is given: a read child's names its one source; a scoped child's (FIX… |
 | `src/code_run/reader_clock.rs` | src | s | 1 fn · 2 crate-vis | — | Which part of its parent's clock a reader job runs to (FIX 7507 PR3), and the parent attempt lease a scoped… |
 | `src/code_run/reader_fold.rs` | src | s | 2 fn | — | The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its… |
-| `src/code_run/replay.rs` | src | L | 12 struct · 1 enum · 24 fn · 8 const · 13 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +5 | — |
+| `src/code_run/replay.rs` | src | L | 12 struct · 1 enum · 24 fn · 8 const · 16 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +5 | — |
 | `src/code_run/replay/position.rs` | src | s | 1 fn | — | A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from… |
 | `src/code_run/replay_capsule.rs` | src | m | 7 struct · 4 enum · 7 fn · 7 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin +3 | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
 | `src/code_run/replay_parts.rs` | src | m | 10 crate-vis | — | A replay row's and a step start's parts under checkpoint custody (FIX 9180, Engine C2; coord-b slice d) |
