@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::kernel::hex_lower;
-use crate::authority::{FederationGrantActivation, FederationPactStatus};
+use oneiron_authority::authority::{FederationGrantActivation, FederationPactStatus};
 use crate::entity_id::EntityId;
 
 /// What one guest revoke did, as the withdrawing door reports it.

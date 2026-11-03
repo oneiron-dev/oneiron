@@ -13,7 +13,7 @@ use rmpv::Value;
 
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::self_heal::{
+use crate::store::diagnostic_record::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body,
 };

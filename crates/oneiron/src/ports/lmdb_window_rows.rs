@@ -6,7 +6,7 @@ use crate::deletion::{PENDING_TOMBSTONE, PendingTombstoneKey};
 use crate::error::Result;
 use crate::store::ManifestDbs;
 #[cfg(feature = "sync")]
-use crate::sync::window_rows::WindowUpdateKey;
+use crate::store::window_rows::WindowUpdateKey;
 use heed::RoTxn;
 
 fn pending_key(window: WindowAddress<'_>, id: &EntityId) -> PendingTombstoneKey {
