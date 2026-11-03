@@ -520,19 +520,19 @@ impl Store {
         if finished.is_empty() {
             return Ok(false);
         }
-        self.with_write_txn(|wtxn| {
-            let mut dropped = false;
-            for slot in &finished {
-                let erasing = ROWS
-                    .get(self, &*wtxn, slot)?
-                    .is_some_and(|row| row.phase == CloudRegistrationPhase::Erasing);
-                if erasing && self.credential_erase_finished_in_txn(&*wtxn, slot)? {
-                    ROWS.delete(self, wtxn, slot)?;
-                    dropped = true;
-                }
+        let mut wtxn = self.env.write_txn()?;
+        let mut dropped = false;
+        for slot in &finished {
+            let erasing = ROWS
+                .get(self, &*wtxn, slot)?
+                .is_some_and(|row| row.phase == CloudRegistrationPhase::Erasing);
+            if erasing && self.credential_erase_finished_in_txn(&*wtxn, slot)? {
+                ROWS.delete(self, &mut wtxn, slot)?;
+                dropped = true;
             }
-            Ok(dropped)
-        })
+        }
+        wtxn.commit()?;
+        Ok(dropped)
     }
 }
 
