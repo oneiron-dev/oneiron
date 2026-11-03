@@ -718,7 +718,7 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;
     }
-    if record.kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND {
+    if record.kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND {
         // Its reason copies the step's failure text; an erased owner's
         // copy becomes the marker, as the pass leaves it (FIX 10460).
         model_step::scrub_erased_failure_reason_in_txn(store, txn, record);

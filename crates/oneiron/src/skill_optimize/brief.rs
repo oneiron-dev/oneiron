@@ -10,7 +10,7 @@ use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_s
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
-use crate::llm::CallPurpose;
+use oneiron_model::llm::CallPurpose;
 use crate::skill_attribution::{
     AttributionVerdict, SkillEditProposal, attribution_judgment_row_ids, attribution_judgments,
     edit_proposal_row_ids, pending_edit_proposals,

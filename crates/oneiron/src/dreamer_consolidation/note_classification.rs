@@ -11,7 +11,7 @@ use super::executor::extraction::{ExtractedPerson, ExtractionReply, contract_rep
 use super::extracted_people::MintNamespace;
 use super::neighbourhood::Neighbourhood;
 use super::roles::RoleCall;
-use crate::llm::{LlmRequest, LlmResponse};
+use oneiron_model::llm::{LlmRequest, LlmResponse};
 use crate::{EntityId, Result};
 
 /// How a sealed scratchpad's review asks for its `keep` lines.
@@ -57,7 +57,7 @@ impl ConsolidationExecutor<'_> {
         listed: &Neighbourhood,
         markdown: &str,
         sealed_pad: Option<PadAsk>,
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
     ) -> Result<(LlmRequest, CallLabelMap)> {
         let mut labels = CallLabelMap::default();

@@ -1,7 +1,7 @@
 //! Transactional per-principal/grant observations, independent of connections.
 
 use super::{FederationPeer, corrupt, peer_health::PeerHealth};
-use crate::llm::normalized_burst_inputs;
+use oneiron_model::llm::normalized_burst_inputs;
 use crate::{Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +59,7 @@ pub(super) fn observe_in_txn(
     save(vault, txn, &key, &row)?;
     let baseline = baseline_from_row(vault, txn, peer, now, &row)?;
     Ok(PeerHealth {
-        inputs: crate::llm::NormalizedBurstInputs {
+        inputs: oneiron_model::llm::NormalizedBurstInputs {
             rate_ratio: baseline.rate_ratio,
             streak: baseline.streak,
         },

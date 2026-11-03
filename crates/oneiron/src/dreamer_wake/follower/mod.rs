@@ -44,7 +44,7 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::llm::Scope;
+use oneiron_model::llm::Scope;
 use crate::store::Store;
 
 pub(crate) use keyframe::{

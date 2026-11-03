@@ -7,7 +7,7 @@ use super::resources::BranchResources;
 use super::support::invalid_consolidation;
 use super::turn_text::MessageSpan;
 use crate::claim::ClaimSource;
-use crate::llm::ScopeResource;
+use oneiron_model::llm::ScopeResource;
 use crate::{EntityId, Result, Vault};
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};

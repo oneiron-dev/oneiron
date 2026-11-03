@@ -30,7 +30,7 @@ mod selector;
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
 
 use crate::error::{SyncProtocolValidation, SyncSelectorValidation};
-use crate::llm::NormalizedBurstInputs;
+use oneiron_model::llm::NormalizedBurstInputs;
 use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 

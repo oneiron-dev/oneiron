@@ -95,7 +95,7 @@ impl<'v> RoomTurnHandle<'v> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        lease: Option<&crate::llm::BudgetLease>,
+        lease: Option<&oneiron_model::llm::BudgetLease>,
     ) -> MemoryResult<MemoryPack> {
         self.memory
             .recall(query, effort, scope, limit, format, lease)

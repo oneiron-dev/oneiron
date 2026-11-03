@@ -3,7 +3,7 @@
 use super::{RerankCandidate, Reranker};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::BudgetLease;
+use oneiron_model::llm::BudgetLease;
 use crate::retrieval_depth::{BackendSpend, DeepSearchBackend, RetrievalError, RetrievalResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

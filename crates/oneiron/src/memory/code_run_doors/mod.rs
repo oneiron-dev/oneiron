@@ -19,7 +19,7 @@ mod types;
 pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::ModelId;
+use oneiron_model::llm::ModelId;
 use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref, session_type_diagnostics_row};
 use crate::consent::AuthenticatedOwner;
 

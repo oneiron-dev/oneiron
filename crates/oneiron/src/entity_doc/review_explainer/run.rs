@@ -7,11 +7,12 @@ use super::{
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
 use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
-use crate::llm::{
+use crate::inference_context::{ HostInferenceContext,
+};
+use oneiron_model::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    FinishReason, HostInferenceContext, LlmBackend, LlmCapability, LlmError, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ReasoningEffort, ResponseFormat, Scope,
-    TierPrecedence,
+    FinishReason, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
+    ModelId, ModelLocality, ReasoningEffort, ResponseFormat, Scope, TierPrecedence,
 };
 use crate::{EntityId, Error, Vault};
 
