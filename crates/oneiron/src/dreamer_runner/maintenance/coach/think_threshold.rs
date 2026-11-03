@@ -22,7 +22,7 @@ use crate::{
 
 /// Quick picks the Coach has not read yet. Key: the source the host bound
 /// the person's answer to (its ask or receipt).
-const THINK_MISSED: SideTable<EntityId, PersonChangedAnswer, Named> =
+pub(super) const THINK_MISSED: SideTable<EntityId, PersonChangedAnswer, Named> =
     SideTable::new(&side_table::COACH_THINK_MISSED);
 /// Sources a think-threshold run has read, with the time it read them, so a
 /// replayed record never counts twice. Key: as above.

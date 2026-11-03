@@ -271,15 +271,17 @@ impl Vault {
             });
         }
         // Authored markdown is a text atom, not trusted HTML. Splitting by line
-        // respects the atom leaf bound while retaining exactly the authored text.
+        // respects the atom leaf bound while retaining exactly the authored
+        // text; a line longer than the leaf bound frames across spans instead
+        // of refusing the brief (FIX 9984).
         let mut atoms = Vec::new();
         for line in shown(&document.markdown).lines() {
+            let line = if line.is_empty() { " " } else { line };
             atoms.push(LensAtom::TextBlock(TextBlockAtom {
-                spans: vec![LensTextSpan::Literal(LensText::new(if line.is_empty() {
-                    " "
-                } else {
-                    line
-                })?)],
+                spans: LensText::frames(line)
+                    .into_iter()
+                    .map(LensTextSpan::Literal)
+                    .collect(),
             }));
         }
         let instrument = render_instrument(&InstrumentAtoms::new(atoms)?, frame, read)?;
