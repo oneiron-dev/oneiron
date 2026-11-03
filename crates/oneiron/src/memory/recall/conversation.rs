@@ -30,10 +30,21 @@ impl Memory<'_> {
         scope: &RecallScope,
         store: &StoreRead<'_>,
     ) -> MemoryResult<Option<BTreeSet<EntityId>>> {
+        // Short refs open their own read transaction; resolve every ref before
+        // holding the transaction used for kind checks and the person walk.
+        let explicit = scope
+            .conversation_refs
+            .iter()
+            .map(|reference| self.resolve_ref(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let person = scope
+            .person_ref
+            .as_deref()
+            .map(|reference| self.resolve_ref(reference))
+            .transpose()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let mut explicit = BTreeSet::new();
-        for reference in &scope.conversation_refs {
-            let id = self.resolve_ref(reference)?;
+        let mut selected = BTreeSet::new();
+        for id in explicit {
             self.expect_scope_kind(
                 store,
                 &txn,
@@ -41,14 +52,11 @@ impl Memory<'_> {
                 ENTITY_TYPE_CONVERSATION,
                 "conversation_refs",
             )?;
-            explicit.insert(id);
+            selected.insert(id);
         }
-        let explicit = (!scope.conversation_refs.is_empty()).then_some(explicit);
-        let person = scope
-            .person_ref
-            .as_deref()
-            .map(|reference| {
-                let person = self.resolve_ref(reference)?;
+        let explicit = (!scope.conversation_refs.is_empty()).then_some(selected);
+        let person = person
+            .map(|person| {
                 self.expect_scope_kind(store, &txn, person, ENTITY_TYPE_PERSON, "person_ref")?;
                 self.person_conversations(store, &txn, person)
             })
