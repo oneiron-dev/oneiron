@@ -195,6 +195,7 @@ impl DesktopSession {
             action: None,
             source_url: None,
             source_origin: None,
+            audience: None,
             source_title: None,
             tab: None,
             result_tab: None,
