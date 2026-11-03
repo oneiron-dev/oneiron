@@ -16,8 +16,9 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// The caller's active mask: the FACET every NOTE and ASSET born in this
-    /// batch is stamped with. `None` stamps the vault default.
+    /// The caller's active mask: the FACET every NOTE, ASSET, EVENT and TURN
+    /// born in this batch is stamped with. `None` stamps the vault default.
+    /// A CLAIM carries its facet in its body and ignores the mask (FIX 7757).
     pub(super) birth_mask: Option<EntityId>,
     /// Every source each ASSET_TEXT this batch births was written from: its
     /// birth copies their one facet (`BatchBuilder::asset_text_birth`).
