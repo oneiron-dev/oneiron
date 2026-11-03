@@ -31,6 +31,7 @@ use std::time::Instant;
 
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::run_admission::WorkPhysical;
 use oneiron::memory::{
     Effort, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
     RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores,
@@ -185,6 +186,19 @@ impl RecallRerankHost for ServedRerank {
             .undeclared_run(self.run_id.clone(), self.meter.clone())
             .for_memory_work()
             .sourced(sent_rows(documents));
+        let run = run.with_work_context({
+            let mut context = run.work_context();
+            context.physical = if self
+                .ai
+                .seat(ModelRole::Reranker)
+                .is_some_and(|seat| seat.ladder.all_keyless_own_server())
+            {
+                WorkPhysical::KeylessOwnServer
+            } else {
+                WorkPhysical::Paid
+            };
+            context
+        });
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
