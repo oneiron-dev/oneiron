@@ -925,7 +925,14 @@ def mcp_input_dispatch(row):
         if 'mcp_served_output' in row:
             body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
-        body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
+        if name == 'self.inbox.concern.move':
+            body += ('if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied '
+                     '{ receipt, .. } if matches!(receipt.link, '
+                     'oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. })) {\n'
+                     'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
+                     '}\n')
+        else:
+            body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
         body += f'let (value, source) = {row["mcp_result"]}; Ok((value, source, McpCarrierPolicy::Drain, None))'
         return f'{json.dumps(name)} => {{\n{body} }},\n'
@@ -1607,7 +1614,11 @@ def facade_dispatch(facade_rows):
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')
         landed = ''
         if r.get('lands_turn'):
-            landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
+            if name == 'self.inbox.concern.move':
+                landed = ('if output.pointer("/receipt/link/kind").and_then(serde_json::Value::as_str) == Some("note") { '
+                          'server.ai.turn_landed_by(server.vault(), actor, class); }')
+            else:
+                landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
         # left to check; so does a lane door whose engine door judges the
         # credential's lane in each snapshot (`require_granted_scope`).

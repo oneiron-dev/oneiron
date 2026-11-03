@@ -927,7 +927,13 @@ async fn self_inbox_concern_move(
         value,
         &producers,
     )?;
-    server.ai.turn_landed_by(server.vault(), actor, class);
+    if output
+        .pointer("/receipt/link/kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("note")
+    {
+        server.ai.turn_landed_by(server.vault(), actor, class);
+    }
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_diagnostics_list(
