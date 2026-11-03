@@ -93,15 +93,16 @@ use crate::{
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput,
     HandoverInput, HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter,
     Observation, ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressGrants,
-    PressMode, ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote,
-    SelectInput, SendPolicy, TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput,
-    ZoomInput,
+    PressMode, ReceiptEvidenceSink, ReceiptOutcome, RoutineDecider, Row, RowSecret,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind,
+    SecretNote, SelectInput, SendPolicy, TakeoverRecord, TextProvenance, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput,
+    WindowsOutput, ZoomInput,
 };
 use images::{looks_as_it_did, mask};
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -160,6 +161,13 @@ pub struct DesktopSession {
     unread: Option<EffectReceipt>,
     /// Whether the running act's input was sent (FIX 12134).
     input_sent: bool,
+    /// Whether the running act's input failed after the guest took part
+    /// of it (FIX 12257): its outcome is unknown.
+    input_unknown: bool,
+    /// The running verb's input calls the guest took (FIX 12257): an act
+    /// reads it around its input, as a browser act reads its written
+    /// calls.
+    input_delivered: Cell<u64>,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
@@ -434,6 +442,10 @@ impl DesktopSession {
                 words: String::new(),
             });
         }
+        // Taken: a later input call that fails leaves this one's effect
+        // standing, its outcome unknown (FIX 12257).
+        self.input_delivered
+            .set(self.input_delivered.get().saturating_add(1));
         Ok(())
     }
 
