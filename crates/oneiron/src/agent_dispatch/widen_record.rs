@@ -28,6 +28,11 @@ pub(super) const PROPOSAL_INDEX: SideTable<String, Vec<u8>, Raw> =
 /// attempt. Key: the parent attempt id.
 pub(super) const SLICE: SideTable<AttemptId, SliceOverride, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_WIDEN_SLICE);
+/// Whether a masked copy of a `AGENT_DISPATCH_WIDEN_SLICE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn agent_dispatch_widen_slice_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<SliceOverride, LegacyJson>(bytes)
+}
 
 /// A parked dispatch. This is a proposal, never a read or dispatch grant.
 #[derive(Debug, Clone, PartialEq)]
