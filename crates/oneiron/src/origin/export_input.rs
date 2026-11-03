@@ -10,7 +10,11 @@
 //! the queue's own read-only gap, and it names each gap rather than
 //! refusing. Nothing here writes a promotion or any other row.
 use crate::Vault;
-use crate::{store::code_commit_metadata::CodeCommitMetadata, code_revision::CodeRevision, code_revision::QueuePromotionGap};
+use crate::{
+    store::code_commit_metadata::CodeCommitMetadata,
+    code_revision::CodeRevision,
+    store::code_promotion_gap::QueuePromotionGap,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_KEY;

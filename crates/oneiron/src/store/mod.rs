@@ -425,3 +425,7 @@ pub mod own_rate_record;
 pub mod repo_provenance_trailer;
 
 pub mod code_revision_identity;
+
+pub mod recovery_kit;
+
+pub mod code_promotion_gap;
