@@ -79,6 +79,15 @@ impl Vault {
         )
     }
 
+    /// Whether this machine keeps its current piece of the exact kit `kit` of
+    /// `kind`. Another kit's piece never counts toward this kit's passphrase choice.
+    pub fn keeps_kit_piece_for(&self, kind: KitSecretKind, kit: KitId) -> bool {
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(piece)) if piece.kit_id() == kit
+        )
+    }
+
     /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over
     /// `given` and this machine's own piece of the same kit when it keeps one, so
     /// the owner gives only the pieces still needed. A kept piece of another kit

@@ -159,7 +159,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             masked_file_in_txn(&self.store, &txn, &hash)?.is_none()
         };
-        if sealed && !crate::batch::secret_scan::is_sealed(bytes) {
+        if sealed && !crate::batch::secret_scan::is_sealed(bytes, None) {
             return Ok(SecretSight::Masked);
         }
         self.stored_file_sight(asker, artifact, (hash, sealed), why)
