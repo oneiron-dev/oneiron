@@ -526,15 +526,16 @@ pub(crate) struct Shape {
 
 impl Shape {
     /// At most what decoding the message allocates: each value one
-    /// [`Value`] at most, a typed one no more; each container one more
-    /// step of the decoder's own stack while it fills; and the bytes of its
-    /// strings, binaries and extensions beside.
+    /// [`Value`] at most, a typed one no more; each container one step of
+    /// the decoder's own stack while it fills, with one more slot for its
+    /// geometric-growth slack; and the bytes of its strings, binaries and
+    /// extensions beside.
     pub(crate) fn decoded(self) -> u64 {
         let value = std::mem::size_of::<Value>() as u64;
         let open = std::mem::size_of::<Open>() as u64;
         self.values
             .saturating_mul(value)
-            .saturating_add(self.containers.saturating_mul(open))
+            .saturating_add(self.containers.saturating_mul(2).saturating_mul(open))
             .saturating_add(self.payload)
     }
 }
