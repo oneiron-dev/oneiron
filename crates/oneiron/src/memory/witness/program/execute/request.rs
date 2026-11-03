@@ -66,6 +66,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
             summary,
             admit: session_admit,
             rostered,
+            turn_vector,
         } => {
             on_record_session = Some(session);
             admit = session_admit;
@@ -97,6 +98,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                     session,
                     route: session_route,
                     summary,
+                    turn_vector,
                 }
             }
         }
