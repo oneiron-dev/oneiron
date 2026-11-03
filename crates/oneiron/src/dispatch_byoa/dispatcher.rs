@@ -8,7 +8,7 @@ use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome,
 };
-use crate::checkout::{CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLiveness};
+use crate::checkout::CheckoutLeaseAct;
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -664,18 +664,16 @@ where
     /// boundary, once the run's pinned job is staged there. The checkout's
     /// custody is judged at the vault's time in one short writer before
     /// staging, and again at terminal capture; no LMDB write lock is held
-    /// meanwhile. `_checkouts` is kept for the host's call; custody is read
-    /// from the vault in that writer.
+    /// meanwhile.
     ///
     /// # Errors
     /// Refuses stale leases, missing/expired checkouts, invalid budgets and a
     /// pinned job with no stager, or propagates the stager's or the sandbox's
     /// refusal (its spool's disk floor and deadline among them).
-    pub fn execute_cli<C: ByoaCliExecutor, F: CheckoutFactSink, L: CheckoutLiveness>(
+    pub fn execute_cli<C: ByoaCliExecutor>(
         &mut self,
         fence: &ByoaExecutionFence,
         budget: ExecutionBudget,
-        _checkouts: &CheckoutLeaseService<'_, F, L>,
         executor: &mut C,
         now: u64,
     ) -> ByoaResult<ByoaExhaust> {

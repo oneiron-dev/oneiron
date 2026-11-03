@@ -16,7 +16,7 @@
 //! next is the owner's pick in [`OnSeatSpent`]; nothing spends by default.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -35,6 +35,7 @@ use super::error::{
     ERR_SEAT_LOGIN_HANDLE, invalid,
 };
 use super::exhaust::{ByoaExhaust, ByoaTerminalReceipt};
+use super::json_lines::{JsonLine, each_json_line};
 use super::official_seats::{OfficialSeatRoute, SIWC_RESPONSES_BASE_URL, SeatPlacementApproval};
 use super::provider::{CODEX_PROGRAM, DreamerProviderInput, ProviderAdapterRegistry};
 
@@ -521,58 +522,20 @@ pub fn spent_seat_in(exhaust: &ByoaExhaust) -> ByoaResult<Option<SeatSpent>> {
 ///
 /// Returns [`super::ByoaError::Store`] when the stream cannot be read.
 pub(crate) fn spent_seat_from_reader(reader: impl Read) -> ByoaResult<Option<SeatSpent>> {
-    let mut reader = BufReader::new(reader);
-    let mut event = Vec::new();
     let mut spent = None;
-    loop {
-        let buffered = reader.fill_buf().map_err(read_error)?;
-        let Some(&first) = buffered.first() else {
-            return Ok(spent);
-        };
-        if first.is_ascii_whitespace() {
-            let blanks = buffered
-                .iter()
-                .take_while(|byte| byte.is_ascii_whitespace())
-                .count();
-            reader.consume(blanks);
-        } else if first == b'{' {
-            event.clear();
-            reader.read_until(b'\n', &mut event).map_err(read_error)?;
-            if let Some(found) = spent_in_line(&String::from_utf8_lossy(&event)) {
+    each_json_line(reader, read_error, |line| match line {
+        JsonLine::Bytes(raw) => {
+            if let Some(found) = spent_in_line(&String::from_utf8_lossy(raw)) {
                 spent = Some(found);
             }
-        } else if first.is_ascii() {
-            skip_line(&mut reader)?;
-        } else {
-            event.clear();
-            reader.read_until(b'\n', &mut event).map_err(read_error)?;
-            let decoded = String::from_utf8_lossy(&event);
-            let trimmed = decoded.trim();
-            if trimmed.starts_with('{') {
-                if let Some(found) = spent_in_line(trimmed) {
-                    spent = Some(found);
-                }
+        }
+        JsonLine::Text(trimmed) => {
+            if let Some(found) = spent_in_line(trimmed) {
+                spent = Some(found);
             }
         }
-    }
-}
-
-/// Passes over the rest of one line without holding it.
-fn skip_line(reader: &mut impl BufRead) -> ByoaResult<()> {
-    loop {
-        let buffered = reader.fill_buf().map_err(read_error)?;
-        if buffered.is_empty() {
-            return Ok(());
-        }
-        let (take, ends) = buffered
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or((buffered.len(), false), |at| (at + 1, true));
-        reader.consume(take);
-        if ends {
-            return Ok(());
-        }
-    }
+    })?;
+    Ok(spent)
 }
 
 fn read_error(error: std::io::Error) -> ByoaError {
