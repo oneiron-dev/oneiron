@@ -1046,7 +1046,7 @@ export type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call
 /** `oneiron::memory::read_selection::RecallWorlds` */
 export type RecallWorlds = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: string; include_base: boolean } | { kind: "worlds"; world_refs: string[]; include_base: boolean }
 /** `oneiron::memory::recall::RecallScope` */
-export type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; facet?: string | null; kinds?: string[] | null }
+export type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; conversation_refs?: string[]; person_ref?: string | null; facet?: string | null; kinds?: string[] | null }
 /** `oneiron_contracts::code_run::vault_read::context_pack::MediaQueryKind` */
 export type MediaQueryKind = "text" | "image" | "audio"
 /** `oneiron_contracts::code_run::vault_read::context_pack::ContextPackMediaQuery` */
@@ -8560,7 +8560,7 @@ export type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reaso
 /** `oneiron_browser::verbs::ReceiptOutcome` */
 export type ReceiptOutcome = "unknown"
 /** `oneiron_browser::verbs::EffectReceipt` */
-export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
+export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; audience?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
 /** `oneiron_browser::library::secret_slots::SecretParam` */
 export type SecretParam = { name: string; kind: SecretKind }
 /** `oneiron_browser::library::admission::RecentCounts` */
