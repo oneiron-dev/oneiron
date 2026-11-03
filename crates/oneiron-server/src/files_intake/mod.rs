@@ -73,6 +73,7 @@ fn walk_files(
     path: &std::path::Path,
     _excluded: &dyn Fn(&std::path::Path) -> bool,
     _unopened: &mut dyn FnMut(&std::path::Path),
+    _unopened_dir: &mut dyn FnMut(&std::path::Path),
     _visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     anyhow::bail!(

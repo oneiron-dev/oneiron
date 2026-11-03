@@ -32,6 +32,12 @@ pub(super) struct FilesRead {
     pub(super) facts: HashMap<String, FileFacts>,
     /// The paths the mtime shortcut skipped (FIX 1365): read by no one.
     pub(super) skipped: Vec<String>,
+    /// Folders that would not open or list, by their path under the folder
+    /// (FIX 10246): nothing under one is read or retracted this scan.
+    pub(super) unopened_dirs: Vec<String>,
+    /// The folder is the vault's own folder, or inside it (FIX 10249):
+    /// nothing was read, and the report says so instead of reading silently.
+    pub(super) vault_covers_folder: bool,
 }
 
 /// How the file at `path` holds its text, by its extension; none for a
@@ -62,25 +68,63 @@ fn excludes(exclude: &[String], path: &str) -> bool {
 /// Every file under `folder` that `exclude` leaves, in path order: its
 /// notes, a file past the note bound as its parts, and the files it holds
 /// by name only. A file whose size and mtime both match `prior`'s record is
-/// not read (FIX 1365).
+/// not read (FIX 1365). `vault_dir` is this vault's own folder: a source
+/// that holds it passes over everything in it, so the vault never ingests
+/// itself (FIX 10249).
 pub(super) fn read_files(
     folder: &Path,
     exclude: &[String],
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
+    vault_dir: Option<&Path>,
 ) -> anyhow::Result<FilesRead> {
     let mut read = FilesRead::default();
-    let excluded =
-        |shown: &Path| relative(folder, shown).is_some_and(|path| excludes(exclude, &path));
+    // The vault's folder as given and canonical: shown paths spell the
+    // source folder as it was attached, so either spelling of the vault
+    // under it passes over.
+    let vault_dirs: Vec<std::path::PathBuf> = vault_dir
+        .map(|dir| {
+            let mut dirs = vec![dir.to_path_buf()];
+            if let Ok(canonical) = dir.canonicalize()
+                && canonical != dirs[0]
+            {
+                dirs.push(canonical);
+            }
+            dirs
+        })
+        .unwrap_or_default();
+    read.vault_covers_folder = vault_dirs
+        .iter()
+        .any(|dir| folder == dir || folder.starts_with(dir));
+    let excluded = |shown: &Path| {
+        vault_dirs
+            .iter()
+            .any(|dir| shown == dir || shown.starts_with(dir))
+            || relative(folder, shown).is_some_and(|path| excludes(exclude, &path))
+    };
     let mut unopened = Vec::new();
     let mut unopened_at = |shown: &Path| unopened.push(shown.to_path_buf());
-    super::walk_files(folder, &excluded, &mut unopened_at, &mut |shown, file| {
-        let Some(path) = relative(folder, shown) else {
-            counts.unreadable_name += 1;
-            return Ok(());
-        };
-        read_file(path, file, shown, counts, &mut read, prior)
-    })?;
+    let mut unopened_dirs = Vec::new();
+    let mut unopened_dir_at = |shown: &Path| unopened_dirs.push(shown.to_path_buf());
+    super::walk_files(
+        folder,
+        &excluded,
+        &mut unopened_at,
+        &mut unopened_dir_at,
+        &mut |shown, file| {
+            let Some(path) = relative(folder, shown) else {
+                counts.unreadable_name += 1;
+                return Ok(());
+            };
+            read_file(path, file, shown, counts, &mut read, prior)
+        },
+    )?;
+    for shown in &unopened_dirs {
+        match relative(folder, shown) {
+            Some(path) => read.unopened_dirs.push(path),
+            None => counts.unreadable_name += 1,
+        }
+    }
     // A file that did not open on the walk (no read permission then) is
     // opened again, never through a link (FIX 11588). One that still does
     // not open is held by its name, with what its metadata says.

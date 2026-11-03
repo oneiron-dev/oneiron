@@ -30,7 +30,9 @@ pub struct FilesSourceAttachRequest {
     /// What the host never opens, matched against each entry's name and its
     /// path under the folder. Absent keeps the default list (hidden entries,
     /// version control, dependency and build folders, credential stores and
-    /// key files); a list, even an empty one, replaces it.
+    /// key files); a list, even an empty one, replaces it. The `oneiron
+    /// files attach` command's `--exclude` adds to the default list instead,
+    /// and its `--no-default-exclude` drops the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
     /// The note kind a file lands as when its frontmatter names none;
@@ -88,7 +90,8 @@ pub struct FilesRescanCounts {
     pub restored: u64,
     pub removed: u64,
     pub name_only: u64,
-    /// Files the write door refused; a later rescan tries them again.
+    /// Files the write door refused and folders that would not open (FIX
+    /// 10246); a later rescan tries them again.
     pub failed: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_error: Option<String>,
