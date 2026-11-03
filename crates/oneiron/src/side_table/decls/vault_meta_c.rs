@@ -456,6 +456,10 @@ side_tables! {
     /// Owner-reason rule behind a derived standing grant. Key: string (grant ref) ":" id16 (rule
     /// decision id).
     CONSENT_OWNER_REASON_RULE: VaultMeta b"consent.owner_reason.v1:" Named;
+    /// Settled contact-disclosure offers by (contact, verdict). Key: id16 + verdict byte + hex64.
+    CONSENT_WIDEN_CONTACT_VERDICT_INDEX: VaultMeta b"consent.widen.contact_verdict.v1:" Raw;
+    /// Completeness flag of the contact-verdict index above (u64 version). Key: ().
+    CONSENT_WIDEN_CONTACT_VERDICT_STATE: VaultMeta b"consent.widen.contact_verdict_state.v1" Raw;
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson;
     /// Marker for a ruled conflict packet. Key: bytes32.
@@ -539,6 +543,10 @@ side_tables! {
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).
     COOPERATIVE_DELETION_SUCCESSION: VaultMeta b"cooperative_deletion:succession:v1:" Named;
+    /// Contacts by live `identity_ref` head, to its head claim. Key: id16(identity) + id16(contact).
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX: VaultMeta b"counterparty.contact.identity.v1:" Raw;
+    /// Completeness flag of the identity index above (u64 version). Key: ().
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX_STATE: VaultMeta b"counterparty.contact.identity_state.v1" Raw;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;
