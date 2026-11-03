@@ -33,9 +33,7 @@ pub const CUSTODY_ANCHOR_PENDING: &str = "custody_anchor_pending";
 pub const CUSTODY_FENCED: &str = "custody_fenced";
 /// A retirement is not complete everywhere yet.
 pub const CUSTODY_RETIREMENT_PENDING: &str = "custody_retirement_pending";
-/// Every handed-off retirement is acknowledged by every required target and
-/// anchored.
-pub const CUSTODY_RETIREMENT_COMPLETE: &str = "custody_retirement_complete";
+pub use crate::store::custody_retirement_status::CUSTODY_RETIREMENT_COMPLETE;
 /// A retired erasable key's copy another machine holds is not verified
 /// retired yet (FIX 8875); its step names the holder machine.
 pub const CUSTODY_REMOTE_RETIREMENT_PENDING: &str = "custody_remote_retirement_pending";

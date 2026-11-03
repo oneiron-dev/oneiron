@@ -14,8 +14,8 @@ use crate::consult_ladder::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::write_envelope::task_body::TaskRole;
 
 use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
@@ -215,7 +215,8 @@ pub(super) fn task_entity_role_in(
     if header.entity_type != ENTITY_TYPE_TASK {
         return Ok(None);
     }
-    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    crate::write_envelope::task_body::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(Some)
 }
 
 pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
@@ -381,27 +382,7 @@ pub(super) fn decode_stored_brief(value: &Value) -> Result<super::brief::StoredB
 
 /// Reads one additive body key. Absent (schema-v1 row) and explicitly `Nil`
 /// both mean "not set"; a duplicated key is still a corrupt body.
-pub(super) fn task_body_optional<'a>(
-    entries: &'a [(Value, Value)],
-    name: &str,
-) -> Result<Option<&'a Value>> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let Some(value) = values.next() else {
-        return Ok(None);
-    };
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(match value {
-        Value::Nil => None,
-        value => Some(value),
-    })
-}
+pub(super) use crate::store::task_body_checks::task_body_optional;
 
 pub(super) fn decode_entity_ref(value: &Value, context: &'static str) -> Result<EntityId> {
     value
@@ -812,23 +793,7 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
     }
 }
 
-pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
-    let mut values = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value);
-    let value = values
-        .next()
-        .ok_or(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )))?;
-    if values.next().is_some() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    Ok(value)
-}
+pub(super) use crate::store::task_body_checks::task_body_field;
 
 /// What a TASK body says authorizes the asks bound to the task: who owns it,
 /// whom it is assigned to, and the ask class its spec sets.

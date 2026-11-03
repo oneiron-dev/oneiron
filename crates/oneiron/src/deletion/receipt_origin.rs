@@ -47,8 +47,8 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     receipt: &RedactionAuditReceipt,
 ) -> Result<bool> {
     let (Some(client_id), Some(device_pk)) = (
-        crate::identity::read_client_id_in_txn(vault, txn)?,
-        crate::identity::read_device_verifying_key_in_txn(vault, txn)?,
+        crate::store::install_identity::read_client_id_in_txn(vault, txn)?,
+        crate::store::install_identity::read_device_verifying_key_in_txn(vault, txn)?,
     ) else {
         return Ok(false);
     };

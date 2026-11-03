@@ -20,13 +20,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
-    BUDGET_HOLD_ACTOR,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, BUDGET_HOLD_ACTOR,
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION};
+use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -56,9 +56,9 @@ const BUDGET_HOLD_NOTICE_DETAIL: &str =
 /// Internal maintenance kinds — consolidation tiers, delivery retries,
 /// polls — settle silently.
 const SURFACED_JOB_KINDS: &[&str] = &[
-    crate::dispatch_byoa::BYOA_ATTEMPT_KIND,
-    crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
-    crate::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND,
+    crate::store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+    crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND,
+    crate::store::dreamer_attempt_kind::WAVE_PLAN_ATTEMPT_KIND,
 ];
 
 /// What happened. A job's kind names its real outcome: a failed, cancelled
@@ -197,7 +197,7 @@ pub fn decode_notification_body(raw: &[u8]) -> Result<NotificationBody> {
 
 /// The row id a producer's event lands under.
 pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         NOTIFICATION_ID_DOMAIN,
         &[source.producer.as_bytes(), source.event.as_bytes()],
     )
@@ -343,7 +343,7 @@ impl Vault {
             return Ok(None);
         };
         let (job_kind, origin) =
-            if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+            if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
                 let Ok(payload) =
                     crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
                 else {

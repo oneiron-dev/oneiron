@@ -230,7 +230,10 @@ fn speaker_person(
         return Ok(Some(actor));
     }
     match crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)? {
-        Some(anchor) if anchor.subject_kind == crate::subject_model::SubjectKind::Person => {
+        Some(anchor)
+            if anchor.subject_kind
+                == crate::write_envelope::subject_record::SubjectKind::Person =>
+        {
             Ok(Some(anchor.subject_ref))
         }
         _ if kind == Some(ENTITY_TYPE_AGENT_DEF) => Ok(None),

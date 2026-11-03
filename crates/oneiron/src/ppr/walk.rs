@@ -4,37 +4,22 @@ use std::collections::{BTreeMap, HashSet};
 
 use heed::RoTxn;
 
-use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::validate_ppr_vad_alpha;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::ManifestDbs;
+use oneiron_contracts::affect::Vad;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::VAD_PROPAGATION_EVIDENCE;
 use super::policy::{
     PprAlphas, SeedWeighting, lambda_for_kind, seed_weights_with_deadline, vad_multiplier,
 };
 
-/// Per-node read visibility for an ACTOR-SCOPED walk (ONE-1608 / ARCH-0050
-/// R6 L2).
-///
-/// The walk consults this before a node may hold or carry mass, so policy
-/// decides STRUCTURE rather than being applied to a ranking that already
-/// crossed hidden nodes. Filtering results afterwards cannot undo that: mass
-/// which already flowed through a denied bridge has changed which permitted
-/// items rank where, and at [`MAX_PPR_DEPTH`] hops a caller can read the
-/// hidden graph off the scores of the nodes it IS allowed to see.
-///
-/// Implementations answer for one actor and must be pure with respect to the
-/// caller's transaction: the walk hands them the SAME `RoTxn` it is reading
-/// from, and an error is propagated (fail closed), never treated as "visible".
-pub(crate) trait PprNodeVisibility {
-    fn ppr_node_visible(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>;
-}
+pub(crate) use crate::ports::PprNodeVisibility;
 struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     store: &'a D,
     txn: &'a RoTxn<'txn>,
@@ -506,7 +491,7 @@ pub(super) fn gate_edge(
         && (crate::workspace_roster::is_project_entity(store, txn, *current)?
             || crate::workspace_roster::is_project_entity(store, txn, neighbor)?)
     {
-        lambda = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA;
+        lambda = crate::ppr::project_weight::HUB_BELONGS_TO_LAMBDA;
     }
 
     // Gate 2 — kind-level block: λ_τ = 0.0 (`opposes`) propagates nothing

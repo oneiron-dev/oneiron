@@ -31,7 +31,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_STAMP_TOKEN,
 };
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -49,15 +48,7 @@ const ACTOR_STAMP_TOKEN: SideTable<EntityId, EntityId, Raw> =
 /// Value-map key carrying the actor class on an `actor.stamp_token` claim.
 const STAMP_TOKEN_VALUE_KEY_CLASS: &str = "class";
 
-/// What a commit stamp names of its writer (FIX 10930): the opaque token in
-/// the actor's place, and the actor's class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActorStamp {
-    /// The id of the actor's `actor.stamp_token` claim.
-    pub token: EntityId,
-    /// The writing actor's class, which a stamp spells after its token.
-    pub class: EdgeActorClass,
-}
+pub use crate::write_envelope::provenance::ActorStamp;
 
 /// `actor`'s stamp token, in the writer's transaction: the cached one while
 /// its claim still names `actor`, else a fresh token claim and its cache row
@@ -89,7 +80,9 @@ pub(crate) fn actor_stamp_in_txn(
         ClaimSubject::Entity(actor.entity_ref()),
         Value::Map(vec![(
             Value::from(STAMP_TOKEN_VALUE_KEY_CLASS),
-            Value::from(crate::edit_distance::actor_class_token(actor.actor_class())),
+            Value::from(crate::write_envelope::actor_tokens::actor_class_token(
+                actor.actor_class(),
+            )),
         )]),
         1.0,
         ClaimApprovalStatus::Auto,
@@ -180,7 +173,7 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
         .iter()
         .find(|(key, _)| key.as_str() == Some(STAMP_TOKEN_VALUE_KEY_CLASS))
         .and_then(|(_, value)| value.as_str())
-        .and_then(crate::edit_distance::actor_class_from_token)?;
+        .and_then(crate::write_envelope::actor_tokens::actor_class_from_token)?;
     Some(WriteActor::new(actor, class))
 }
 
@@ -354,10 +347,10 @@ fn hard_erase_token_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, token: &EntityId
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(&vault.store, wtxn, token)?;
     crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, token, &neighbors)?;
     if graph {
-        crate::ppr::increment_graph_version(&vault.store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(&vault.store, wtxn)?;
     }
     if vector {
-        crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(&vault.store, wtxn)?;
     }
     let erased_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     crate::deletion::stage_engine_row_hard_erasure_in_txn(
