@@ -26,7 +26,7 @@ use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_i
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::llm::{DurableStepContext, DurableStepError, LlmError};
-use crate::self_heal::{DiagnosticEvent, DiagnosticEventClass};
+use crate::store::diagnostic_record::{DiagnosticEvent, DiagnosticEventClass};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 

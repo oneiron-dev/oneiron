@@ -18,7 +18,7 @@ use crate::learning::{
 use crate::llm::DreamerTrapKind;
 use crate::llm::run_admission::LeaseUnit;
 use crate::ports::EdgeDirection;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 /// `long_wait`: an attempt that spent more than the dial's share of its life

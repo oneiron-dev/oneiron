@@ -45,7 +45,7 @@ use crate::llm::decision::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::self_heal::blocked_reports::{self, BlockedIssue};
 use crate::self_heal::issue_work::{self, IssueCursor, PendingIssue};
-use crate::self_heal::{DiagnosticEventClass, HealContextSeed, HealEvidenceContext};
+use crate::{store::diagnostic_record::DiagnosticEventClass, self_heal::HealContextSeed, self_heal::HealEvidenceContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{
     SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillOptimizeBrief,
