@@ -90391,6 +90391,7 @@
      "path": "src/row.rs",
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "struct": 2
      }
