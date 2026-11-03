@@ -502,15 +502,17 @@ pub mod config {
         pub content_type: Option<String>,
     }
 
-    /// A fetched response. Its body is admitted memory (FIX 7655): its bytes
-    /// were reserved before they were allocated, and every owner shares them
-    /// and their reservation, so a clone copies no bytes. A custom fetcher
-    /// builds it with `AdmittedBytes::copy_from` (or `AdmittedBytes::empty`)
-    /// over the engine's `SealResourceLimits::memory`.
+    /// A fetched response. Its body and content type are admitted memory
+    /// (FIX 7655, FIX 8455): their bytes were reserved before they were
+    /// allocated, and every owner shares them and their reservation, so a
+    /// clone copies no bytes. A custom fetcher builds them with
+    /// `AdmittedBytes::copy_from` (or `AdmittedBytes::shared_empty`) and
+    /// `AdmittedStr::copy_from` (or `AdmittedStr::shared_empty`) over the engine's
+    /// `SealResourceLimits::memory`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchResponse {
         pub body: crate::memory::SharedBytes,
-        pub content_type: Option<String>,
+        pub content_type: Option<crate::memory::SharedStr>,
     }
 
     #[derive(Debug, thiserror::Error)]
