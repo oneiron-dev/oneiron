@@ -278,8 +278,7 @@ pub fn decide_join_in_txn(
     request: &JoinRequest,
     now: u64,
 ) -> Result<(JoinDecision, ConsentSet)> {
-    let filed = JOINS
-        .get(&vault.store, txn, &join_ref(request)?)?
+    let filed = super::join_history::live_join(&vault.store, txn, &join_ref(request)?)?
         .filter(|receipt| receipt.request == *request);
     let (principal, answers) = filed.map_or((None, Vec::new()), |receipt| {
         (receipt.principal_id(), receipt.answers)
