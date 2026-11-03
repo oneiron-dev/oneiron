@@ -582,6 +582,7 @@ impl PipelineBuilder<'_> {
             // the run actually returns. So the factor is deferred to that
             // single blend.
             let expand_allowed = self.ppr_expand.is_some() && !self.deadline_reached();
+            let l15_fusion_blend = crate::stage_timing::stage("pipe.fusion_blend");
             let first_blend = blended_retrieval_scores(
                 &acc.ranked_lists,
                 RetrievalChannelIndexes {
@@ -605,6 +606,7 @@ impl PipelineBuilder<'_> {
                 temporal_now,
                 blend_weights,
             )?;
+            drop(l15_fusion_blend);
             let mut scores = first_blend.scores;
             let mut cosine_ghosts_dampened = first_blend.cosine_ghosts_dampened;
             let mut blend_components = first_blend.components;
@@ -675,6 +677,7 @@ impl PipelineBuilder<'_> {
                 ppr_expand_executed = outcome.ppr_expand_executed;
             }
 
+            let l15_fusion_postblend = crate::stage_timing::stage("pipe.fusion_postblend");
             let PostBlend {
                 rerank_ladder_scores,
                 blended_trace_scores,
@@ -694,6 +697,7 @@ impl PipelineBuilder<'_> {
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
+            drop(l15_fusion_postblend);
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
