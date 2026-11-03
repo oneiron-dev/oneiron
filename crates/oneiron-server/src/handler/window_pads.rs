@@ -17,7 +17,6 @@ use oneiron::sync::WindowKey;
 use oneiron::sync::transport::{
     WindowPadArrival, WindowPadEnvelope, WindowPadReadiness, WindowPadReceipt,
 };
-use oneiron::sync::window::{carrier_window_pads, prepare_window_pads};
 
 use super::conn_state::ConnState;
 use super::socket_stop::StoppingTransport;
@@ -132,26 +131,22 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
     // FIX 7608 slice 4: a peer gets a marked repo item's masked copy, made
     // before any pad is. One that cannot be masked is withheld, never sent
     // raw; nothing retires it, so the window's next exchange owes it again.
-    let masked =
-        match oneiron::sync::selector::prepare_repo_sync_frame(server.vault(), payload, context) {
-            Ok(masked) => masked,
-            Err(error) => {
-                tracing::warn!(window = window_key, %error, "window blob withheld: no masked copy");
-                return Vec::new();
-            }
-        };
-    let payload = masked.as_deref().unwrap_or(payload);
-    let prepared = if conn_state.window_pad_carrier.contains(&key) {
-        carrier_window_pads(server.vault(), &key, payload, context)
-    } else {
-        prepare_window_pads(
-            server.vault(),
-            &key,
-            payload,
-            context,
-            conn_state.peer_machine(server.vault()),
-        )
+    // FIX 10477: that masked copy and its pad projection are made once for
+    // every socket this blob fans out to, under the secret pass this call
+    // read; the seal below is still this socket's alone.
+    let shared = match server
+        .window_releases
+        .get_or_compute(server.vault(), &key, payload, context)
+    {
+        Ok(shared) => shared,
+        Err(error) => {
+            tracing::warn!(window = window_key, %error, "window blob withheld: no masked copy");
+            return Vec::new();
+        }
     };
+    let recipient = (!conn_state.window_pad_carrier.contains(&key))
+        .then(|| conn_state.peer_machine(server.vault()));
+    let prepared = shared.prepare(server.vault(), &key, context, recipient);
     match prepared.frames(window_key, sub_tag, None) {
         Ok((frames, _)) => frames,
         Err(error) => {

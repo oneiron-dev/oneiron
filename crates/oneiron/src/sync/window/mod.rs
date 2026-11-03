@@ -30,6 +30,7 @@ mod history_free;
 mod pad_custody;
 mod project_history;
 mod rebootstrap;
+mod release_cache;
 mod replacement;
 mod reverse;
 mod sealed_membership;
@@ -76,6 +77,7 @@ pub use self::pad_custody::{
     prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
+pub use self::release_cache::{SharedWindowRelease, WindowReleaseCache};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{ReplacementByteBound, prepare_bounded_replacement};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;

@@ -285,6 +285,7 @@ impl SyncServer {
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
             reassert_manager,
+            window_releases: Default::default(),
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
