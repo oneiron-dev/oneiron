@@ -314,10 +314,23 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             ] {
                 field(text.as_bytes());
             }
-            for text in [&action.page, &action.document, &action.stopped] {
+            for text in [
+                &action.page,
+                &action.audience,
+                &action.document,
+                &action.stopped,
+            ] {
                 field(&[u8::from(text.is_some())]);
                 field(text.as_deref().unwrap_or_default().as_bytes());
             }
+            field(&[action.actor_class]);
+            field(&[u8::from(action.project.is_some())]);
+            field(
+                action
+                    .project
+                    .as_ref()
+                    .map_or(&[][..], |project| &project.as_bytes()[..]),
+            );
             field(&[u8::from(action.hook_pre.is_some())]);
             field(
                 &action

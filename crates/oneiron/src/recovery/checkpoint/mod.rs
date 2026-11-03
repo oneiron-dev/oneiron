@@ -557,8 +557,13 @@ impl Vault {
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
         // The archive the swap parks keeps every body instance its rows
-        // name, until its custodian releases it (FIX 6022).
-        self.store.hold_parked_archive_bodies()?;
+        // name, until its custodian releases it (FIX 6022). Its census and
+        // registration hold the custody read guard like a snapshot's, so
+        // no finisher write guard lands between them (FIX 9067).
+        {
+            let _custody = self.store.gate_custody_read_guard()?;
+            self.store.hold_parked_archive_bodies()?;
+        }
         self.store.swap_out(
             &replacement.store,
             |txn| {
