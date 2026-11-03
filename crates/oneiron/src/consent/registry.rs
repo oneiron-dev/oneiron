@@ -5,7 +5,7 @@ use super::contact_clearance::{
 use super::grant::{ConsentGrantRow, ConsentGrantStatus};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::entity_id::EntityId;
-use crate::federation::{RepoAccessBounds, Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{RepoAccessBounds, Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 // ---------------------------------------------------------------------------
 // The registry surface (invariant 9 surface (b))
