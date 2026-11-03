@@ -326,7 +326,8 @@ done
 mount --bind "$engine" "$root/src"
 mount --bind "$cargo_home" "$root/cargo-home"
 mount --bind "$rust" "$root/rust"
-exec chroot "$root" "$@"
+chroot=$(command -v chroot || echo /usr/sbin/chroot)
+exec "$chroot" "$root" "$@"
 """
 
 

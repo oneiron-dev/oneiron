@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use crate::claim::{CLAIM_SCOPE_EVIDENCE_TAINT_KEY, PREDICATE_ACTOR_EDIT_COST};
+use crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -19,14 +19,10 @@ pub const PREDICATE_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
 /// Scope key naming the SKILL half of a [`PREDICATE_ACTOR_SKILL_FIT`] pair.
 /// The scope IS the conflict set: two rows collide iff their skill matches.
 pub const ACTOR_SKILL_FIT_SCOPE_KEY: &str = "skill";
-/// Scope key naming the SCOPE half of a [`PREDICATE_ACTOR_EDIT_COST`] pair
-/// (ED-03). Same shape and same job as [`ACTOR_SKILL_FIT_SCOPE_KEY`]: two cost
-/// rows collide iff they speak about the same scope.
+/// Scope key naming the SCOPE half of an `*.edit_cost` pair (ED-03). Same
+/// shape and same job as [`ACTOR_SKILL_FIT_SCOPE_KEY`]: two cost rows collide
+/// iff they speak about the same scope.
 pub const ACTOR_EDIT_COST_SCOPE_KEY: &str = "scope";
-/// Longest accepted `actor.edit_cost` scope, borrowed from the consent bound
-/// the ED lane measures every other scope axis against
-/// (`edit_distance::escalation`).
-pub const ACTOR_EDIT_COST_SCOPE_MAX_BYTES: usize = crate::consent::MAX_CONSENT_REF_LEN;
 /// [`CallPurpose::Other`](crate::CallPurpose::Other) name for the CHAT-lane distillation tier, so session
 /// distillation is budgeted and audited as its own class instead of hiding
 /// inside consolidation's totals.
@@ -84,19 +80,6 @@ pub enum ActorClaimRow {
         skill: EntityId,
         fit: f32,
     },
-    /// Per-`(actor, scope)` amendment cost in `0..=1` (ED-03, ONE-1759). ONE
-    /// per pair, superseding — the `skill_fit` cardinality, for the same
-    /// reason: it is a current estimate, not a standing fact.
-    ///
-    /// `cost` is an AGGREGATE the judge earned, never a raw Δ:
-    /// [`crate::edit_distance::attribution::project_edit_cost_claims`] is the
-    /// only writer, and it takes judgments rather than deltas so an
-    /// unclassified edit has no path to this row.
-    EditCost {
-        actor: EntityId,
-        scope: String,
-        cost: f32,
-    },
 }
 /// Which of the three SET-cardinality note rows a distilled note becomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,7 +119,6 @@ impl ActorClaimRow {
             Self::FailureMode { .. } => PREDICATE_ACTOR_FAILURE_MODE,
             Self::ScopeNote { .. } => PREDICATE_ACTOR_SCOPE_NOTE,
             Self::SkillFit { .. } => PREDICATE_ACTOR_SKILL_FIT,
-            Self::EditCost { .. } => PREDICATE_ACTOR_EDIT_COST,
         }
     }
 
@@ -147,8 +129,7 @@ impl ActorClaimRow {
             Self::Lesson { actor, .. }
             | Self::FailureMode { actor, .. }
             | Self::ScopeNote { actor, .. }
-            | Self::SkillFit { actor, .. }
-            | Self::EditCost { actor, .. } => *actor,
+            | Self::SkillFit { actor, .. } => *actor,
         }
     }
 
@@ -168,15 +149,6 @@ impl ActorClaimRow {
                     return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
                 }
                 Ok((Value::F32(*fit), Some(skill_fit_scope(skill))))
-            }
-            Self::EditCost { scope, cost, .. } => {
-                if !valid_unit_interval(*cost) {
-                    return Err(invalid("actor.edit_cost must be a finite cost in 0..=1"));
-                }
-                Ok((
-                    Value::F32(*cost),
-                    Some(edit_cost_scope(normalize_edit_cost_scope(scope)?)),
-                ))
             }
         }
     }
@@ -207,20 +179,6 @@ pub(crate) fn edit_cost_scope(scope: &str) -> Value {
         Value::from(ACTOR_EDIT_COST_SCOPE_KEY),
         Value::from(scope),
     )])
-}
-/// The trimmed scope of an `actor.edit_cost` row, or the reason it is not one.
-///
-/// Trimmed before it becomes a conflict-set key, so `"outbound"` and
-/// `" outbound "` are one pair rather than two live rows about the same thing —
-/// the note rows' normalization law, applied to the axis this row is keyed on.
-pub(super) fn normalize_edit_cost_scope(scope: &str) -> Result<&str> {
-    let trimmed = scope.trim();
-    if trimmed.is_empty() || trimmed.len() > ACTOR_EDIT_COST_SCOPE_MAX_BYTES {
-        return Err(invalid(
-            "actor.edit_cost scope must be non-empty and within the consent-ref bound",
-        ));
-    }
-    Ok(trimmed)
 }
 /// A fit or a cost is a finite estimate in the unit interval. The finiteness
 /// half is explicit: NaN fails every range comparison, so a `contains` check
