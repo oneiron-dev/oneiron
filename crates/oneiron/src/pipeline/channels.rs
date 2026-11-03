@@ -162,6 +162,11 @@ pub(super) fn temporal_window(
     });
     let mut can_grow = true;
 
+    // Query-constant blend weights: one `exp` per query, reused by every
+    // scoring-context construction below (bit-identical values).
+    let (alpha, one_minus_alpha) =
+        TemporalScoringContext::blend_weights(now, config.anchor_end);
+
     for round in 0..ADAPTIVE_ROUNDS {
         rounds = round + 1;
         let radius = compute_radius(range_width, sigma);
@@ -173,8 +178,6 @@ pub(super) fn temporal_window(
                 deadline,
                 widest,
             };
-            let (alpha, one_minus_alpha) =
-                TemporalScoringContext::blend_weights(now, config.anchor_end);
             let scoring = TemporalScoringContext {
                 sigma,
                 now,
@@ -232,8 +235,6 @@ pub(super) fn temporal_window(
         sigma = sigma.saturating_mul(2).max(1);
     }
 
-    let (alpha, one_minus_alpha) =
-        TemporalScoringContext::blend_weights(now, config.anchor_end);
     let window = TemporalScoringContext {
         sigma,
         now,
