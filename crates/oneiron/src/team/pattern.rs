@@ -13,7 +13,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::{SpawnNeed, TeamPlan};
+use crate::agent_dispatch::{ TeamPlan};
+use crate::team::spawn_need::SpawnNeed;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::claim::learning_estimate::EstimateValue;

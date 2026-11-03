@@ -30,8 +30,9 @@ use super::{
     research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
 };
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome,  AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::context_projection::ContextSpec;
 use crate::research_budget::RsiSpendPurpose;

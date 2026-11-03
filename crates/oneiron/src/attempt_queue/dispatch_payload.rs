@@ -4,3 +4,30 @@
 /// invisible to existing dreamer consumers, which match on their own types.
 pub const AGENT_DISPATCH_ATTEMPT_TYPE: &str = "agent.dispatch";
 
+/// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 24] = [
+    "schema_version",
+    "target",
+    "agent_def",
+    "preset",
+    "definition",
+    "context_spec",
+    "context_from",
+    "depth_remaining",
+    "project_ref",
+    "spawn_intent",
+    "scope",
+    "healer_case",
+    "task_type_ref",
+    "budget",
+    "launch",
+    "origin_conversation",
+    "room",
+    "join",
+    "team",
+    "plan",
+    "objectives",
+    "comm",
+    "direct_spawn",
+    "requester",
+];

@@ -10,7 +10,7 @@ use super::{CONTAINER_KINDS, RecallScope, recall_kinds};
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryResult};
-use crate::pipeline::TurnFold;
+use crate::context_pack::turn_fold::TurnFold;
 use crate::claim::world_access::WorldAuthoritySet;
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};

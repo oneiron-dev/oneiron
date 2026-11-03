@@ -16,7 +16,7 @@ use super::carrier_erase::offer_answer_erased_wins;
 use super::offer_settle::{OfferAnswer, RecordedOfferAnswer};
 use super::offers::{OfferBallot, OfferState, OfferVoteTally, StoredOffer};
 use crate::EntityId;
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
 use crate::run_budget::DeclaredMaximum;
