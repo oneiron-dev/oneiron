@@ -10,7 +10,8 @@ use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
 use crate::origin::lfs::LfsOid;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;

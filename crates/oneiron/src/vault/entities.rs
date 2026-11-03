@@ -8,7 +8,8 @@ use crate::error::{Error, Result};
 
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use std::time::Instant;

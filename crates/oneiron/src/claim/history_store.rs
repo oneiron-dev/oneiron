@@ -458,7 +458,7 @@ pub(crate) fn machine_history_ids_for_target(
     let mut count = crate::scan_check::ScanCount::start(
         store,
         txn,
-        crate::scan_check::EngineScan::MachineHistoryTargetRows,
+        crate::store::EngineScan::MachineHistoryTargetRows,
         target.as_bytes(),
     )?;
     let mut ids = Vec::new();

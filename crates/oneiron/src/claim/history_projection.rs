@@ -16,7 +16,8 @@ use crate::claim::transition::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};

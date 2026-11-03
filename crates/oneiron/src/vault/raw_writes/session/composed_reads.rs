@@ -9,7 +9,8 @@
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::vault::edges::{ancestors_in, subtree_in, would_create_cycle_in};
 use crate::{ContextPackBuilder, PipelineBuilder, ScoredEntity};
 
