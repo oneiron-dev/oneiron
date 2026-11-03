@@ -39,8 +39,9 @@ impl RunReceiptSink for LoggedReceipts {
 }
 
 /// What a receipt's log line carries: ids, counts, codes and the request
-/// digest (owner ruling 2026-10-14, fix 6), and a settlement's typed
-/// inference receipts (FIX 8314). A run's name is text someone
+/// digest (owner ruling 2026-10-14, fix 6), a settlement's typed
+/// inference receipts (FIX 8314), and what a settlement past its
+/// reservation reported past it (FIX 11481). A run's name is text someone
 /// wrote unless this server named it, so only the server's own run names are
 /// logged. A teacher's purpose and a caller's selector are text someone
 /// wrote, a lease id begins with the run's name, a refusal can name a
@@ -112,6 +113,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             service_quantity,
             stream,
             inference_calls,
+            overage,
         } => json!({
             "event": "settled",
             "revision": revision,
@@ -123,6 +125,9 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "usage": usage,
             "service_quantity": service_quantity,
             "stream": stream,
+            // What the call reported past its reservation (FIX 11481); null
+            // on an ordinary settlement.
+            "overage": overage,
             // The typed receipts only (FIX 8314): kinds, digests, counts and
             // a validated model id, never the provider's raw usage.
             "inference_calls": inference_calls,

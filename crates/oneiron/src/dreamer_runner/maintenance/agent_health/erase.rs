@@ -14,11 +14,20 @@
 //! that names it, and each such receipt's rule-outcome row in the skill
 //! reliability ledger. Unrelated cards, receipts, source history and
 //! learning evidence stay as they are.
+//!
+//! An answer that predates `source_rows` names none of the SKILLs or the
+//! CLAIM its text was written from (FIX 10432): the erase of a SKILL or a
+//! CLAIM scrubs every such standing draft, fail-closed, since no index can
+//! attribute them. The widened pass reads the live cards, so it needs no
+//! backfill and no new index; an erase whose kind no longer reads cannot
+//! rule either out and scrubs too.
 use std::collections::BTreeSet;
 
 use super::ask::AgentHealthCoachAnswer;
-use super::{AgentHealthCard, CARDS, HEALTH_REVIEW_RECEIPT_PREFIX};
-use crate::ports::TombstoneStoreRead;
+use super::{AgentHealthCard, CARDS, HEALTH_REVIEW_RECEIPT_PREFIX, card_key};
+use crate::batch::EntityMetadataHeader;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
@@ -125,7 +134,8 @@ pub(super) fn sync_reviewer_membership(
 /// from every card and review receipt that names it, and each such
 /// receipt's rule-outcome row goes with it. A card or receipt that names
 /// another revision, and a receipt a revision never seeded, stay as they
-/// are.
+/// are. A SKILL or CLAIM erase additionally scrubs every standing draft
+/// that predates `source_rows` (FIX 10432), which no index attributes.
 pub(crate) fn erase_sources_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -175,7 +185,80 @@ pub(crate) fn erase_sources_in_txn(
             CARDS.put(store, txn, &key, &card)?;
         }
     }
+    // FIX 10432: a standing draft that predates `source_rows` names none of
+    // the SKILLs or the CLAIM its text was written from, so the loop above
+    // cannot find it. On a SKILL or CLAIM erase every such draft goes,
+    // fail-closed; the live row is rechecked here too, and the pass keeps
+    // the indexes in step exactly as the loop above does.
+    if widened_scrub_owed(store, txn, id)? {
+        for (key, mut card) in CARDS.scan(store, txn)? {
+            let unknown = card
+                .coach
+                .as_ref()
+                .and_then(|ask| ask.answer.as_ref())
+                .is_some_and(|answer| {
+                    answer.draft.is_some()
+                        && answer.draft_erased != Some(true)
+                        && answer.source_rows.is_none()
+                });
+            if !unknown {
+                continue;
+            }
+            let old_sources = card.draft_source_rows();
+            let old_reviewers = card.reviewer_revisions();
+            if card.scrub_coach_draft() {
+                sync_card_membership(store, txn, &key, &old_sources, &card.draft_source_rows())?;
+                sync_reviewer_membership(
+                    store,
+                    txn,
+                    &key,
+                    &old_reviewers,
+                    &card.reviewer_revisions(),
+                )?;
+                CARDS.put(store, txn, &key, &card)?;
+            }
+        }
+    }
     Ok(())
+}
+
+/// Whether the erased `id` owes the fail-closed scrub of every standing
+/// draft that predates `source_rows` (FIX 10432): a SKILL or a CLAIM may
+/// have written text such a draft holds, and no index attributes them. The
+/// row still stands at both delete doors, since the erasers run before its
+/// body goes, so its kind reads there; a kind that no longer reads, or a
+/// row that no longer parses, cannot rule either out and scrubs too, as an
+/// unreadable row names an actor for the actor scrubs (FIX 8908).
+fn widened_scrub_owed(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    let Some(raw) = store.port_entity_raw(txn, id)? else {
+        return Ok(true);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(true);
+    };
+    Ok(matches!(
+        header.entity_type,
+        ENTITY_TYPE_SKILL | ENTITY_TYPE_CLAIM
+    ))
+}
+
+/// Whether the live card standing under `card`'s key holds its Coach draft
+/// erased (FIX 10432): a saved Weave copy's serve-time recheck asks it for
+/// a draft that predates `source_rows`, whose sources no tombstone check
+/// can name. `false` when no live card stands there, the row does not parse,
+/// or its draft reads unerased: only a positive erase signal clears the
+/// copy's text (L07-A's FIX 10432 condition).
+pub(crate) fn live_coach_draft_erased_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    card: &AgentHealthCard,
+) -> Result<bool> {
+    let key = card_key(card.subject, card.signal, card.task);
+    Ok(CARDS
+        .get(store, txn, &key)
+        .ok()
+        .flatten()
+        .is_some_and(|live| live.coach_draft_erased()))
 }
 
 /// The live card table's actor scrub: an actor's erase, and a restored

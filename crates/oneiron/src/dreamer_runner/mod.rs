@@ -119,3 +119,11 @@ pub mod authority;
 
 pub mod connector_event;
 pub mod maintenance;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::maintenance::call_receipt_accepts_masked;
+pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
+pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accepts_masked;
+pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
+pub(crate) use self::store::dreamer_parked_accepts_masked;
