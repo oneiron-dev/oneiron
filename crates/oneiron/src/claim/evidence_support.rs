@@ -23,13 +23,11 @@ pub(crate) fn has_live_support_in_txn(
     txn: &RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {
-    let carried;
+    let mut carried;
     let body = match body.evidence.as_ref().and_then(envelope_carried_evidence) {
         Some(evidence) => {
-            carried = ClaimBody {
-                evidence: Some(evidence.clone()),
-                ..body.clone()
-            };
+            carried = body.clone();
+            carried.evidence = Some(evidence.clone());
             &carried
         }
         None => body,

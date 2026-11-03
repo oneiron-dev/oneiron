@@ -4,7 +4,7 @@ use rmpv::Value;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::temporal::TimeRange;
+use oneiron_contracts::temporal::TimeRange;
 use super::claim_predicate::{validate_predicate, validate_session_tag};
 use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
@@ -15,24 +15,24 @@ mod codec;
 mod evidence_refs;
 mod relationship_scope;
 mod scope;
-pub(crate) mod lexical_query_hint;
-pub(crate) mod scope_stamp;
+pub mod lexical_query_hint;
+pub mod scope_stamp;
 mod source_trust;
 mod made_by;
 
 pub use codec::decode_claim_body;
-pub(crate) use codec::encode_claim_body;
+pub use codec::encode_claim_body;
 pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
-pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
+pub use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
 pub use relationship_scope::{
     RelationshipScope, meet_relationship_scopes, relationship_scope_includes,
     relationship_scope_of, relationship_scope_transcript,
 };
-pub(crate) use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
-pub(crate) use scope::{claim_principal_id, validate_known_claim_scope_entries};
+pub use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
+pub use scope::{claim_principal_id, validate_known_claim_scope_entries};
 pub use scope_stamp::{base_world_id, default_project_id, substrate_facet_id, PREDICATE_VAULT_DEFAULT_FACET};
 pub use source_trust::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
-pub(crate) use source_trust::*;
+pub use source_trust::*;
 pub use made_by::MadeByClass;
 
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
@@ -69,27 +69,27 @@ pub const CLAIM_BODY_KEYS: [&str; 21] = [
 
 const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
 const KEY_VAL: &str = CLAIM_BODY_KEYS[1];
-pub(crate) const KEY_CONF: &str = CLAIM_BODY_KEYS[2];
-pub(crate) const KEY_SAL: &str = CLAIM_BODY_KEYS[3];
+pub const KEY_CONF: &str = CLAIM_BODY_KEYS[2];
+pub const KEY_SAL: &str = CLAIM_BODY_KEYS[3];
 const KEY_EVID: &str = CLAIM_BODY_KEYS[4];
 const KEY_FROM: &str = CLAIM_BODY_KEYS[5];
 const KEY_TO: &str = CLAIM_BODY_KEYS[6];
 const KEY_SRC: &str = CLAIM_BODY_KEYS[7];
-pub(crate) const KEY_WORLD: &str = CLAIM_BODY_KEYS[8];
+pub const KEY_WORLD: &str = CLAIM_BODY_KEYS[8];
 const KEY_REL: &str = CLAIM_BODY_KEYS[9];
 const KEY_SUBJ: &str = CLAIM_BODY_KEYS[10];
-pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[11];
+pub const KEY_SCOPE: &str = CLAIM_BODY_KEYS[11];
 const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
 const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
 const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
-pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
+pub const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
 const KEY_CONF_BAND: &str = CLAIM_BODY_KEYS[19];
 const KEY_CONF_BASIS: &str = CLAIM_BODY_KEYS[20];
 
 /// Context-pack CLAIM field profiles, derived from [`CLAIM_BODY_KEYS`] so the
 /// serializer cannot drift from the storage ABI.
-pub(crate) const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
-pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = &[
+pub const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
+pub const CLAIM_FIELDS_STANDARD: &[&str] = &[
     "pred",
     "val",
     "conf",
@@ -98,7 +98,7 @@ pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = &[
     KEY_CONF_BAND,
     KEY_CONF_BASIS,
 ];
-pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
+pub const CLAIM_FIELDS_FULL: &[&str] = &[
     "pred",
     "val",
     "conf",
@@ -124,7 +124,7 @@ const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
 }
 
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
-pub(crate) const EDGE_REF_LEN: usize = 33;
+pub const EDGE_REF_LEN: usize = 33;
 
 /// A claim's subject reference (`subj`). Two pinned encodings:
 ///
@@ -147,7 +147,7 @@ pub enum ClaimSubject {
 }
 
 impl ClaimSubject {
-    pub(crate) fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         match self {
             Self::Entity(id) => id.as_bytes().to_vec(),
             Self::Edge {
@@ -164,7 +164,7 @@ impl ClaimSubject {
         }
     }
 
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
         match bytes.len() {
             ENTITY_ID_LEN => {
                 let arr: [u8; ENTITY_ID_LEN] = bytes
@@ -292,11 +292,11 @@ pub struct SessionClaimBundle {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SessionClaimBundleMember {
-    pub(crate) id: EntityId,
-    pub(crate) body: ClaimBody,
-    pub(crate) occurred: TimeRange,
-    pub(crate) learned_at: u64,
+pub struct SessionClaimBundleMember {
+    pub id: EntityId,
+    pub body: ClaimBody,
+    pub occurred: TimeRange,
+    pub learned_at: u64,
 }
 
 impl ClaimBody {

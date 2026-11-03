@@ -40,7 +40,7 @@ pub(crate) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Resul
             }
             match value {
                 Value::Binary(bytes) => {
-                    crate::EntityId::from_bytes(
+                    crate::entity_id::EntityId::from_bytes(
                         bytes
                             .as_slice()
                             .try_into()
@@ -49,7 +49,7 @@ pub(crate) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Resul
                     .map_err(|_| Error::InvalidClaimBody("scope selector id"))?;
                 }
                 Value::String(text) => {
-                    crate::EntityId::from_hex(
+                    crate::entity_id::EntityId::from_hex(
                         text.as_str()
                             .ok_or(Error::InvalidClaimBody("scope selector id"))?,
                     )
@@ -63,7 +63,7 @@ pub(crate) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Resul
 }
 
 /// Principal audience for learned preferences. Missing is unknown, not everyone.
-pub(crate) fn claim_principal_id(body: &ClaimBody) -> Result<Option<crate::entity_id::EntityId>> {
+pub fn claim_principal_id(body: &ClaimBody) -> Result<Option<crate::entity_id::EntityId>> {
     principal_id_from_scope(body.scope.as_ref())
 }
 

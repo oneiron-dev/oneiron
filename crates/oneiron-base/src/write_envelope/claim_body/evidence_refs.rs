@@ -14,7 +14,7 @@ use crate::write_envelope::{
 };
 
 /// The evidence map key the typed citations ride under.
-pub(crate) const EVIDENCE_REFS_KEY: &str = "evidence_refs";
+pub const EVIDENCE_REFS_KEY: &str = "evidence_refs";
 
 /// ARCH-0032: one citation of the entity's own document at an exact frontier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -47,7 +47,7 @@ pub struct CursorSpan {
 
 /// A candidate may carry these citations into the promotion writer, which
 /// verifies them again inside its own commit. No source or actor rides here.
-pub(crate) fn public_evidence_refs(value: Option<&Value>) -> Result<Vec<EvidenceRef>> {
+pub fn public_evidence_refs(value: Option<&Value>) -> Result<Vec<EvidenceRef>> {
     let Some(value) = value
         .and_then(Value::as_map)
         .and_then(|fields| {
@@ -65,7 +65,7 @@ pub(crate) fn public_evidence_refs(value: Option<&Value>) -> Result<Vec<Evidence
         .map_err(|_| Error::InvalidClaimBody("evidence refs do not decode"))
 }
 
-pub(crate) fn public_evidence_value(refs: &[EvidenceRef]) -> Result<Value> {
+pub fn public_evidence_value(refs: &[EvidenceRef]) -> Result<Value> {
     let bytes = rmp_serde::to_vec_named(refs)
         .map_err(|_| Error::InvalidClaimBody("evidence refs do not encode"))?;
     rmpv::decode::read_value(&mut bytes.as_slice())

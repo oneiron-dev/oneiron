@@ -36,7 +36,7 @@ const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 /// rematerialize; reads always allow reserved predicates so stored
 /// provenance Claims stay decodable. `allow_reserved` skips ONLY this
 /// reserved-namespace arm — the grammar checks above run unconditionally.
-pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
+pub fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
     if predicate.len() > MAX_PREDICATE_BYTES {
         return Err(Error::Claim(ClaimError::InvalidPredicate {
             predicate: predicate.to_owned(),
@@ -74,11 +74,11 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
 /// reserved `edge`, `skill` or `actor` namespaces (D17, ARCH-0053 §9). Their
 /// writes and lifecycle transitions are owned by dedicated crate-private doors,
 /// so the generic Claim API rejects them.
-pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
+pub fn is_reserved_predicate(predicate: &str) -> bool {
     is_edge_reserved_predicate(predicate) || is_engine_owned_reserved_predicate(predicate)
 }
 
-pub(crate) fn is_edge_reserved_predicate(predicate: &str) -> bool {
+pub fn is_edge_reserved_predicate(predicate: &str) -> bool {
     predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn is_edge_reserved_predicate(predicate: &str) -> bool {
 /// exclusively edge-owned. `repo.*` is the origin's own record of what it
 /// published and admitted: a generic door that could write it could stand in
 /// for a publication's intent or a push's evidence.
-pub(crate) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
+pub fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
     let namespace = predicate.split('.').next();
     namespace == Some("machine")
         || namespace == Some("world_access")
@@ -105,7 +105,7 @@ pub(crate) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
 /// Whether `prefix` is a well-formed predicate prefix: one or more grammar
 /// segments, each followed by a dot (`host.persona.`), within the predicate
 /// byte bound. A host's protected namespace is declared in this shape.
-pub(crate) fn is_predicate_prefix(prefix: &str) -> bool {
+pub fn is_predicate_prefix(prefix: &str) -> bool {
     prefix.len() <= MAX_PREDICATE_BYTES
         && prefix
             .strip_suffix('.')
@@ -125,7 +125,7 @@ fn valid_predicate_segment(segment: &str) -> bool {
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
-pub(crate) fn validate_session_tag(session_tag: &str) -> Result<()> {
+pub fn validate_session_tag(session_tag: &str) -> Result<()> {
     if session_tag.trim().is_empty() {
         return Err(Error::InvalidClaimBody(
             "sess must be a non-empty, non-whitespace string",
@@ -178,14 +178,14 @@ pub const COREFERENCE_STATUS_CONFIRMED: &str = "confirmed";
 pub const COREFERENCE_SHARE_CONSENT_PACT_KEY: &str = "pact_id";
 
 /// A federation pact id is 32 bytes, carried as 64 LOWERCASE hex characters.
-pub(crate) const COREFERENCE_PACT_ID_HEX_LEN: usize = 2 * COREFERENCE_PACT_ID_LEN;
+pub const COREFERENCE_PACT_ID_HEX_LEN: usize = 2 * COREFERENCE_PACT_ID_LEN;
 
 /// Byte length of a federation pact id.
-pub(crate) const COREFERENCE_PACT_ID_LEN: usize = 32;
+pub const COREFERENCE_PACT_ID_LEN: usize = 32;
 
-pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
-pub(crate) const COMPANION_EXPRESSION_WARM: &str = "warm";
-pub(crate) const COMPANION_EXPRESSION_UNRESTRICTED: &str = "unrestricted";
+pub const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
+pub const COMPANION_EXPRESSION_WARM: &str = "warm";
+pub const COMPANION_EXPRESSION_UNRESTRICTED: &str = "unrestricted";
 
 pub const EXPRESSION_REGISTER_CASUAL: &str = "casual";
 pub const EXPRESSION_REGISTER_NEUTRAL: &str = "neutral";

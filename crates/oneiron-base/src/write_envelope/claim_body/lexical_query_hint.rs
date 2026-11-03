@@ -14,11 +14,11 @@ use crate::error::{Error, Result};
 pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "core.lexical.query_hint";
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
-pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
+pub const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
 
 /// Maximum UTF-8 byte length of one prospective query hint.
-pub(crate) const MAX_LEXICAL_QUERY_HINT_BYTES: usize = 256;
-pub(crate) const LEXICAL_QUERY_HINT_ID_PREFIX: [u8; 2] = *b"LH";
+pub const MAX_LEXICAL_QUERY_HINT_BYTES: usize = 256;
+pub const LEXICAL_QUERY_HINT_ID_PREFIX: [u8; 2] = *b"LH";
 
 const LEXICAL_HINT_KIND: &str = "prospective_query";
 const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
@@ -26,12 +26,12 @@ const LEXICAL_HINT_VALUE_KEY_QUERY: &str = "query";
 const LEXICAL_HINT_VALUE_KEY_TARGET: &str = "target";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LexicalQueryHintValue {
-    pub(crate) target: EntityId,
-    pub(crate) query: String,
+pub struct LexicalQueryHintValue {
+    pub target: EntityId,
+    pub query: String,
 }
 
-pub(crate) fn normalize_lexical_query_hints(hints: &[&str]) -> Result<Vec<String>> {
+pub fn normalize_lexical_query_hints(hints: &[&str]) -> Result<Vec<String>> {
     let mut normalized = Vec::<String>::new();
     for hint in hints {
         let hint = hint.trim();
@@ -55,7 +55,7 @@ pub(crate) fn normalize_lexical_query_hints(hints: &[&str]) -> Result<Vec<String
 }
 
 #[must_use]
-pub(crate) fn encode_lexical_query_hint_value(target: &EntityId, query: &str) -> Value {
+pub fn encode_lexical_query_hint_value(target: &EntityId, query: &str) -> Value {
     Value::Map(vec![
         (
             Value::from(LEXICAL_HINT_VALUE_KEY_KIND),
@@ -72,7 +72,7 @@ pub(crate) fn encode_lexical_query_hint_value(target: &EntityId, query: &str) ->
     ])
 }
 
-pub(crate) fn decode_lexical_query_hint_value(value: &Value) -> Result<LexicalQueryHintValue> {
+pub fn decode_lexical_query_hint_value(value: &Value) -> Result<LexicalQueryHintValue> {
     let Value::Map(entries) = value else {
         return Err(Error::InvalidClaimBody(
             "lexical query hint value must be a map",
@@ -160,7 +160,7 @@ pub(crate) fn decode_lexical_query_hint_value(value: &Value) -> Result<LexicalQu
     })
 }
 
-pub(crate) fn lexical_query_hint_target(body: &ClaimBody) -> Result<Option<EntityId>> {
+pub fn lexical_query_hint_target(body: &ClaimBody) -> Result<Option<EntityId>> {
     if body.predicate != PREDICATE_LEXICAL_QUERY_HINT {
         return Ok(None);
     }
