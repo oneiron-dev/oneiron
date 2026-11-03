@@ -45,7 +45,7 @@ use super::free_time_item_waits_unstarted;
 use super::policy::FreeTimePolicyRecord;
 use super::receipt::FreeTimeItemOutcome;
 use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeItemReceipt, FreeTimeKind, POLICY, RECEIPT};
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::attempt_queue::AttemptQueue;
 use crate::authority::{GrantStanding, OwnerActKind, grant_standing_in_txn};
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};

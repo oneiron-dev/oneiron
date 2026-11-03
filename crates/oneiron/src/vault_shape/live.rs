@@ -21,7 +21,7 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CONNECTOR_KEY,
     ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORLD,
 };
-use crate::skill::{SkillLifecycle, decode_skill_record};
+use crate::write_envelope::skill_record::{SkillLifecycle, decode_skill_record};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;

@@ -27,8 +27,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
-use crate::pipeline::WorldAuthoritySet;
+use crate::claim::world_access::WorldAuthoritySet;
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
 const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";

@@ -231,7 +231,7 @@ impl Memory<'_> {
 /// that names the blob holding the bytes.
 pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> MemoryResult<Vec<u8>> {
     asset_body(
-        crate::embed::InputKind::Image,
+        crate::store::embedding::InputKind::Image,
         &image.media_type,
         &image.bytes,
         "generated",
@@ -244,16 +244,16 @@ pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> Memor
 /// the blob the ASSET holds by that hash, never a field here; the resolver
 /// and the media backfill read them through it (`blob`).
 pub(in crate::memory) fn asset_body(
-    kind: crate::embed::InputKind,
+    kind: crate::store::embedding::InputKind,
     mime_type: &str,
     bytes: &[u8],
     source: &str,
     model: Option<&str>,
 ) -> MemoryResult<Vec<u8>> {
     let kind = match kind {
-        crate::embed::InputKind::Text => "text",
-        crate::embed::InputKind::Image => "image",
-        crate::embed::InputKind::Audio => "audio",
+        crate::store::embedding::InputKind::Text => "text",
+        crate::store::embedding::InputKind::Image => "image",
+        crate::store::embedding::InputKind::Audio => "audio",
     };
     let mut fields = vec![
         (Value::from("kind"), Value::from(kind)),
