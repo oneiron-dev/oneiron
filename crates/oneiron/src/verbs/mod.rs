@@ -90,7 +90,9 @@ mod workflows;
 mod workspace;
 
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
-use crate::task_verb::TaskAskHandle;
+use crate::task_verb::{
+    TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+};
 use serde::{Deserialize, Serialize};
 
 /// `can(ask(...))`: one read-only preflight for a typed ask spec.

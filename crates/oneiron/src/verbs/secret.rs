@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult,
+    Memory, MemoryError, MemoryResult,
 };
 use crate::secret_custody::{
     HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
