@@ -123,7 +123,10 @@ mod http {
         FetchError, FetchMethod, FetchPolicy, FetchRequest, FetchResponse, SealFetcher,
     };
     use crate::error::{FatalCode, SealError, SealStage};
-    use crate::memory::{AdmittedBytes, Lease, SealMemoryProvider, SealMemoryRefusal, SharedBytes};
+    use crate::memory::{
+        AdmittedBytes, AdmittedStr, Lease, SHARED_CONTROL_BYTES, SealMemoryProvider,
+        SealMemoryRefusal, SharedBytes, SharedStr,
+    };
 
     use super::{addr_allowed, origin_allowed};
 
@@ -140,12 +143,10 @@ mod http {
     struct CacheEntry {
         key: CacheKey,
         response_digest: [u8; 32],
-        /// The response's own bytes: a hit shares them and their
-        /// reservation, and copies nothing.
+        /// The response's own bytes and content type: a hit shares them and
+        /// their reservations, and copies nothing.
         body: SharedBytes,
-        content_type: Option<String>,
-        /// Holds the entry's copy of `content_type`.
-        _content_type_held: Lease,
+        content_type: Option<SharedStr>,
         inserted: Instant,
     }
 
@@ -243,10 +244,11 @@ mod http {
         }
 
         /// Keeps `resp` for later requests with the same key. The cache is
-        /// optional: what an entry needs (the table the first time, the
-        /// copy of the content type) is reserved first, and when memory
-        /// refuses it, or the deadline passes, nothing is kept and the
-        /// caller has its response all the same.
+        /// optional: what an entry needs (the table the first time) is
+        /// reserved first, and when memory refuses it, or the deadline
+        /// passes, nothing is kept and the caller has its response all the
+        /// same. The entry shares the response's body and content type and
+        /// their reservations, and copies nothing.
         async fn cache_put(
             &self,
             key: CacheKey,
@@ -266,10 +268,6 @@ mod http {
                     return;
                 };
                 Some(held)
-            };
-            let content_type_bytes = resp.content_type.as_ref().map_or(0, String::len);
-            let Ok(content_type_held) = self.lease(content_type_bytes, deadline).await else {
-                return;
             };
             let response_digest = super::super::cms::sha256(&resp.body);
             let Ok(mut cache) = self.cache.lock() else {
@@ -295,7 +293,6 @@ mod http {
                 response_digest,
                 body: Arc::clone(&resp.body),
                 content_type: resp.content_type.clone(),
-                _content_type_held: content_type_held,
                 inserted: Instant::now(),
             };
             match cache.entries.iter_mut().find(|e| e.key == key) {
@@ -403,13 +400,17 @@ mod http {
         async fn stream_body<S>(
             &self,
             stream: &mut S,
-            content_type: Option<String>,
+            content_type: Option<SharedStr>,
             deadline: tokio::time::Instant,
         ) -> Result<FetchResponse, FetchError>
         where
             S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
         {
-            let mut body = AdmittedBytes::empty();
+            let held = self
+                .lease(SHARED_CONTROL_BYTES, deadline)
+                .await
+                .map_err(FetchError::Memory)?;
+            let mut body = AdmittedBytes::from_leased_empty(held);
             loop {
                 let chunk = tokio::time::timeout_at(deadline, stream.next())
                     .await
@@ -418,7 +419,7 @@ mod http {
                 let chunk = chunk.map_err(|_| FetchError::Unavailable)?;
                 if let Some(capacity) = body.growth(chunk.len()) {
                     let held = self
-                        .lease(capacity, deadline)
+                        .lease(capacity.saturating_add(SHARED_CONTROL_BYTES), deadline)
                         .await
                         .map_err(FetchError::Memory)?;
                     body.regrow(capacity, held).map_err(FetchError::Memory)?;
@@ -483,11 +484,22 @@ mod http {
                 }
                 break resp;
             };
-            let content_type = response
+            let header = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string);
+                .and_then(|v| v.to_str().ok());
+            // The header is admitted where it is owned, before it is copied:
+            // its bytes plus the shared header, once, never per clone.
+            let content_type = match header {
+                None => None,
+                Some(text) => {
+                    let held = self
+                        .lease(text.len().saturating_add(SHARED_CONTROL_BYTES), deadline)
+                        .await
+                        .map_err(FetchError::Memory)?;
+                    Some(Arc::new(AdmittedStr::from_leased(text.to_owned(), held)))
+                }
+            };
             let mut stream = response.bytes_stream();
             let out = self
                 .stream_body(&mut stream, content_type, deadline)

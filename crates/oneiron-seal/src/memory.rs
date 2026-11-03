@@ -338,6 +338,11 @@ impl DecodeAdmission for MemoryLedger {
     }
 }
 
+/// The fixed `Arc` control header a shared owner holds beside its bytes: the
+/// strong and weak counts. A model of the allocation, not a content ceiling:
+/// it is reserved once at creation, never per `Arc::clone`.
+pub(crate) const SHARED_CONTROL_BYTES: usize = 2 * std::mem::size_of::<usize>();
+
 /// What a memory service holds for one owner's bytes, until the owner drops
 /// it (see [`SealMemoryProvider::lease`]).
 pub(crate) struct Lease {
@@ -372,20 +377,40 @@ impl AdmittedBytes {
         }
     }
 
-    /// A copy of `bytes`, its memory reserved from `memory`'s service before
-    /// the copy is made. The reservation is the copy's own: it goes back
-    /// when the copy drops, not when an operation ends.
+    /// No bytes, with the shared `Arc` control header reserved.
+    pub fn shared_empty(memory: &SealMemoryProvider) -> Result<Self, SealMemoryRefusal> {
+        Ok(Self {
+            bytes: Vec::new(),
+            _lease: Some(memory.lease(SHARED_CONTROL_BYTES)?),
+        })
+    }
+
+    /// No bytes, with an already reserved shared header.
+    pub(crate) fn from_leased_empty(lease: Lease) -> Self {
+        Self {
+            bytes: Vec::new(),
+            _lease: Some(lease),
+        }
+    }
+
+    /// A copy of `bytes`, its memory plus the shared header reserved from
+    /// `memory`'s service before the copy is made. The reservation is the
+    /// copy's own: it goes back when the copy drops, not when an operation
+    /// ends. The header ([`SHARED_CONTROL_BYTES`]) is reserved once here,
+    /// never per `Arc::clone`.
     ///
     /// # Errors
     /// The service's refusal; [`SealMemoryRefusal::Unavailable`] when
     /// `memory` names no service. An allocator that refuses bytes the
     /// service reserved is the floor with nothing available.
     pub fn copy_from(memory: &SealMemoryProvider, bytes: &[u8]) -> Result<Self, SealMemoryRefusal> {
-        let mut copy = Self::empty();
-        if !bytes.is_empty() {
-            copy.regrow(bytes.len(), memory.lease(bytes.len())?)?;
-            copy.extend(bytes)?;
+        if bytes.is_empty() {
+            return Self::shared_empty(memory);
         }
+        let mut copy = Self::empty();
+        let held = memory.lease(bytes.len().saturating_add(SHARED_CONTROL_BYTES))?;
+        copy.regrow(bytes.len(), held)?;
+        copy.extend(bytes)?;
         Ok(copy)
     }
 
@@ -393,7 +418,8 @@ impl AdmittedBytes {
     /// when something already holds their memory (the organ runtime's
     /// reservation, made before it copied them), else a lease of their own
     /// from `memory`'s service, taken now. The lease covers the buffer's
-    /// whole capacity and drops with it.
+    /// whole capacity plus the shared header ([`SHARED_CONTROL_BYTES`],
+    /// once, never per `Arc::clone`) and drops with it.
     ///
     /// # Errors
     /// The service's refusal, when the bytes need a lease of their own.
@@ -403,14 +429,16 @@ impl AdmittedBytes {
         bytes: Vec<u8>,
         held: Option<Box<dyn Send>>,
     ) -> Result<Self, SealMemoryRefusal> {
-        if bytes.capacity() == 0 {
-            return Ok(Self::empty());
-        }
         let lease = match held {
-            Some(held) => Lease {
-                _held: Mutex::new(held),
-            },
-            None => memory.lease(bytes.capacity())?,
+            Some(held) => {
+                // The runtime already holds the bytes; the header is leased
+                // beside them and both are held together.
+                let control = memory.lease(SHARED_CONTROL_BYTES)?;
+                Lease {
+                    _held: Mutex::new(Box::new((held, control)) as Box<dyn Send>),
+                }
+            }
+            None => memory.lease(bytes.capacity().saturating_add(SHARED_CONTROL_BYTES))?,
         };
         Ok(Self {
             bytes,
@@ -498,6 +526,100 @@ impl PartialEq for AdmittedBytes {
 }
 
 impl Eq for AdmittedBytes {}
+
+/// Text whose memory was reserved before it was allocated, with the lease
+/// that holds the reservation (FIX 8455). The string and its lease drop
+/// together, so the memory goes back when the last owner lets go and never
+/// before. It is shared as [`SharedStr`] and has no clone: a copy would be
+/// memory nothing reserved.
+pub struct AdmittedStr {
+    text: String,
+    /// Holds the text's bytes plus the shared header; none while it holds
+    /// nothing. Never read: it is dropped with the text.
+    _lease: Option<Lease>,
+}
+
+/// Admitted text, shared by every owner that keeps it: a fetch response,
+/// the fetcher's cache, a hit.
+pub type SharedStr = Arc<AdmittedStr>;
+
+impl AdmittedStr {
+    /// No text, and nothing reserved.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            text: String::new(),
+            _lease: None,
+        }
+    }
+
+    /// No text, with the shared `Arc` control header reserved.
+    pub fn shared_empty(memory: &SealMemoryProvider) -> Result<Self, SealMemoryRefusal> {
+        Ok(Self {
+            text: String::new(),
+            _lease: Some(memory.lease(SHARED_CONTROL_BYTES)?),
+        })
+    }
+
+    /// A copy of `text`, its bytes plus the shared header reserved from
+    /// `memory`'s service before the copy is made. The reservation is the
+    /// copy's own: it goes back when the copy drops, not when an operation
+    /// ends. Empty text reserves the shared header.
+    ///
+    /// # Errors
+    /// The service's refusal; [`SealMemoryRefusal::Unavailable`] when
+    /// `memory` names no service.
+    pub fn copy_from(memory: &SealMemoryProvider, text: &str) -> Result<Self, SealMemoryRefusal> {
+        if text.is_empty() {
+            return Self::shared_empty(memory);
+        }
+        let lease = memory.lease(text.len().saturating_add(SHARED_CONTROL_BYTES))?;
+        Ok(Self {
+            text: text.to_owned(),
+            _lease: Some(lease),
+        })
+    }
+
+    /// `text` with `lease`, already reserved for its bytes plus the shared
+    /// header (the native fetcher's deadline-bound reservation).
+    pub(crate) fn from_leased(text: String, lease: Lease) -> Self {
+        Self {
+            text,
+            _lease: Some(lease),
+        }
+    }
+}
+
+impl Deref for AdmittedStr {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl AsRef<str> for AdmittedStr {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl fmt::Debug for AdmittedStr {
+    /// The length only: fetched headers stay out of every debug string.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdmittedStr")
+            .field("len", &self.text.len())
+            .finish()
+    }
+}
+
+impl PartialEq for AdmittedStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for AdmittedStr {}
 
 /// A length as a service counts bytes.
 fn wide(bytes: usize) -> u64 {
