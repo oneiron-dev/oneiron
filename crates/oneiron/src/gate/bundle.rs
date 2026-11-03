@@ -157,6 +157,7 @@ impl Vault {
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        pending_prompt: None,
                     },
                     &policy,
                     GateWriteMode {
@@ -873,6 +874,7 @@ fn replay_gate_consent_bundle_member(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         policy,
         GateWriteMode {

@@ -36,6 +36,7 @@ pub(super) fn apply_claim_candidate(
         indexing,
         write_policy,
         owner_authored,
+        pending_prompt,
     } = request;
     crate::gate::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
@@ -143,6 +144,7 @@ pub(super) fn apply_claim_candidate(
                 transition: None,
                 posture: config.privacy.posture,
                 owner_authored,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
     )?;

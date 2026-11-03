@@ -530,6 +530,15 @@ impl Memory<'_> {
                 });
                 record.context = crate::store::GateDecisionContext {
                     read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
+                        .map(|read| {
+                            let anchors = crate::conversation::gate_claim_anchors_in(
+                                self.vault,
+                                &*wtxn,
+                                &id,
+                                &reviewed.body,
+                            );
+                            read.with_anchors(anchors)
+                        })
                         .into_iter()
                         .collect(),
                     ..pending
