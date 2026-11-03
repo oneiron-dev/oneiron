@@ -398,13 +398,13 @@ impl ProviderHttp {
 
     /// [`Self::send_body`] with `release` invoked before every physical send,
     /// including a fresh-connection retry and a plain resend after 400/415.
-    fn send_body_released(
-        &self,
-        path: &str,
-        request: impl Fn() -> reqwest::RequestBuilder,
+    fn send_body_released<'a>(
+        &'a self,
+        path: &'a str,
+        request: impl Fn() -> reqwest::RequestBuilder + 'a,
         plain: Vec<u8>,
-        release: DispatchRelease<'_>,
-    ) -> ReleaseSending<'_> {
+        release: DispatchRelease<'a>,
+    ) -> ReleaseSending<'a> {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
