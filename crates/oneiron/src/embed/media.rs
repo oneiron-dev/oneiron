@@ -93,7 +93,7 @@ pub trait MediaEmbedder: Send + Sync {
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
+        release: &(dyn Fn(&[EntityId]) -> Result<()> + Sync),
     ) -> Result<Vec<MediaOutcome>> {
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;

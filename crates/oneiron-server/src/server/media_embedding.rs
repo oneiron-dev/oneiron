@@ -532,7 +532,7 @@ impl RuntimeMediaEmbedder {
         &self,
         part: MediaPart,
         release: Option<(
-            &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
             oneiron::EntityId,
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
@@ -568,7 +568,7 @@ impl RuntimeMediaEmbedder {
         part: MediaPart,
         name_width: bool,
         release: Option<(
-            &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
             oneiron::EntityId,
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
@@ -726,7 +726,7 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+        release: &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
     ) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
@@ -743,7 +743,7 @@ impl RuntimeMediaEmbedder {
         &self,
         input: &MediaEmbeddingInput<'_>,
         release: Option<(
-            &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
             oneiron::EntityId,
         )>,
     ) -> oneiron::Result<MediaOutcome> {
@@ -760,7 +760,7 @@ impl RuntimeMediaEmbedder {
         &self,
         input: &MediaEmbeddingInput<'_>,
         release: Option<(
-            &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
             oneiron::EntityId,
         )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
