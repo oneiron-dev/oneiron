@@ -33,7 +33,8 @@ use crate::{EntityId, Error, MemoryError, Result, Vault};
 use super::super::storage::{PausedRoute, SessionHookKey, SessionHooks, SessionVerbAsk};
 use super::super::{InvocationId, VerbCall, VerbHookStop};
 use super::{
-    AskToken, HOLD, PROCEED, Retry, USED, VERB_HOOK_INTENT, author_memory, cut, pending, proceeds,
+    AskToken, HOLD, HOOK_OUTCOME_UNCERTAIN, PROCEED, Retry, VERB_HOOK_INTENT, author_memory, cut,
+    pending, proceeds,
 };
 
 /// What a session-only call's hook ask tells whoever answers it, after the
@@ -110,7 +111,17 @@ pub(in crate::runtime_hooks::verb) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.used {
-        return skipped(USED);
+        // Used up, with no outcome retained (FIX 1996, as `super::retry`):
+        // the verb may or may not have run, so the retry is told exactly
+        // that, never Skipped "already used", and the verb never runs
+        // again under this invocation.
+        return Ok(Retry::Stop(VerbHookStop::CompletedWithError {
+            invocation: call.invocation.to_hex(),
+            code: HOOK_OUTCOME_UNCERTAIN.to_owned(),
+            message: "this invocation's ask was used but no outcome was retained; the verb may or may not have run, and it will not run again under this invocation"
+                .to_owned(),
+            receipt_ref: None,
+        }));
     }
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });

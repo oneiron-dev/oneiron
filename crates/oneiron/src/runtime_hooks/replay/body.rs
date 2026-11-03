@@ -238,9 +238,40 @@ impl Replay<'_> {
                 .and_then(|shown| shown.get("args").cloned());
             let check = |next: &serde_json::Value| {
                 if let Some(before) = &before {
-                    crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
+                    // A narrowed hook's saved window holds placeholders, not
+                    // text, where its grant withheld content (an object where
+                    // the text stood): pin membership against such a window is
+                    // unevaluatable, so the host-door check is skipped — the
+                    // live chain admits against the restored window, which
+                    // replay cannot rebuild.
+                    let withheld = saved.verb == "host.compact"
+                        && before
+                            .get("window")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|window| {
+                                window.iter().any(|message| {
+                                    !message
+                                        .get("content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .is_some()
+                                })
+                            });
+                    if !withheld {
+                        crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
+                    }
                 }
-                if crate::task_verb::sdk::input_schema(&saved.verb).is_some()
+                // The SDK table knows every SDK verb's facade shape, but a
+                // hook can save a hook flavor of the same verb
+                // (pre_compact_hooks without session_ref, pre_wake_hooks
+                // kind/scope plus queue_head): the facade shape governs only
+                // a run the facade flavor admitted, so when the saved args
+                // themselves do not validate under it, the host-door rules
+                // above are the check, not the facade shape.
+                let facade = before.as_ref().is_some_and(|before| {
+                    crate::task_verb::sdk::input_schema(&saved.verb).is_some()
+                        && crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
+                });
+                if facade
                     && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
                 {
                     // A browser row's run checked its rewrites against the
