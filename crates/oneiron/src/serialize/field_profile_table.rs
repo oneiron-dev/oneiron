@@ -145,13 +145,13 @@ pub(super) fn fields_for_profile(
             crate::psych_profile::PSYCH_PROFILE_FIELDS_FULL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Standard) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
         }
         (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Full) => {
-            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
+            crate::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
         }
         (ENTITY_TYPE_FACET, FieldProfile::Minimal) => {
             &["kind", "label", "scope", "subject", "sensitivity"]

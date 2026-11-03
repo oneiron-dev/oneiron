@@ -129,6 +129,7 @@ pub mod verb_invocation;
 pub mod code_tree_blob;
 pub mod repo_fork;
 pub mod sandbox_import;
+pub(crate) mod repo_environment;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
