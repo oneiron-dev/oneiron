@@ -12,7 +12,7 @@
 use oneiron_crypto::HybridPublicKey;
 
 use super::{InputBinding, refused};
-use crate::authority::{CustodyChange, CustodyRecipientPermit};
+use crate::authority::{CustodyChange, CustodyPermitSet, CustodyRecipientPermit};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -48,6 +48,7 @@ pub fn seal_custody_input(
 ) -> Result<Vec<u8>> {
     let key = HybridPublicKey::from_bytes(holder_key)
         .map_err(|_| refused("the holder's encryption key does not import"))?;
+    let bound = CustodyPermitSet::from(binding.permits);
     InputBinding {
         vault_id: binding.vault_id,
         id: binding.secret_id,
@@ -55,7 +56,7 @@ pub fn seal_custody_input(
         generation: binding.generation,
         seen: binding.seen,
         holder: binding.holder,
-        permits: binding.permits,
+        permits: &bound,
     }
     .seal(&key, body)
 }

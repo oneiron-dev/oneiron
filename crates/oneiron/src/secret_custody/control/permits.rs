@@ -135,13 +135,13 @@ pub(crate) fn live_encryption_key(
 /// The key each of `permits` seals to, when every one still stands: its
 /// machine a live linked install whose live revision carries the very key
 /// permitted, and that key imports. `None` when any recipient changed.
-pub(crate) fn permitted_keys(
+pub(crate) fn permitted_keys<'a>(
     fold: &AuthorityFold,
-    permits: &[CustodyRecipientPermit],
+    permits: impl IntoIterator<Item = &'a CustodyRecipientPermit>,
 ) -> Option<Vec<(CustodyRecipientPermit, HybridPublicKey)>> {
     match CUSTODY_PERMITS {
         CustodyPermits::InlineExactBytePermits => permits
-            .iter()
+            .into_iter()
             .map(|permit| {
                 live_revisions(fold, permit.machine)
                     .into_iter()
