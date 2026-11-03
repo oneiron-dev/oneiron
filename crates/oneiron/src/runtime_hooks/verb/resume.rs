@@ -149,6 +149,7 @@ impl Vault {
             actor,
             class,
             args,
+            inputs,
             resume,
             ask: group,
         } = ready;
@@ -180,7 +181,9 @@ impl Vault {
             )?,
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
-                receipt = Some(RefusalReceipt::new(&reference, &verb, actor, class, &args));
+                receipt = Some(RefusalReceipt::new(
+                    &reference, &verb, actor, class, &args, inputs,
+                ));
                 let resumed =
                     credential::resume(self, key, group, verb, actor, class, args, reference)?;
                 match resumed {
