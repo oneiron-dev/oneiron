@@ -49428,7 +49428,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BriefCitationView",
@@ -50575,6 +50575,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/author_token/carrier.rs",
+     "purpose": "Byte-bound DOCX revision-author carriers over the existing export rows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -50926,7 +50936,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DocxBlockView",
@@ -85795,9 +85805,9 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Live office body records and Vault doors"
     },
@@ -86453,9 +86463,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 110,
+   "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5858,
+   "source_files": 5859,
    "test_files": 902
   },
   "oneiron-android": {
@@ -109410,7 +109420,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 34
      }
     },
     {
@@ -115614,7 +115624,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
