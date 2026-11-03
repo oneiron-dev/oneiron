@@ -32,6 +32,10 @@ pub struct TurnProgramAdmissionRequest {
 pub struct TurnProgramAdmissionView {
     pub turn_ref: String,
     pub admissions: Vec<TurnProgramAdmissionItem>,
+    /// The wakes the turn still owes the programs the caller reads, which
+    /// no admission has decided yet, in registration order (FIX 12172).
+    /// Listed on the first page alone, so pages never repeat one.
+    pub owed: Vec<TurnProgramOwedWakeItem>,
     /// Where the next page's scan goes on; none once every admission was
     /// examined. A page may hold none and still name one.
     pub next_cursor: Option<String>,
@@ -71,6 +75,42 @@ pub struct TurnProgramAdmissionItem {
     pub decided_at: u64,
     /// The fields withheld from this caller, by name.
     pub withheld: Vec<String>,
+}
+
+/// A wake a landed turn still owes one armed program (FIX 12172): recorded
+/// in the turn's own commit and not decided by any admission yet. With the
+/// turn, `registration` names it to `vault.turn_programs.rebind`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TurnProgramOwedWakeItem {
+    pub registration: EntityId,
+    /// The waking actor the program runs as, and its class.
+    pub actor: EntityId,
+    pub actor_class: String,
+    /// 64-hex definition revision the wake woke.
+    pub revision: String,
+    /// 64-hex digest of the credential scope the waking turn was sealed
+    /// under, when a credential admitted it.
+    pub sealed_scope: Option<String>,
+    /// Why an admission keeps the wake owed instead of deciding it (FIX
+    /// 12058); none while the wake waits for its first admission.
+    pub held: Option<OwedWakeHoldView>,
+    /// The fields withheld from this caller, by name.
+    pub withheld: Vec<String>,
+}
+
+/// Why an owed wake waits (FIX 12058): an admission found its sealed slip
+/// lapsed and keeps it owed for its waking actor's rebind. The drain passes
+/// it by until `expires_at`; the first admission from then judges it
+/// finally, and refuses it when its slip still lapses.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OwedWakeHoldView {
+    /// The refusal the lapse would have been.
+    pub reason: String,
+    /// When the first admission found the lapse.
+    pub held_at: u64,
+    /// When the hold expires, a fixed time after the turn landed; withheld
+    /// (`held.expires_at`) unless the turn reads on the caller's lane.
+    pub expires_at: Option<u64>,
 }
 
 /// Whether an admission queued the program or refused it.
