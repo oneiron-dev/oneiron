@@ -219,9 +219,25 @@ impl Nonces {
                     );
                     return false;
                 }
-                self.journal_len = file.metadata().map_or(0, |meta| meta.len());
+                self.journal_len = match file.metadata() {
+                    Ok(meta) => meta.len(),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "the slip-spend journal's length did not read; the spend takes the writer's path"
+                        );
+                        return false;
+                    }
+                };
                 let torn = self.journal_len % (JOURNAL_RECORD_LEN as u64);
-                if torn > 0 && file.set_len(self.journal_len - torn).is_ok() {
+                if torn > 0 {
+                    if let Err(error) = file.set_len(self.journal_len - torn) {
+                        tracing::warn!(
+                            error = %error,
+                            "the slip-spend journal's torn tail did not trim; the spend takes the writer's path"
+                        );
+                        return false;
+                    }
                     self.journal_len -= torn;
                 }
                 self.journal = Some(file);
