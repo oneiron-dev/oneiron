@@ -29,6 +29,8 @@
 mod actions;
 mod page;
 
+pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
+
 use std::collections::HashMap;
 
 use heed::{RoTxn, RwTxn};

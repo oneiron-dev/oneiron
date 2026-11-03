@@ -697,3 +697,7 @@ pub(crate) fn hand_back_owed_in_txn(
     state::save_in_txn(&vault.store, txn, &session)?;
     Ok(true)
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::state::dreamer_follower_result_accepts_masked;
