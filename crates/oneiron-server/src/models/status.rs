@@ -296,8 +296,10 @@ pub struct TaggerStatus {
     /// Which tagger the `[oneironer]` section names: `local`, `endpoint`
     /// or `none`.
     pub provider: &'static str,
-    /// `ready` once a local engine serves or an endpoint's card was
-    /// accepted; `configured` while a slot stands with neither yet.
+    /// `served` once a local engine serves or an endpoint's card was
+    /// accepted at least once; `never_ready` while a slot stands with
+    /// neither yet. No current-health claim: down and recovering need the
+    /// slot's retained probe and worker state (FIX 7384).
     pub state: &'static str,
     /// The checkpoint the section names, when it names one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -428,6 +430,9 @@ pub struct SeatStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seat_model: Option<String>,
     pub state: SeatState,
+    /// Why the seat stands in its state, when one cause stands out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub rungs: Vec<RungStatus>,
 }
 
@@ -442,6 +447,7 @@ impl SeatStatus {
             role: role_key(role),
             seat_model: seat_model.map(ToString::to_string),
             state,
+            reason: None,
             rungs,
         }
     }
