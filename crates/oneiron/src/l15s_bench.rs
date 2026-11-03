@@ -16,7 +16,7 @@ pub fn run(stage: &str) -> String {
         "bm25" => bm25(&dir),
         "hydrate" => hydrate(&dir),
         "temporal" => crate::pipeline::l15s_bench::run(),
-        "secret" => crate::secret_custody::known_values::l15s_bench::run(&dir),
+        "secret" => crate::secret_custody::known_values_bench::run(&dir),
         other => format!("L15S-BENCH unknown stage {other}"),
     }
 }
@@ -156,10 +156,9 @@ fn bm25(dir: &str) -> String {
 /// hydrate (pure slice): decode + judge every corpus claim body — decode_claim_body and
 /// claim_surfaceable over encode_claim_body bytes, the per-item pure work of hydrate.
 fn hydrate(dir: &str) -> String {
-    use crate::claim::source_trust::claim_surfaceable;
     use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
-        encode_claim_body,
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable,
+        decode_claim_body, encode_claim_body,
     };
     use rmpv::Value;
 

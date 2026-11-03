@@ -76,6 +76,7 @@ mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
 pub(crate) mod holder_export;
 mod known_values;
+pub(crate) use self::known_values::l15s_bench as known_values_bench;
 mod leaf_delivery;
 mod masked_files;
 mod owner_door;
