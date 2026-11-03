@@ -546,6 +546,7 @@ pub(super) fn promote_one_answering(
         .transpose()
         .map_err(|error| PromotionRejection::engine_in("checker admission failed", error))?;
     let write = if let Some(checker) = checker.as_ref() {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
         vault
             .batch()
             .claim_candidate_with_lexical_hints(

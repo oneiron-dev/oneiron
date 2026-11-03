@@ -23,7 +23,8 @@ const WRITER_HOLD_LOG_MS: u64 = 20;
 
 /// Times one grouped write's closure, which runs while the vault's writer is
 /// held, and logs the hold when dropped if it reached [`WRITER_HOLD_LOG_MS`].
-/// The site name and ms only.
+/// The site name and ms only. The shared group-commit wait after the closure
+/// is the write door's, not this site's hold, so it stays out of the timing.
 pub(crate) struct WriterHold {
     site: &'static str,
     started: Instant,

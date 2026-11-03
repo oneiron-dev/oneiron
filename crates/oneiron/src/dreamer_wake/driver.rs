@@ -229,7 +229,10 @@ impl<'a> DreamerWakeDriver<'a> {
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
         let clock = WakePassClock::start(&input);
-        let hooks = match self.pre_wake_hooks(&input)? {
+        let hooks = match self
+            .pre_wake_hooks(&input)
+            .inspect_err(|error| clock.log_err(error))?
+        {
             Ok(hooks) => hooks,
             Err(skipped) => return Ok(skipped),
         };
