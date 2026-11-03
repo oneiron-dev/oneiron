@@ -33,12 +33,12 @@ use heed::{RoTxn, RwTxn};
 use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::federation::Sensitivity;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::vault::Vault;
+use oneiron_authority::federation::Sensitivity;
 
 /// The band a file with keys in it carries.
 pub(crate) const MASKED_FILE_BAND: Sensitivity = Sensitivity::Restricted;

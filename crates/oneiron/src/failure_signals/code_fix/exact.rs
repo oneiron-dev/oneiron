@@ -22,7 +22,8 @@ use crate::code_run::{
 };
 use crate::dreamer_runner::maintenance::code_fix::CoachReplayAdmission;
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
-use crate::{EntityId, LlmRequest, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::LlmRequest;
 
 /// The request a failing call sent, as the vault kept it, for a replay that
 /// sends it again inside the vault.
