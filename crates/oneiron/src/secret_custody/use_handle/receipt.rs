@@ -106,6 +106,9 @@ pub(super) struct Used<'a> {
     pub(super) effector: &'a str,
     /// The grant a lease-aware use redeemed (FIX 4313), if any.
     pub(super) grant: Option<EntityId>,
+    /// The T1 lease a T1 use stamped (FIX 2616), if any: named beside the
+    /// presented record in the outcome's details.
+    pub(super) lease: Option<EntityId>,
     /// For a held call's send a resume makes, the first use's intent
     /// record (FIX 2822).
     pub(super) first_intent: Option<GateDecisionId>,
@@ -121,6 +124,7 @@ fn resumed_use(context: &SecretUseContext) -> Used<'_> {
         operation: &context.operation,
         effector: &context.effector,
         grant: context.grant,
+        lease: None,
         first_intent: Some(context.intent),
     }
 }
@@ -209,6 +213,15 @@ impl Used<'_> {
         }
     }
 
+    /// This use under the T1 lease `lease`: the stamp, not the admission,
+    /// is what the send saw (FIX 2616).
+    pub(super) fn with_lease(&self, lease: EntityId) -> Self {
+        Self {
+            lease: Some(lease),
+            ..self.clone()
+        }
+    }
+
     /// This use's Gate record of `phase` and its receipt: an outcome names
     /// the intent it answers; `presented` is what its send actually
     /// presented, when it said.
@@ -252,6 +265,9 @@ impl Used<'_> {
         }
         if let Some(grant) = self.grant {
             details.push(format!("grant:{}", grant.to_hex()));
+        }
+        if let Some(lease) = self.lease {
+            details.push(format!("lease:{}", lease.to_hex()));
         }
         if let Some(presented) = presented {
             details.push(format!("presented:{}", presented.custody.to_hex()));
