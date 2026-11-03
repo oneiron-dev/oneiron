@@ -5,7 +5,7 @@
 use super::{live_audience, room_clearance_in, room_reader_in, room_roster_in};
 use crate::claim::RoomTurnCeiling;
 use crate::conversation::RoomLiveSpeakerEntries;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::{EntityId, Vault};
 
 /// Whether `caller` reads thread `thread` of `room` as `txn` reads it

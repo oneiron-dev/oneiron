@@ -204,7 +204,7 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
         }
         // Scope and purpose selectors are disjoint fields in schema 1.2.
         // Never infer a legacy preset from an empty or partially specified Scope.
-        let authority_scope = crate::federation::scope_codec::decode_scope_value(required_value(
+        let authority_scope = oneiron_authority::federation::scope_codec::decode_scope_value(required_value(
             entries,
             GRANT_SCOPE_KEY,
         )?)

@@ -11,7 +11,7 @@
 
 use super::{REPO_PROVENANCE_REQUIRED, RepoRunBinding, refusal_error};
 use crate::claim::ScopedReadActorKey;
-use crate::federation::RepoAccessRefusal;
+use oneiron_authority::federation::RepoAccessRefusal;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
