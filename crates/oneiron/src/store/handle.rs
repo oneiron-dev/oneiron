@@ -255,7 +255,7 @@ pub struct StoreCore {
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
-    pub(crate) pending_scan_checks: crate::scan_check::PendingScanChecks,
+    pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -278,7 +278,7 @@ pub struct StoreCore {
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
-    pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
+    pub(crate) result_memory: RwLock<Arc<crate::store::result_memory::ResultMemoryPool>>,
     /// The inference snapshot admission generation, closing gate, disk line
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
@@ -619,7 +619,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.base.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
@@ -662,7 +662,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
             /// ([`crate::scan_check::ScanCount::defer`]).
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks;
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
             fn gate_custody_archived(&self) -> bool;
@@ -678,7 +678,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
@@ -694,7 +694,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }

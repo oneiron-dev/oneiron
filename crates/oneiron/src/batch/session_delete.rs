@@ -92,9 +92,9 @@ pub(super) fn stage_session_delete(
         },
         header.learned_at,
     )?;
-    crate::ingest::reindex_identity_hints(view, wtxn, id, None)?;
+    crate::store::identity_hints::reindex_identity_hints(view, wtxn, id, None)?;
     crate::ports::reindex_named_entities(view, wtxn, id, None)?;
-    crate::bm25::deindex_text(view, wtxn, id)?;
+    crate::store::text_index::deindex_text(view, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(view, wtxn, id)?;
     super::delete_from_phonetic_postings(view, wtxn, id)?;
     super::delete_short_id_rows_for_id(view, wtxn, id)?;

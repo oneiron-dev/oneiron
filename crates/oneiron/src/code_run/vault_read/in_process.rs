@@ -189,7 +189,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         vector: Option<&[f32]>,
         media: &[EmbeddedMediaSeed],
         limit: usize,
-        affect: Option<crate::affect::Vad>,
+        affect: Option<oneiron_contracts::affect::Vad>,
     ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
         let results = if media.is_empty() && affect.is_none() {
             match (query, vector) {

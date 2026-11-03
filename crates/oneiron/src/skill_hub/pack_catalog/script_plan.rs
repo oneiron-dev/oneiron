@@ -32,7 +32,7 @@ impl ScriptExecutionPlan {
             return Err(invalid("pack does not declare a script adapter"));
         };
         if runtime.adapter != PackAdapter::Script(script_path.clone())
-            || runtime.runtime_id != crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME
+            || runtime.runtime_id != crate::store::sandbox_contract::SANDBOX_JS_COMPONENT_NAME
         {
             return Err(invalid(
                 "script runtime does not bind declared QuickJS adapter",

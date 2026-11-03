@@ -1,6 +1,6 @@
 //! The structured failure corpus, read through the actor's scoped door.
 use super::{PointRead, ReadRow, ScopedRead, ScopedReadResult};
-use crate::self_heal::DiagnosticEvent;
+use crate::store::diagnostic_record::DiagnosticEvent;
 use crate::{EntityId, Result};
 
 impl ScopedRead<'_> {
@@ -20,7 +20,10 @@ impl ScopedRead<'_> {
                 ..
             } = row
             {
-                events.push((*id, crate::self_heal::decode_diagnostic_event_body(body)?));
+                events.push((
+                    *id,
+                    crate::store::diagnostic_record::decode_diagnostic_event_body(body)?,
+                ));
             }
         }
         Ok(ScopedReadResult {

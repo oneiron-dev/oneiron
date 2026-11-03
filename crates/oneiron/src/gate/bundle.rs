@@ -15,14 +15,17 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::run_tree::{
-    GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle,
-    GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt, RunTreeAdapter,
-};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{
+    consent::bundle_projection::{
+        GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle,
+        GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt,
+    },
+    run_tree::RunTreeAdapter,
+};
 
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
@@ -551,18 +554,18 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    crate::runtime_hooks::SettledFact {
+                    crate::consent::settlement_fact::SettledFact {
                         proposal: *id,
                         outcome: match action {
                             GateConsentBundleAction::Approve => {
-                                crate::runtime_hooks::SettledOutcome::Approved
+                                crate::consent::settlement_fact::SettledOutcome::Approved
                             }
                             GateConsentBundleAction::Decline => {
-                                crate::runtime_hooks::SettledOutcome::Declined
+                                crate::consent::settlement_fact::SettledOutcome::Declined
                             }
                         },
                         settled_by: actor.entity_ref(),
-                        kind: crate::runtime_hooks::SettlementKind::GateConsentBundle,
+                        kind: crate::consent::settlement_fact::SettlementKind::GateConsentBundle,
                     },
                 )?;
             }

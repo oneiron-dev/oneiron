@@ -41,8 +41,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
-use crate::llm::CallPurpose;
 use crate::side_table::{self, Named, SideTable};
+use oneiron_model::llm::CallPurpose;
 
 pub use self::cycle::{
     FreeTimeCycle, FreeTimeCycleState, FreeTimeItemRef, FreeTimeNote, FreeTimeOwnTimeChoice,

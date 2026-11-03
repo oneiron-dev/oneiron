@@ -48,7 +48,7 @@ use super::{
     Door, detect, framed_payload, release_hit, scan_payload, secret_scan_error, write_payload_hit,
 };
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
+use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
 /// The bytes all of a file's members may decode to over its whole tree: the
 /// floor of what one walk holds. A rebuilt copy is held to it too.

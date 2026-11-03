@@ -58,7 +58,7 @@ pub(crate) fn principal_reach_ids_in(
         return crate::claim::claim_ids_for_predicate_in_txn(
             &vault.store,
             txn,
-            crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+            crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF,
         );
     }
     crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?.collect()
@@ -112,7 +112,8 @@ impl<'v> AccessContext<'v> {
                     }
                 } else if raw.len() > ENTITY_METADATA_HEADER_LEN {
                     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                    if body.predicate == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF
+                    if body.predicate
+                        == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                         && claim_surfaceable(&body)
                         && crate::gate::claim_critical_confirm_settled_in_txn(
                             &vault.store,
@@ -149,7 +150,7 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         // A retained context answers for now: authority is resolved again in a
         // fresh snapshot, so a later expiry, revocation or relationship delete
@@ -173,7 +174,7 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         self.allows_at(entity_type, space, private, record, self.observed_at)
     }
@@ -196,7 +197,7 @@ impl<'v> AccessContext<'v> {
     pub(crate) fn allows_conversation_message_at_snapshot(
         &self,
         conversation: EntityId,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
     ) -> bool {
         let Some(principal) = self.principal else {
             return false;
@@ -216,7 +217,7 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
         now: u64,
     ) -> bool {
         if private {

@@ -16,8 +16,9 @@ use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::settle::decision_pages::measure_state;
 use crate::dreamer_wake::WakePassDeadline;
-use crate::llm::decision::catalogue::CONFLICT_RESOLUTION;
-use crate::llm::decision::{AnswerContract, AskTo, DecisionAnswer, DecisionQuestion};
+use crate::llm::decision::AskTo;
+use crate::model_decision::catalogue::CONFLICT_RESOLUTION;
+use crate::model_decision::{AnswerContract, DecisionAnswer, DecisionQuestion};
 
 /// A conflict's resolutions. With no prior head in scope, supersede degrades to merge (D7:
 /// at most one prior head; the promotion writer owns the supersession).
@@ -337,7 +338,7 @@ impl ConsolidationExecutor<'_> {
         conflict: &ConflictSet,
         members: &[&PromotionCandidate],
         prior_heads: &[super::super::PriorHead],
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<MergeResolution>> {
         let call = self.role(DREAMER_VERDICT_ROLE);
@@ -393,7 +394,7 @@ impl ConsolidationExecutor<'_> {
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
         prior_heads: &[super::super::PriorHead],
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
     ) -> Result<LlmRequest> {
         let mut labels = CallLabelMap::default();
         let mut lines = format!("resolution {resolution}\n");
@@ -436,7 +437,7 @@ impl ConsolidationExecutor<'_> {
                 scope: scope.clone(),
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::Durable {
-                    fallback: crate::llm::DeterministicFallback {
+                    fallback: oneiron_model::llm::DeterministicFallback {
                         name: "json_rules_v1".into(),
                         config: Some(
                             serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"value":null}}]}),

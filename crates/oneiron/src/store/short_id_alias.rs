@@ -148,7 +148,7 @@ pub enum ShortIdAliasTarget {
     /// lands on, which is what makes a content-hash refresh a one-place fix.
     EntityForwardKey(Vec<u8>),
     /// A vault, named by its durable 32-byte identity.
-    Vault(crate::authority::AuthorityVaultId),
+    Vault(oneiron_authority::authority::AuthorityVaultId),
 }
 
 /// The four row families short-id aliasing and re-keying touch.

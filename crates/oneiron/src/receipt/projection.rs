@@ -13,7 +13,7 @@ use crate::Vault;
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::outbound::OutboundIntentSource;
+use crate::store::outbound_trigger::OutboundIntentSource;
 
 /// Receipt field carrying the O2 trigger source. Emitters write it as a bare
 /// key (`receipt/ledgers.rs`), so this is a reader-side name for the same

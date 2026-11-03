@@ -7,12 +7,12 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
+use crate::store::row_birth::RowBirth;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -255,10 +255,11 @@ fn index_document(
         entity,
         document_text_fields(doc, &head.field)?,
     )?;
-    match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, entity, &fields) {
+    match crate::store::text_index::index_text(&vault.store, txn, &vault.analyzer, entity, &fields)
+    {
         // A large document remains authoritative even when it is not searchable.
         Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
-            crate::bm25::deindex_text(&vault.store, txn, entity)?;
+            crate::store::text_index::deindex_text(&vault.store, txn, entity)?;
         }
         Ok(()) => {}
         Err(error) => return Err(error),

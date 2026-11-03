@@ -29,7 +29,7 @@ use super::{
     Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
 };
 use crate::error::Error;
-use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
+use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
 
 /// What the walk does next, the last frame first.
 enum Frame {

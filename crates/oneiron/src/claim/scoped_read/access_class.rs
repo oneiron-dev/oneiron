@@ -21,8 +21,8 @@ use std::rc::Rc;
 
 use super::access_gate::HeldAuthority;
 use super::*;
-use crate::federation::Scope;
 use crate::gate::{ClaimReadPolicy, ClaimReadView};
+use oneiron_authority::federation::Scope;
 
 /// Readers one serving txn holds class verdicts for. A further reader's
 /// classes are judged, never held.

@@ -44,26 +44,31 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AGENT_DEF_BODY_KEYS;
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
-    decode_agent_dispatch_input, record_dispatch_input,
+    agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
 };
-use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
-use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
-use crate::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
-    RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
-};
-use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
-};
+use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
+use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
+use crate::browser_library::admission_payload_actor;
+use crate::conversation::TurnActionAttempt;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::federation::RepoAccessRefusal;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
+use crate::{
+    dispatch_byoa::{
+        ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON, RunnerTaskSource,
+        StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    },
+    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+};
+use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};
@@ -718,7 +723,7 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;
     }
-    if record.kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND {
+    if record.kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND {
         // Its reason copies the step's failure text; an erased owner's
         // copy becomes the marker, as the pass leaves it (FIX 10460).
         model_step::scrub_erased_failure_reason_in_txn(store, txn, record);

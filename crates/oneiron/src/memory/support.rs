@@ -78,7 +78,7 @@ pub struct Memory<'v> {
     pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
-    pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    pub(super) invocation: Option<crate::store::verb_invocation::InvocationId>,
     /// The hook pause a transport's call names as the one it resumes, by
     /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
     /// pause the keep no longer holds then refuses, never running as a new
@@ -172,7 +172,7 @@ pub struct HostWriteOrigin {
     /// 1a), built by the dispatcher from the executor's own bridge position,
     /// never from the guest: a hold for consent alone binds a code consent
     /// wait to it.
-    code_consent: Option<crate::code_run::CodeConsentCallSite>,
+    code_consent: Option<crate::consent::code_wait_state::CodeConsentCallSite>,
     /// The hook pause a call the run makes again resumes (FIX 5526): the ask
     /// an earlier try of the same call in its durable run parked on, read
     /// from the run's own history, never from the guest. It names the pause
@@ -191,7 +191,7 @@ pub struct HostWriteOrigin {
     /// invocation the dispatcher derives from the call's place, the same
     /// across replays of the run, never from the guest. A `reveal.wait` a
     /// live re-attempt of that step makes reads its value again under it.
-    step: Option<crate::runtime_hooks::InvocationId>,
+    step: Option<crate::store::verb_invocation::InvocationId>,
 }
 
 impl HostWriteOrigin {
@@ -211,7 +211,7 @@ impl HostWriteOrigin {
     /// This origin naming the code-mode step its call is, if it is one.
     pub(crate) const fn with_step(
         mut self,
-        step: Option<crate::runtime_hooks::InvocationId>,
+        step: Option<crate::store::verb_invocation::InvocationId>,
     ) -> Self {
         self.step = step;
         self
@@ -232,7 +232,10 @@ impl HostWriteOrigin {
 
     /// This origin with the call's place in its durable run, for a call a
     /// code consent wait may bind.
-    pub(crate) fn with_code_consent(mut self, site: crate::code_run::CodeConsentCallSite) -> Self {
+    pub(crate) fn with_code_consent(
+        mut self,
+        site: crate::consent::code_wait_state::CodeConsentCallSite,
+    ) -> Self {
         self.code_consent = Some(site);
         self
     }

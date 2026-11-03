@@ -32,9 +32,7 @@ use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault, WriteActor};
 
-/// How long a room-wide card with no fixed deadline stays open after its
-/// last engagement: a day (OF-530 ruling A).
-pub(crate) const ROOM_OFFER_IDLE_SECS: u64 = 24 * 60 * 60;
+pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
 
 /// The field a message's metadata, or a DAG record's body, names the
 /// room-wide cards it mentions in: an array of offer ids.

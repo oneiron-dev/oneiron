@@ -26,8 +26,9 @@ use super::{
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;
-use crate::runtime_hooks::VerbHookStop;
-use crate::{EntityId, LlmRequest, Vault, WriteActor};
+use crate::error::VerbHookStop;
+use crate::{EntityId, Vault, WriteActor};
+use oneiron_model::llm::LlmRequest;
 
 mod log;
 mod storage;
