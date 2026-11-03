@@ -17,7 +17,6 @@
 //! Other queue kinds retain their own terminal doors: no error string can
 //! masquerade as a T1 detector verdict.
 
-pub mod task_terminal;
 mod blocked_reports;
 mod classify;
 mod custom_review;
@@ -29,6 +28,7 @@ mod ladder;
 mod lineage;
 pub mod oversight;
 mod scope;
+pub mod task_terminal;
 mod transitions;
 
 pub use self::blocked_reports::{BlockedReportRef, FailureIssueEntry, ingest_report_blocked};

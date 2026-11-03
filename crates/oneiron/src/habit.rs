@@ -25,9 +25,9 @@ use crate::temporal::TimeRange;
 
 pub use crate::write_envelope::task_body::TaskRole;
 pub(crate) use crate::write_envelope::task_body::{
-    HabitStreak, TASK_BODY_CURRENT_STREAK_KEY, TASK_BODY_LONGEST_STREAK_KEY,
-    TASK_BODY_ROLE_KEY, reject_public_streak_fields, rewrite_habit_streak_fields,
-    streak_from_checkin_days, strip_streak_fields, task_role_from_body_bytes,
+    HabitStreak, TASK_BODY_CURRENT_STREAK_KEY, TASK_BODY_LONGEST_STREAK_KEY, TASK_BODY_ROLE_KEY,
+    reject_public_streak_fields, rewrite_habit_streak_fields, streak_from_checkin_days,
+    strip_streak_fields, task_role_from_body_bytes,
 };
 
 /// UTC day-bucket width. `occurred_start / STREAK_DAY_SECS` is the whole

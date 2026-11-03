@@ -2,16 +2,16 @@
 
 use rmpv::Value;
 
-use crate::write_envelope::communication::{ClaimClassDescriptorRow, claim_class_descriptors};
-use crate::write_envelope::communication_record::{
-    elided_string, encode_value, required_bool, required_string, validate_keys_with_optional,
-    value_map,
-};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CLAIM_CLASS_DESCRIPTOR;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::store::Store;
+use crate::write_envelope::communication::{ClaimClassDescriptorRow, claim_class_descriptors};
+use crate::write_envelope::communication_record::{
+    elided_string, encode_value, required_bool, required_string, validate_keys_with_optional,
+    value_map,
+};
 
 const KEY_PREDICATE: &str = "predicate";
 const KEY_WRITE_CLASS: &str = "write_class";

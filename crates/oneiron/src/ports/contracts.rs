@@ -1,18 +1,17 @@
 //! The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions.
 use super::{ChangeLogRecord, EdgeDirection, EntityRecord, SourceSpan};
 use crate::attempt_queue::{
-    ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
-    FailAttempt, FailOutcome,
+    ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome,
 };
-use crate::store::attempt_inputs::ClaimAttempt;
-use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;
-use oneiron_retrieval::pipeline::ScoredEntity;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange, Vault};
+use oneiron_retrieval::pipeline::ScoredEntity;
 use std::ops::Deref;
 
 pub trait Transactions {

@@ -10,11 +10,11 @@
 use std::sync::Arc;
 
 use crate::batch::BatchOp;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::store::embedding::{
     Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput, PendingEmbeddingPayload,
 };
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
 
 use super::gate::GatedCompaction;
 

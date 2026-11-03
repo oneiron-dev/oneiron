@@ -157,7 +157,10 @@ impl<'a> BatchBuilder<'a> {
     /// A federated tier sends each one through federation admission inside
     /// the transaction.
     #[cfg(feature = "sync")]
-    pub(crate) fn with_import_tier(mut self, tier: crate::store::window_protocol::ImportTier) -> Self {
+    pub(crate) fn with_import_tier(
+        mut self,
+        tier: crate::store::window_protocol::ImportTier,
+    ) -> Self {
         self.import_tier = tier;
         self
     }

@@ -1,9 +1,9 @@
 //! Stored reader-fold receipts and their occurrence vocabulary.
 
-use serde::{Deserialize, Serialize};
 use crate::side_table::{CodecError, RawValue};
 use crate::store::result_manifest::ResultOccurrence;
 use crate::{EntityId, Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// One result occurrence as a receipt names it: its id, the run that holds
 /// it, its path in that run's record and its body's handle.
@@ -178,4 +178,3 @@ macro_rules! json_row {
 
 json_row!(ReaderFoldReceipt, "code-run reader fold receipt");
 json_row!(SummaryMemo, "code-run summary memo");
-

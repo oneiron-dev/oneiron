@@ -49,7 +49,6 @@ pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
     )
 }
 
-
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| {
         if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
@@ -106,7 +105,6 @@ pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str
         _ => f(key, &[]),
     });
 }
-
 
 /// The single delta-export entry point for the sync wire (ONE-1127).
 ///

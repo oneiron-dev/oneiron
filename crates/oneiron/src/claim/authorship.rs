@@ -21,4 +21,3 @@ pub(crate) fn claim_author(body: &ClaimBody) -> Option<EntityId> {
     }
     EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
 }
-

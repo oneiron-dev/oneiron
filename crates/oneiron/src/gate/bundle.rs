@@ -15,21 +15,17 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::{
-    consent::bundle_projection::{
-        GATE_CONSENT_BUNDLE_DOMAIN,
-        GATE_CONSENT_BUNDLE_SCHEMA_VERSION,
-        GateConsentBundle,
-        GateConsentBundleAction,
-        GateConsentBundleMember,
-        GateConsentBundleReceipt,
-    },
-    run_tree::RunTreeAdapter,
-};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{
+    consent::bundle_projection::{
+        GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle,
+        GateConsentBundleAction, GateConsentBundleMember, GateConsentBundleReceipt,
+    },
+    run_tree::RunTreeAdapter,
+};
 
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;

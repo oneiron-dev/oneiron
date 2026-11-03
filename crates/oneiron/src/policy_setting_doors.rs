@@ -27,10 +27,10 @@ use crate::code_run::actions::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
-use crate::memory::{Memory};
-use oneiron_contracts::memory::{MemoryResult};
+use crate::memory::Memory;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use oneiron_contracts::memory::MemoryResult;
 
 /// `vault.settings.wake_policy.set`'s input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

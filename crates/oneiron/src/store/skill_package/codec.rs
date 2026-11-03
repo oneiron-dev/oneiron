@@ -2,9 +2,9 @@
 
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
+use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{CodecError, RawValue};
 use crate::write_envelope::skill_record::{decode_skill_record, encode_skill_record};
-use crate::error::{ArtifactError, Error, Result};
 use std::io::{Cursor, Read};
 
 impl RawValue for HubPackage {

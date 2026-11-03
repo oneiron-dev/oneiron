@@ -4,10 +4,10 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::{BodyMint, StagedAssetBody, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::ClaimSubject;
@@ -27,8 +27,8 @@ use super::store_keys::{
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
-use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).

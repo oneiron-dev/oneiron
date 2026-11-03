@@ -601,9 +601,9 @@ mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 mod token_uses;
 #[cfg(feature = "sync")]
-mod replica;
-#[cfg(feature = "sync")]
 pub(crate) mod frame_envelope;
+#[cfg(feature = "sync")]
+mod replica;
 #[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]

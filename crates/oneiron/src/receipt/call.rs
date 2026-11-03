@@ -54,12 +54,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::DetachedWrite;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The prefix every call receipt ref carries.
 pub const CALL_RECEIPT_REF_PREFIX: &str = "call:";

@@ -4,10 +4,10 @@ use super::super::*;
 use super::BatchBuilder;
 use super::ops::capture_invalid_vector_component;
 
-use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::affect::Vad;
 
 impl BatchBuilder<'_> {
     /// Adds a vector write operation to the batch.

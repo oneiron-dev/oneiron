@@ -1,8 +1,5 @@
 //! Row birth derivation envelopes and copy-scoped withheld identities.
 
-use heed::RwTxn;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -11,6 +8,9 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
+use heed::RwTxn;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Most hex characters a birth's input hash may carry.
 const MAX_CONTENT_HASH_HEX: usize = 128;
@@ -365,7 +365,6 @@ impl RowBirth {
 const WITHHELD_SECRET: SideTable<(), [u8; 32], Raw> =
     SideTable::new(&side_table::PROVENANCE_WITHHELD_SECRET);
 
-
 /// One evidence ref a room write's caller supplied: as spelled, and the
 /// TURN the caller read it as in the room with the bytes it read, when it
 /// read one.
@@ -436,7 +435,6 @@ impl RowBirth {
     }
 }
 
-
 impl RowBirth {
     /// The birth of a row `actor` wrote through `door` at `at`, made of a
     /// model's answer to a prompt that carried the rows `prompt` (each named
@@ -461,4 +459,3 @@ impl RowBirth {
         Some(birth)
     }
 }
-

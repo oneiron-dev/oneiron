@@ -1,11 +1,11 @@
 //! Audio-free voice-bank metadata views and record conversions.
 
-use serde::{Deserialize, Serialize};
+use super::consent::{VoiceConsentBasis, VoiceConsentState};
+use super::model::{VoiceIdentity, VoiceRefOrigin, VoiceRenderConsent, VoiceTargetRecord};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::ModelLocality;
 use crate::memory::voice_actor::VoiceRefSubjectKind;
-use super::consent::{VoiceConsentBasis, VoiceConsentState};
-use super::model::{VoiceIdentity, VoiceRefOrigin, VoiceRenderConsent, VoiceTargetRecord};
+use serde::{Deserialize, Serialize};
 
 /// A banked voice identity: its owner (entity hex), whether it is a real
 /// person's voice or a designed one, and its packs' ids, source and

@@ -4,8 +4,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 pub use crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE;
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 /// Subject-model vocabulary version. Claim bodies retain the generic claim ABI.
 pub const SUBJECT_MODEL_SCHEMA_VERSION: u64 = 1;

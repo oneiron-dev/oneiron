@@ -7,8 +7,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
-use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
+use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -338,8 +338,11 @@ impl Memory<'_> {
                     .fork_skill_package_in_txn(txn, &parent, &stored, &mut record)?;
             let (author, proof) = self.birth_skill_in_txn(txn, id, &mut record, now)?;
             if let Some(package) = package {
-                let package =
-                    crate::store::skill_package::package_from_source(&record, package.files, package.format)?;
+                let package = crate::store::skill_package::package_from_source(
+                    &record,
+                    package.files,
+                    package.format,
+                )?;
                 self.vault.persist_hub_package_in_txn(txn, &id, &package)?;
             }
             self.vault

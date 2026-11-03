@@ -15,7 +15,7 @@ use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{GateReasonCode, RecordedClaimGateDecision};
-use crate::store::{GateRetentionContext};
+use crate::store::GateRetentionContext;
 use crate::store::Store;
 use crate::write_envelope::claim_body::ClaimBody;
 

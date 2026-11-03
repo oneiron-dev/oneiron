@@ -23,9 +23,9 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_crypto::HybridPublicKey;
 use oneiron_authority::authority::RecoveryRootId;
 use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
+use oneiron_crypto::HybridPublicKey;
 
 use super::super::identity::{CustodyKind, CustodySubject};
 use super::super::log::{AEAD, CRYPTO_EPOCH, CustodyPosition, open_sym, seal_refused, seal_sym};

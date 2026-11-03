@@ -15,10 +15,10 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
-use crate::write_envelope::task_body::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 /// TASK-body subkind for sends executed by a connector actor.
 pub const CONNECTOR_SEND_TASK_SUBKIND: &str = "connector_send";
@@ -329,7 +329,9 @@ impl Vault {
         if !has_connector_send_subkind(body_bytes)? {
             return Ok(None);
         }
-        if crate::write_envelope::task_body::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
+        if crate::write_envelope::task_body::task_role_from_body_bytes(body_bytes)?
+            != TaskRole::Task
+        {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "connector send must use the Task role",
             )));
@@ -357,11 +359,9 @@ impl Vault {
                 )));
             }
         };
-        if body
-            .counterparty_ref
-            .as_deref()
-            .is_some_and(|party| crate::write_envelope::communication_record::validate_key_string(party).is_err())
-        {
+        if body.counterparty_ref.as_deref().is_some_and(|party| {
+            crate::write_envelope::communication_record::validate_key_string(party).is_err()
+        }) {
             return Err(Error::Record(RecordError::InvalidTaskBody(
                 "invalid connector send counterparty",
             )));
