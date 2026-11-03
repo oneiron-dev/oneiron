@@ -9,11 +9,11 @@ use crate::scan_check::ScanCount;
 use crate::{
     EntityId, Vault,
     error::Result,
-    federation::{Scope, ScopeAxis},
     ports::{EntityStore, EntityStoreRead},
     registry::ENTITY_TYPE_MACHINE,
     side_table::{self, HexId, Named, SideTable},
 };
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use std::{
