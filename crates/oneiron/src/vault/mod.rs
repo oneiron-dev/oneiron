@@ -146,6 +146,9 @@ pub struct Vault {
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
     pub(crate) conversation_presence:
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
+    /// The backoff of each critical confirm whose timeout demotion keeps
+    /// failing (FIX 12079). In memory only: a reopened vault tries each at once.
+    pub(crate) confirm_demotion_retries: crate::gate::ConfirmDemotionRetries,
     /// The host's USD quote for launch statements (OF-532), installed once
     /// by [`Vault::install_launch_usd_prices`]. Empty: dollars are unknown.
     pub(crate) launch_usd_prices:

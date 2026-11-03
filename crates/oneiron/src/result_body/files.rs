@@ -130,19 +130,30 @@ pub(super) fn unlink_body(
     }
 }
 
+/// What removing one unnamed body came to (FIX 12248): it went, a reader's
+/// pin kept it, or it was not this entry's to remove yet. One result, read
+/// once: a pin taken and released between two probes would be counted by
+/// neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RemoveOutcome {
+    Removed,
+    Pinned,
+    Skipped,
+}
+
 /// Removes the body of `entry`, which nothing names, with its line index,
 /// or the line index alone once its body is gone: only past [`BODY_GRACE`]
-/// and while no reader in `pins` holds it. `true` when something went.
+/// and while no reader in `pins` holds it.
 pub(super) fn remove_unnamed(
     dir: &BodyDir,
     entry: &BodyEntry,
     now: SystemTime,
     pins: &ResultBodyPins,
-) -> Result<bool> {
+) -> Result<RemoveOutcome> {
     let body = entry.body_name();
     if entry.index && file_age(dir, &body, now)?.is_some() {
         // Its body is there: the body's own entry decides for both.
-        return Ok(false);
+        return Ok(RemoveOutcome::Skipped);
     }
     let name = if entry.index {
         format!("{body}{LINE_INDEX_SUFFIX}")
@@ -150,7 +161,7 @@ pub(super) fn remove_unnamed(
         body.clone()
     };
     if file_age(dir, &name, now)?.is_none_or(|age| age < BODY_GRACE) {
-        return Ok(false);
+        return Ok(RemoveOutcome::Skipped);
     }
     let remove = || {
         if entry.index {
@@ -159,10 +170,12 @@ pub(super) fn remove_unnamed(
             unlink_named(dir, &body)
         }
     };
-    Ok(pins
-        .unless_pinned(&entry.digest, remove)
-        .transpose()?
-        .is_some())
+    Ok(
+        match pins.unless_pinned(&entry.digest, remove).transpose()? {
+            Some(()) => RemoveOutcome::Removed,
+            None => RemoveOutcome::Pinned,
+        },
+    )
 }
 
 /// Syncs `dir`, so the unlinks in it last.
