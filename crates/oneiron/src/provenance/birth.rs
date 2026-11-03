@@ -326,7 +326,7 @@ impl RowBirth {
     /// from, but for a room's: it keeps the evidence its caller supplied,
     /// none of which the room may have read as a TURN (FIX 4281). No count
     /// of inputs or handles is refused.
-    fn check_shape(&self) -> Result<()> {
+    pub(crate) fn check_shape(&self) -> Result<()> {
         let made_by = &self.made_by;
         let withheld = |role: WithheldRole| self.withheld.iter().any(|w| w.role == role);
         let has_prompt = made_by

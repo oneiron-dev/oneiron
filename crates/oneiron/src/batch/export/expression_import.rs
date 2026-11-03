@@ -7,7 +7,7 @@ use std::io::{Read, Seek};
 use super::archive_index::{
     FLAG_EXPRESSION, IndexedArchive, QUEUE_EXPRESSION, Tag, id_at, ready_key,
 };
-use super::document_import::parse_id;
+use super::document_import::{parse_id, stamp_archived_birth};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
 use crate::claim::{
     ArchivedExpressionPreference, ClaimSubject, ExpressionPreferenceArchive, decode_claim_body,
@@ -205,6 +205,11 @@ pub(super) fn restore<R: Read + Seek>(
         ))?;
     let history = history(archive, &group)?;
     let (inserted, unchanged) = history.restore_in_txn(vault, txn, actor)?;
+    // FIX 1178: each landed row's archived birth, stamped once the history
+    // compares exact.
+    for id in history.ids() {
+        stamp_archived_birth(vault, txn, archive, &id)?;
+    }
     archive.index.remove(Tag::HistoryPending, id.as_bytes())?;
     for id in history.ids() {
         archive.index.remove(Tag::Waiting, id.as_bytes())?;

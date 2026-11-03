@@ -9,7 +9,7 @@ use super::archive_index::{
     ArchiveIndex, FLAG_PROVENANCE, IndexedArchive, Loc, QUEUE_PROVENANCE, Tag, edge_key, id_at,
     id_list, ids_of, ready_key,
 };
-use super::document_import::{import_edge, matches_row, parse_id};
+use super::document_import::{import_edge, matches_row, parse_id, stamp_archived_birth};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body};
 use crate::entity_id::ENTITY_ID_LEN;
@@ -268,6 +268,11 @@ pub(super) fn restore<R: Read + Seek>(
     let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
+    }
+    // FIX 1178: each landed row's archived birth, stamped once its final
+    // body compares exact.
+    for (_, id, _) in &rows {
+        stamp_archived_birth(vault, txn, archive, id)?;
     }
     archive.index.remove(Tag::CohortPending, key.as_bytes())?;
     for (_, id, _) in &rows {
