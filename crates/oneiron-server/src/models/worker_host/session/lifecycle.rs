@@ -286,7 +286,8 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
             .or_insert_with(|| (place.worker.clone(), 0))
             .1 += 1;
         releases.spawn(async move {
-            let acked = registry::release_acked(target, place, SessionInvalidation::Evicted).await;
+            let acked =
+                registry::release_acked(target, place, SessionInvalidation::VaultLocked).await;
             (key, acked)
         });
     }
