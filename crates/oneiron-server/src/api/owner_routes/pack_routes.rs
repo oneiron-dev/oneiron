@@ -30,6 +30,7 @@ use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
 mod line_chats;
+mod native_mail_identities;
 pub(crate) mod schema;
 mod setup_routes;
 mod skill_routes;

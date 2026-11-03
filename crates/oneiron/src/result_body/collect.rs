@@ -237,7 +237,11 @@ impl Vault {
                     }
                     if remove_unnamed(dir, entry, now, &self.result_body_pins)? {
                         went += 1;
-                    } else if self.result_body_pins.unless_pinned(&entry.digest, || ()).is_none() {
+                    } else if self
+                        .result_body_pins
+                        .unless_pinned(&entry.digest, || ())
+                        .is_none()
+                    {
                         kept += 1;
                     }
                 }

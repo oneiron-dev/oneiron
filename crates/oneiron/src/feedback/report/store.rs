@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 
 use super::{ReportIssue, ReportReceipt, ReportRequest, ReportReview, ReportStatus, invalid};
 use crate::batch::{BatchOp, apply_ops};
+use crate::consent::StandingConsentGrant;
 use crate::feedback::intake::FeedbackDedup;
 use crate::limit_ask::EngineLimit;
 use crate::registry::ENTITY_TYPE_ISSUE;
@@ -58,6 +59,40 @@ pub(super) fn read(
         return Err(Error::CorruptedIndex("report issue identity"));
     }
     vault.project_report_disclosure_in_txn(txn, &mut issue)?;
+    Ok(Some(issue))
+}
+
+/// One issue as `txn` reads it, its disclosure the effective view its basis
+/// and the already-loaded `grants` give (FIX 9366, one load per pass). Same
+/// output as [`read`] when `grants` holds the active set on `txn`; pure of
+/// grant IO.
+pub(super) fn read_with_grants(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    grants: &[StandingConsentGrant],
+) -> Result<Option<ReportIssue>> {
+    let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        id,
+        crate::vault::entity_revision::ReadMode::Live,
+    )?
+    else {
+        return Ok(None);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("report issue header"))?;
+    if header.entity_type != ENTITY_TYPE_ISSUE {
+        return Err(invalid("report reference is not an ISSUE"));
+    }
+    let mut issue: ReportIssue =
+        rmp_serde::from_slice(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| Error::CorruptedIndex("report issue body"))?;
+    if issue.issue_ref != id.to_hex() {
+        return Err(Error::CorruptedIndex("report issue identity"));
+    }
+    vault.project_report_disclosure_with_grants_in_txn(&mut issue, grants)?;
     Ok(Some(issue))
 }
 
@@ -165,25 +200,42 @@ impl Vault {
     }
 
     /// Receipt-backed arrivals, oldest first. Each accepted actor/subject/category appears once.
+    /// Loads the active standing grants once on the page txn and reuses the
+    /// set for every arrival (FIX 9366): at most N scans become 1; empty/no-text pages pay 1.
     pub fn report_inbox(
         &self,
         after: Option<(u64, EntityId)>,
         limit: usize,
     ) -> Result<Vec<ReportIssue>> {
+        let (issues, _) = self.report_inbox_page_and_grants(after, limit)?;
+        Ok(issues)
+    }
+
+    /// [`Self::report_inbox`] with its pass-local grant set (FIX 9366, one
+    /// load per pass): the page and the grants share one txn snapshot, so the
+    /// projection is output-identical to per-issue loads. The delivery pass
+    /// reuses the returned set for its sends (0 fresh loads); the set is
+    /// dropped at pass end, never memoized across passes/pages.
+    pub(super) fn report_inbox_page_and_grants(
+        &self,
+        after: Option<(u64, EntityId)>,
+        limit: usize,
+    ) -> Result<(Vec<ReportIssue>, Vec<StandingConsentGrant>)> {
         use std::ops::Bound;
         let txn = self.store.env.read_txn()?;
+        let grants = self.active_standing_consent_grants_in_txn(&txn)?;
         let start = after.map_or(Bound::Unbounded, Bound::Excluded);
         let mut issues = Vec::new();
         for row in ARRIVALS.iter_range(&self.store, &txn, start.as_ref(), Bound::Unbounded)? {
             let ((_, id), ()) = row?;
-            if let Some(issue) = read(self, &txn, &id)? {
+            if let Some(issue) = read_with_grants(self, &txn, &id, &grants)? {
                 if issues.len() == limit {
                     break;
                 }
                 issues.push(issue);
             }
         }
-        Ok(issues)
+        Ok((issues, grants))
     }
 
     /// The owner reviews the ISSUE itself. Reports do not create a TASK or grant authority.

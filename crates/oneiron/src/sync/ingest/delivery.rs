@@ -128,7 +128,9 @@ pub(in crate::sync) fn payload_rows(
     if raw.import(update).is_err() {
         return BTreeSet::new();
     }
-    delivered_rows(&raw.get_map("entities")).into_keys().collect()
+    delivered_rows(&raw.get_map("entities"))
+        .into_keys()
+        .collect()
 }
 
 /// Puts back the delivery an outer import installed, on every exit.

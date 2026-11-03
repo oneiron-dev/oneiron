@@ -39,6 +39,7 @@
 use rmpv::Value;
 
 mod archive;
+pub(crate) mod seeded;
 mod validation;
 pub use archive::SubjectRestoreReview;
 pub(crate) use archive::{imported_subject_body, is_subject_model_predicate};

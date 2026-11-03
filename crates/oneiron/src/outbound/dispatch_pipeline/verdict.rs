@@ -33,6 +33,9 @@ pub(in crate::outbound) struct DispatchVerdict {
     /// The provider's edge, when that wait held this dispatch and nothing
     /// was sent.
     pub(in crate::outbound) provider_wait_held_until: Option<u64>,
+    /// The instant a full window paces this unsent send until (FIX 7948,
+    /// FIX 8788): it comes back then.
+    pub(in crate::outbound) paced_until: Option<u64>,
     /// Where this send's reserved budget stands (FIX 7964).
     pub(in crate::outbound) budget_reservation: Option<ReservationStatus>,
 }

@@ -137,6 +137,20 @@ impl Vault {
         }
     }
 
+    /// [`Self::publish_review_paths_in_txn`] as a Grant's bounds judge them:
+    /// `None` when a path's Git bytes are not UTF-8 and its text is lossy
+    /// (FIX 10003).
+    pub(super) fn publish_grant_paths_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        view: &OriginPublishRequestView,
+    ) -> Result<Option<BTreeSet<String>>> {
+        if view.review.lossy_paths {
+            return Ok(None);
+        }
+        self.publish_review_paths_in_txn(txn, view).map(Some)
+    }
+
     /// Every path a request's review names, read from its pages. A page the
     /// count names that is missing is an error: no admission stands on part
     /// of a review.
