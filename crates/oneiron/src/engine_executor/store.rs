@@ -3,7 +3,8 @@
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding,
+    ExecutorStorage,
 };
 use crate::code_sandbox::source::PreparedSource;
 use crate::compaction::output::OutputRef;
@@ -56,6 +57,25 @@ pub(super) fn publish_output(
         storage.publish_code_run_output_sourced(path, sink, true, record.run_id, input_rows)?;
     record.outputs.push(output.clone());
     Ok(output)
+}
+
+/// Binds the published `output` to the next free automatic `r<n>` name, one
+/// past the record's live names and past any name taken: the binding joins
+/// the record, and its name and handle join the step's digest bindings.
+pub(super) fn bind_published_output(
+    record: &mut CodeRunReplayRecord,
+    digest_bindings: &mut Vec<(String, String)>,
+    output: &CodeRunRawOutput,
+) {
+    let name = (record.bindings.len() + 1..)
+        .map(|n| format!("r{n}"))
+        .find(|name| !record.bindings.iter().any(|binding| binding.name == *name))
+        .unwrap_or_default();
+    record.bindings.push(CodeRunResultBinding::new(
+        name.clone(),
+        output.handle.clone(),
+    ));
+    digest_bindings.push((name, output.handle.clone()));
 }
 
 /// A step's model reply as the provider gave it, kept apart from the program
@@ -552,8 +572,8 @@ pub(crate) fn store_result_output_path(digest: &[u8; 32]) -> String {
 }
 
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result, a stored value, or the reply a parked call resumed
-/// with.
+/// stored bridge result, a stored value, the reply a parked call resumed
+/// with, a step's observation, or a file a step wrote.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -564,6 +584,42 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
         || resumed_output_wait(path).is_some()
+        || is_observation_output_path(path)
+        || is_runtime_output_path(path)
+}
+
+/// Whether `path` names a step's observation.
+fn is_observation_output_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let Some(seq) = rest.strip_suffix(".observation.txt") else {
+        return false;
+    };
+    !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `path` names a file a step wrote.
+fn is_runtime_output_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let Some((seq, rest)) = rest.split_once("/output/") else {
+        return false;
+    };
+    if seq.is_empty() || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let Some((index, tail)) = rest.split_once('-') else {
+        return false;
+    };
+    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()) && !tail.is_empty()
 }
 
 /// Whether the run's output at `path` holds reply content an erase of the

@@ -54,22 +54,15 @@ pub struct ArmTypeFeedback<'f> {
 }
 
 /// The outputs of `prefix`, a run's row as a step starts, that the step's
-/// program may read back: the run's results, and the observation of each
-/// step before it.
+/// program may read back: the run's results (observations and runtime files
+/// included).
 pub(crate) fn shadow_readable_outputs(prefix: &CodeRunReplayRecord) -> Vec<CodeRunRawOutput> {
-    let mut readable: Vec<CodeRunRawOutput> = prefix
+    prefix
         .outputs
         .iter()
         .filter(|output| is_result_output_path(&output.path))
         .cloned()
-        .collect();
-    for seq in 0..prefix.step_checkpoints.len() as u64 {
-        let path = observation_output_path(seq);
-        if let Some(output) = prefix.outputs.iter().find(|output| output.path == path) {
-            readable.push(output.clone());
-        }
-    }
-    readable
+        .collect()
 }
 
 /// Runs `prepared`'s captured step in an arm whose bodies are in `store`,

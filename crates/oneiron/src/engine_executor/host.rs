@@ -69,8 +69,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
     streamed: StreamedOutputs,
-    /// The run's earlier results stored as bodies (bridge results and
-    /// stored values), which the guest may read back.
+    /// The run's earlier results stored as bodies (bridge results, stored
+    /// values, observations and runtime files), which the guest may read
+    /// back.
     results: Vec<CodeRunRawOutput>,
     /// This step's results stored as bodies, for the record.
     pub(super) captured: Vec<CodeRunRawOutput>,
