@@ -1,9 +1,9 @@
 //! Housekeeping sweep identifiers, cadence policy, and pass budget values.
 
+use serde::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use serde::Serialize;
 
 /// One sweep the housekeeping pass knows. The engine runs the first fourteen;
 /// the rest need a host's authority and are reported, never run.

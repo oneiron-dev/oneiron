@@ -358,9 +358,11 @@ pub fn store_output_sourced(
 /// is redacted, the stored body never rewritten.
 pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
     if !output_clean(vault, source)? {
-        return Ok(crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     vault
         .get_raw_body(source)?

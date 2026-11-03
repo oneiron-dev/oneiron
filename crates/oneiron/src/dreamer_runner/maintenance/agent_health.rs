@@ -20,10 +20,10 @@
 use std::collections::BTreeMap;
 
 use crate::EntityId;
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::agent_dispatch::AgentDispatchInput;
 use crate::agent_dispatch::agent_dispatch_actor;
 use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::llm::OpenTrapWait;
 use crate::run_budget::LeaseUnit;
@@ -43,7 +43,6 @@ mod environment;
 mod erase;
 mod loaded;
 mod moves;
-pub mod steer;
 mod outcomes;
 mod pipeline;
 mod policy;
@@ -51,6 +50,7 @@ mod rollups;
 mod run_loop;
 mod silence;
 mod sources;
+pub mod steer;
 mod targeted;
 mod trend;
 mod trend_output;
