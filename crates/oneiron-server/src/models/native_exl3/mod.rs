@@ -44,8 +44,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
-    WorkerBuildEvidence, WorkerFailure,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, SchedulingReceipt,
+    SegmentManifest, WorkerBuildEvidence, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
@@ -127,7 +127,7 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
-        Box::pin(execute(route, body, segments, context))
+        Box::pin(execute(route, body, segments, context, lease))
     }
 
     fn stream<'a>(
@@ -147,6 +147,7 @@ impl OpenAiCompatTransport for NativeExl3Transport {
                 body,
                 segments,
                 context,
+                lease: lease.clone(),
             },
             Streaming::step,
         )))
@@ -379,6 +380,7 @@ async fn execute(
     body: JsonValue,
     segments: Option<Arc<SegmentManifest>>,
     context: WorkContext,
+    lease: &BudgetLease,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
@@ -388,6 +390,8 @@ async fn execute(
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
+    // One physical request, observed from its send (FIX 9297, FIX 9417 pattern).
+    let publisher = InferencePublisher::begin(lease);
     let mut last = loop {
         match sent.call.next().await {
             Ok(Event::Final(last)) => break last,
@@ -401,7 +405,11 @@ async fn execute(
         }
     };
     report(&route, &last);
-    record_receipt(&route, &sent, &last);
+    // The final's receipt, done or error, is this call's final one; the
+    // Failed settlement records what its lease observed (FIX 9297).
+    if let Some(receipt) = record_receipt(&route, &sent, &last) {
+        publisher.finish(receipt);
+    }
     stamp_physical(&mut last, sent.physical);
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
@@ -501,7 +509,13 @@ fn activity_of(stats: &JsonValue) -> Option<WorkerActivity> {
 }
 
 /// Retains the physical receipt a terminal carried, with its launch epoch.
-fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
+/// Parses the `final`'s first inference-call receipt for the device
+/// ledger, and returns it stamped for the settlement sink (FIX 9297).
+fn record_receipt(
+    route: &NativeRoute,
+    sent: &Sent,
+    last: &JsonValue,
+) -> Option<InferenceCallReceipt> {
     let scheduling = last
         .get("scheduling")
         .and_then(|value| serde_json::from_value::<SchedulingReceipt>(value.clone()).ok());
@@ -517,7 +531,14 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
         receipt.physical = Some(sent.physical);
-        worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
+        worker_host::report_receipt(
+            &route.worker.spec().worker_id,
+            &sent.tie.epoch,
+            receipt.clone(),
+        );
+        Some(receipt)
+    } else {
+        None
     }
 }
 
@@ -660,6 +681,7 @@ enum Streaming {
         body: JsonValue,
         segments: Option<Arc<SegmentManifest>>,
         context: WorkContext,
+        lease: BudgetLease,
     },
     Live(Box<Live>),
     Done,
@@ -669,6 +691,7 @@ enum Streaming {
 struct Live {
     route: NativeRoute,
     sent: Sent,
+    publisher: InferencePublisher,
     target: Option<String>,
     id: String,
     created: u64,
@@ -687,13 +710,20 @@ impl Streaming {
                 body,
                 segments,
                 context,
+                lease,
             } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
                 match begin(&route, &body, true, segments.as_deref(), context).await {
-                    Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
+                    Ok(Begun::Sent(sent)) => {
+                        // One physical request, observed from its send (FIX 9297).
+                        let publisher = InferencePublisher::begin(&lease);
+                        Box::new(Live::over(route, sent, target, publisher))
+                            .next()
+                            .await
+                    }
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))
                     }
@@ -707,10 +737,16 @@ impl Streaming {
 }
 
 impl Live {
-    fn over(route: NativeRoute, sent: Sent, target: Option<String>) -> Self {
+    fn over(
+        route: NativeRoute,
+        sent: Sent,
+        target: Option<String>,
+        publisher: InferencePublisher,
+    ) -> Self {
         Self {
             route,
             sent,
+            publisher,
             model: target.clone().map_or(JsonValue::Null, JsonValue::String),
             target,
             id: format!("chatcmpl-native-{}", transport::next_request_id()),
@@ -766,7 +802,11 @@ impl Live {
                 Ok(Event::Final(mut last)) => {
                     self.finished = true;
                     report(&self.route, &last);
-                    record_receipt(&self.route, &self.sent, &last);
+                    // The final's receipt, done or error, is this call's
+                    // final one; a cut stream keeps its progress (FIX 9297).
+                    if let Some(receipt) = record_receipt(&self.route, &self.sent, &last) {
+                        self.publisher.finish(receipt);
+                    }
                     stamp_physical(&mut last, self.sent.physical);
                     self.finish(last);
                 }

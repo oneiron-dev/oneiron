@@ -15,11 +15,11 @@ use crate::channel_identity_lifecycle::{
     ChannelIdentityLifecycleRequest, ReleaseIntent,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::ports::EdgeDirection;
-use crate::registry::ENTITY_TYPE_FACET;
 use crate::deletion::{DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
+use crate::ports::EdgeDirection;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -106,19 +106,12 @@ impl Vault {
                 EdgeKind::InWorld,
                 Some(ENTITY_TYPE_FACET),
             )? {
-                let LiveEntityRow::Live { .. } =
-                    live_entity_row_in_txn(&self.store, &txn, &facet)?
+                let LiveEntityRow::Live { .. } = live_entity_row_in_txn(&self.store, &txn, &facet)?
                 else {
                     continue;
                 };
                 if self
-                    .filtered_edge_peers(
-                        &txn,
-                        EdgeDirection::In,
-                        &facet,
-                        EdgeKind::HasFacet,
-                        None,
-                    )?
+                    .filtered_edge_peers(&txn, EdgeDirection::In, &facet, EdgeKind::HasFacet, None)?
                     .is_empty()
                 {
                     orphans.push(facet);
