@@ -21614,7 +21614,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 25
      }
     },
@@ -22145,6 +22145,7 @@
      "path": "src/context_board/stream/mod.rs",
      "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -22172,7 +22173,7 @@
      "path": "src/context_board/stream/publish.rs",
      "purpose": "The own-task producer: committed TASK writes become routed board events",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
      }
