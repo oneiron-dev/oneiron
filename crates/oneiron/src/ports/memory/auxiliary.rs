@@ -420,6 +420,7 @@ impl JobQueue for Memory {
             dedupe_key: input.dedupe_key,
             created_at: now,
             updated_at: now,
+            settled_at: None,
             events: Vec::new(),
             manifest: Vec::new(),
             executor_model: None,
