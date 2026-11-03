@@ -32851,7 +32851,7 @@ async fn vault_artifacts_body_proposal_settle(
         class,
         "vault.artifacts.body.proposal.settle",
         &value,
-        &["artifact_ref"],
+        &["artifact_ref", "reviewed[*].artifact_ref"],
     )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
@@ -38725,7 +38725,10 @@ async fn self_focus_unsubscribe(
 }
 /// The nested `readable` paths of each facade row that declares one (2690):
 /// a hook's rewrite of one meets its credential read check again.
-const NESTED_READABLE: &[(&str, &[&str])] = &[];
+const NESTED_READABLE: &[(&str, &[&str])] = &[(
+    "vault.artifacts.body.proposal.settle",
+    &["reviewed[*].artifact_ref"],
+)];
 /// [`NESTED_READABLE`]'s paths for `verb`; none for a row that declares none.
 pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
     match NESTED_READABLE.iter().find(|(row, _)| *row == verb) {

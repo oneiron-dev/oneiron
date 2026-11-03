@@ -370,3 +370,7 @@ impl Vault {
         Ok(self.post_verb_hooks(pre, result)?)
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::record::hooks_verb_run_accepts_masked;

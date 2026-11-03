@@ -4234,6 +4234,7 @@ class CampaignProgramOutboundSpec(TypedDict):
     verb: str
     payload: str
     idempotency_supported: bool
+    subject: NotRequired[str | None]
 class CampaignProgramStepSpec(TypedDict):
     step_ref: str
     channel: str
@@ -19749,6 +19750,7 @@ class MemberAnswer(TypedDict):
     landed: NotRequired[list[int] | None]
     at: int
 class ProposalMember(TypedDict):
+    artifact: EntityId
     fork: EntityId
     opener: BodyActor
     run_root: NotRequired[EntityId | None]
@@ -19761,10 +19763,12 @@ class ProposalSettlement(TypedDict):
     at: int
     reason: NotRequired[str | None]
 class ProposalAsk(TypedDict):
+    artifact: EntityId
     ask: EntityId
     forks: list[EntityId]
     at: int
 class ProposalAskRefusal(TypedDict):
+    artifact: EntityId
     forks: list[EntityId]
     reason: str
     at: int
@@ -19773,7 +19777,7 @@ class OfficeBodyProposal(TypedDict):
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
     asks: NotRequired[list[ProposalAsk]]
-    ask_refused: NotRequired[ProposalAskRefusal | None]
+    ask_refused: NotRequired[list[ProposalAskRefusal]]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str
@@ -19783,14 +19787,15 @@ class ApproveScopeOneItem(TypedDict):
     one_item: str
 ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
 class OfficeBodyReviewedFork(TypedDict):
+    artifact_ref: str
     fork_ref: str
+    reviewed_head: list[int]
     reviewed_fork: list[int]
 class OfficeBodyProposalSettleRequest(TypedDict):
     artifact_ref: str
     proposal_ref: str
     verdict: SettleVerdict
     scope: NotRequired[ApproveScope | None]
-    reviewed_head: list[int]
     reviewed: list[OfficeBodyReviewedFork]
     reason: NotRequired[str | None]
 class OfficeBodyExportVerbRequest(TypedDict):

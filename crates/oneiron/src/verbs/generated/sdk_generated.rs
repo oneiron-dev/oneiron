@@ -34705,7 +34705,12 @@ pub fn vault_artifacts_body_proposal_settle(
         memory,
         "vault.artifacts.body.proposal.settle",
         &input,
-        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+        &[
+            "/artifact_ref",
+            "/proposal_ref",
+            "/reviewed/*/artifact_ref",
+            "/reviewed/*/fork_ref",
+        ],
     )?;
     memory.artifacts_body_proposal_settle(&input)
 }
@@ -36354,7 +36359,12 @@ pub fn receipt_declared_refs(
                 memory,
                 "vault.artifacts.body.proposal.settle",
                 &input,
-                &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+                &[
+                    "/artifact_ref",
+                    "/proposal_ref",
+                    "/reviewed/*/artifact_ref",
+                    "/reviewed/*/fork_ref",
+                ],
             )?;
         }
         "vault.artifacts.body.export" => {

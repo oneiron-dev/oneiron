@@ -115,3 +115,7 @@ mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
 pub use pdf::{PdfText, PdfTextError, pdf_text};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::history::ingest_history_ledger_accepts_masked;

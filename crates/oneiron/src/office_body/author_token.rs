@@ -20,11 +20,13 @@
 //!
 //! [`ERASED_CALL_IDENTITY`]: crate::receipt::ERASED_CALL_IDENTITY
 
+mod carrier;
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use heed::RoTxn;
-use oneiron_docedit::ooxml::{XmlError, XmlTree};
+use oneiron_docedit::ooxml::{Node, XmlError, XmlTree};
 use oneiron_docedit::resource::Resources;
 use oneiron_docedit::retained_opc::Package;
 
@@ -201,13 +203,7 @@ fn swap_tokens(
     let tree = XmlTree::parse(document, resources)?;
     let mut splices: Vec<(Range<usize>, &str)> = Vec::new();
     for node in &tree.nodes {
-        if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
-            continue;
-        }
-        let Some(value) = node
-            .attr_ns(W_MAIN, "author")
-            .filter(|value| is_token(value))
-        else {
+        let Some(value) = revision_token(node) else {
             continue;
         };
         let Some(author) = authors.get(value.as_bytes()) else {
@@ -248,6 +244,16 @@ fn swap_tokens(
     }
     out.extend_from_slice(document.get(at..).unwrap_or_default());
     Ok(Some(out))
+}
+
+/// The whole token a tracked revision carries as its `w:author`, or none.
+/// Both the resolver and the byte-bound carrier use this one XML predicate.
+fn revision_token(node: &Node) -> Option<&str> {
+    if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
+        return None;
+    }
+    node.attr_ns(W_MAIN, "author")
+        .filter(|value| is_token(value))
 }
 
 /// Whether `value` is a whole default author's token: the marker, then a
