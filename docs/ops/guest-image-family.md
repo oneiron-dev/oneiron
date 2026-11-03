@@ -644,10 +644,10 @@ The vault variant builds like the others, with these differences:
   image), not the Expat 2.1.0 its crate bundles. DT_NEEDED, read from the ELF dynamic sections: oneiron-server links `libexpat.so.1`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and `ld-linux-x86-64.so.2`; oneiron-broker drops the Expat entry; oneiron-vm-init and oneiron-vm-outbox link only `libgcc_s.so.1`, `libc.so.6` and the loader. Every entry is present in `/usr/lib/x86_64-linux-gnu` in the rootfs.
 - **Memory.** A release build of oneiron-server ran out of memory above
   22 GiB at one Cargo job. Run v6 on nelly at 48G and 8 threads was also
-  OOM-killed. Run v8
-  on gce-ci-3 used 96G, 32 threads and Cargo's default `-j`: its largest
-  process peaked at 40,842,067,968 B (38.04 GiB), and the whole-job cgroup
-  peaked at 85,016,260,608 B (79.19 GiB, anonymous memory plus page cache).
+  OOM-killed. Run v9 on gce-ci-3 used 96G, 32 threads and Cargo's default
+  `-j`: its largest process peaked at 40,156,364,800 B (37.40 GiB), and the
+  whole-job cgroup peaked at 84,632,231,936 B (78.82 GiB, anonymous memory
+  plus page cache).
   Book vault release builds on gce-ci-3 at 96G, 32 threads and default `-j`;
   kel, bel and mel cap a guest at 16G and cannot take that shape.
 - **What the init runs.** sh, cat, head and sync come with Debian's
@@ -679,11 +679,16 @@ this candidate instead is LC's `vault-family-artifact-import`, together
 with the kernel and LC's boot legs (health, provision, restore, outbox,
 resolver, shutdown). None of them ran here.
 
-**The candidate (run v8, gce-ci-3):**
+**The candidate (run v9, gce-ci-3):**
 
 | OCI archive | Unpacked filesystem | Proposed payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS |
 |---|---|---|---|---|---|
-| 249.8 MiB (261,918,720 B) | 789.9 MiB (828,261,961 B) | 512 MiB: **OUTSIDE by 291,391,049 B** | 944.0 MiB (989,855,744 B); 3,305,111,552 B under the 4 GiB cap | 815.6 MiB (855,261,184 B) | 38.04 GiB (40,842,067,968 B) |
+| 249.8 MiB (261,918,720 B) | 789.9 MiB (828,253,513 B) | 512 MiB: **OUTSIDE by 291,382,601 B** | 944.0 MiB (989,855,744 B); 3,305,111,552 B under the 4 GiB cap | 815.6 MiB (855,252,992 B) | 37.40 GiB (40,156,364,800 B) |
+
+The v8/v9 repeat comparison is not yet byte-clean: both runs have the same
+lock, tools tree, engine pin and 3,157-member set, but all four native
+engine binaries differ (FIX 12484). The other 3,153 members and all
+metadata match.
 
 ## Repeatability
 

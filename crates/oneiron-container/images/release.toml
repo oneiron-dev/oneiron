@@ -435,7 +435,32 @@ cold_boot = "health <= 1 s; an actual vault read still meets its existing gates"
 ram = "256-512 MiB experiment range; hosted sizing unchanged"
 
 [variants.vault.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+builder_commit = "75e8e959545cebb4e02c997c7fa5f7c67f827628"
+engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
+host = "fleet-gce-ci-3.asia-northeast1-b.c.oneiron-ci.internal"
+tools_tree_sha256 = "8a18ff6616c547e81c08eeba661a8e071cf1e7d74744bfa6be8284b1d49151d4"
+packages_lock_sha256 = "ad0743641b75af8a46dad42ed5b4cb7fb0399f1de2b2a9660dfe9eb755d59277"
+oci_index_digest = "sha256:54a6fc7ca22adb230f015bdd6136bf40bce112ce966e799b8419138f886a6a2a"
+oci_manifest_digest = "sha256:bd314d746f7901f6776d23626bcb1e7f7b91329e35e902dac37ab5aa8f3f12f8"
+oci_config_digest = "sha256:02954a241c30cf84d2fdd815a8bc6a0c76af7c97fb086bdd4cfcc1470914df44"
+oci_layer_digest = "sha256:357f23c899df72be829d9e98cc7738138c83e279af26b0c3f607dcdb491880a4"
+oci_layer_diff_id = "sha256:3cff5a874f459b1d911d414f389fd928fbd67a88bf50d6cbacf1d3e30ab3e91f"
+oci_archive_sha256 = "8cef7d37c117d3d29f9faacd480662b2fe5f5d8441cc2b9d2349b1cb02a4c7cb"
+ext4_sha256 = "7367805a960148b03856532a75c184e6e917ece3e27e3503dba037f579e4c361"
+ext4_uuid = "26c1a599-2dbc-5290-8cf3-8608b89b4fbd"
+rootfs_tar_sha256 = "3cff5a874f459b1d911d414f389fd928fbd67a88bf50d6cbacf1d3e30ab3e91f"
+rootfs_members_sha256 = "746f5177df4943c6e5498db88c5bc3714df2a37434a65d2c5a4e86ab19fe48ae"
+compressed_bytes = 261918720
+oci_layer_bytes = 261902093
+unpacked_bytes = 828253513
+rootfs_tar_bytes = 830556160
+sparse_capacity_bytes = 989855744
+ext4_allocated_bytes = 855252992
+builder_peak_rss_bytes = 40156364800
+sbom_sha256 = "da1bc6912b1803e3e59256b90789e2f355e888452f865ff737f263e2c4c04134"
+provenance_sha256 = "679281d27288fee14f16d34a7b17bc223fa12c55571b4499bcf27dec3c51ffa7"
+receipt_sha256 = "2d09cb327bfbf628430bf96f6c52a33b39f725f60bc54155a01ae33a05d9cb8a"
 
 [variants.browser]
 role = "guest agent, fence, stdio relay and both browser engines (Lightpanda, Chromium)"
