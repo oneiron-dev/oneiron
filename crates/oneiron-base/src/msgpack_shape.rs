@@ -9,18 +9,18 @@
 
 /// What one decode door accepts.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ShapeBudget {
+pub struct ShapeBudget {
     /// The most values the body may hold; a map counts its keys and values.
-    pub(crate) max_values: u64,
+    pub max_values: u64,
     /// The most containers that may be open at once.
-    pub(crate) max_depth: usize,
+    pub max_depth: usize,
     /// The longest string, binary or extension payload, in bytes.
-    pub(crate) max_scalar_bytes: usize,
+    pub max_scalar_bytes: usize,
 }
 
 /// Which budget a body breaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OverBudget {
+pub enum OverBudget {
     Values,
     Depth,
     Scalar,
@@ -28,7 +28,7 @@ pub(crate) enum OverBudget {
 
 /// The first budget `bytes` breaks, or `None` when they fit it (or stop
 /// being MessagePack before they break it).
-pub(crate) fn over_budget(bytes: &[u8], budget: ShapeBudget) -> Option<OverBudget> {
+pub fn over_budget(bytes: &[u8], budget: ShapeBudget) -> Option<OverBudget> {
     let mut at = 0usize;
     let mut values = 0u64;
     // What each enclosing container still owes, innermost last.
