@@ -10,8 +10,9 @@
 use super::*;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use crate::browser_library::{
-    PROGRAM_ADMISSION_KIND, ProgramAdmissionJob, program_admission_job_id,
+    ProgramAdmissionJob, program_admission_job_id,
 };
+use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
 use crate::memory::{HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::task_verb::sdk::AgentVerb;
 
