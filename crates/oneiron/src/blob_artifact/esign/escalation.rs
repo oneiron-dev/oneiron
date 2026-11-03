@@ -414,3 +414,41 @@ impl Vault {
         })
     }
 }
+
+/// An erased actor's held-ask waits forget it (FIX 5223): a wait timed at
+/// `AskRole::Responsible` naming the actor names no one
+/// ([`AnswerActor::Erased`]), keeping its project, rank and `since`, so the
+/// climb still walks that project's boards. A hold asked at its first role
+/// (`wait: None`), at another role, or already settled is left as it is; the
+/// signed audit trail is never rewritten, and an erased allower still lands
+/// nothing (the [`HeldSigningAnswer::Allow`] refusal). A row that does not
+/// decode names no one and stays.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_held_signing_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for key in HELD.scan_keys(&vault.store, wtxn, &[])? {
+        let Some(mut held) = HELD.get_lenient(&vault.store, wtxn, &key)? else {
+            continue;
+        };
+        let HeldSigningState::Asked {
+            wait: Some(wait), ..
+        } = &mut held.state
+        else {
+            continue;
+        };
+        let AskRole::Responsible { actor: named, .. } = &mut wait.role else {
+            continue;
+        };
+        if *named != AnswerActor::Actor(*actor) {
+            continue;
+        }
+        *named = AnswerActor::Erased;
+        HELD.put(&vault.store, wtxn, &key, &held)?;
+    }
+    Ok(())
+}
