@@ -10,11 +10,14 @@
 //! the queue's own read-only gap, and it names each gap rather than
 //! refusing. Nothing here writes a promotion or any other row.
 use crate::Vault;
-use crate::claim::ClaimLifecycleStatus;
-use crate::code_revision::{CodeCommitMetadata, CodeRevision, QueuePromotionGap};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::repo_mutation::REPO_PROVENANCE_TRAILER_KEY;
+use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_KEY;
+use crate::store::{
+    code_commit_metadata::CodeCommitMetadata, code_promotion_gap::QueuePromotionGap,
+    code_revision_record::CodeRevision,
+};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 /// How a load judges the revision's promotion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +157,9 @@ pub(super) fn export_message(
     metadata: &CodeCommitMetadata,
     provenance: EntityId,
 ) -> Result<String> {
-    if crate::repo_mutation::parse_repo_provenance_trailer(&metadata.message)?.is_some() {
+    if crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&metadata.message)?
+        .is_some()
+    {
         return Err(Error::InvariantViolation(
             "export message must not supply its own provenance trailer",
         ));

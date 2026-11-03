@@ -67,7 +67,7 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let mut record = decode_record(&raw, AttemptId::from_bytes(key)?)?;
-    if record.kind == crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND
+    if record.kind == crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND
         && let Some(payload) =
             crate::surface_event::lift_intake_payload_in_txn(vault, txn, &record.payload)?
     {

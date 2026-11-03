@@ -36,11 +36,11 @@ use super::{EntityDoc, invalid};
 use crate::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::ActorStamp;
-use crate::provenance::made_by::{
+use crate::write_envelope::provenance::ActorStamp;
+use crate::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
-use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
+use crate::write_envelope::provenance::text_commit::{RowProvenance, TextCommitReceipt};
 
 /// What joins a commit's engine stamp to its receipt.
 pub(super) const RECEIPT_PREFIX: &str = "|made_by=";

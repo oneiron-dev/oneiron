@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use crate::context_board::AssembledContext;
-use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
-use crate::context_pack::FieldProfile;
-use crate::context_pack::PackFormat;
 use crate::context_pack::PackStats;
-use crate::context_pack::TokenAllocation;
+use crate::serialize::context_entity::ContextEntity;
+use crate::serialize::pack_accounting::TokenAllocation;
+use crate::serialize::pack_format::FieldProfile;
+use crate::serialize::pack_format::PackFormat;
 
 use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};
@@ -68,7 +68,7 @@ pub(super) enum PreparedEntitySource {
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedPack {
-    pub(super) l2_base: Option<crate::context_pack::L2BaseSummary>,
+    pub(super) l2_base: Option<crate::store::l2_evidence::L2BaseSummary>,
     pub(super) merged: bool,
     pub(super) results: Vec<(GroupKey, Vec<PreparedEntity>)>,
     pub(super) neighbors: Vec<(GroupKey, Vec<PreparedEntity>)>,

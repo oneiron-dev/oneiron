@@ -10,10 +10,10 @@ use zeroize::{Zeroize, Zeroizing};
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{MemoryResult, SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
@@ -26,6 +26,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, Vault, entity_revision, live_entity_row_in_txn};
+use oneiron_contracts::memory::MemoryResult;
 
 /// Gate reason code: the owner ruled a found key no secret.
 pub const FOUND_KEY_REASON_NOT_A_SECRET: &str = "gate.secret.found_key.not_a_secret";
@@ -38,10 +39,7 @@ const FOUND_KEY_CONTENT_KIND: &str = "secret_found_key";
 /// names no tier; a record that held a key keeps no shell of it.
 const FOUND_KEY_DELETE: SafeDeleteReason = SafeDeleteReason::UserHardDelete;
 
-/// The text form a mask leaves in a span, `[secret sc12]`, before the
-/// handle. The claim-restore proof recomputes the restored body with it
-/// (FIX 11882).
-pub(crate) const HANDLE_TEXT_OPEN: &str = "[secret ";
+pub(crate) use crate::file_secret_marks::HANDLE_TEXT_OPEN;
 
 /// The text each record was indexed with, by field.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
@@ -588,7 +586,7 @@ fn restore_text_in_txn(
         return Ok(());
     };
     *text = text.replace(&text_form, as_text(value)?);
-    crate::bm25::deindex_text(&vault.store, txn, record)?;
+    crate::store::text_index::deindex_text(&vault.store, txn, record)?;
     let fields = fields
         .iter()
         .map(|(name, text)| (name.as_str(), text.as_str()))
@@ -715,67 +713,6 @@ fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u
     }
 }
 
-/// [`unmasked_body`] over one decoded value: whether anything changed. The
-/// claim-restore proof recomputes a restored claim body with it (FIX 11882).
-pub(crate) fn unmask_value(
-    tree: &mut Value,
-    handle: &str,
-    text_form: &str,
-    value: &[u8],
-) -> Result<bool> {
-    let restored = match &*tree {
-        Value::String(text) => match text.as_str() {
-            Some(text) => unmasked_text(text, handle, text_form, value)?,
-            None => None,
-        },
-        Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => unmasked_text(text, handle, text_form, value)?,
-            Err(_) => None,
-        },
-        _ => None,
-    };
-    if let Some(restored) = restored {
-        *tree = restored;
-        return Ok(true);
-    }
-    let mut changed = false;
-    match tree {
-        Value::Array(items) => {
-            for item in items {
-                changed |= unmask_value(item, handle, text_form, value)?;
-            }
-        }
-        Value::Map(fields) => {
-            for (key, member) in fields.iter_mut() {
-                changed |= unmask_value(key, handle, text_form, value)?;
-                changed |= unmask_value(member, handle, text_form, value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(changed)
-}
+pub(crate) use crate::file_secret_marks::unmask_value;
 
-/// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field keeps, each span's text form within it
-/// otherwise.
-fn unmasked_text(text: &str, handle: &str, text_form: &str, value: &[u8]) -> Result<Option<Value>> {
-    if text == handle {
-        return Ok(Some(match std::str::from_utf8(value) {
-            Ok(value) => Value::from(value),
-            Err(_) => Value::Binary(value.to_vec()),
-        }));
-    }
-    if text.contains(text_form) {
-        return Ok(Some(Value::from(text.replace(text_form, as_text(value)?))));
-    }
-    Ok(None)
-}
-
-fn as_text(value: &[u8]) -> Result<&str> {
-    std::str::from_utf8(value).map_err(|_| {
-        Error::Gate(GateError::InvalidConsentBound(
-            "the key is not text, so it cannot go back into the record's text",
-        ))
-    })
-}
+use crate::file_secret_marks::as_text;

@@ -24,7 +24,7 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let facet = crate::claim::substrate_facet_id(person)?;
+    let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
@@ -86,7 +86,7 @@ pub(crate) fn ensure_person_substrate(
         facet,
         1.0,
         learned_at,
-        crate::affect::Vad::NEUTRAL,
+        oneiron_contracts::affect::Vad::NEUTRAL,
         None,
     )?;
     Ok(())
@@ -105,7 +105,9 @@ fn is_substrate(data: &[u8], person: EntityId) -> bool {
 }
 /// Caller-selected ids cannot mint base reality or the default project as records.
 pub(super) fn validate_scope_identity(id: EntityId) -> Result<()> {
-    if id == crate::claim::base_world_id() || id == crate::claim::default_project_id() {
+    if id == oneiron_contracts::claim::base_world_id()
+        || id == crate::write_envelope::claim_body::default_project_id()
+    {
         return Err(Error::InvalidClaimBody(
             "reserved scope member cannot be minted",
         ));

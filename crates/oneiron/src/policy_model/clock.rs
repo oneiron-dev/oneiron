@@ -7,7 +7,7 @@
 //! its own, and separate decisions keep separate clocks.
 use std::time::{Duration, Instant};
 
-use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 
 /// When one policy call started.
 #[derive(Debug, Clone, Copy)]

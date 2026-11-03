@@ -169,12 +169,13 @@ impl EntityStoreMaintenance for Store {
         &self,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
-        streak: crate::habit::HabitStreak,
+        streak: crate::write_envelope::task_body::HabitStreak,
     ) -> Result<()> {
         let Some(mut row) = self.port_entity_record(txn, id)? else {
             return Ok(());
         };
-        let body = crate::habit::rewrite_habit_streak_fields(&row.body, streak)?;
+        let body =
+            crate::write_envelope::task_body::rewrite_habit_streak_fields(&row.body, streak)?;
         if body != row.body {
             // The record scope stamp binds to the id, not the body bytes, so a
             // derived streak rewrite keeps the birth stamp as it is.
