@@ -370,6 +370,19 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         restore.verified(&vault)?;
     }
 
+    // Dedicated environments open before ready and the opening wake push, so
+    // the first supervisor schedule already includes their earliest deadlines.
+    let env_config = config.vault_config();
+    let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+        config.shared_env.clone(),
+        &env_config,
+        config.lease_vault_id,
+        state.background_admission(WriteKind::DeviceSync),
+        Some(state.device_sync_freeze()),
+    )
+    .await;
+    sync_server.install_shared_envs(shared);
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -381,7 +394,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // traffic to. A facility it serves without is named first, and the ready
     // signal is the same either way.
     super::vault_gates::warn_degraded(&readiness);
-    host.ready()?;
+    if let Err(error) = host.ready() {
+        sync_server.stop_shared_envs().await;
+        return Err(error);
+    }
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
     if let Some(link) = host.vm_link() {
@@ -546,6 +562,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Tagging stays outside this scope: an error in it returns only once
     // tagging has stopped and every call it made has settled (FIX 7304).
     let mut tagging = tagging;
+    let mut shared_live = true;
     let outcome = async {
         // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
         ladder_workers.push(crate::ai_host::coach_heal::spawn(
@@ -629,18 +646,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             state.device_sync_freeze(),
         )
         .await;
-        // The supervisor's settings file carries each dedicated environment
-        // with its paths checked before this point (FIX 2051, FIX 11136).
-        let env_config = config.vault_config();
-        let shared = crate::shared_envs::SharedEnvRegistry::open_all(
-            config.shared_env.clone(),
-            &env_config,
-            config.lease_vault_id,
-            state.background_admission(WriteKind::DeviceSync),
-            Some(state.device_sync_freeze()),
-        )
-        .await;
-        sync_server.install_shared_envs(shared);
         let artifact_task = artifacts.map(|listener| {
             let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
             let stop = shutdown.triggered();
@@ -662,6 +667,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             device_sync.stop().await;
         }
         sync_server.stop_shared_envs().await;
+        shared_live = false;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
@@ -752,6 +758,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         anyhow::Ok(())
     }
     .await;
+    // An error before the normal stop still stops every env opened above.
+    if shared_live {
+        sync_server.stop_shared_envs().await;
+    }
     // Still running only when an error left the scope before its join.
     if let Some(background) = background {
         background.stop().await;
