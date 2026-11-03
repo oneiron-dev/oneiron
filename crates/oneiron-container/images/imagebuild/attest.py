@@ -215,20 +215,36 @@ def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
 # DEP-5 exception shorthands that have one exact SPDX exception id. Ambiguous
 # or unknown exception names stay NOASSERTION rather than guessing a version.
 DEBIAN_EXCEPTION_TO_SPDX = {
+    "autoconf generic exception": "Autoconf-generic-exception",
+    "bison exception": "Bison-exception-2.2",
     "classpath exception": "Classpath-exception-2.0",
     "classpath-exception-2.0": "Classpath-exception-2.0",
     "font exception": "Font-exception-2.0",
     "font-exception-2.0": "Font-exception-2.0",
+    "libtool exception": "libtool-exception",
+    "linux-syscall-note exception": "Linux-syscall-note",
+    "llvm exception": "LLVM-exception",
     "openssl exception": "OpenSSL-exception",
     "openssl-exception": "OpenSSL-exception",
 }
 
 
+def _exception_id(name: str, base: str) -> str | None:
+    if name in DEBIAN_EXCEPTION_TO_SPDX:
+        return DEBIAN_EXCEPTION_TO_SPDX[name]
+    if name in ("autoconf exception", "autoconf-data exception"):
+        if base.lower().startswith("gpl-2"):
+            return "Autoconf-exception-2.0"
+        if base.lower().startswith("gpl-3"):
+            return "Autoconf-exception-3.0"
+    return None
+
+
 def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dict],
                 rootfs: Path | None = None) -> tuple[str | None, str]:
     """One Files paragraph's License field as an SPDX expression, or (None, why).
-    DEP-5 commas mean OR; parentheses and `with ... exception` are read, and
-    mixed operators use SPDX precedence (WITH, then AND, then OR)."""
+    Comma-lowered `, and` and `, or` are read; a bare comma is invalid.
+    Parentheses and `with ... exception` are read, with explicit grouping on output."""
     first, text = _field(field)
     tokens = re.findall(r"\(|\)|,|[^\s(),]+", first)
     pos = 0
@@ -240,13 +256,20 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
             return True
         return False
 
+    def comma_word(value: str) -> bool:
+        nonlocal pos
+        if pos + 1 < len(tokens) and tokens[pos] == "," and tokens[pos + 1].lower() == value:
+            pos += 2
+            return True
+        return False
+
     def primary() -> tuple:
         nonlocal pos
         if pos >= len(tokens):
             raise ValueError("ends before a licence name")
         if tokens[pos] == "(":
             pos += 1
-            node = or_expression()
+            node = low_or_expression()
             if pos >= len(tokens) or tokens[pos] != ")":
                 raise ValueError("has an unclosed parenthesis")
             pos += 1
@@ -270,7 +293,7 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
             exception_name = " ".join(tokens[start:pos]).lower()
             if not exception_name:
                 raise ValueError("has `with` without an exception")
-            exception = DEBIAN_EXCEPTION_TO_SPDX.get(exception_name)
+            exception = _exception_id(exception_name, node[1])
             if exception is None:
                 raise ValueError(f"exception {exception_name!r} has no exact SPDX id")
             node = "with", node, exception
@@ -283,18 +306,25 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
         return nodes[0] if len(nodes) == 1 else ("and", nodes)
 
     def or_expression() -> tuple:
-        nonlocal pos
         nodes = [and_expression()]
-        while pos < len(tokens):
-            if tokens[pos] == ",":
-                pos += 1
-            elif not word("or"):
-                break
+        while word("or"):
             nodes.append(and_expression())
         return nodes[0] if len(nodes) == 1 else ("or", nodes)
 
+    def low_and_expression() -> tuple:
+        nodes = [or_expression()]
+        while comma_word("and"):
+            nodes.append(or_expression())
+        return nodes[0] if len(nodes) == 1 else ("low-and", nodes)
+
+    def low_or_expression() -> tuple:
+        nodes = [low_and_expression()]
+        while comma_word("or"):
+            nodes.append(low_and_expression())
+        return nodes[0] if len(nodes) == 1 else ("low-or", nodes)
+
     try:
-        parsed = or_expression()
+        parsed = low_or_expression()
         if pos != len(tokens):
             raise ValueError(f"has unexpected token {tokens[pos]!r}")
     except ValueError as error:
@@ -309,7 +339,7 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
 
     name_count = count_names(parsed)
 
-    def emit(node: tuple, parent_precedence: int = 0) -> str:
+    def emit(node: tuple) -> str:
         kind = node[0]
         if kind == "name":
             name = node[1]
@@ -321,11 +351,15 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
                 spdx = _licence_ref(name, _with_common_texts(body, rootfs), extracted)
             return spdx
         if kind == "with":
-            return f"{emit(node[1], 3)} WITH {node[2]}"
-        precedence = 1 if kind == "or" else 2
-        operator = " OR " if kind == "or" else " AND "
-        body = operator.join(emit(child, precedence) for child in node[1])
-        return f"({body})" if precedence < parent_precedence else body
+            return f"{emit(node[1])} WITH {node[2]}"
+        operator = " AND " if kind in ("and", "low-and") else " OR "
+        parts = []
+        for child in node[1]:
+            body = emit(child)
+            if child[0] in ("and", "or", "low-and", "low-or"):
+                body = f"({body})"
+            parts.append(body)
+        return operator.join(parts)
 
     try:
         return emit(parsed), ""
