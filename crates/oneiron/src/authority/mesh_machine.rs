@@ -13,8 +13,8 @@ use crate::{
     registry::ENTITY_TYPE_MACHINE,
     side_table::{self, HexId, Named, SideTable},
 };
-use oneiron_authority::federation::{Scope, ScopeAxis};
 use ed25519_dalek::Signature;
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},

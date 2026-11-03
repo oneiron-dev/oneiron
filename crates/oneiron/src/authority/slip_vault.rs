@@ -2,11 +2,11 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use oneiron_authority::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
+use oneiron_authority::federation::Scope;
 use std::collections::BTreeSet;
 
 mod backup_signer;
