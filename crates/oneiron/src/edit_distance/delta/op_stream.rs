@@ -196,10 +196,12 @@ pub(super) fn read_window(
     let moved = pair_moves(&deleted, &inserted);
     // Within-change churn (FIX 11536): what the ops wrote over the net diff.
     // The diff keeps the content pairing reads; the ops repair only the mass,
-    // and only upward — a smaller ops total means the diff's site separators
-    // already charge more, so there is no churn to add.
+    // and only upward — a smaller ops insert total means the diff's site
+    // separators already charge more, so there is no insert churn to add.
+    // Delete churn is the collapsed same-change hidden mass measured below,
+    // never a raw ops length minus the diff's collapsed mass.
     let churn_ins = ops_ins.saturating_sub(ins);
-    let churn_del = ops_del.saturating_sub(del);
+    let churn_del = ops_del;
     let kept: String = chars
         .iter()
         .zip(&origins)
@@ -294,36 +296,63 @@ fn change_deltas(
 }
 
 /// The authored mass one recorded change wrote to the body, read from the
-/// change's own JSON ops (FIX 11536): every insert's text and every delete's
-/// length, so typing and deleting inside one commit counts even when the net
-/// [`change_deltas`] diff cannot see it.
+/// change's own JSON ops (FIX 11536): every insert's text and the collapsed
+/// mass of text inserted and deleted by that same change, so typing and
+/// deleting inside one commit counts even when the net [`change_deltas`] diff
+/// cannot see it. Deletes of older text stay in the diff lane.
 ///
 /// Only `Text` insert and delete ops on the body container count; `Mark` ops
-/// are style, not text, and other containers are not the proposal body.
-/// Inserts count collapsed, as the diff lane does; deletes carry a length but
-/// no text, so they count raw — the diff keeps the content pairing reads.
+/// are style, not text, and other containers are not the proposal body. A
+/// delete names its first character's id, so same-change inserts supply the
+/// deleted fragments' text and both lanes use the same collapsed frame.
 fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (u32, u32) {
     let end = span.counter.saturating_add_unsigned(span.len);
     let id_span = IdSpan::new(span.peer_id, span.counter, end);
     let mut ins = 0_u32;
-    let mut del = 0_u32;
+    let mut hidden_del = 0_u32;
     for change in document.doc.export_json_in_id_span(id_span) {
+        let mut inserts = Vec::new();
         for op in &change.ops {
             if op.container != *body {
                 continue;
             }
-            match &op.content {
-                JsonOpContent::Text(JsonTextOp::Insert { text, .. }) => {
-                    ins = ins.saturating_add(collapsed_len(text));
+            if let JsonOpContent::Text(JsonTextOp::Insert { text, .. }) = &op.content {
+                ins = ins.saturating_add(collapsed_len(text));
+                inserts.push((op.counter, text.chars().collect::<Vec<_>>()));
+            }
+        }
+        inserts.sort_by_key(|(counter, _)| *counter);
+        for op in &change.ops {
+            if op.container != *body {
+                continue;
+            }
+            let JsonOpContent::Text(JsonTextOp::Delete { len, start_id, .. }) = &op.content else {
+                continue;
+            };
+            if start_id.peer != change.id.peer {
+                continue;
+            }
+            let delete_start = i64::from(start_id.counter);
+            let delete_end = delete_start.saturating_add(i64::from(len.unsigned_abs()));
+            for (insert_counter, run) in &inserts {
+                let insert_start = i64::from(*insert_counter);
+                if insert_start >= delete_end {
+                    break;
                 }
-                JsonOpContent::Text(JsonTextOp::Delete { len, .. }) => {
-                    del = del.saturating_add(len.unsigned_abs());
+                let insert_end = insert_start.saturating_add(run.len() as i64);
+                if insert_end <= delete_start {
+                    continue;
                 }
-                _ => {}
+                let overlap_start = delete_start.max(insert_start);
+                let overlap_end = delete_end.min(insert_end);
+                let from = (overlap_start - insert_start) as usize;
+                let to = (overlap_end - insert_start) as usize;
+                let fragment: String = run[from..to].iter().collect();
+                hidden_del = hidden_del.saturating_add(collapsed_len(&fragment));
             }
         }
     }
-    (ins, del)
+    (ins, hidden_del)
 }
 
 /// Charges relocated: a deleted run of proposal text paired with a kept

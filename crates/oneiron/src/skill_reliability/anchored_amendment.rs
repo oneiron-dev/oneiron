@@ -187,8 +187,9 @@ fn matches_row(row: &EvidenceRow, evidence: &LearningEvidence) -> bool {
 /// Mint the flipped loss for an amendment whose attempt has no anchored row
 /// to flip and no desired row (FIX 11676): the sealed credit's context gives
 /// the cell and provenance, the amendment's defect share the loss weight.
-/// `None` when no sealed credit for `attempt` names `skill` on this arm, or
-/// its attribution is gone. The receipt key is the credit's id, so re-minting
+/// `None` when no sealed credit for `attempt` names `skill` on this arm, no
+/// sealed credit matches the attempt's axis, or its attribution is gone. The
+/// receipt key is the credit's id, so re-minting
 /// replaces in place.
 ///
 /// # Errors
@@ -228,27 +229,12 @@ pub(super) fn mint_flipped_from_credit_in_txn(
     if candidates.is_empty() {
         return Ok(None);
     }
-    let credit = if candidates.len() == 1 {
-        let Some(credit) = candidates.pop() else {
-            return Ok(None);
-        };
-        credit
-    } else {
-        let axis = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
-            .and_then(|receipt| receipt.fields.get("axis").cloned())
-            .unwrap_or_else(|| crate::skill_reliability::SKILL_OUTCOME_AXIS.to_owned());
-        match candidates
-            .iter()
-            .position(|candidate| candidate.axis == axis)
-        {
-            Some(index) => candidates.swap_remove(index),
-            None => {
-                let Some(credit) = candidates.into_iter().next() else {
-                    return Ok(None);
-                };
-                credit
-            }
-        }
+    let axis = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+        .and_then(|receipt| receipt.fields.get("axis").cloned())
+        .unwrap_or_else(|| crate::skill_reliability::SKILL_OUTCOME_AXIS.to_owned());
+    candidates.retain(|candidate| candidate.axis == axis);
+    let Some(credit) = candidates.into_iter().next() else {
+        return Ok(None);
     };
     let Some(fields) = credit.attribution.clone() else {
         return Ok(None);
