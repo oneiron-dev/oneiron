@@ -640,6 +640,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// this call existed. The catalog window is taken whole; the fraction
     /// is what leaves room for the prompt and the answer.
     pub fn model_window(mut self, model: &str) -> Self {
+        self.model_window_tokens = None;
         let Ok(model) = model.parse::<ModelId>() else {
             return self;
         };
@@ -706,12 +707,13 @@ impl<'a> ContextPackBuilder<'a> {
     /// The ONE public read of the assembled budget, resolved at call time
     /// (ARCH-0004 #budget-unit): an explicit [`Self::token_budget`] wins,
     /// then a memory profile's window budget, then the declared
-    /// [`Self::context_fraction`] of the active model's known window, and
-    /// only when no window is known the fixed engine fallback — so a pack
-    /// whose call site names no model assembles exactly as it did before
-    /// the window-relative default existed. An explicit budget of `0`
-    /// keeps its "no limit" meaning; a derived budget never resolves
-    /// to `0`.
+    /// [`Self::context_fraction`] of the active model's known window (never
+    /// below the fixed engine fallback, so a known window only ever raises
+    /// the default), and only when no window is known the fixed engine
+    /// fallback — so a pack whose call site names no model assembles exactly
+    /// as it did before the window-relative default existed. An explicit
+    /// budget of `0` keeps its "no limit" meaning; a derived budget never
+    /// resolves to `0`.
     #[must_use]
     pub fn effective_token_budget(&self) -> usize {
         if let Some(budget) = self.token_budget {
@@ -727,7 +729,7 @@ impl<'a> ContextPackBuilder<'a> {
             let fraction = f64::from(self.context_fraction.min(1.0));
             #[allow(clippy::cast_precision_loss)]
             let derived = (window as f64 * fraction) as usize;
-            return derived.max(1);
+            return derived.max(1).max(DEFAULT_WINDOW_TOKEN_BUDGET);
         }
         DEFAULT_WINDOW_TOKEN_BUDGET
     }
