@@ -42,10 +42,20 @@ pub const DEFAULT_QUEUE_CHECK_CONCURRENCY: u32 = 1;
 /// The checked configuration of one object store. Key: hex(repo identity).
 pub(super) const CHECK_CONFIGS: SideTable<String, QueueCheckConfiguration, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_CONFIG);
+/// Whether a masked copy of a `MERGE_QUEUE_CHECK_CONFIG` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_check_config_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<QueueCheckConfiguration, Named>(bytes)
+}
 
 /// Checker work rows. Key: hex(repo identity) ":" hex64(request digest).
 pub(super) const CHECK_WORK: SideTable<String, QueueCheckWork, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_WORK);
+/// Whether a masked copy of a `MERGE_QUEUE_CHECK_WORK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_check_work_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<QueueCheckWork, Named>(bytes)
+}
 
 /// Where a checked initialization stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
