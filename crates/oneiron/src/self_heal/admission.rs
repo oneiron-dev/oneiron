@@ -1,12 +1,12 @@
 //! Content-address and occurrence binding shared by local and replicated puts.
 
-pub(super) use crate::store::diagnostic_record::admission::{
-    stored_diagnostic_event, validate_detector_id,
-};
-pub(crate) use crate::store::diagnostic_record::admission::validate_diagnostic_event_admission;
 use super::{invalid_diagnostic, validate_diagnostic_event_body_bytes};
 use crate::error::Result;
 use crate::store::Store;
+pub(crate) use crate::store::diagnostic_record::admission::validate_diagnostic_event_admission;
+pub(super) use crate::store::diagnostic_record::admission::{
+    stored_diagnostic_event, validate_detector_id,
+};
 
 /// Base DIAGNOSTIC writes may not cite an evaporating room, even when their
 /// own content-addressed ID is different from the overlay member ID. Run this

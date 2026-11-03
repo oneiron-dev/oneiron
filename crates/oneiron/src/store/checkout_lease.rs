@@ -1,11 +1,11 @@
 //! Checkout identifiers, lease requests, settlement receipts and teardown values.
 
-use std::fmt;
-use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{FixedSideKey, SideKey};
+use crate::store::code_snapshot::RepoRef;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Closed materialization ladder. There is deliberately no copy-on-write, lazy
 /// mount, overlay, filesystem-clone, or `Other(String)` rung: a rung that the

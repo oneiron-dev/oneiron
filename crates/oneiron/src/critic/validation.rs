@@ -93,5 +93,5 @@ pub(super) fn validate_reliability(reliability: &CriticReliability) -> Result<()
     Ok(())
 }
 
-pub(super) use crate::store::critic_lens::{validate_identifier, invalid_critic_config};
 use crate::store::critic_lens::validate_text;
+pub(super) use crate::store::critic_lens::{invalid_critic_config, validate_identifier};

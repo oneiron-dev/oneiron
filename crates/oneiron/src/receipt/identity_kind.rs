@@ -9,9 +9,9 @@ use super::kernel::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
 use crate::store::ChannelIdentityLifecycleReceiptRecord;
+use crate::store::EngineScan;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.

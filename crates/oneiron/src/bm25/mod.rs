@@ -63,9 +63,9 @@ use self::query::{
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
+use oneiron_retrieval::pipeline::ScoredEntity;
 pub(crate) use scoped::{
     Bm25CategorySearchOptions, search_text_category_with_recency, search_text_filtered_with_recency,
 };
@@ -92,4 +92,7 @@ use std::collections::BTreeMap;
 
 pub(crate) use crate::store::text_index::POSTINGS_VALUE_FORMAT_VERSION;
 #[cfg(test)]
-use crate::store::text_index::{ENTITY_ID_LEN, FIELD_TF_LEN, FIELD_STATS_LEN, FIELD_LENGTH_LEN, DOC_META_LEN, TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY, FORWARD_TERM_LEN_LEN, FORWARD_FIELD_ID_LEN, BM25_DIAGNOSTIC_COUNTER_COUNT};
+use crate::store::text_index::{
+    BM25_DIAGNOSTIC_COUNTER_COUNT, DOC_META_LEN, ENTITY_ID_LEN, FIELD_LENGTH_LEN, FIELD_STATS_LEN,
+    FIELD_TF_LEN, FORWARD_FIELD_ID_LEN, FORWARD_TERM_LEN_LEN, TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
+};

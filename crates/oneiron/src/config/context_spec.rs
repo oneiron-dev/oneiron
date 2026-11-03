@@ -260,4 +260,3 @@ pub(crate) fn validate_panel_text(text: &str, _field: &'static str) -> Result<()
 /// everything is okay (rule 5): an advisory threshold, never a bound. Every
 /// ancestor is read; `depth_remaining` is the policy.
 pub const CONTEXT_PROJECTION_ANCESTOR_CHECK: u64 = 16;
-

@@ -23,8 +23,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
-use crate::secret_record::{CustodyWrite};
 use crate::secret_custody::{KnownValues, masked_file_in_txn};
+use crate::secret_record::CustodyWrite;
 use crate::side_table::SideTableDecl;
 use crate::store::Store;
 

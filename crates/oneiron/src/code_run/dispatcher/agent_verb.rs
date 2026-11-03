@@ -6,6 +6,7 @@ mod session_write;
 use serde_json::Value;
 
 use crate::EntityId;
+use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{
@@ -22,7 +23,6 @@ use crate::memory::HostWriteOrigin;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
-use crate::code_run::ConnectorCallReply;
 use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};

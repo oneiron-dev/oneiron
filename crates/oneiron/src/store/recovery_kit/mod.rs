@@ -1,8 +1,8 @@
 //! Offline recovery-kit values, passphrases, piece formats and pure codecs.
 
+use crate::entity_id::EntityId;
 use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 use zeroize::Zeroizing;
-use crate::entity_id::EntityId;
 
 pub(crate) mod piece;
 pub use piece::{KitId, KitPiece, PieceExport, RecoveryCode};
@@ -351,7 +351,6 @@ pub enum KitError {
     #[error("this machine's kit piece could not be read; give two pieces")]
     KeptPieceUnreadable,
 }
-
 
 /// Which slot pair of this install's kit pieces (FIX 11977, 12046).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -2,15 +2,18 @@
 mod auxiliary;
 mod query;
 use super::*;
-use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome};
-use crate::store::attempt_inputs::ClaimAttempt;
-use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::attempt_queue::{
+    AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome,
+    EnqueueOutcome, FailAttempt, FailOutcome,
+};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::*;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange};
 use std::cell::RefCell;

@@ -1,7 +1,7 @@
 //! Owner-requested experiment work, through the ordinary attenuating dispatcher.
 use super::{binding, bounded, hex, invalid, nodes_in_txn, pruned_lineage};
 use crate::agent_dispatch::{
-    AgentDispatchOutcome,  AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::context_projection::ContextSpec;

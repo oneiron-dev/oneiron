@@ -4,7 +4,9 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 
 pub use crate::store::repo_mutation_record::{
-    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, RepoMutationStatus, RepoMutationOperation, RepoBundleFile, RepoCommitProvenance, RepoMutationOplogEntry, RepoMutationOutcome, RepoConflictClaim, RepoConflictResolutionClaim, RepoForkHash,
+    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, RepoBundleFile,
+    RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoForkHash,
+    RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationStatus,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

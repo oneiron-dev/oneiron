@@ -5,22 +5,22 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
-pub mod report_signature;
 mod ambient_alternative;
 mod capability;
 mod connector_reply;
 mod connector_task;
 mod dispatch_attempt_id;
 mod dispatch_pipeline;
-pub mod linkedin_policy;
 mod dispatch_types;
 mod executor;
 mod intent;
+pub mod linkedin_policy;
 mod manifests;
 mod receipt_fields;
 mod recovery_suggestions;
 mod reply_content;
 mod reply_job;
+pub mod report_signature;
 mod retry_audit;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;

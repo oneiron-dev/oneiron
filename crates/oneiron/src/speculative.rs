@@ -45,10 +45,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId};
 use crate::work_line::{LinePermit, TASK_WORK_WAIT, WaitTimedOut, WorkLine};
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 pub(crate) mod scoped;
 

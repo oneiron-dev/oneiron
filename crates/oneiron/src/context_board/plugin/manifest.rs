@@ -4,11 +4,11 @@ use super::claim::PluginInstallClaimPayload;
 use super::errors::{PluginResult, PluginSectionError};
 use super::install::PluginInstallTarget;
 use crate::entity_id::EntityId;
-use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord};
-use crate::write_envelope::skill_source::{HubRef};
-use crate::store::skill_package::{HubPackage};
+use crate::store::skill_package::HubPackage;
 use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
+use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord};
+use crate::write_envelope::skill_source::HubRef;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

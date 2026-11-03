@@ -9,7 +9,9 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) use crate::store::code_revision_record::file_frontiers::{invalid, validate, to_value, from_value};
+pub(super) use crate::store::code_revision_record::file_frontiers::{
+    from_value, invalid, to_value, validate,
+};
 
 pub(super) fn artifact_hash(
     store: &Store,

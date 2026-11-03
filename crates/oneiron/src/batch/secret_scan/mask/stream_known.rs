@@ -28,9 +28,11 @@ use zeroize::Zeroizing;
 use super::REASON_KNOWN_VALUE;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeptValues};
-use crate::file_secret_marks::{KeySpan};
-use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile, masked_file_in_txn, put_masked_file_in_txn};
+use crate::file_secret_marks::KeySpan;
+use crate::secret_custody::KeptValues;
+use crate::secret_custody::{
+    KnownValues, MASKED_FILE_BAND, MaskedFile, masked_file_in_txn, put_masked_file_in_txn,
+};
 use crate::store::Store;
 
 /// How a streamed ASSET body meets a value custody holds (CALLS

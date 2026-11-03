@@ -468,7 +468,6 @@ pub(crate) fn media_text_hash_of(
     }
 }
 
-
 /// The overlay key of `id`'s media vector row in declared space `space_id`: the `vault_meta` row
 /// a room's media door stages, which the room holds outside its byte budget (FIX 2345).
 pub(crate) fn media_vector_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
