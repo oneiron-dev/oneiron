@@ -132,7 +132,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
         txn: &mut RwTxn<'_>,
         from: crate::EntityId,
         to: crate::EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<()> {
         crate::code_memory::validate_blocks_insert(self, txn, from, to, context)?;
         let kind = crate::EdgeKind::Blocks;
@@ -156,7 +156,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
         txn: &mut RwTxn<'_>,
         from: crate::EntityId,
         to: crate::EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<bool> {
         crate::code_memory::validate_blocks_retirement(self, txn, context)?;
         let kind = crate::EdgeKind::Blocks;

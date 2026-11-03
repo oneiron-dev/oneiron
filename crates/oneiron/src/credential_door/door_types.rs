@@ -1,6 +1,6 @@
 //! Door constants, floor names and prefixes, error type, and small naming helpers.
 
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 
 // The one-shot lifetime ceiling and the floor-name predicate are defined in
 // `oneiron-authority`: the authority log's slip checks apply the same bounds.

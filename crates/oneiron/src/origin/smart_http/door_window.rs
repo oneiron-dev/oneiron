@@ -21,7 +21,7 @@ use super::paths::{
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::credential_door::{CredentialDoorService, DoorScanVerdict};
 use crate::receive_scan::PushedBlob;
 use crate::error::{Error, Result};

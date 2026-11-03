@@ -27,7 +27,7 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutResult, CheckoutTeardownInspection,
     GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_projection::checkout::{
     bind_projected_checkout, retained_projected_checkout,

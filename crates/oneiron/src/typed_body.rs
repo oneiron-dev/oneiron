@@ -652,7 +652,7 @@ fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<(
     crate::memory::verify_actor_binding_in_txn(vault, txn, actor.entity_ref(), actor.actor_class())
         .map_err(|_| invalid("typed body actor class does not match store truth"))?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("typed body actor is not active"));
     }

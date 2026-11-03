@@ -4,7 +4,7 @@
 use std::net::IpAddr;
 
 use super::paths::door_refused;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::credential_door::{CredentialDoorError, CredentialDoorService};
 use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::credential_door::{DoorCredential, DoorScanVerdict};

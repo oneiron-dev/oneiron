@@ -356,8 +356,22 @@ pub struct RecallExecution<'a> {
     /// the pack ([`crate::memory::RecallRerank::Unavailable`]).
     pub rerank_unavailable: bool,
     /// The caller's opt-in stage capture and exact turn linkage.
-    pub telemetry: Option<&'a crate::task_verb::sdk::RecallTelemetry>,
+    pub telemetry: Option<&'a RecallTelemetry>,
     /// The token budget the pack is assembled and rendered under, as its
     /// door resolved it (FIX 9962); `None` is the 4,000-token default.
     pub render_budget: Option<usize>,
+}
+
+use serde::{Deserialize, Serialize};
+use crate::store::RetrievalTurn;
+
+/// Opt-in stage capture and the actual host turn whose retrieval is being observed.
+/// The vault's capture setting remains authoritative; this cannot turn it on.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecallTelemetry {
+    #[serde(default)]
+    pub capture_trace: bool,
+    #[serde(default)]
+    pub turn: Option<RetrievalTurn>,
 }
