@@ -30,6 +30,7 @@ pub mod vad_annotation;
 pub mod person_identity;
 pub mod companion_subject;
 pub mod companion_task_kind;
+pub mod learning_predicate;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

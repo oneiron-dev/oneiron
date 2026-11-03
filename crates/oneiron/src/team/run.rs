@@ -42,7 +42,7 @@ use crate::autoreason_campaign::authoring::tournament_team_stamp;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
 
 use super::market::market;
 use super::observations::team_run_observations;

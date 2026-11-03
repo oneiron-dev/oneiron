@@ -19,10 +19,7 @@ mod retry_policy;
 
 pub use park::ParkDreamerAttempt;
 
-use super::constants::{
-    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-};
+use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 
 /// Coarse Dreamer attempt progress state for live ephemeral rows and durable
 /// milestone fallback.
@@ -97,36 +94,7 @@ pub struct DreamerDurableMilestone {
     pub learned_at: u64,
 }
 
-/// Consolidation attempt-table lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum DreamerConsolidationScope {
-    Micro,
-    Meso,
-    Macro,
-}
-
-impl DreamerConsolidationScope {
-    /// Stable scope string used in Dreamer payloads.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Micro => "micro",
-            Self::Meso => "meso",
-            Self::Macro => "macro",
-        }
-    }
-
-    /// Private attempt-table kind for this consolidation lane.
-    #[must_use]
-    pub const fn attempt_kind(self) -> &'static str {
-        match self {
-            Self::Micro => DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-            Self::Meso => DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-            Self::Macro => DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
-        }
-    }
-}
+pub use crate::store::consolidation_scope::DreamerConsolidationScope;
 
 /// Speaker role of a TURN entity as seen by the Dreamer extraction lane.
 ///

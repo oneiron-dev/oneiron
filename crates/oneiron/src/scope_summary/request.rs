@@ -18,7 +18,8 @@ use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::dreamer_consolidation::{
     DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, ScopeSummaryEvidence, scope_summary_evidence_in_txn,
 };
-use crate::dreamer_runner::{DreamerAttemptPayload, DreamerConsolidationScope};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
+use crate::dreamer_runner::{DreamerAttemptPayload};
 use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
