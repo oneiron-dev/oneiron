@@ -197,6 +197,7 @@ pub(in crate::task_verb) fn hold_ask_in(
         choice_receipt_ref: None,
         shipped_policy_rows: governed.shipped_rows.clone(),
         requester: hold.requester,
+        recipient_scrub: None,
     };
     let admission = admit_fanout_with_history(
         &plan,
