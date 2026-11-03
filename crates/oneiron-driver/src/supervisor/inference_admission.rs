@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use oneiron::llm::{AdmissionGrant, ResourceClass, WorkClass, WorkPriority};
+use oneiron::llm::{AdmissionGrant, ResourceClass, WorkClass, WorkPhysical, WorkPriority};
 use tokio::sync::Notify;
 
 use super::inference_device::{
@@ -35,6 +35,8 @@ pub struct WorkRequest {
     pub worker_id: String,
     pub resource: ResourceClass,
     pub class: WorkClass,
+    /// This call's own host-attested custody; never inherited from a parent.
+    pub physical: WorkPhysical,
     pub priority: WorkPriority,
     pub deadline: Option<Instant>,
     pub envelope: WorkEnvelope,
@@ -54,6 +56,7 @@ impl WorkRequest {
             worker_id: worker_id.into(),
             resource,
             class: DEFAULT_WORK_CLASS,
+            physical: WorkPhysical::Paid,
             priority: WorkPriority::default(),
             deadline: DEFAULT_DEADLINE,
             envelope: WorkEnvelope::default(),
@@ -318,6 +321,7 @@ impl DeviceAdmission {
             request.class = parent.request.class;
             request.deadline = parent.request.deadline;
             request.cancel = fresh_cancel(&parent.request.cancel);
+            // Physical custody is per-call, never inherited.
         }
         request.parent = parent;
         if state.reaping.contains(&request.worker_id) {
@@ -437,6 +441,7 @@ impl DeviceAdmission {
                     ticket.request.class = parent.class;
                     ticket.request.deadline = parent.deadline;
                     ticket.request.cancel = fresh_cancel(&parent.cancel);
+                    // Physical custody is per-call, never inherited.
                     ticket.request.parent = Some(parent_id);
                     ticket.blocked_by = Some(parent_id);
                 }
