@@ -70,7 +70,6 @@ impl Memory<'_> {
         choice: ConsultFanOutChoice,
         owner: &AuthenticatedOwner,
         remembered_cap: Option<u64>,
-        resumer_requester: Option<crate::agent_dispatch::QueuedRequester>,
     ) -> MemoryResult<FanoutLaunchReceipt> {
         let owner_actor = self.reauthenticate_fanout_owner(owner)?;
         if remembered_cap.is_some() && choice != ConsultFanOutChoice::ApproveAndRemember {
@@ -93,7 +92,6 @@ impl Memory<'_> {
                     choice,
                     remembered_cap,
                     Some(owner),
-                    resumer_requester,
                     &WriteActor::new(owner_actor, EdgeActorClass::Human),
                     now,
                 )
@@ -114,7 +112,6 @@ impl Memory<'_> {
         choice: ConsultFanOutChoice,
         holder: &WriteActor,
         remembered_cap: Option<u64>,
-        resumer_requester: Option<crate::agent_dispatch::QueuedRequester>,
     ) -> MemoryResult<FanoutLaunchReceipt> {
         require_holder_launch_choice(choice, remembered_cap)?;
         let now = self.vault().now_recorded_at();
@@ -126,7 +123,6 @@ impl Memory<'_> {
                 choice,
                 None,
                 None,
-                resumer_requester,
                 holder,
                 now,
             )
@@ -149,7 +145,6 @@ impl Memory<'_> {
         choice: ConsultFanOutChoice,
         remembered_cap: Option<u64>,
         owner: Option<&AuthenticatedOwner>,
-        resumer_requester: Option<crate::agent_dispatch::QueuedRequester>,
         approver: &WriteActor,
         now: u64,
     ) -> MemoryResult<FanoutLaunchReceipt> {
@@ -257,13 +252,7 @@ impl Memory<'_> {
             // the primitive's verb intent has no count cap and MUST
             // NOT widen the remembered cap.
             drop(resume.grant_mint_intent);
-            self.launch_approved_in(
-                txn,
-                &mut launch,
-                approver.entity_ref(),
-                resumer_requester,
-                now,
-            )?;
+            self.launch_approved_in(txn, &mut launch, approver.entity_ref(), now)?;
         }
         save_launch(self.vault(), txn, &launch)?;
         Ok(self.listed_receipt(&launch))
@@ -395,12 +384,8 @@ impl Memory<'_> {
         txn: &mut heed::RwTxn<'_>,
         launch: &mut StoredLaunch,
         owner_actor: EntityId,
-        resumer_requester: Option<crate::agent_dispatch::QueuedRequester>,
         now: u64,
     ) -> MemoryResult<()> {
-        // The resuming surface stamps its own request; without one, keep the
-        // admission-time requester (L09 11:35, FIX 11691).
-        let requester = resumer_requester.or_else(|| launch.requester.clone());
         let (actor, class) = (launch.launcher()?, launch.class()?);
         let task_refs: Vec<EntityId> = match &launch.payload {
             LaunchPayload::Wave {
@@ -416,7 +401,7 @@ impl Memory<'_> {
                     cut: cut.clone(),
                     statement: &launch.statement,
                     now,
-                    requester,
+                    requester: launch.requester.clone(),
                 },
             )?
             .iter()
@@ -434,12 +419,12 @@ impl Memory<'_> {
                 effect,
                 ..
             } => {
-                // FIX 11691: its dispatches keep the resumer's requester,
-                // else the admission-time one, judged again when each is claimed.
+                // FIX 11691: its dispatches keep the requester the ask was
+                // admitted under, judged again when each is claimed.
                 let asker = self
                     .vault()
                     .memory(actor, class)
-                    .with_kept_requester(requester);
+                    .with_kept_requester(launch.requester.clone());
                 let task_refs = asker.release_held_ask_in(
                     txn,
                     *group_ref,
