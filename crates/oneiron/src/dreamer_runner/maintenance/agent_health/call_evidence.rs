@@ -264,8 +264,9 @@ pub(super) fn attempt_calls(
 /// attempt bytes, with its calls back to its claim (FIX 8374): the
 /// lookback alone truncates the silence clock of a lease older than the
 /// window, so `silent` would judge calls it cannot see as never made. The
-/// read is the targeted review's own ([`attempt_calls`]) at the same
-/// `since`, so both reviews judge the same activity; the witnessed stream
+/// read is the targeted review's own ([`attempt_calls`]) with the same
+/// claim bound: the activity part does not depend on `since`, so both reviews
+/// judge the same activity; the witnessed stream
 /// it also collects is dropped, since the nightly review's streams come
 /// from its one shared read. Each scan is measured, never refused.
 pub(super) fn claim_bound_activities(
