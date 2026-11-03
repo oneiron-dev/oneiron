@@ -448,12 +448,7 @@ impl Vault {
     }
 }
 
-/// What result bodies staged inside one write transaction spill into,
-/// prepared before it opened ([`Vault::staged_result_sinks`]).
-#[derive(Clone)]
-pub(crate) struct StagedSinks {
-    mint: crate::store::BodyMint,
-}
+pub(crate) use crate::store::result_manifest::StagedSinks;
 
 /// A finished body: its manifest, its row and the secret scan's hit. A
 /// spilled body's file is already whole on disk.

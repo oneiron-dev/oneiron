@@ -71,7 +71,10 @@ impl Vault {
                 else {
                     return Err(Error::EntityNotFound);
                 };
-                crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
+                crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+                    entity_type,
+                    actor.actor_class(),
+                )?;
             }
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::InvariantViolation(
