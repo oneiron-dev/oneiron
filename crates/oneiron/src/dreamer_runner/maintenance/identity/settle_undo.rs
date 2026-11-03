@@ -33,7 +33,7 @@ use super::erase::{
 use super::hints::{self, HINTS, StoredIdentityHint};
 use super::{
     ASKS, Answer, IDENTITY_RECHECK_FACET, IdentityAsk, apply_in_txn, ask_key, escalate_in_txn,
-    evidence, invalid, key_hex,
+    evidence, index, invalid, key_hex,
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::TopologySeal;
@@ -91,6 +91,41 @@ pub(in crate::dreamer_runner::maintenance) struct SettleInverse {
     /// Each distinct assertion a someone-new answer made, at its revision
     /// then.
     distinct: Vec<(EntityId, [u8; 32])>,
+}
+
+impl SettleInverse {
+    /// Every id whose erase would change this inverse (FIX 10376): the ask
+    /// copy's ids while it stands, each held provisional's id, name span
+    /// and origin while its row stands, the settled entity, and both hint
+    /// copies' spans. The source anchor, the spans' links, the distinct
+    /// assertions and the confirmed person are none: the erase never
+    /// scrubs them.
+    pub(super) fn named_ids(&self) -> BTreeSet<EntityId> {
+        let mut ids = BTreeSet::new();
+        if let Some(ask) = &self.ask {
+            ids.extend(super::index::ask_ids(ask));
+        }
+        for held in &self.provisionals {
+            // While its row stands only: with `entity: None` the scrub
+            // returns false even on an id match.
+            if let Some(entity) = &held.entity {
+                ids.insert(held.id);
+                if let Some(source) = &held.source {
+                    ids.insert(source.turn);
+                    ids.insert(source.message);
+                }
+                ids.insert(entity.origin);
+            }
+        }
+        ids.insert(self.entity);
+        for hint in [&self.hint_before, &self.hint_after].into_iter().flatten() {
+            for each in &hint.sources {
+                ids.insert(each.source.turn);
+                ids.insert(each.source.message);
+            }
+        }
+        ids
+    }
 }
 
 /// A provisional entity a settle may retire, as it stood before.
@@ -356,10 +391,28 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
                 Some(before) => hints::standing_in_txn(&vault.store, txn, before)?,
                 None => None,
             };
+            // `stands` read the row as `hint_after`, so the old set is exact
+            // without another read (FIX 10376).
             match before {
-                Some(before) => HINTS.put(&vault.store, txn, &hint, &before)?,
+                Some(before) => {
+                    HINTS.put(&vault.store, txn, &hint, &before)?;
+                    index::sync_hint_membership(
+                        &vault.store,
+                        txn,
+                        &hint,
+                        inverse.hint_after.as_ref(),
+                        Some(&before),
+                    )?;
+                }
                 None => {
                     HINTS.delete(&vault.store, txn, &hint)?;
+                    index::sync_hint_membership(
+                        &vault.store,
+                        txn,
+                        &hint,
+                        inverse.hint_after.as_ref(),
+                        None,
+                    )?;
                 }
             }
             out.settings.push(HINT_ROW.to_owned());

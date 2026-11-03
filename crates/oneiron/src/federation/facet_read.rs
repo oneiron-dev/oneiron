@@ -109,10 +109,9 @@ pub(crate) fn facets_admit_in(
     raw: &[u8],
     facets: &ScopeAxis<ScopeId>,
 ) -> Result<bool> {
-    let set = match facets {
-        ScopeAxis::All => return Ok(true),
-        ScopeAxis::Some(set) if !set.is_empty() => set,
-        _ => return Ok(false),
+    let set = match facet_set(facets) {
+        Ok(set) => set,
+        Err(every) => return Ok(every),
     };
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     if header.entity_type == ENTITY_TYPE_TASK
@@ -157,6 +156,28 @@ pub(crate) fn facets_admit_in(
     };
     Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
         .is_some_and(|room| !room.meet(facets).is_bottom()))
+}
+
+/// [`facets_admit_in`] for a CLAIM whose `FacetOf` targets are `placed`, as
+/// its access class carries them (FIX 11915): a CLAIM is no TASK and no
+/// room's row, so those edges are its whole placement.
+pub(crate) fn placed_facets_admit(facets: &ScopeAxis<ScopeId>, placed: &[EntityId]) -> bool {
+    match facet_set(facets) {
+        Ok(set) => placed.iter().any(|facet| set.contains(&ScopeId(*facet))),
+        Err(every) => every,
+    }
+}
+
+/// The facets `facets` names, or what it reads of every row when it names
+/// none: a whole axis reads every row, an empty one none.
+fn facet_set(
+    facets: &ScopeAxis<ScopeId>,
+) -> std::result::Result<&std::collections::BTreeSet<ScopeId>, bool> {
+    match facets {
+        ScopeAxis::All => Err(true),
+        ScopeAxis::Some(set) if !set.is_empty() => Ok(set),
+        _ => Err(false),
+    }
 }
 
 /// The targets of `id`'s outgoing `kind` edges.
