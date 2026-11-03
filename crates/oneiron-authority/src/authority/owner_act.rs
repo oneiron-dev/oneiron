@@ -99,7 +99,8 @@ pub enum OwnerActKind {
     /// 02:0x). Its `seen` is over the grant's live choices.
     GrantTravel,
     /// A vault-wide policy setting the owner changed: the dreamer's wake
-    /// policy or the inference defaults (Engine 10-19 02:4x). Its `target`
+    /// policy, the inference defaults or the room-thread admin switches
+    /// (Engine 10-19 02:4x). Its `target`
     /// names the setting, its `seen` the setting's live acts
     /// (`PolicySettingSet`, FIX 4624), whose `prior` keeps the setting as
     /// it stood.
