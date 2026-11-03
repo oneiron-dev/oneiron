@@ -229,10 +229,17 @@ impl Vault {
         &self,
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
-        self.with_write_txn_grouped(|wtxn| {
+        let resolution = self.with_write_txn_grouped(|wtxn| {
             let now = self.store.clock.now_recorded_at();
             self.settle_critical_write_confirm_in_txn(wtxn, confirm_id, now, None)
-        })?
+        })??;
+        // A settled answer can release a held hook binding at once, not at
+        // the binding cache's staleness lapse (FIX 12108): after the commit,
+        // never inside the writer, and never on an error.
+        if resolution != CriticalWriteConfirmResolution::AlreadySettled {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(resolution)
     }
 
     /// Applies the folded answer in the caller's writer. An owner ceremony
