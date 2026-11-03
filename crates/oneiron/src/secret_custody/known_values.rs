@@ -319,6 +319,45 @@ impl KnownValues {
         })
     }
 
+    /// The matcher over one custody record's entries written at
+    /// `generations`, as the writer `wtxn` reads them, or `None` when it
+    /// knows no value there (FIX 10550): what a resumed connector round
+    /// clears its replies of, the value its original send presented
+    /// included after a rotation replaced it. Only that record's slots are
+    /// read; the entries are keyed fingerprints, so no value is loaded and
+    /// a superseded value matches without its bytes. A record no handle
+    /// names, or one with no entry at a named generation, knows no value
+    /// here, as [`Self::load_in_writer`] reads it. The writer contract is
+    /// `load_in_writer`'s.
+    pub(crate) fn load_for_in_writer(
+        store: &Store,
+        wtxn: &RwTxn<'_>,
+        custody: &EntityId,
+        generations: &[u32],
+    ) -> Result<Option<Self>> {
+        let Some((master, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
+            return Ok(None);
+        };
+        let entries: Vec<KnownEntry> = entries
+            .into_iter()
+            .filter(|(generation, _)| generations.contains(generation))
+            .map(|(_, entry)| entry)
+            .collect();
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let history = KnownHistory {
+            master,
+            holders: vec![(*custody, entries)],
+        };
+        let txn: &RoTxn<'_> = wtxn;
+        Self::of(&history, |custody| {
+            Ok(store
+                .port_short_id_reference(txn, custody)?
+                .map(|(handle, _)| handle))
+        })
+    }
+
     /// The most bytes a known value takes in incoming bytes, spelled the
     /// longest way a spelling reaches (CALLS KNOWN_FORM_REACH_FACTOR): what
     /// a stream holds back so a value still arriving is never let through
