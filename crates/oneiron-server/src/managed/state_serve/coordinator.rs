@@ -372,10 +372,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     // Dedicated environments open before ready and the opening wake push, so
     // the first supervisor schedule already includes their earliest deadlines.
-    let env_config = config.vault_config();
     let shared = crate::shared_envs::SharedEnvRegistry::open_all(
         config.shared_env.clone(),
-        &env_config,
+        &config,
         config.lease_vault_id,
         state.background_admission(WriteKind::DeviceSync),
         Some(state.device_sync_freeze()),
