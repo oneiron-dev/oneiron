@@ -46,6 +46,20 @@ pub(super) fn stamp_embedding_locality_in_txn(
     EMBEDDING_LOCALITY.put(&vault.store, txn, id, &locality)
 }
 
+/// FIX 7791: the carried-vector twin of [`stamp_embedding_locality_in_txn`]
+/// for batch apply, which holds the store and no `Vault`: a claim vector
+/// taken verbatim from another of the owner's machines keeps the locality
+/// its fill declares, so this machine can carry it onward in turn.
+#[cfg(feature = "sync")]
+pub(crate) fn stamp_carried_embedding_locality_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    locality: EmbedderLocality,
+) -> Result<()> {
+    EMBEDDING_LOCALITY.put(store, txn, id, &locality)
+}
+
 impl Vault {
     /// Where the current reconciled vector was actually filled. Client-supplied
     /// vectors and pending/stale fills carry no inferred locality.

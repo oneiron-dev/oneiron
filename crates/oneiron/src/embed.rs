@@ -1,4 +1,6 @@
 mod binding_move;
+#[cfg(feature = "sync")]
+mod carried;
 mod cold_attach;
 mod device;
 mod eligibility;
@@ -35,6 +37,10 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::carried::admit_carried_vector;
+#[cfg(feature = "sync")]
+pub(crate) use self::locality::stamp_carried_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
