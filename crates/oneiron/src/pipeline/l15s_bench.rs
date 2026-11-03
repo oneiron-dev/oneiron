@@ -50,12 +50,16 @@ pub(crate) fn run() -> String {
         query_occurred_range: None,
         effort_anchor: false,
     };
+    let (alpha, one_minus_alpha) =
+        TemporalScoringContext::blend_weights(T1 + 3600, config.anchor_end);
     let scoring = TemporalScoringContext {
         sigma: config.sigma_secs,
         now: T1 + 3600,
         anchor_mid: mid,
         learned_anchor: (config.anchor_start, config.anchor_end),
         learned_anchor_mid: mid,
+        alpha,
+        one_minus_alpha,
     };
     let run_set = |hash: &mut u64| {
         let mut scored: Vec<_> = rows
