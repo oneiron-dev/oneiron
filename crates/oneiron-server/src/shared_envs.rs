@@ -66,8 +66,6 @@ pub(crate) struct SharedEnvSpec {
     pub(crate) credential_file: PathBuf,
 }
 
-// Staged: the lead's serve/managed/embedded integration calls this next.
-#[allow(dead_code, reason = "staged for the lead's integration")]
 impl SharedEnvSpec {
     /// Validates one configured entry. `Err` is a malformed entry: the
     /// caller logs and skips it, and serve runs on without that env.
@@ -138,8 +136,6 @@ pub(crate) struct SharedEnvRegistry {
     inner: Arc<SharedEnvInner>,
 }
 
-// Staged: the lead's serve/managed/embedded integration calls these next.
-#[allow(dead_code, reason = "staged for the lead's integration")]
 impl SharedEnvRegistry {
     /// An empty registry: no configured envs, or before [`Self::open_all`].
     pub(crate) fn empty() -> Self {
@@ -352,11 +348,9 @@ impl SharedEnvRegistry {
                 .filter_map(|entry| entry.lane.take())
                 .collect()
         };
-        for lane in &lanes {
-            let _ = lane.stop.send(());
-        }
         for lane in lanes {
             let vault_id = lane.vault_id;
+            let _ = lane.stop.send(());
             if let Err(error) = lane.task.await {
                 tracing::warn!(vault_id = vault_id, %error, "shared env lane task");
             }
@@ -459,10 +453,10 @@ async fn run_lane(
         Pause,
     }
     loop {
-        let (end, ended) = tokio::sync::oneshot::channel();
+        let (stop_run, ended) = tokio::sync::oneshot::channel();
         let run = connection.run_observed(ended, lane_observer(vault_id));
         tokio::pin!(run);
-        let end = match freeze.as_mut() {
+        let outcome = match freeze.as_mut() {
             Some(freeze) => tokio::select! {
                 biased;
                 _ = &mut stop => End::Stop,
@@ -475,9 +469,9 @@ async fn run_lane(
                 ran = &mut run => End::Done(ran.map_err(|error| error.to_string())),
             },
         };
-        match end {
+        match outcome {
             End::Stop => {
-                let _ = end.send(());
+                let _ = stop_run.send(());
                 match run.await {
                     Ok(()) => tracing::debug!(vault_id = vault_id, "shared env lane stopped"),
                     Err(error) => {
@@ -496,7 +490,7 @@ async fn run_lane(
                 return;
             }
             End::Pause => {
-                let _ = end.send(());
+                let _ = stop_run.send(());
                 if let Err(error) = run.await {
                     tracing::warn!(
                         vault_id = vault_id,
@@ -548,9 +542,11 @@ fn direct_home_url(home_url: &str, vault_id: u64) -> Result<(), String> {
         .parse()
         .map_err(|_| format!("shared env {vault_id} home_url is not a URL"))?;
     let loopback = uri.host().is_some_and(|host| {
-        host.trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
     });
     if uri.scheme_str() == Some("wss") || loopback {
         Ok(())
@@ -574,7 +570,16 @@ fn open_one(
     let vault_id = spec.vault_id;
     direct_home_url(&spec.home_url, vault_id)?;
     let key: SharedEnvKey = (vault_id, spec.member.clone());
-    let vault = oneiron::Vault::open_existing(&spec.path, vault_config.clone())
+    // Existing-only, but process-owned: precheck the vault file so a typo
+    // never creates one, then take the same writer lease every served vault
+    // holds. `open_existing` would skip that lease (FIX 2051).
+    if !spec.path.join("data.mdb").is_file() {
+        return Err(format!(
+            "open {}: no existing vault (data.mdb is missing)",
+            spec.path.display()
+        ));
+    }
+    let vault = oneiron::Vault::open_owned(&spec.path, vault_config.clone())
         .map_err(|error| format!("open {path}: {error:#}", path = spec.path.display()))?;
     let vault = Arc::new(vault);
     // The canonical dir, for diagnostics; the open refuses a missing root,
