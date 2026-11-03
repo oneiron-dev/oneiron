@@ -356,7 +356,7 @@ pub trait HeldOutReplayNotes {
     /// the host's ordinary decision journal. Failure aborts scoring.
     fn record_decision(
         &self,
-        question: &crate::llm::decision::DecisionQuestion,
+        question: &crate::model_decision::DecisionQuestion,
         decision: &crate::llm::decision::TypedDecision,
         state: &serde_json::Value,
     ) -> Result<()>;
@@ -368,7 +368,7 @@ pub trait HeldOutReplayNotes {
     /// and records as [`Self::record_decision`] does.
     fn record_decision_sourced(
         &self,
-        question: &crate::llm::decision::DecisionQuestion,
+        question: &crate::model_decision::DecisionQuestion,
         decision: &crate::llm::decision::TypedDecision,
         state: &serde_json::Value,
         _decision_sources: Option<Vec<crate::EntityId>>,

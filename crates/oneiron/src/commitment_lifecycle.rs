@@ -164,7 +164,7 @@ pub fn link_brief_fulfillment(
     let edge_value = EdgeValueFields {
         weight: 1.0,
         created_at: linked_at,
-        vad: crate::affect::Vad::NEUTRAL,
+        vad: oneiron_contracts::affect::Vad::NEUTRAL,
         provenance: None,
     };
     vault

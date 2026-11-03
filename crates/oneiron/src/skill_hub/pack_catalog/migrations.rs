@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use super::invalid;
 use crate::error::Result;
-use crate::saved_query::PackPredicateRewrite;
+use crate::skill_hub::pack_catalog::predicate_rewrites::PackPredicateRewrite;
 
 /// One shipped migration map: the rewrites that carry a saved query from an
 /// earlier source of this pack to this one.

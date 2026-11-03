@@ -8,14 +8,10 @@ use crate::error::Result;
 
 use super::invalid;
 
-/// Distilled craft note about an actor. SET cardinality (§G.1).
-pub const PREDICATE_ACTOR_LESSON: &str = "actor.lesson";
-/// Recurring lapse pattern — the routing signal a spawner reads. SET.
-pub const PREDICATE_ACTOR_FAILURE_MODE: &str = "actor.failure_mode";
-/// What this actor is FOR, feeding spawn/routing decisions. SET.
-pub const PREDICATE_ACTOR_SCOPE_NOTE: &str = "actor.scope_note";
-/// Per-`(actor, skill)` effectiveness in `0..=1`. ONE per pair, superseding.
-pub const PREDICATE_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
+pub use crate::write_envelope::actor_predicate::{
+    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE,
+    PREDICATE_ACTOR_SKILL_FIT,
+};
 /// Scope key naming the SKILL half of a [`PREDICATE_ACTOR_SKILL_FIT`] pair.
 /// The scope IS the conflict set: two rows collide iff their skill matches.
 pub const ACTOR_SKILL_FIT_SCOPE_KEY: &str = "skill";

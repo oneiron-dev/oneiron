@@ -14,10 +14,9 @@
 
 use rmpv::Value;
 
+use crate::authority::consolidation_evidence::ConsolidationProvenanceHopKind;
 use crate::claim::{ClaimBody, ClaimSubject, ScopedRead};
-use crate::dreamer_consolidation::{
-    ConsolidationProvenanceHopKind, decode_consolidation_evidence, decode_verified_locators,
-};
+use crate::dreamer_consolidation::{decode_consolidation_evidence, decode_verified_locators};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::record_references::{NamedRecordRef, validate_record_references_with};

@@ -13,9 +13,9 @@ use super::{LoopDecisionFamily, LoopRead};
 use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
-use crate::federation::{ScopeAxis, ScopeId};
 use crate::gate::ClaimReadView;
 use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 /// What a kept read context admitted: the rows the decision is about, for
 /// relevance, and every live row its admission stood on, so a recheck reads

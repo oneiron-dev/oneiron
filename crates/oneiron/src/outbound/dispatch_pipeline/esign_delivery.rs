@@ -151,7 +151,8 @@ pub(crate) fn esign_approval_digest_from_frozen_payload(
 pub(crate) fn failure_signals_approval_digest_from_frozen_payload(
     payload: &[u8],
 ) -> Option<crate::consent::EffectDigest> {
-    use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
+    use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_CHANNEL;
+    use crate::gate::failure_signal_delivery::FAILURE_SIGNALS_SEND_VERB;
     pressed_send_digest(payload, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB)
 }
 

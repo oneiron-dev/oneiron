@@ -21,12 +21,16 @@
 use std::collections::BTreeMap;
 
 use crate::Vault;
+use crate::claim::learning_evidence::EVIDENCE;
+use crate::claim::learning_evidence::EvidenceRow;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::evidence::{EVIDENCE, EvidenceRow, cells_for_subject_in_txn};
-use crate::learning::{
-    EvidenceSource, LearningCell, LearningEvidence, LearningPredicate, Observation,
-};
+use crate::learning::LearningCell;
+use crate::learning::evidence::cells_for_subject_in_txn;
 use crate::skill_attribution::{late_credit_receipt_in_txn, standing_credit_observation_in_txn};
 
 /// One anchored pack-outcome observation held in a reliability cell,
