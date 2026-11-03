@@ -589,6 +589,13 @@ fn step(value: &Value) -> Result<MemberStep> {
                 generation: small(generation)?,
             })
         }
+        // FIX 11550: a PDF object stream's decoded bytes.
+        [kind, object, generation] if kind.as_str() == Some("pdf_object_stream") => {
+            Ok(MemberStep::PdfObjectStream {
+                object: small(object)?,
+                generation: small(generation)?,
+            })
+        }
         _ => Err(corrupt()),
     }
 }
