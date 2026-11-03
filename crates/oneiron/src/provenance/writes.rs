@@ -44,6 +44,9 @@ pub(crate) struct EdgeProvenanceWrite<'a> {
     pub(crate) actor_class: EdgeActorClass,
     pub(crate) learned_at: u64,
     pub(crate) explicit_prior: Option<&'a EntityId>,
+    /// The project the wrapper lands in when the write carries one (archive
+    /// restore, FIX 10052); a native write names none and defaults.
+    pub(crate) scope_project: Option<EntityId>,
     pub(crate) imported_evidence: Option<Value>,
     /// Computed evidence source for an attributed derived edge. The original
     /// head is not re-sourced; the provenance wrapper records this assertion.
@@ -386,6 +389,7 @@ impl Vault {
                     actor_class,
                     learned_at,
                     explicit_prior,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },
@@ -405,6 +409,7 @@ impl Vault {
             actor_class,
             learned_at,
             explicit_prior,
+            scope_project,
             imported_evidence,
             generated_evidence,
         } = write;
@@ -464,6 +469,9 @@ impl Vault {
         )?;
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
+        if let Some(project) = scope_project {
+            claim_body.scope_project = project;
+        }
         if let Some(evidence) = imported_evidence {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }

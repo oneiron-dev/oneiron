@@ -11,7 +11,7 @@ use super::archive_index::{
 };
 use super::document_import::{import_edge, matches_row, parse_id};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
-use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::{
     Vault,
@@ -282,6 +282,10 @@ fn restore_cohort(
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
+    // The last row this restore inserted: on a learned-at tie the implicit
+    // strictly-older closure cannot close it, so a successor names it as its
+    // explicit prior when the archive holds it Superseded (FIX 9594).
+    let mut previous: Option<(EntityId, u64, ClaimLifecycleStatus)> = None;
     for (row, id, body) in rows {
         let expected =
             ExportBody::from_bytes(&crate::claim::encode_claim_body(body)?, row.entity_type);
@@ -296,6 +300,11 @@ fn restore_cohort(
             unchanged += 1;
             continue;
         }
+        let explicit_prior = previous.and_then(|(prior, prior_learned_at, prior_lifecycle)| {
+            (prior_learned_at == row.learned_at
+                && prior_lifecycle == ClaimLifecycleStatus::Superseded)
+                .then_some(prior)
+        });
         vault.restore_archived_provenance_in_txn(
             txn,
             id,
@@ -305,8 +314,10 @@ fn restore_cohort(
                 end: row.occurred_end,
             },
             row.learned_at,
+            explicit_prior.as_ref(),
         )?;
         inserted += 1;
+        previous = Some((*id, row.learned_at, body.lifecycle));
     }
     // A superseded row is never silently resurrected if its closing history
     // was absent or ambiguous. Every final lifecycle must reproduce exactly.
