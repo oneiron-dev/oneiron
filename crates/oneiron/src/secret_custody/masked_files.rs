@@ -394,6 +394,20 @@ impl Vault {
         sighted_bytes_in_txn(&self.store, &rtxn, bytes, None, sight)
     }
 
+    /// [`Self::sighted_asset_bytes`] for a caller holding `digest`, the
+    /// BLAKE3 of `bytes` computed from, or checked against, these exact
+    /// bytes: the mark is read by it and the bytes are not hashed again
+    /// (speed).
+    pub(crate) fn sighted_asset_bytes_with_digest(
+        &self,
+        bytes: Vec<u8>,
+        digest: &[u8; 32],
+        sight: SecretSight,
+    ) -> Result<Vec<u8>> {
+        let rtxn = self.store.env.read_txn()?;
+        sighted_bytes_in_txn(&self.store, &rtxn, bytes, Some(digest), sight)
+    }
+
     /// [`Vault::export_blob_artifact`] for a reader at a serving door. The
     /// export's `content_hash` still names the stored version.
     pub fn export_blob_artifact_as(
