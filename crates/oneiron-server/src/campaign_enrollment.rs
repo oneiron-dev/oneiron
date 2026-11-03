@@ -249,13 +249,12 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         Arc::clone(server.vault()),
         server.config.line.monthly_push_allowance(),
     );
-    // FIX 11642: the stalwart branch sends through the host-owned client
-    // built here per send; without one it fails closed, and every other
-    // channel flows as before.
-    let mut sender = match campaign_stalwart_client(server) {
-        Some(client) => sender.with_stalwart(client),
-        None => sender,
-    };
+    // FIX 11642: only the native-email branch invokes this factory. Non-email
+    // sends, Gmail and Gate-held attempts never connect to Stalwart.
+    let mut sender = sender.with_stalwart({
+        let server = server.clone();
+        move || campaign_stalwart_client(&server)
+    });
     let now_ms = crate::runtime::wall_clock_ms();
     let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
     Some(match drive {

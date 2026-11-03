@@ -22,6 +22,7 @@ use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
+use crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn;
 use crate::channel_identity_provider::stalwart::{
     NativeMailMessage, StalwartClient, StalwartSendSink,
 };
@@ -79,7 +80,7 @@ pub struct CampaignChannelSender {
     sink: OwnedServedChannelSink,
     remote: Option<RemoteTaskHandle>,
     provider_wait: Option<ProviderWait>,
-    stalwart: Option<StalwartClient>,
+    stalwart: Option<Box<dyn FnMut() -> Option<StalwartClient> + Send + 'static>>,
 }
 
 impl CampaignChannelSender {
@@ -97,13 +98,16 @@ impl CampaignChannelSender {
         }
     }
 
-    /// The host-owned Stalwart client the stalwart branch sends through
-    /// (FIX 11642): the server builds one per send from its
-    /// `[native_mail]` placement and the checked connection's credential
-    /// and injects it here. Without it the stalwart branch fails closed.
+    /// The host-owned Stalwart client factory for the native-email branch
+    /// (FIX 11642): the server defers credential-door discovery until this
+    /// branch actually sends. Other channels and Gate-held sends never call
+    /// it. Without a client the branch fails closed.
     #[must_use]
-    pub fn with_stalwart(mut self, client: StalwartClient) -> Self {
-        self.stalwart = Some(client);
+    pub fn with_stalwart(
+        mut self,
+        factory: impl FnMut() -> Option<StalwartClient> + Send + 'static,
+    ) -> Self {
+        self.stalwart = Some(Box::new(factory));
         self
     }
 
@@ -229,7 +233,18 @@ impl CampaignChannelSender {
         verb_contract: &'static OutboundVerbContract,
         intent_id_hex: &str,
     ) -> OutboundTransportResult {
-        let Some(client) = self.stalwart.as_ref() else {
+        let txn = match self.vault.store.env.read_txn() {
+            Ok(txn) => txn,
+            Err(_) => return self.invalid(),
+        };
+        if !matches!(
+            is_native_mail_sender_in_txn(&self.vault.store, &txn, keys.sender_ref),
+            Ok(true)
+        ) {
+            return self.invalid();
+        }
+        drop(txn);
+        let Some(client) = self.stalwart.as_mut().and_then(|factory| factory()) else {
             return self.invalid();
         };
         let Ok(Some(body_text)) = self.vault.campaign_step_body_text(&envelope.content_ref) else {
@@ -255,7 +270,7 @@ impl CampaignChannelSender {
         };
         let execution = {
             let Ok(mut sink) = StalwartSendSink::new(
-                client,
+                &client,
                 &message,
                 keys.sender_ref,
                 &sender_facts.address_or_handle,
