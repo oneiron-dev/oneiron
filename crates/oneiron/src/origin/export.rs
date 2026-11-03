@@ -4,7 +4,7 @@ use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, start_tree_count};
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
@@ -265,7 +265,7 @@ impl Vault {
                             .file_modes
                             .get(&frontier.document_id)
                             .copied()
-                            .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE),
+                            .unwrap_or(crate::store::code_snapshot::DEFAULT_CODE_FILE_MODE),
                         content,
                     },
                 )

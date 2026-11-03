@@ -120,7 +120,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
 /// The id of the archived source whose canonical stored bytes are `bytes`
 /// ([`ReceiptArchive::bytes`]), hashed once from the bytes already held.
 pub(super) fn id_of_bytes(bytes: &[u8]) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
+    crate::store::code_snapshot::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
 }
 /// A writer that accepts only the next bytes of `rest`, so an encoding is
 /// compared with stored bytes as it is written.

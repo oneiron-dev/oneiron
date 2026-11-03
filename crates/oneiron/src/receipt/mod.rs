@@ -5,6 +5,8 @@
 //! keeps the lasting receipt every wire reply carries (OF-538). Admission
 //! observations keep named calls visible before their wire settlement.
 
+pub mod dispatch_identity;
+pub mod intent_id;
 pub mod admission;
 mod authority_audit;
 mod brief_share;
@@ -27,6 +29,8 @@ mod projection;
 mod questions;
 mod record;
 mod reference_refusal;
+mod refusal_reason;
+pub use refusal_reason::RefusalReason;
 mod send_receipt_txn;
 mod served_form;
 mod session;
@@ -90,7 +94,7 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
+    AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
     GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
     QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
     QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,

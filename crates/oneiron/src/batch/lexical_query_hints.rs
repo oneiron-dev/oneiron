@@ -117,7 +117,7 @@ pub(super) fn validate_public_raw_put(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             )));
         }
-        ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
+        ENTITY_TYPE_SKILL => crate::write_envelope::skill_record::validate_skill_record_bytes(data)?,
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only

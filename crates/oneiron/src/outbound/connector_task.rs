@@ -192,7 +192,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_ref: EntityId,
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
-    schedule_context: &crate::memory::OutboundScheduleContext,
+    schedule_context: &crate::delivery_window::OutboundScheduleContext,
     continuation: &super::OutboundScheduleContinuation,
     calendar_invite: Option<&CalendarInvitePayload>,
     counterparty_ref: Option<&str>,

@@ -4,7 +4,7 @@ use super::door_types::{CredentialDoorError, DoorResult, log_unreachable, repo_r
 use super::{CredentialDoorService, DoorCredential};
 use crate::Vault;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState, load_act_in_txn};
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 
 fn parse_ticket(text: &str) -> DoorResult<(CheckoutId, u64)> {
     let (id, epoch) = text

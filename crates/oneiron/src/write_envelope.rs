@@ -13,8 +13,13 @@ use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
 
 pub mod carry_forward;
+pub mod channel_identity;
+pub mod identity_pair;
+pub mod identity_reputation;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod skill_record;
+pub mod skill_source;
 pub mod task_body;
 pub mod profile_snapshot;
 pub mod voice_segment;

@@ -159,7 +159,7 @@ pub(crate) fn erase_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) ->
                 vault,
                 txn,
                 turn,
-                crate::memory::extraction::ExtractionWork::Bulk,
+                crate::store::ExtractionWork::Bulk,
             )?;
             crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, &turn)?;
         }

@@ -90,7 +90,7 @@ pub(super) fn identity_topology_receipts(
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);
             if fold.rejections.iter().any(|(rejected, reason)| {
                 *rejected == event_id && matches!(reason,
-                    crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
+                    oneiron_contracts::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
             }) {
                 continue;
             }
@@ -375,7 +375,7 @@ fn channel_identity_lifecycle_receipt(
     }
 
     ReceiptRecord {
-        receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),
+        receipt_id: crate::store::lifecycle_receipt_ref(record.receipt_id),
         receipt_kind: ReceiptKind::IdentityLifecycle,
         occurred_at: record.created_at,
         actor: record

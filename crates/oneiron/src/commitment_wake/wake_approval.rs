@@ -9,7 +9,8 @@ use crate::claim::{
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
+use crate::memory::{Memory, OutboundDraftInput, OutboundIntentReceipt};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, CommitmentWakeDue,
@@ -445,8 +446,8 @@ pub(crate) fn scheduled_commitment_wake_authorised(
     else {
         return Ok(true);
     };
-    if crate::outbound::OutboundIntentSource::parse(&intent.intent_source)
-        != Some(crate::outbound::OutboundIntentSource::Commitment)
+    if crate::store::outbound_trigger::OutboundIntentSource::parse(&intent.intent_source)
+        != Some(crate::store::outbound_trigger::OutboundIntentSource::Commitment)
     {
         return Ok(true);
     }

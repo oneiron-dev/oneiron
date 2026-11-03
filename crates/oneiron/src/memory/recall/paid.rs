@@ -45,7 +45,8 @@ use crate::memory::{
 use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
-use crate::task_verb::sdk::{RecallDoor, RecallRequest};
+use crate::task_verb::recall_door::RecallDoor;
+use crate::memory::RecallRequest;
 use oneiron_model::llm::BudgetLease;
 
 mod lineage;

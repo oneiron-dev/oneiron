@@ -5,7 +5,28 @@ use super::{ClaimScope, CommitReceipt, Memory, MemoryError, MemoryResult, Scoped
 use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::task_verb::sdk::QueryAffect;
+/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryAffect {
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
+}
+
+impl QueryAffect {
+    /// The affect as the engine takes it, refused out of range.
+    pub fn vad(self) -> MemoryResult<oneiron_contracts::affect::Vad> {
+        let vad = oneiron_contracts::affect::Vad {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
+        };
+        vad.validate()
+            .map_err(|error| MemoryError::bad_request(format!("query_affect: {error}")))?;
+        Ok(vad)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

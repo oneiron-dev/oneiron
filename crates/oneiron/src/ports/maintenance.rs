@@ -112,14 +112,14 @@ pub(crate) trait EdgeStoreReadiness: Transactions {
         txn: &mut Self::Write<'_>,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<()>;
     fn port_blocks_remove(
         &self,
         txn: &mut Self::Write<'_>,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<bool>;
 }
 

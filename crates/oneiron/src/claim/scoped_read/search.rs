@@ -406,9 +406,9 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested.min(crate::memory::caps::MAX_SEARCH_LIMIT));
+            return Ok(requested.min(crate::request_limits::MAX_SEARCH_LIMIT));
         }
-        Ok(crate::memory::caps::narrowed_candidate_window(requested))
+        Ok(crate::request_limits::narrowed_candidate_window(requested))
     }
 
     pub fn filter_scored_entities(

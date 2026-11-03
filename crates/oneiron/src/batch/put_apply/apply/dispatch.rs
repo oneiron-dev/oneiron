@@ -140,7 +140,7 @@ pub(super) fn dispatch_put_type(
             fixed.own_device,
         )?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
-        crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+        crate::store::code_artifact_body::validate_code_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
@@ -232,7 +232,7 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
-        crate::skill_hub::decode_skill_hub_record(data)?;
+        crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
         crate::comm::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {
@@ -243,7 +243,7 @@ pub(super) fn dispatch_put_type(
         crate::provenance::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
-        let decoded = crate::skill::decode_skill_record(data)?;
+        let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(
             store,
             wtxn,

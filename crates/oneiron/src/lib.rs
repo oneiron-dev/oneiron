@@ -57,6 +57,7 @@ pub mod registry {
     #[cfg(test)]
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
+pub use oneiron_base::request_limits;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
@@ -170,6 +171,9 @@ pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
+pub mod connect_delivery;
+pub mod guest_document_share;
+pub mod verb_catalog;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;

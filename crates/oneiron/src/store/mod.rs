@@ -102,6 +102,9 @@
 
 /// Backend-neutral storage contracts and injectable time sources.
 /// Implementations compose in a caller-owned transaction; they never commit it.
+mod extraction_work;
+pub use extraction_work::ExtractionWork;
+
 pub mod ports {
     pub use crate::ports::{
         BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
@@ -116,6 +119,13 @@ pub mod ports {
     };
 }
 
+pub mod attempt_cleanup;
+pub mod attempt_inputs;
+pub mod attempt_lease;
+pub mod attempt_manifest;
+pub mod attempt_result;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
@@ -128,6 +138,10 @@ mod body_envelope;
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+pub mod code_artifact_body;
+pub mod code_document_values;
+pub mod code_memory_values;
+pub mod code_snapshot;
 mod claim_vad_owed;
 pub(crate) use claim_vad_owed::{
     owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
@@ -149,6 +163,7 @@ mod host_issuer_custody;
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
 mod key_encoding;
@@ -172,6 +187,10 @@ mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_content_index;
+pub mod skill_package;
+pub(crate) mod skill_source_carrier;
+pub(crate) mod refinement_carrier;
 mod structural_kind_registry;
 mod sync_responses;
 mod training_link;
