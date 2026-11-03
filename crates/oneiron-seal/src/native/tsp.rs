@@ -5,6 +5,7 @@ use x509_tsp::{TspVersion, TstInfo};
 
 use crate::api::{Sha256Digest, VerifyCheckStatus};
 use crate::error::{FatalCode, SealError, SealStage};
+use crate::memory::MemoryLedger;
 
 use super::cms::{self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256};
 
@@ -17,6 +18,12 @@ fn ts_err() -> SealError {
     }
 }
 
+fn admit(bytes: usize, memory: &MemoryLedger) -> Result<(), SealError> {
+    memory
+        .admit_len::<u8>(bytes)
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))
+}
+
 fn sha256_alg_id() -> Vec<u8> {
     let mut body = cms::oid_tlv(&OID_SHA256);
     body.extend_from_slice(&[0x05, 0x00]);
@@ -24,19 +31,24 @@ fn sha256_alg_id() -> Vec<u8> {
 }
 
 /// Build a DER TimeStampReq: SHA-256 imprint, nonzero 128-bit nonce,
-/// `certReq = TRUE`.
+/// `certReq = TRUE`. The request and its working TLVs are admitted on
+/// `memory` before anything is built.
 pub(crate) fn build_request(
     imprint: &Sha256Digest,
     nonce: &[u8; 16],
+    memory: &MemoryLedger,
 ) -> Result<Vec<u8>, SealError> {
     if nonce.iter().all(|b| *b == 0) {
         return Err(ts_err());
     }
+    // Fixed-shape request under 128 bytes plus its intermediate bodies; the
+    // slack is admission-only.
+    admit(256, memory)?;
     let mut body = cms::tlv(0x02, &[1]); // version v1
     let mut mi = sha256_alg_id();
     mi.extend_from_slice(&cms::tlv(0x04, imprint));
     body.extend_from_slice(&cms::tlv(0x30, &mi));
-    body.extend_from_slice(&cms::tlv(0x02, &nonce_int_body(nonce)));
+    body.extend_from_slice(&cms::tlv(0x02, &nonce_int_body(nonce, memory)?));
     body.extend_from_slice(&cms::tlv(0x01, &[0xFF])); // certReq TRUE
     Ok(cms::tlv(0x30, &body))
 }
@@ -48,8 +60,10 @@ pub(crate) struct ValidatedToken {
 }
 
 /// Extract the TimeStampToken ContentInfo DER from a TimeStampResp, requiring
-/// status `granted` (0) or `grantedWithMods` (1) with a present token.
-fn extract_token(resp_der: &[u8]) -> Result<Vec<u8>, SealError> {
+/// status `granted` (0) or `grantedWithMods` (1) with a present token. The
+/// extracted copy is admitted on `memory` before it is made; the fetched
+/// response it slices stays under its own lease and is not re-charged.
+fn extract_token(resp_der: &[u8], memory: &MemoryLedger) -> Result<Vec<u8>, SealError> {
     let mut top = DerReader::new(resp_der);
     let resp = top.expect(0x30)?;
     if !top.is_done() {
@@ -64,13 +78,17 @@ fn extract_token(resp_der: &[u8]) -> Result<Vec<u8>, SealError> {
     if r.is_done() {
         return Err(ts_err()); // granted but token absent
     }
-    Ok(r.expect(0x30)?.full.to_vec())
+    let token = r.expect(0x30)?;
+    admit(token.full.len(), memory)?;
+    Ok(token.full.to_vec())
 }
 
 /// Nonce as a DER INTEGER body: minimal-length two's complement — strip
 /// redundant leading zero octets while the next octet's high bit is clear,
 /// then sign-pad a set high bit.
-fn nonce_int_body(nonce: &[u8; 16]) -> Vec<u8> {
+fn nonce_int_body(nonce: &[u8; 16], memory: &MemoryLedger) -> Result<Vec<u8>, SealError> {
+    // Sixteen input bytes plus at most one sign pad.
+    admit(17, memory)?;
     let mut be = nonce.to_vec();
     while be.len() > 1 && be[0] == 0 && be[1] & 0x80 == 0 {
         be.remove(0);
@@ -78,14 +96,17 @@ fn nonce_int_body(nonce: &[u8; 16]) -> Vec<u8> {
     if be[0] & 0x80 != 0 {
         be.insert(0, 0);
     }
-    be
+    Ok(be)
 }
 
 /// Extract the message-digest signed attribute value from a token signer.
-fn token_message_digest(signer: &cms::ParsedSignerInfo) -> Result<Sha256Digest, SealError> {
+fn token_message_digest(
+    signer: &cms::ParsedSignerInfo,
+    memory: &MemoryLedger,
+) -> Result<Sha256Digest, SealError> {
     let mut found = None;
     for attr in &signer.signed_attrs {
-        let (oid, value) = cms::parse_attribute(attr)?;
+        let (oid, value) = cms::parse_attribute(attr, memory)?;
         if oid == OID_ATTR_MESSAGE_DIGEST.as_bytes() {
             if found.is_some() || value.tag != 0x04 || value.content.len() != 32 {
                 return Err(ts_err());
@@ -100,10 +121,13 @@ fn token_message_digest(signer: &cms::ParsedSignerInfo) -> Result<Sha256Digest, 
 
 /// RFC 3161 §2.4.2: the token's signedAttrs MUST include a content-type
 /// attribute (exactly once) whose value is id-ct-TSTInfo.
-fn token_content_type_check(signer: &cms::ParsedSignerInfo) -> Result<(), SealError> {
+fn token_content_type_check(
+    signer: &cms::ParsedSignerInfo,
+    memory: &MemoryLedger,
+) -> Result<(), SealError> {
     let mut seen = false;
     for attr in &signer.signed_attrs {
-        let (oid, value) = cms::parse_attribute(attr)?;
+        let (oid, value) = cms::parse_attribute(attr, memory)?;
         if oid == cms::OID_ATTR_CONTENT_TYPE.as_bytes() {
             if seen || value.tag != 0x06 || value.content != OID_TST_INFO {
                 return Err(ts_err());
@@ -115,12 +139,16 @@ fn token_content_type_check(signer: &cms::ParsedSignerInfo) -> Result<(), SealEr
 }
 
 /// Signer-certificate binding inside the token's signingCertificateV2 attr.
-fn token_ess_check(signer: &cms::ParsedSignerInfo, tsa_cert_der: &[u8]) -> Result<(), SealError> {
-    let (issuer, serial) = cms::issuer_and_serial(tsa_cert_der)?;
+fn token_ess_check(
+    signer: &cms::ParsedSignerInfo,
+    tsa_cert_der: &[u8],
+    memory: &MemoryLedger,
+) -> Result<(), SealError> {
+    let (issuer, serial) = cms::issuer_and_serial(tsa_cert_der, memory)?;
     for attr in &signer.signed_attrs {
-        let (oid, _) = cms::parse_attribute(attr)?;
+        let (oid, _) = cms::parse_attribute(attr, memory)?;
         if oid == OID_ATTR_SIGNING_CERT_V2.as_bytes() {
-            return cms::check_ess_binding(attr, tsa_cert_der, &issuer, &serial);
+            return cms::check_ess_binding(attr, tsa_cert_der, &issuer, &serial, memory);
         }
     }
     Err(ts_err())
@@ -168,32 +196,40 @@ pub(crate) fn validate_response(
     expected_policy_oid: Option<&str>,
     anchors: &[pkix_chain::TrustAnchor],
     clock_ms: u64,
+    memory: &MemoryLedger,
 ) -> Result<ValidatedToken, SealError> {
-    let token_ci = extract_token(resp_der)?;
-    let parsed = cms::parse_cms(&token_ci)?;
+    let token_ci = extract_token(resp_der, memory)?;
+    let parsed = cms::parse_cms(&token_ci, memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
     }
     check_digest_algs(&parsed)?;
+    if let Some(econtent) = parsed.econtent.as_ref() {
+        admit(econtent.len(), memory)?;
+    }
     let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
     let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
-    check_tst_fields(&tst, expected_imprint, nonce, expected_policy_oid)?;
+    check_tst_fields(&tst, expected_imprint, nonce, expected_policy_oid, memory)?;
     let signer = &parsed.signer;
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
-    token_content_type_check(signer)?;
-    if token_message_digest(signer)? != cms::sha256(&econtent) {
+    token_content_type_check(signer, memory)?;
+    if token_message_digest(signer, memory)? != cms::sha256(&econtent) {
         return Err(ts_err());
     }
-    let tsa_idx = find_bound_cert(&parsed.certificates, signer)?;
+    let tsa_idx = find_bound_cert(&parsed.certificates, signer, memory)?;
     let tsa_cert_der = &parsed.certificates[tsa_idx];
     let tsa_alg = cms::cert_signature_algorithm(tsa_cert_der)?;
     if !cms::sig_alg_permitted(tsa_alg, &signer.signature_alg_oid) {
         return Err(ts_err());
     }
-    let signing_input = cms::signed_attrs_signature_input(signer);
+    let signing_input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
+    admit(parsed.certificates.iter().map(Vec::len).sum(), memory)?;
+    memory
+        .admit_len::<Vec<u8>>(parsed.certificates.len())
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
     let chain_ders: Vec<Vec<u8>> = std::iter::once(tsa_cert_der.clone())
         .chain(
             parsed
@@ -223,6 +259,7 @@ fn check_tst_fields(
     expected_imprint: &Sha256Digest,
     nonce: &[u8; 16],
     expected_policy_oid: Option<&str>,
+    memory: &MemoryLedger,
 ) -> Result<(), SealError> {
     if tst.version != TspVersion::V1 {
         return Err(ts_err());
@@ -234,7 +271,7 @@ fn check_tst_fields(
         return Err(ts_err());
     }
     let token_nonce = tst.nonce.as_ref().ok_or_else(ts_err)?;
-    if token_nonce.as_bytes() != nonce_int_body(nonce).as_slice() {
+    if token_nonce.as_bytes() != nonce_int_body(nonce, memory)?.as_slice() {
         return Err(ts_err());
     }
     if let Some(expected) = expected_policy_oid {
@@ -261,10 +298,27 @@ fn check_digest_algs(parsed: &cms::ParsedCms) -> Result<(), SealError> {
 }
 
 /// Locate the CMS certificate whose ESS binding matches the token signer.
-fn find_bound_cert(certs: &[Vec<u8>], signer: &cms::ParsedSignerInfo) -> Result<usize, SealError> {
+/// Only an ordinary ESS/parse mismatch moves to the next candidate; a memory
+/// refusal (retryable, or an unconfigured service) propagates, never a miss.
+fn find_bound_cert(
+    certs: &[Vec<u8>],
+    signer: &cms::ParsedSignerInfo,
+    memory: &MemoryLedger,
+) -> Result<usize, SealError> {
     for (i, cert) in certs.iter().enumerate() {
-        if token_ess_check(signer, cert).is_ok() {
-            return Ok(i);
+        match token_ess_check(signer, cert, memory) {
+            Ok(()) => return Ok(i),
+            Err(err) if err.is_retryable() => return Err(err),
+            Err(SealError::Fatal {
+                code: FatalCode::InvalidConfiguration,
+                ..
+            }) => {
+                return Err(SealError::Fatal {
+                    stage: SealStage::Timestamp,
+                    code: FatalCode::InvalidConfiguration,
+                });
+            }
+            Err(_) => continue,
         }
     }
     Err(ts_err())
@@ -311,12 +365,16 @@ pub(crate) fn validate_token_for_verify(
     token_der: &[u8],
     expected_imprint: &Sha256Digest,
     anchors: &[pkix_chain::TrustAnchor],
+    memory: &MemoryLedger,
 ) -> Result<VerifiedToken, SealError> {
-    let parsed = cms::parse_cms(token_der)?;
+    let parsed = cms::parse_cms(token_der, memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
     }
     check_digest_algs(&parsed)?;
+    if let Some(econtent) = parsed.econtent.as_ref() {
+        admit(econtent.len(), memory)?;
+    }
     let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
     let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
     // TSTInfo version enforced on BOTH tsp paths (the seal-time path gets it
@@ -336,18 +394,22 @@ pub(crate) fn validate_token_for_verify(
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
-    token_content_type_check(signer)?;
-    if token_message_digest(signer)? != cms::sha256(&econtent) {
+    token_content_type_check(signer, memory)?;
+    if token_message_digest(signer, memory)? != cms::sha256(&econtent) {
         return Err(ts_err());
     }
-    let idx = find_bound_cert(&parsed.certificates, signer)?;
+    let idx = find_bound_cert(&parsed.certificates, signer, memory)?;
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der)?;
     if !cms::sig_alg_permitted(alg, &signer.signature_alg_oid) {
         return Err(ts_err());
     }
-    let input = cms::signed_attrs_signature_input(signer);
+    let input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
+    admit(parsed.certificates.iter().map(Vec::len).sum(), memory)?;
+    memory
+        .admit_len::<Vec<u8>>(parsed.certificates.len())
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
             parsed

@@ -12,6 +12,41 @@ use crate::api::{
 use crate::memory::SealMemoryRefusal;
 use lopdf::{Document, Object, ObjectId};
 
+/// Whether two xref entries are the same value. `XrefEntry` carries no
+/// `PartialEq`, and the old code compared the two `Debug` strings; a derived
+/// `Debug` is injective over these four shapes (each variant's fields print
+/// distinctly), so a field-by-field value comparison decides exactly what the
+/// string comparison decided, with no per-object allocation (FIX 8452).
+fn xref_entry_same(a: Option<&lopdf::xref::XrefEntry>, b: Option<&lopdf::xref::XrefEntry>) -> bool {
+    use lopdf::xref::XrefEntry as Entry;
+    match (a, b) {
+        (None, None) => true,
+        (Some(Entry::Free), Some(Entry::Free)) => true,
+        (Some(Entry::UnusableFree), Some(Entry::UnusableFree)) => true,
+        (
+            Some(Entry::Normal {
+                offset: a_offset,
+                generation: a_generation,
+            }),
+            Some(Entry::Normal {
+                offset: b_offset,
+                generation: b_generation,
+            }),
+        ) => a_offset == b_offset && a_generation == b_generation,
+        (
+            Some(Entry::Compressed {
+                container: a_container,
+                index: a_index,
+            }),
+            Some(Entry::Compressed {
+                container: b_container,
+                index: b_index,
+            }),
+        ) => a_container == b_container && a_index == b_index,
+        _ => false,
+    }
+}
+
 fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
     if before
         .objects
@@ -25,8 +60,10 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
         let current = after.objects.get(id)?;
         // A redefinition with identical effective value is still a write.
         if current != old
-            || format!("{:?}", before.reference_table.get(id.0))
-                != format!("{:?}", after.reference_table.get(id.0))
+            || !xref_entry_same(
+                before.reference_table.get(id.0),
+                after.reference_table.get(id.0),
+            )
         {
             out.insert(*id);
         }

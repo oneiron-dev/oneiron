@@ -113,12 +113,11 @@ fn dss_material_valid(
     let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
     let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
     let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
-    Ok(material_valid(
-        certs, crls, ocsps, anchors, covered, at_unix,
-    ))
+    material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
-/// The decoded arrays, judged.
+/// The decoded arrays, judged. Memory an `/Certs` parse was refused is
+/// `Err`, never invalid material.
 fn material_valid(
     certs: DssArray,
     crls: DssArray,
@@ -126,28 +125,30 @@ fn material_valid(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-) -> bool {
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
         && matches!(crls, DssArray::Absent)
         && matches!(ocsps, DssArray::Absent)
     {
-        return false;
+        return Ok(false);
     }
     // /Certs first: CRL and OCSP issuer lookups draw from it. A
     // present-but-empty array breaks profile completeness.
     let embedded: Vec<EmbeddedCert> = match certs {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
+            memory.admit_len::<EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(c) = EmbeddedCert::from_der(e) else {
-                    return false;
+                let Some(c) = EmbeddedCert::from_der(e, memory)? else {
+                    return Ok(false);
                 };
                 v.push(c);
             }
@@ -164,22 +165,23 @@ fn material_valid(
             .any(|e| e.der == c.der)
     });
     if !bound {
-        return false;
+        return Ok(false);
     }
     // Every CRL entry must be valid; collect the key-bound issuer certs the
     // valid CRLs authenticated under so the coverage rule below can match
     // them against each covered certificate's ACTUAL issuer (name+key).
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
+            memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
                 let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
-                    return false;
+                    return Ok(false);
                 };
                 v.push(issuer);
             }
@@ -191,15 +193,16 @@ fn material_valid(
     let mut ocsp_targets: Vec<Vec<u8>> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
-        DssArray::Malformed => return false,
+        DssArray::Malformed => return Ok(false),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return false;
+                return Ok(false);
             }
             for e in &entries {
                 let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix) else {
-                    return false;
+                    return Ok(false);
                 };
+                memory.admit_len::<Vec<u8>>(targets.len())?;
                 ocsp_targets.extend(targets);
             }
         }
@@ -220,9 +223,9 @@ fn material_valid(
         crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der)
     });
     if !covered_ok {
-        return false;
+        return Ok(false);
     }
-    true
+    Ok(true)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
@@ -233,12 +236,30 @@ pub(crate) struct EmbeddedCert {
 }
 
 impl EmbeddedCert {
-    pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {
+    /// The DER copy plus a share for the parsed form's heap, both reserved
+    /// on `memory` before anything is allocated (FIX 8452). `Ok(None)` is a
+    /// DER that does not parse, never a refusal: memory a copy was refused
+    /// is `Err`. On an unparsable DER nothing is retained, so the admission
+    /// goes back; on a refusal nothing is given back and the operation ends
+    /// refused.
+    pub(crate) fn from_der(
+        der_bytes: &[u8],
+        memory: &MemoryLedger,
+    ) -> Result<Option<Self>, SealMemoryRefusal> {
         use der::Decode;
-        Some(Self {
-            der: der_bytes.to_vec(),
-            cert: x509_cert::Certificate::from_der(der_bytes).ok()?,
-        })
+        let der_len = der_bytes.len();
+        let share = std::mem::size_of::<x509_cert::Certificate>();
+        memory.admit_len::<u8>(der_len)?;
+        memory.take(share as u64)?;
+        let der = der_bytes.to_vec();
+        match x509_cert::Certificate::from_der(der_bytes) {
+            Ok(cert) => Ok(Some(Self { der, cert })),
+            Err(_) => {
+                memory.release(der_len as u64);
+                memory.release(share as u64);
+                Ok(None)
+            }
+        }
     }
 }
 
