@@ -15907,7 +15907,7 @@
      "path": "src/code_run/consent_wait/browser.rs",
      "purpose": "A browser act a press held, bound to a code consent wait (FIX 10423)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -54314,7 +54314,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BudgetChargeMarker",
@@ -54337,16 +54337,18 @@
       "OutboundSendFailure",
       "OutboundSendOutcome",
       "OutboundToolDescriptor",
-      "RecordedOutboundOutcome"
+      "RecordedOutboundOutcome",
+      "SecretSendRefusal",
+      "SecretSendRefusalKind"
      ],
      "path": "src/outbound_intent_ledger/types.rs",
      "purpose": "Version consts, domain types, record impls, and listing/escalation/report types",
      "surface": {
       "const": 2,
       "crate-vis": 19,
-      "enum": 8,
-      "fn": 20,
-      "struct": 13,
+      "enum": 9,
+      "fn": 22,
+      "struct": 14,
       "type": 2
      }
     },
@@ -68794,7 +68796,7 @@
      "path": "src/store/key_custody/body_history.rs",
      "purpose": "A vault's body history in its exterior custody (KS-2A/KS-2B1, FIX 6229, 6023): the obligations an erase…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -69005,7 +69007,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 38,
       "mod": 1,
       "re-export": 2
      }
@@ -85871,7 +85873,7 @@
     "outbound_intent_ledger": {
      "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
     },
@@ -86485,7 +86487,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5861,
    "test_files": 902
@@ -111929,7 +111931,7 @@
      "path": "src/connector_call_host/sent.rs",
      "purpose": "What one send of the call host came to, before the ledger scrubs its raw fields",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
