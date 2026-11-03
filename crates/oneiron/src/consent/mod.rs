@@ -53,6 +53,7 @@ mod bound;
 mod browser;
 pub mod bypass_lifecycle;
 mod codec;
+pub mod code_wait_state;
 mod contact_clearance;
 mod doors;
 mod effect;
