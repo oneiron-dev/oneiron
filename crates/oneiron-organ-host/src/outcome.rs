@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use oneiron_organ_protocol::MappedRegion;
 use oneiron_organ_protocol::{Hash32, TypedBody, Value};
 
-use crate::budget::Kept;
+use crate::budget::{Kept, Lease};
 use crate::receipt::CallReceipt;
 use crate::resource_memory::FloorLease;
 
@@ -21,6 +21,8 @@ pub struct OrganOutcome {
     pub outputs: Vec<OrganOutput>,
     pub report: Value,
     pub receipt: CallReceipt,
+    /// The decoded reply's room, held while its body and report live.
+    pub(crate) _frame: Option<Lease>,
 }
 
 /// One file an organ made, hashed by the host.

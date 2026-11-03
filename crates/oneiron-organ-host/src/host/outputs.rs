@@ -86,7 +86,6 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
     if grown.overcommit > 0 {
         vault.measure_limit_at(EngineLimit::OrganMemoryBytes, budget, grown.peak);
     }
-    drop(frame);
     let receipt = CallReceipt {
         organ: process.hello.organ.clone(),
         protocol: process.session,
@@ -132,6 +131,7 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
         outputs,
         report: proposal.report,
         receipt,
+        _frame: Some(frame),
     })
 }
 

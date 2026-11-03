@@ -330,6 +330,7 @@ async fn received(
         outputs,
         report,
         receipt,
+        _frame: None,
     })
 }
 
