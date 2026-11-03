@@ -60,6 +60,15 @@ impl ConsolidationExecutor<'_> {
                 step_hashes: Vec::new(),
             });
         }
+        // A queued rung over an excluded conversation parks for retry
+        // before any source read, exactly as a refused wake preparation
+        // does; it runs if the conversation is later un-excluded.
+        if ctx.vault.dreamer_turn_excluded(&input.span.turn)? {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "conversation excluded from Dreamer passes".to_owned(),
+                cause: DreamerParkCause::Retry,
+            });
+        }
         let Some(evidence) = sieve::rung_evidence(ctx.vault, &input)? else {
             // The source may be withheld temporarily. Keep the job and queue
             // entry, rather than completing the only owed-rung receipt.

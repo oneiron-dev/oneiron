@@ -2029,6 +2029,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/confession.rs` | src | s | 2 fn | — | The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each… |
 | `src/dreamer_consolidation/conflict.rs` | src | m | 9 struct · 9 fn · 10 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef +1 | Conflict and bucket identities for consolidation candidates and swarm returns |
 | `src/dreamer_consolidation/evidence.rs` | src | m | 36 crate-vis | — | Parent-verified evidence is the sole scoped consolidation handoff |
+| `src/dreamer_consolidation/excluded_conversations.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DreamerExcludedConversations | Operator-set conversations that stay out of Dreamer consolidation |
 | `src/dreamer_consolidation/executor.rs` | src | m | 1 struct · 1 re-export · 6 crate-vis | ConsolidationExecutor | Partition executor: runs one prepared consolidation partition end to end |
 | `src/dreamer_consolidation/executor/conflicts.rs` | src | m | 3 crate-vis | — | The conflict loop of `resolve_conflicts`: each conflicting set decided through the host's ladder, merged… |
 | `src/dreamer_consolidation/executor/decisions.rs` | src | m | 1 struct · 2 fn · 17 crate-vis | ConsolidationDecisions | The consolidation's typed questions through the host's ladder: how a conflict set resolves and which… |
@@ -2053,7 +2054,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 25 re-export · 31 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 5 mod · 25 re-export · 31 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 18 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/pages.rs` | src | s | 5 crate-vis | — | A child's listing in stable pages (Rule 5, FIX 7580) |
 | `src/dreamer_consolidation/neighbourhood/render.rs` | src | s | 4 crate-vis | — | The listing as a call shows it (FIX 7506): each entity, claim and relationship by its call-local label… |
