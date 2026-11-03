@@ -478,6 +478,8 @@ pub(super) fn let_go_in_txn(
 pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &EntityId) -> Result<()> {
     let at = store.clock().now_recorded_at();
     let mut changed = Vec::new();
+    #[cfg(feature = "sync")]
+    let mut mirror_artifacts = BTreeSet::new();
     for (proposal, mut record) in PROPOSALS.scan(store, txn)? {
         let members = record.members.len();
         let asks = record.asks.len();
@@ -492,6 +494,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
         {
             continue;
         }
+        #[cfg(feature = "sync")]
+        mirror_artifacts.insert(record.header.artifact);
         if record.members.is_empty() {
             changed.push((proposal, None));
             continue;
@@ -500,6 +504,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
             record.header.artifact = record.members[0].artifact;
         }
         close_if_done(&mut record, at, None);
+        #[cfg(feature = "sync")]
+        mirror_artifacts.insert(record.header.artifact);
         changed.push((proposal, Some(record)));
     }
     for (proposal, record) in changed {
@@ -511,6 +517,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
         }
     }
     MEMBERSHIP.delete_from(store, txn, artifact.as_bytes())?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, txn, mirror_artifacts);
     Ok(())
 }
 
