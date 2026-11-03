@@ -118,19 +118,24 @@ impl ExpressionPreferenceArchive {
             // REVIEW-4378 P1: several closers for one row at one time is
             // the branching-ambiguous shape this history refuses: require
             // exactly one eligible closer, never silently keep the max.
+            // Blind-review P1 (round 2): a Retracted closer is a retained
+            // historical edge, never a standing close — exclude it before
+            // the uniqueness check (its link stays exempt below). A row
+            // whose only closer is retracted still refuses: a retracted row
+            // closes no standing row.
             let mut matching: Vec<EntityId> = links
                 .iter()
                 .filter(|&(_, closed, link_at)| *closed == row.id && *link_at == at)
                 .map(|&(closer, _, _)| closer)
+                .filter(|closer| {
+                    by_id[closer].body.lifecycle != ClaimLifecycleStatus::Retracted
+                })
                 .collect();
             matching.sort();
             matching.dedup();
             let &[closer] = matching.as_slice() else {
                 return Err(invalid("superseded row has no unique archived closer"));
             };
-            if by_id[&closer].body.lifecycle == ClaimLifecycleStatus::Retracted {
-                return Err(invalid("a retracted row closes no standing row"));
-            }
             closes.push((closer, row.id, at));
         }
         // REVIEW-4378 P1: every archived link must take effect as a
@@ -146,6 +151,23 @@ impl ExpressionPreferenceArchive {
                 || by_id[&link.0].body.lifecycle == ClaimLifecycleStatus::Retracted
         }) {
             return Err(invalid("supersession link takes no archived effect"));
+        }
+        // Blind-review P1 (round 2): the historical-edge exemption above
+        // must not smuggle cycles — two retracted rows with reciprocal
+        // links leave `closes` empty and would replay the cycle. Check
+        // acyclicity over ALL archived links, retracted closers included,
+        // separately from ordering the effective closes below.
+        let mut pending_all: Vec<(EntityId, EntityId)> = links
+            .iter()
+            .map(|&(closer, closed, _)| (closer, closed))
+            .collect();
+        while !pending_all.is_empty() {
+            let Some(at) = pending_all.iter().position(|&(_, closed)| {
+                !pending_all.iter().any(|&(closer, _)| closer == closed)
+            }) else {
+                return Err(invalid("cyclic supersession history"));
+            };
+            pending_all.remove(at);
         }
         // A closer must still be active when its close lands, so a row
         // closes before the close that closes it. No such order, no history.
