@@ -98,8 +98,8 @@ pub use self::inference_publisher::InferencePublisher;
 pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
 pub use self::backend::{
-    BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,
-    LlmStreamResult, SingleRouteBackend, SingleSend,
+    BrokerIsolation, BudgetLease, DispatchRelease, LlmBackend, LlmGenerateFuture, LlmResult,
+    LlmStream, LlmStreamResult, SingleRouteBackend, SingleSend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
