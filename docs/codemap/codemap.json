@@ -2669,7 +2669,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "mod": 4,
+      "mod": 5,
       "re-export": 10
      }
     },
@@ -2787,6 +2787,28 @@
      "surface": {
       "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunAskState",
+      "RunBranchSignal",
+      "RunSignalInput",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/attempt_queue/run_signal.rs",
+     "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 4,
+      "struct": 5
      }
     },
     {
@@ -13784,7 +13806,6 @@
       "CheckoutSettlementDisposition",
       "CheckoutSettlementReceipt",
       "CheckoutSettlementRequest",
-      "CheckoutTaskClass",
       "CheckoutTeardownInspection",
       "CheckoutTeardownOutcome",
       "GitOid",
@@ -13795,8 +13816,9 @@
      "purpose": "Lease domain vocabulary: ids, requests, grants, receipts, errors, and traits",
      "surface": {
       "const": 5,
-      "enum": 8,
-      "fn": 8,
+      "enum": 7,
+      "fn": 6,
+      "re-export": 1,
       "struct": 12,
       "trait": 3,
       "type": 2
@@ -15836,7 +15858,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CodeTreeBlob",
       "CodeTreeInventory"
      ],
      "path": "src/code_revision/tree_inventory.rs",
@@ -15844,7 +15865,8 @@
      "surface": {
       "crate-vis": 8,
       "fn": 3,
-      "struct": 2
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -18117,16 +18139,17 @@
       "SandboxGuestLanguage",
       "SandboxGuestRuntime",
       "SandboxGuestTier",
-      "SandboxImportClass",
-      "SandboxLinkedImport"
+      "SandboxLinkedImportEffects"
      ],
      "path": "src/code_sandbox/contract.rs",
      "purpose": "Guest tier, runtime, language, import classes and the linked-import boundary contract",
      "surface": {
       "const": 3,
-      "enum": 5,
-      "fn": 28,
-      "struct": 2
+      "enum": 4,
+      "fn": 23,
+      "re-export": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -18545,19 +18568,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ProposalSpoolClaim",
-      "ProposalSpoolFloor",
-      "SpoolAtFloor",
-      "SpoolFloorRefusal"
-     ],
+     "notable": [],
      "path": "src/code_sandbox/proposal/spool.rs",
-     "purpose": "Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650)",
+     "purpose": "Proposal spool disk-floor contracts, defined at the store layer",
      "surface": {
-      "enum": 1,
-      "fn": 2,
-      "struct": 1,
-      "trait": 2
+      "re-export": 1
      }
     },
     {
@@ -34173,7 +34188,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/recovery.rs",
@@ -55272,7 +55287,7 @@
      "purpose": "Snapshot/export row, consent, and artifact domain types with pinned key and schema consts",
      "surface": {
       "const": 10,
-      "crate-vis": 23,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "struct": 9
@@ -58909,26 +58924,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
       "CanonicalCustodyTransition",
-      "CanonicalDocumentFork",
-      "CanonicalDocumentPin",
-      "CanonicalDocumentPurge",
-      "CanonicalDocumentReceipt",
-      "CanonicalDocumentVersion",
       "CanonicalEntity",
-      "CanonicalEntityDocument",
-      "CanonicalEntityDocumentHistory",
-      "CanonicalForkStatus",
       "CanonicalPinCarrier",
       "CanonicalRoomFact",
       "CanonicalRoomTurn",
       "CanonicalSchemaManifest",
-      "CanonicalSettleVerb",
       "CanonicalShellWorld",
       "CanonicalSnapshot",
       "CanonicalTombstone"
@@ -58936,9 +58942,8 @@
      "path": "src/recovery/canonical/vocabulary.rs",
      "purpose": "CRDT-independent canonical snapshot values and document history vocabulary",
      "surface": {
-      "enum": 2,
-      "fn": 2,
-      "struct": 18
+      "re-export": 1,
+      "struct": 11
      }
     },
     {
@@ -59005,19 +59010,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "RestoreAdmissionError",
-      "RestoreAdmissionReason",
-      "RestoreDestinationState",
-      "RestorePhase"
-     ],
+     "notable": [],
      "path": "src/recovery/checkpoint/admission/reason.rs",
-     "purpose": "Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
+     "purpose": "Restore refusal vocabulary, defined at the store layer",
      "surface": {
-      "crate-vis": 7,
-      "enum": 3,
-      "fn": 3,
-      "struct": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -59212,9 +59210,10 @@
      "path": "src/recovery/checkpoint/custody_head/status.rs",
      "purpose": "The status names of a vault's custody (KS-4A1/KS-4A2, FIX 5685), on the owner's status read (`doctor`, `GET…",
      "surface": {
-      "const": 8,
+      "const": 7,
       "crate-vis": 5,
       "fn": 2,
+      "re-export": 1,
       "struct": 5
      }
     },
@@ -59476,17 +59475,16 @@
      "notable": [
       "ArtifactHostOrderHolds",
       "HostHoldsAvailability",
-      "HostHoldsRecipient",
-      "HostHoldsSealing",
       "HostHoldsUnavailable"
      ],
      "path": "src/recovery/checkpoint/host_holds/seal.rs",
      "purpose": "A hosted vault's host-order family in its own checkpoints (FIX 6598, FIX 6817; LEGAL-HOLD = B): a hold must…",
      "surface": {
       "crate-vis": 5,
-      "enum": 3,
-      "fn": 6,
-      "struct": 2
+      "enum": 2,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -59894,17 +59892,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AtWriteFloor",
-      "RecoveryWriteBudget"
-     ],
+     "notable": [],
      "path": "src/recovery/checkpoint/write_budget.rs",
      "purpose": "The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX…",
      "surface": {
       "crate-vis": 10,
-      "fn": 1,
-      "struct": 1,
-      "trait": 1
+      "re-export": 1
      }
     },
     {
@@ -60643,9 +60636,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/repo_mutation/secret_remediation/env.rs",
-     "purpose": "The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: \".env: values -> secret store…",
+     "purpose": "Repository dotenv parsing and value classification, defined at the store layer",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 1
      }
     },
     {
@@ -60778,8 +60771,8 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 8,
-      "struct": 7,
-      "type": 1
+      "re-export": 1,
+      "struct": 7
      }
     },
     {
@@ -60922,9 +60915,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/result_body/pins.rs",
-     "purpose": "Reader pins: a result body a reader holds is never deleted",
+     "purpose": "Result-body reader pins, defined at the store layer",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 1
      }
     },
     {
@@ -60940,15 +60933,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ResultMemoryPool"
-     ],
+     "notable": [],
      "path": "src/result_memory.rs",
-     "purpose": "The memory code-mode result bodies may hold (OF-190 B++)",
+     "purpose": "Result-body memory accounting, defined at the store layer",
      "surface": {
-      "crate-vis": 7,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -61180,24 +61170,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "RunAsk",
-      "RunAskAnswer",
-      "RunAskAnswerKind",
-      "RunAskQuestion",
-      "RunAskState",
-      "RunBranchSignal",
-      "RunSignalInput",
-      "RunSignalKind",
-      "RunSignalState"
-     ],
+     "notable": [],
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
       "fn": 7,
-      "struct": 5
+      "re-export": 1
      }
     },
     {
@@ -61725,7 +61704,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "InvocationId",
       "VerbCall",
       "VerbDomain",
       "VerbHookPre"
@@ -61735,9 +61713,9 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "fn": 13,
-      "re-export": 5,
-      "struct": 3,
+      "fn": 9,
+      "re-export": 6,
+      "struct": 2,
       "type": 1
      }
     },
@@ -64587,7 +64565,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 5,
       "re-export": 6
      }
@@ -64693,6 +64671,16 @@
      "purpose": "Pure PERSON baseline validation and JSON-compatible MessagePack decoding",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/persona_export_fields.rs",
+     "purpose": "Field projections and omitted-reference key of persona snapshot exports",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69268,6 +69256,29 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CanonicalDocumentFork",
+      "CanonicalDocumentPin",
+      "CanonicalDocumentPurge",
+      "CanonicalDocumentReceipt",
+      "CanonicalDocumentVersion",
+      "CanonicalEntityDocument",
+      "CanonicalEntityDocumentHistory",
+      "CanonicalForkStatus",
+      "CanonicalSettleVerb"
+     ],
+     "path": "src/store/canonical_document.rs",
+     "purpose": "CRDT-independent EntityDoc snapshot values and causal history",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ChannelIdentityLifecycleReceiptId",
       "ChannelIdentityLifecycleReceiptRecord"
      ],
@@ -69277,6 +69288,34 @@
       "crate-vis": 4,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutTaskClass"
+     ],
+     "path": "src/store/checkout_task.rs",
+     "purpose": "Checkout task classes and their lease-reclaim policy",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostHoldsRecipient",
+      "HostHoldsSealing"
+     ],
+     "path": "src/store/checkpoint_host_recipient.rs",
+     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -69564,6 +69603,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeTreeBlob"
+     ],
+     "path": "src/store/code_tree_blob.rs",
+     "purpose": "Untouched blob references and submodule mode in tested code trees",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69664,6 +69716,16 @@
      "purpose": "What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/custody_retirement_status.rs",
+     "purpose": "Completion marker for acknowledged custody retirement",
+     "surface": {
+      "const": 1
      }
     },
     {
@@ -70957,8 +71019,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 57,
-      "mod": 36,
+      "crate-vis": 58,
+      "mod": 49,
       "re-export": 23
      }
     },
@@ -71299,6 +71361,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ProposalSpoolClaim",
+      "ProposalSpoolFloor",
+      "SpoolAtFloor",
+      "SpoolFloorRefusal"
+     ],
+     "path": "src/store/proposal_spool.rs",
+     "purpose": "Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650)",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/reader_fold_receipt.rs",
      "purpose": "Stored reader-fold receipts and their occurrence vocabulary",
@@ -71315,6 +71395,21 @@
      "surface": {
       "const": 1,
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AtWriteFloor",
+      "RecoveryWriteBudget"
+     ],
+     "path": "src/store/recovery_write_budget.rs",
+     "purpose": "Host-lent disk floor for checkpoint and recovery writes",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -71340,6 +71435,54 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/repo_environment.rs",
+     "purpose": "The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: \".env: values -> secret store…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/repo_fork.rs",
+     "purpose": "Repository recovery-fork identity",
+     "surface": {
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RestoreAdmissionError",
+      "RestoreAdmissionReason",
+      "RestoreDestinationState",
+      "RestorePhase"
+     ],
+     "path": "src/store/restore_admission.rs",
+     "purpose": "Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/result_body_pins.rs",
+     "purpose": "Reader pins: a result body a reader holds is never deleted",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CodeRunOutputKind",
       "CodeRunOutputPreview",
@@ -71354,6 +71497,20 @@
       "enum": 1,
       "fn": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResultMemoryPool"
+     ],
+     "path": "src/store/result_memory.rs",
+     "purpose": "The memory code-mode result bodies may hold (OF-190 B++)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -71601,6 +71758,21 @@
       "enum": 1,
       "fn": 7,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SandboxImportClass",
+      "SandboxLinkedImport"
+     ],
+     "path": "src/store/sandbox_import.rs",
+     "purpose": "Guest-linked host import names and effect classes",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -71995,6 +72167,19 @@
      "purpose": "Persisted vector-index metadata and admission vocabulary",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InvocationId"
+     ],
+     "path": "src/store/verb_invocation.rs",
+     "purpose": "Stable invocation identity across transport wrappers and runtime hooks",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -87850,7 +88035,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88384,7 +88569,7 @@
     "entity_doc": {
      "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge"
     },
@@ -88953,7 +89138,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "The memory code-mode result bodies may hold (OF-190 B++)"
+     "purpose": "Result-body memory accounting, defined at the store layer"
     },
     "retrieval_depth": {
      "files": 7,
@@ -89054,7 +89239,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89166,7 +89351,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 271,
+     "files": 285,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89425,9 +89610,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 114,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6118,
+   "source_files": 6134,
    "test_files": 900
   },
   "oneiron-android": {
