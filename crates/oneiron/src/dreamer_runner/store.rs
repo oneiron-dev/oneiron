@@ -1172,10 +1172,10 @@ impl<'a> DreamerRunnerStore<'a> {
     /// for any of those.
     pub fn propose_claim_cohorts(
         &self,
-        claims: &[crate::cluster::ClusterClaim],
-        options: crate::cluster::ClusterOptions,
-    ) -> Result<crate::cluster::ClusterAssignments> {
-        crate::cluster::cluster_claims(claims, options)
+        claims: &[crate::dreamer_consolidation::claim_cluster::ClusterClaim],
+        options: crate::dreamer_consolidation::claim_cluster::ClusterOptions,
+    ) -> Result<crate::dreamer_consolidation::claim_cluster::ClusterAssignments> {
+        crate::dreamer_consolidation::claim_cluster::cluster_claims(claims, options)
     }
 }
 

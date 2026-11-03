@@ -187,3 +187,5 @@ use self::codec::{
 use self::support::SUBJECT_KIND_AUDIENCE;
 
 pub mod bundle_projection;
+
+pub mod settlement_fact;

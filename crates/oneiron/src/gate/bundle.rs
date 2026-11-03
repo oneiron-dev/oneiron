@@ -558,18 +558,18 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    crate::runtime_hooks::SettledFact {
+                    crate::consent::settlement_fact::SettledFact {
                         proposal: *id,
                         outcome: match action {
                             GateConsentBundleAction::Approve => {
-                                crate::runtime_hooks::SettledOutcome::Approved
+                                crate::consent::settlement_fact::SettledOutcome::Approved
                             }
                             GateConsentBundleAction::Decline => {
-                                crate::runtime_hooks::SettledOutcome::Declined
+                                crate::consent::settlement_fact::SettledOutcome::Declined
                             }
                         },
                         settled_by: actor.entity_ref(),
-                        kind: crate::runtime_hooks::SettlementKind::GateConsentBundle,
+                        kind: crate::consent::settlement_fact::SettlementKind::GateConsentBundle,
                     },
                 )?;
             }

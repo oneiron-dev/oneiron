@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::code_document::CodeOpProvenance;
-use crate::critic::LensCatalog;
+use crate::store::critic_lens::LensCatalog;
 use crate::repo_mutation::proposal::RepoProposalStatus;
 
 /// Declares the code symbols one task will touch. The holder is the caller;

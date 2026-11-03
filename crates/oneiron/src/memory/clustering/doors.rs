@@ -6,7 +6,7 @@ use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedRead, ScopedReadResult,
 };
-use crate::cluster::{ClusterClaim, ClusterOptions, cluster_claims};
+use crate::dreamer_consolidation::claim_cluster::{ClusterClaim, ClusterOptions, cluster_claims};
 use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::{
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyOp,

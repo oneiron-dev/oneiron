@@ -431,3 +431,13 @@ pub mod recovery_kit;
 pub mod code_promotion_gap;
 
 pub mod code_revision_record;
+
+pub mod sandbox_path;
+
+pub mod sandbox_credential;
+
+pub mod sandbox_contract;
+
+pub mod critic_lens;
+
+pub mod verb_domain;
