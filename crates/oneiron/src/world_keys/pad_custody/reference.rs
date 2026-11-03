@@ -354,6 +354,58 @@ mod window {
         })
     }
 
+    /// Whether an update's own ops carry a pad row, read from the update
+    /// alone: `Some(false)` only when the split of a document holding
+    /// nothing else covers every op span the blob declares and no
+    /// entities value among them is a pad row -- exactly the updates
+    /// [`project_update`] ends at `NothingToProject` for. Anything the
+    /// read cannot prove (an import fault, a split fault, spans the
+    /// split does not cover) is `None`, and the caller projects in full
+    /// as today, so no byte masked today travels unmasked for the skip.
+    fn update_carries_pad(encoded: &[u8], meta: &ImportBlobMetadata) -> Option<bool> {
+        let scratch = LoroDoc::new();
+        scratch.import(encoded).ok()?;
+        let parts = parts_of(&scratch).ok()?;
+        // The split must hold every declared op: a change the import
+        // left outside it is one this read cannot judge.
+        for (peer, end) in &meta.partial_end_vv {
+            let start = meta.partial_start_vv.get(peer).copied().unwrap_or(0);
+            let mut covered = start;
+            let mut spans: Vec<(i32, i32)> = parts
+                .skeleton
+                .changes
+                .iter()
+                .filter(|change| change.peer == *peer)
+                .map(|change| {
+                    (
+                        change.counter,
+                        change.counter + i32::try_from(change.ops.len()).unwrap_or(0),
+                    )
+                })
+                .collect();
+            spans.sort_unstable();
+            for (from, to) in spans {
+                if from <= covered {
+                    covered = covered.max(to);
+                }
+            }
+            if covered < *end {
+                return None;
+            }
+        }
+        let rows = parts.skeleton.roots.iter().position(|root| root == ROWS);
+        let sites = sites(&parts);
+        let carries = parts.atoms.iter().any(|atom| {
+            let Some((root, _, _)) = sites.get(&atom.id) else {
+                return false;
+            };
+            rows == Some(*root as usize)
+                && matches!(&atom.payload, Payload::Value(LoroValue::Binary(raw))
+                    if super::pad_row_body(raw).is_some_and(|body| !body.is_empty()))
+        });
+        Some(carries)
+    }
+
     /// Projects an update on an isolated copy holding its dependencies: a
     /// copy of `context` when it is passed, else an empty document, which
     /// takes the update whole or not at all.
@@ -364,6 +416,12 @@ mod window {
         context: Option<&LoroDoc>,
         namespace_hint: &[u8; 16],
     ) -> Result<WindowPadProjection> {
+        // FIX 10525: an update that carries no pad projects to nothing;
+        // learn that from the update alone before copying the whole
+        // window that holds its dependencies.
+        if update_carries_pad(encoded, meta) == Some(false) {
+            return Ok(WindowPadProjection::NothingToProject);
+        }
         let scratch = match context {
             Some(context) => isolated(context)?,
             None => LoroDoc::new(),

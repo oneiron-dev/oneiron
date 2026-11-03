@@ -233,8 +233,8 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     use crate::sync::window::{
         CarrierRemoval, apply_tombstone_to_indexed_window_doc, entity_carriers,
         export_scrubbed_window_snapshot, export_tombstone_commit_delta, load_window_from_state,
-        mark_removed_carriers_first, merge_persisted_state_into_doc, persist_window_doc_in_txn,
-        rebuild_window_from_updates,
+        mark_removed_carriers_first, merge_persisted_state_into_doc,
+        persist_window_doc_in_txn_projected, persisted_window_pads, rebuild_window_from_updates,
     };
     use loro::CommitOptions;
 
@@ -316,11 +316,13 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
         }
     };
 
+    // Project before the write transaction opens (FIX 10525).
+    let stored = persisted_window_pads(vault, window_key, &snapshot, None);
     // ONE transaction: snapshot triple + delete-bearing queue row + marker
     // deletions. An empty delta (every apply was downgrade-blocked / no-op)
     // skips the queue push — nothing new to propagate.
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        persist_window_doc_in_txn_projected(vault, wtxn, window_key, &stored, &vv)?;
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(
                 vault,
