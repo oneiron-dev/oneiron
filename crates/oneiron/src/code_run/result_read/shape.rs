@@ -137,7 +137,7 @@ impl<'de> Visitor<'de> for TopKeys<'_> {
         formatter.write_str("a JSON object")
     }
 
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> std::result::Result<bool, A::Error> {
         while let Some(key) = map.next_key::<String>()? {
             if self.0.len() == SHAPE_KEYS {
                 return Ok(false);
