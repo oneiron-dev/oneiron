@@ -35,7 +35,7 @@ use oneiron::llm::{
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
-use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, host_room, identity_part, mib};
+use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity_part, mib};
 use super::registry::{self, HostCopy, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
@@ -185,7 +185,7 @@ impl Restore<'_> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
         let ledger = super::super::device_ledger(self.worker_id);
-        if host_room(bytes) != Some(true) || !device_room(ledger.as_deref(), bytes) {
+        if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
@@ -238,7 +238,8 @@ impl Restore<'_> {
         // From here the session holds the pin: its release drops it.
         let region = SnapshotRegion::from_bytes(plaintext.get()).map_err(|_| (COLD, true))?;
         drop(plaintext);
-        let region = HostCopy::hold(self.key.anchor.vault, region);
+        let region_len = region.len();
+        let region = HostCopy::hold(self.key.anchor.vault, region, region_len);
         let body = SessionImport {
             target: target.clone(),
             stamp: SessionOpStamp {
@@ -302,7 +303,8 @@ impl Restore<'_> {
         .ok()?
         .ok()??;
         lifecycle::count(Counted::Open);
-        Some(HostCopy::hold(self.key.anchor.vault, opened))
+        let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
+        Some(HostCopy::hold(self.key.anchor.vault, opened, opened_len))
     }
 
     /// A fresh session for the turn's key on this incarnation, registered

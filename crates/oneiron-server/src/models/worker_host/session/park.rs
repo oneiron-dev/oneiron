@@ -89,11 +89,19 @@ pub(super) fn mib(bytes: u64) -> u64 {
 }
 
 /// Whether a host copy of `bytes` fits in the memory this process may
-/// still take with [`SNAPSHOT_HEADROOM_BYTES`] left; `None` when no source
-/// measures that memory.
-pub(super) fn host_room(bytes: u64) -> Option<bool> {
-    let available = available_memory_bytes()?;
-    Some(bytes.saturating_add(SNAPSHOT_HEADROOM_BYTES) <= available)
+/// still take with [`SNAPSHOT_HEADROOM_BYTES`] left, past the plaintext
+/// bytes it already holds; `None` when no source measures that memory.
+/// The memory read stays live on every call but runs off the runtime: it
+/// is a blocking `/proc` read (FIX 11290). Held bytes are charged, so two
+/// parks racing the same headroom do not both admit (FIX 11289).
+pub(super) async fn fits_host(bytes: u64) -> Option<bool> {
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
+    let want = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(registry::host_held_bytes());
+    Some(want <= available)
 }
 
 /// Whether the device room `ledger` knows leaves room for `bytes` past the
@@ -243,8 +251,11 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
         return Err(None);
     };
     let scope = &candidate.basis.scope;
-    if scope.read_scope != candidate.key.anchor.read_scope || !scope.dependencies.precise {
+    if scope.read_scope != candidate.key.anchor.read_scope {
         return Err(Some(Skip::Unsupported));
+    }
+    if !scope.dependencies.precise {
+        return Err(Some(Skip::Imprecise));
     }
     let budget = lifecycle::budget(&vault_ref);
     if budget.limit() == 0 {
@@ -263,7 +274,7 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     if estimate.is_some_and(|bytes| bytes > budget.limit()) {
         return Err(Some(Skip::Oversize));
     }
-    room(estimate.unwrap_or(0))?;
+    room(estimate.unwrap_or(0)).await?;
     let ledger = super::super::device_ledger(&candidate.worker_id);
     if estimate.is_some_and(|bytes| !device_room(ledger.as_deref(), bytes)) {
         return Err(Some(Skip::NoRoom));
@@ -273,6 +284,12 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
         ledger.hold(&holder, mib(bytes));
     }
     let parked = seal(candidate, &vault, admission, budget).await;
+    // The export measured the region: the device hold carries its actual
+    // bytes now, not the residency estimate (FIX 11289).
+    if let (Ok(bytes), Some(ledger)) = (&parked, &ledger) {
+        ledger.release_hold(&holder);
+        ledger.hold(&holder, mib(*bytes));
+    }
     if parked.is_ok() {
         retire(candidate).await;
     }
@@ -285,8 +302,8 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
 
 /// Whether a host copy of `bytes` may be taken now: `Err` with the reason
 /// it may not.
-fn room(bytes: u64) -> Result<(), Option<Skip>> {
-    match host_room(bytes) {
+async fn room(bytes: u64) -> Result<(), Option<Skip>> {
+    match fits_host(bytes).await {
         Some(true) => Ok(()),
         Some(false) => Err(Some(Skip::NoRoom)),
         None => Err(Some(Skip::UnknownRoom)),
@@ -327,7 +344,7 @@ async fn seal(
     vault: &Arc<Vault>,
     admission: SnapshotAdmission,
     budget: SnapshotBudget,
-) -> Result<(), Option<Skip>> {
+) -> Result<u64, Option<Skip>> {
     let vault_ref = candidate.key.anchor.vault;
     let body = SessionExport {
         target: candidate.target.clone(),
@@ -341,7 +358,8 @@ async fn seal(
     let (answer, region) = session_export(&place.socket, &place.epoch, &body, &place.worker)
         .await
         .map_err(|_| None)?;
-    let region = HostCopy::hold(vault_ref, region);
+    let region_len = region.len();
+    let region = HostCopy::hold(vault_ref, region, region_len);
     lifecycle::count(Counted::Park);
     let bytes = region.get().len();
     if answer.checkpoint != candidate.checkpoint || answer.snapshot_bytes != bytes {
@@ -351,13 +369,14 @@ async fn seal(
         return Err(Some(Skip::Oversize));
     }
     // Reading the region makes a second copy.
-    room(bytes)?;
+    room(bytes).await?;
     if lifecycle::admission(&vault_ref) != Some(Admitted::Granted(admission)) {
         return Err(None);
     }
     let plaintext = region.get().read().map_err(|_| None)?;
     drop(region);
-    let plaintext = HostCopy::hold(vault_ref, Zeroizing::new(plaintext));
+    let plaintext_len = u64::try_from(plaintext.len()).unwrap_or(u64::MAX);
+    let plaintext = HostCopy::hold(vault_ref, Zeroizing::new(plaintext), plaintext_len);
     let compatibility =
         compatibility(&candidate.key, plaintext.get()).ok_or(Some(Skip::Unsupported))?;
     recheck(candidate).await?;
@@ -385,7 +404,7 @@ async fn seal(
     match published {
         Ok(Some(_)) => {
             lifecycle::count(Counted::Seal);
-            Ok(())
+            Ok(bytes)
         }
         // Nothing kept while the admission still holds: no room inside the
         // budget beside what is pinned.

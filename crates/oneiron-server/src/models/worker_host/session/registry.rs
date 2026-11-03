@@ -462,11 +462,12 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     })
 }
 
-/// The host's plaintext copies of each vault's snapshots, counted while
-/// they live.
+/// The host's plaintext copies of each vault's snapshots, counted with
+/// their bytes while they live, so a park or restore admits against what
+/// the process already holds (FIX 11289).
 #[derive(Default)]
 struct Copies {
-    live: Mutex<BTreeMap<VaultRef, u64>>,
+    live: Mutex<BTreeMap<VaultRef, (u64, u64)>>,
     dropped: Notify,
 }
 
@@ -478,23 +479,24 @@ fn copies() -> &'static Copies {
 
 /// One plaintext copy of a vault's snapshot the host holds (a region an
 /// export passed or an import sends, or a buffer read from one or opened
-/// from a sealed body), counted against its vault until it drops.
+/// from a sealed body), counted with its `bytes` against its vault until
+/// it drops.
 pub(super) struct HostCopy<T> {
     vault: VaultRef,
+    bytes: u64,
     copy: Option<T>,
 }
 
 impl<T> HostCopy<T> {
-    /// Counts `copy` against `vault` from now until it drops.
-    pub(super) fn hold(vault: VaultRef, copy: T) -> Self {
-        *copies()
-            .live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(vault)
-            .or_insert(0) += 1;
+    /// Counts `copy` with its `bytes` against `vault` from now until it drops.
+    pub(super) fn hold(vault: VaultRef, copy: T, bytes: u64) -> Self {
+        let mut live = copies().live.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = live.entry(vault).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 = entry.1.saturating_add(bytes);
         Self {
             vault,
+            bytes,
             copy: Some(copy),
         }
     }
@@ -507,15 +509,16 @@ impl<T> HostCopy<T> {
 }
 
 impl<T> Drop for HostCopy<T> {
-    /// The copy goes first; only then does its count drop.
+    /// The copy goes first; only then do its count and bytes drop.
     fn drop(&mut self) {
         drop(self.copy.take());
         let copies = copies();
         {
             let mut live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(count) = live.get_mut(&self.vault) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
+            if let Some(entry) = live.get_mut(&self.vault) {
+                entry.0 = entry.0.saturating_sub(1);
+                entry.1 = entry.1.saturating_sub(self.bytes);
+                if entry.0 == 0 {
                     live.remove(&self.vault);
                 }
             }
@@ -531,8 +534,18 @@ pub(super) fn host_copies(vault: &VaultRef) -> u64 {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(vault)
-        .copied()
+        .map(|entry| entry.0)
         .unwrap_or(0)
+}
+
+/// The plaintext bytes of every vault's snapshots the host holds now.
+pub(super) fn host_held_bytes() -> u64 {
+    copies()
+        .live
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .fold(0, |held, entry| held.saturating_add(entry.1))
 }
 
 /// Waits until the host holds no plaintext copy of `vault`'s snapshots, or

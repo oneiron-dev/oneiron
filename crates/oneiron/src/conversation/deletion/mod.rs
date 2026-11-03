@@ -102,6 +102,7 @@ impl Vault {
         let named = match entity_type {
             crate::registry::ENTITY_TYPE_CLAIM => {
                 let Ok(claim) = crate::claim::decode_claim_body(&body, true) else {
+                    tracing::debug!("a park skipped a CLAIM it cannot decode; it restores cold");
                     return Ok(None);
                 };
                 crate::batch::authenticated_claim_author_in_txn(&self.store, &txn, id, &claim)?
@@ -110,7 +111,10 @@ impl Vault {
             }
             ENTITY_TYPE_TURN => match record_author(&body) {
                 Ok(author) => author,
-                Err(_) => return Ok(None),
+                Err(_) => {
+                    tracing::debug!("a park skipped a TURN it cannot decode; it restores cold");
+                    return Ok(None);
+                }
             },
             ENTITY_TYPE_MESSAGE => {
                 let mut authors = Vec::new();
@@ -123,6 +127,9 @@ impl Vault {
                 )? {
                     authors.push(edge?.target);
                     if authors.len() > 1 {
+                        tracing::debug!(
+                            "a park skipped a MESSAGE with several authors; it restores cold"
+                        );
                         return Ok(None);
                     }
                 }
