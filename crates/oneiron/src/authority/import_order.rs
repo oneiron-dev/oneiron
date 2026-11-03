@@ -122,9 +122,11 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         // anchor's own rows do (FIX 8498).
         AuthorityOp::FrontierJoin(FrontierJoin {
             family: FrontierJoinFamily::Install(carrier),
+            ..
         }) => vec![Grant::InstallKey(*carrier, entry.signer_key().clone())],
         AuthorityOp::FrontierJoin(FrontierJoin {
             family: FrontierJoinFamily::Anchor,
+            ..
         }) => vec![Grant::Anchor(entry.signer_key().clone())],
         // The owner's kit push (FIX 6053) waits for its signer to be an
         // owner anchor, as an anchored machine revision does.
@@ -148,6 +150,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 cancel.carrier,
                 entry.signer_key().clone(),
             )]
+        }
+        AuthorityOp::ExportSupplementImported(mark) => {
+            vec![Grant::InstallKey(mark.carrier, entry.signer_key().clone())]
         }
         // A custody request's permit piece waits as the request it leads to
         // (FIX 11866): for its carrier's install key, or with no carrier for
