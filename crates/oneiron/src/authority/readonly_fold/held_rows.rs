@@ -86,8 +86,7 @@ impl<'a> HeldRows<'a> {
         if after.checked_add(1) != Some(baseline.ids.len() as u64) {
             return Ok(None);
         }
-        let Some(next) = crate::authority::store_order::complete_next_in_txn(store, txn)?
-        else {
+        let Some(next) = crate::authority::store_order::complete_next_in_txn(store, txn)? else {
             return Ok(None);
         };
         let Some(ids) = crate::authority::store_order::tail_ids_in_txn(store, txn, after, next)?
@@ -106,7 +105,12 @@ impl<'a> HeldRows<'a> {
             let Ok(hash) = authority_entry_hash(&entry) else {
                 return Ok(None);
             };
-            rest.insert(hash);
+            // A repeated tail row, or one already in the baseline, means
+            // the index cannot prove the tail is complete. Fall back to the
+            // type-index scan rather than silently dropping a displaced row.
+            if baseline.ids.contains_key(id) || !rest.insert(hash) {
+                return Ok(None);
+            }
             fresh.push((hash, entry));
         }
         tail.extend(fresh);
