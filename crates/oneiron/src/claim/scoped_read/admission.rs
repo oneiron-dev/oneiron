@@ -517,8 +517,8 @@ impl ScopedRead<'_> {
         id: &EntityId,
         kind: u8,
         data: &[u8],
-        ceiling: &crate::federation::Scope,
-    ) -> Result<Option<crate::federation::Scope>> {
+        ceiling: &oneiron_authority::federation::Scope,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
         use crate::federation::record_scope::note_world::world_record_held_at;
         match self.session_view {
             Some(view) => world_record_held_at(view, txn, *id, kind, data, ceiling),
@@ -540,7 +540,7 @@ impl ScopedRead<'_> {
         let Some(granted) = self.actor_key.authority_scope() else {
             return Ok(false);
         };
-        if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
+        if matches!(granted.worlds, oneiron_authority::federation::ScopeAxis::All) {
             return Ok(false);
         }
         // A TASK and its authority facts, and an epoch SUMMARY, sit at their

@@ -17,7 +17,7 @@ use crate::authority::{
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{ScopeAxis, ScopeId};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::{EntityId, Vault};
 

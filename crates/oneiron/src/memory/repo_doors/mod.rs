@@ -40,7 +40,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::federation::repo_access::RepoMembership;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
 
