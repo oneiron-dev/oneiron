@@ -125,7 +125,7 @@ impl<'vault> ScopedRead<'vault> {
     }
 }
 
-impl crate::ppr::PprNodeVisibility for RetrievalVisibility<'_, '_> {
+impl crate::ports::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         // The held authority is the walk's transaction's; a node checked in
         // any other transaction loads its own.
