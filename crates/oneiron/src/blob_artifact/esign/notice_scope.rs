@@ -23,7 +23,8 @@ use super::lane_scope::{self, EsignScope};
 use super::notice_unattended::UnattendedNotices;
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ScopedRead;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::outbound::{OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult};
 use crate::{EntityId, Result, Vault};
 

@@ -42,7 +42,9 @@ use crate::core_write::CoreWriteLane;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
+use crate::deletion::{SafeDeleteReason};
 use crate::task_verb::sdk::{SafeDeleteRequest, vault_delete};
 use crate::temporal::TimeRange;
 

@@ -7,7 +7,7 @@ use super::delivery_settlement::EsignDeliveryReceipt;
 use super::model::{
     DocumentStatus, EsignDocument, EsignEventRow, EsignState, RecipientState, SignatureRow,
 };
-use crate::memory::MemoryError;
+use oneiron_contracts::memory::MemoryError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

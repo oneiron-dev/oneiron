@@ -24,7 +24,8 @@ use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::federation::Scope;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryResult};
 use crate::{EntityId, Result, Vault};
 
 /// Where one e-sign call is judged.

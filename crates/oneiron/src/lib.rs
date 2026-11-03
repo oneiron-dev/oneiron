@@ -28,6 +28,7 @@ pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub use oneiron_base::request_limits;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;

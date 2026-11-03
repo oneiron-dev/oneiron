@@ -42,6 +42,8 @@ pub use pack_entry::{
 pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemetry};
 
 pub(crate) use oneiron_contracts::serialize::entity_ref;
+mod export_format;
+pub use export_format::{EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF};
 mod export_value;
 mod okf_bundle;
 mod vault_archive;

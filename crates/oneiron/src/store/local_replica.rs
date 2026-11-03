@@ -500,7 +500,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
         vault,
         txn,
         *turn,
-        crate::memory::extraction::ExtractionWork::Bulk,
+        crate::store::ExtractionWork::Bulk,
     )?;
     crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }

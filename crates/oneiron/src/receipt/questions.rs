@@ -21,7 +21,7 @@ use crate::llm::decision::questions::{
     OutcomeLabel, QuestionCriteria, QuestionDefinitionInput,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
@@ -98,7 +98,7 @@ impl GraphAskRequest {
     /// one selection of distinct units, and the question itself. A ceiling
     /// of human asks the next authorised role (OF-506), never stops at big.
     pub fn validate(&self) -> MemoryResult<()> {
-        crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
+        crate::request_limits::check_deadline_ms(self.unit_deadline_ms)?;
         match (&self.select, self.units.is_empty()) {
             (Some(_), false) => {
                 return Err(MemoryError::bad_request_with(

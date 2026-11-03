@@ -19,7 +19,8 @@ use crate::conversation_dag::{
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{

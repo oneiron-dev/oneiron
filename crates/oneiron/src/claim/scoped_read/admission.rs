@@ -197,7 +197,7 @@ impl<'a> ScopedRead<'a> {
         if let Some(owner) = self.actor_key.owner_proof_guard() {
             return owner_proof_holds_in(self.vault, txn, owner).map_err(|error| {
                 Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::from(error),
+                    oneiron_contracts::memory::MemoryError::from(error),
                 )))
             });
         }
@@ -213,8 +213,8 @@ impl<'a> ScopedRead<'a> {
             }
             return Err(Error::Claim(
                 crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::new(
-                        crate::memory::MEMORY_CODE_FORBIDDEN,
+                    oneiron_contracts::memory::MemoryError::new(
+                        oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                         "a due owner schedule's owner is no longer a live owner here",
                         &[],
                     ),

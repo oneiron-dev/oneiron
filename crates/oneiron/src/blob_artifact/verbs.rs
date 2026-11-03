@@ -34,9 +34,8 @@ use crate::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
     TypedDecision,
 };
-use crate::memory::{
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
-};
+use crate::memory::{Memory, resolve_image_ref};
+use oneiron_contracts::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
 use crate::secret_custody::SecretSight;

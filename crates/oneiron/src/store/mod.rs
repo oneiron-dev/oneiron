@@ -102,6 +102,9 @@
 
 /// Backend-neutral storage contracts and injectable time sources.
 /// Implementations compose in a caller-owned transaction; they never commit it.
+mod extraction_work;
+pub use extraction_work::ExtractionWork;
+
 pub mod ports {
     pub use crate::ports::{
         BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,

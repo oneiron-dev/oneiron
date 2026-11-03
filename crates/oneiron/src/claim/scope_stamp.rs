@@ -3,7 +3,7 @@ use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, C
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::store::Store;

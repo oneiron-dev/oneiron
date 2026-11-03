@@ -47,6 +47,8 @@
 //! * `expression_preference` — the typed expression-preference write surface.
 
 mod aging_profiles;
+mod authorship;
+pub(crate) use authorship::claim_author;
 mod core_types;
 mod decay;
 mod deferred;
