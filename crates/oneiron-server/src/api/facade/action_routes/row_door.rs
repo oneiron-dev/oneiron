@@ -170,7 +170,9 @@ impl FacadeRowDoor {
         } else {
             serde_json::from_slice(&bytes).map_err(|_| refused())?
         };
-        if status.is_success() {
+        // A 202 is a pending hook ask's refusal envelope, not a successful row
+        // answer (FIX 1450); decode its error and hook below as for any refusal.
+        if status.is_success() && status != StatusCode::ACCEPTED {
             return Ok(body);
         }
         let text = |pointer: &str| {
