@@ -45,6 +45,7 @@ fn hold_is_final(reason: &str) -> bool {
             | "pusher_erased"
             | "no_change"
             | "non_fast_forward"
+            | "exact_forward"
     )
 }
 

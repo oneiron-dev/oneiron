@@ -229,7 +229,7 @@ impl Vault {
     ///
     /// # Errors
     /// A store failure reading the intent.
-    pub(in crate::origin) fn forward_stamp_for_operation(
+    pub(in crate::origin::smart_http) fn forward_stamp_for_operation(
         &self,
         root: &Path,
         operation: EntityId,
@@ -254,7 +254,7 @@ impl Vault {
     ///
     /// # Errors
     /// A store failure, or outcome evidence that does not decode.
-    pub(in crate::origin) fn forward_lfs_pointers_for_outcome(
+    pub(in crate::origin::smart_http) fn forward_lfs_pointers_for_outcome(
         &self,
         provenance: EntityId,
     ) -> Result<Vec<LfsPushedPointer>> {

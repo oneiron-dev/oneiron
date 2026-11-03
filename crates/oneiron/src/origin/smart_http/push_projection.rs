@@ -21,11 +21,6 @@
 //! exactly to the canonical store. Identity mappings alone prove nothing
 //! about a changed copy's ancestry.
 
-#![allow(
-    dead_code,
-    reason = "FIX 7608: the exact-forward classification waits for its forward arm (FIX line)"
-)]
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
