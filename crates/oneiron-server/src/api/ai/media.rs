@@ -498,6 +498,7 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Fatal(FatalLlmError::EmptyResponse) => {
             (StatusCode::BAD_GATEWAY, "empty_response")
         }
+        LlmError::Fatal(FatalLlmError::JobLost) => (StatusCode::BAD_GATEWAY, "job_lost"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")

@@ -307,6 +307,12 @@ pub enum FatalLlmError {
     /// fallback's trigger, never handed to another offer.
     #[error("response erased")]
     ResponseErased,
+    /// A media job's submit went out and its provider's answer never
+    /// reached its row, so the job cannot be found again (FIX 11464): a
+    /// poll of the kept row reads this. The job may still run and bill at
+    /// its provider, so this is no proof the provider is down.
+    #[error("job lost")]
+    JobLost,
 }
 
 /// Why a decision read's answer cannot be read as its label probabilities. Each is checked on

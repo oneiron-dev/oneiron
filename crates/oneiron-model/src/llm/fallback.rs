@@ -177,6 +177,7 @@ impl DeterministicRunner for JsonRules {
             FatalLlmError::InvalidRequestDetail { .. } => "invalid_request",
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
+            FatalLlmError::JobLost => "job_lost",
             FatalLlmError::Unsupported(_) => "unsupported",
             FatalLlmError::LabelRead(_) => "label_read",
             // Terminal, never a rule's trigger, the "fatal" row's included.
