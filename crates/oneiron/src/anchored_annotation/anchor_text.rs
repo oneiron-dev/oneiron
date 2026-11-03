@@ -79,7 +79,7 @@ const HTML_BLOCK_TAGS: &[&str] = &[
     "dd",
 ];
 const HTML_LEAF_CONTAINERS: &[&str] = &[
-    "div", "section", "article", "header", "footer", "main", "aside", "figure",
+    "div", "section", "article", "header", "footer", "main", "aside", "figure", "body", "html",
 ];
 const HTML_IGNORED_SUBTREES: &[&str] = &["script", "style", "template", "noscript"];
 
@@ -324,12 +324,7 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
         }
         found.unwrap_or(root)
     };
-    let mut pending = body
-        .element_children()
-        .enumerate()
-        .map(|(index, node)| (node, vec![index]))
-        .collect::<Vec<_>>();
-    pending.reverse();
+    let mut pending = vec![(body, vec![0])];
     let mut blocks = Vec::new();
     let mut used_ids = BTreeSet::new();
     while let Some((node, path)) = pending.pop() {
