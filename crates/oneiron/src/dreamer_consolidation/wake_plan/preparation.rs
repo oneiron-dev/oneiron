@@ -68,6 +68,7 @@ pub(super) fn collect_queued(
     let mut attempts = BTreeSet::new();
     let mut retries = Vec::new();
     let mut preparations = BTreeMap::new();
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     // Each prepared attempt's queue lineage, for the work it owes.
     let mut lineage = BTreeMap::new();
     // Each attempt's projection round, by its kind and dedupe key.
@@ -102,6 +103,19 @@ pub(super) fn collect_queued(
         let Ok(branch) = super::super::partition::decode_partition_payload(&payload.input) else {
             continue;
         };
+        if branch
+            .conversations()
+            .any(|conversation| excluded.contains(&conversation))
+        {
+            preparations.insert(
+                *attempt.id.as_bytes(),
+                AttemptPreparation::Refused {
+                    reason: "conversation excluded from Dreamer passes",
+                    scope_error: false,
+                },
+            );
+            continue;
+        }
         let turns = branch.turn_ids();
         ids.extend(branch.conversations());
         ids.extend(turns.iter().copied());
