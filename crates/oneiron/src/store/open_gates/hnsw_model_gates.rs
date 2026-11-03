@@ -338,7 +338,7 @@ pub(super) fn has_persisted_vector_or_hnsw_data(
 ) -> Result<bool> {
     Ok(store.port_index_has_rows(txn, IndexRows::Vectors)?
         || store.port_index_has_rows(txn, IndexRows::HnswNeighbors)?
-        || crate::hnsw::has_population(store.hnsw_meta(), txn)?)
+        || crate::store::vector_index::has_population(store.hnsw_meta(), txn)?)
 }
 
 pub(super) fn migrate_temporal_long_intervals_if_needed(store: &Store) -> Result<()> {

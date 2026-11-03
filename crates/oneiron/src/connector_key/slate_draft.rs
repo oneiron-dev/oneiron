@@ -16,7 +16,7 @@ use crate::llm::decision::catalogue::CONNECTOR_SLATE_DRAFT;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
 };
-use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};

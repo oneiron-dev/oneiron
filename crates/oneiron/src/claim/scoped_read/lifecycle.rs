@@ -1,7 +1,7 @@
 //! Status-only history reads for already-served session rows, without weakening body reads.
 
 use super::*;
-use crate::context_board::ServedLifecycle;
+use crate::claim::served_lifecycle::ServedLifecycle;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
 
 impl ScopedRead<'_> {

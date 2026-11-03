@@ -414,7 +414,7 @@ pub(super) fn materialize_lexical_query_hint_text_if_target_ready(
             )?;
             *text_indexing.manifest_checked = true;
         }
-        crate::bm25::index_text(
+        crate::store::text_index::index_text(
             store,
             wtxn,
             text_indexing.analyzer,

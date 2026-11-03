@@ -15,7 +15,7 @@
 //! through `vault.diagnostics()` with no further change.
 
 use crate::attempt_queue::{AttemptQueueCleanupMetrics, AttemptQueueCleanupMetricsSnapshot};
-use crate::bm25::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
+use crate::store::text_index::diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
 use crate::failure_signals::FailureSignalCounts;
 use crate::gate::GateMetrics;
 

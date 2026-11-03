@@ -15,7 +15,7 @@ use crate::affect::{
     coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
     validate_affect_trigger_claim_structure,
 };
-use crate::context_pack::FieldProfile;
+use crate::serialize::pack_format::FieldProfile;
 use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::temporal::TimeRange;

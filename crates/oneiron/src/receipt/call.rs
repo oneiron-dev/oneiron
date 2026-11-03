@@ -416,7 +416,7 @@ impl Vault {
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
         );
-        let graph = crate::ppr::read_graph_version(&self.store, &txn)?;
+        let graph = crate::store::graph_version::read_graph_version(&self.store, &txn)?;
         let mut inputs = ActionInputs::new()
             .with("vault.changes", head)
             .with("vault.graph", graph.to_string());

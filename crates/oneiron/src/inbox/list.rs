@@ -17,7 +17,7 @@ use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::context_board::{
+use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,
     notification_scoped_to_caller,
 };

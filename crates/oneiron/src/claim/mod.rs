@@ -48,6 +48,8 @@
 
 mod aging_profiles;
 mod core_types;
+pub mod corpus_scope;
+pub mod served_lifecycle;
 mod decay;
 mod deferred;
 mod demotion;
