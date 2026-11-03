@@ -263,9 +263,10 @@ impl LiveLine {
         }
     }
 
-    /// Openers waiting for a turn now.
-    #[cfg(test)]
-    pub(crate) fn waiting(&self) -> usize {
+    /// Openers waiting for a turn now. Core's tests read it, so it is
+    /// compiled for `oneiron-base/test-support` too.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn waiting(&self) -> usize {
         lock(&self.queue).waiters()
     }
 }
