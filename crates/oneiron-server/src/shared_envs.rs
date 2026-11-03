@@ -145,8 +145,8 @@ impl SharedEnvRegistry {
     /// Opens every configured env, runs each unleft lane, and returns the
     /// registry holding them. A malformed entry and a bad env (a missing
     /// dir, an unreadable leave state, an unreadable lane slip, an
-    /// unbuildable lane, or a non-loopback `ws://` home) each log one line
-    /// and are skipped; serve runs on without them. A first admission refused
+    /// unbuildable lane, or an unleft non-loopback `ws://` home) each log
+    /// one line and are skipped; serve runs on without them. A first admission refused
     /// by a reap freeze waits for thaw instead. A repeated membership keeps
     /// its first entry.
     ///
@@ -570,16 +570,15 @@ fn direct_home_url(home_url: &str, vault_id: u64) -> Result<(), String> {
 
 /// Opens one validated spec: the vault, its leave state, and (while
 /// unleft) its constructed lane connection. The caller starts the run.
-/// The vault opens existing-only, and the home URL passes the direct-dial
-/// rule first. `Err` is one log line for the caller; it names the path and
-/// the vault id, never the member, the slip, or the credential.
+/// The vault opens existing-only; the home URL's direct-dial rule gates only
+/// an unleft lane, never a left env's retained housekeeping. `Err` is one log
+/// line for the caller; it names the path and vault id, never member/slip/secret.
 fn open_one(
     spec: &SharedEnvSpec,
     vault_config: &oneiron::VaultConfig,
     lease_vault_id: u64,
 ) -> Result<OpenedEnv, String> {
     let vault_id = spec.vault_id;
-    direct_home_url(&spec.home_url, vault_id)?;
     let key: SharedEnvKey = (vault_id, spec.member.clone());
     // Existing-only, but process-owned: precheck the vault file so a typo
     // never creates one, then take the same writer lease every served vault
@@ -604,6 +603,7 @@ fn open_one(
     let lane = if left {
         None
     } else {
+        direct_home_url(&spec.home_url, vault_id)?;
         Some(open_lane(Arc::clone(&vault), spec, lease_vault_id)?)
     };
     if left {

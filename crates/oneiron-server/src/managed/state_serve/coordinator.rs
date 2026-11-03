@@ -666,8 +666,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;
         }
-        sync_server.stop_shared_envs().await;
-        shared_live = false;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
@@ -753,6 +751,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ledger_report.abort();
         let _ = ledger_report.await;
         final_ledger_push(&state, &sync_server).await;
+        // Keep every env in the final full-replacement wake snapshot, then stop.
+        sync_server.stop_shared_envs().await;
+        shared_live = false;
         result?;
         telemetry_drained?;
         anyhow::Ok(())
