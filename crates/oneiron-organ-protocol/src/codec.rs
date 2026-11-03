@@ -15,12 +15,11 @@
 //! only for such a length, so a value under 4 GiB a field is plain
 //! MessagePack.
 //!
-//! A typed field's own decode recurses only as deep as its type does. A type
-//! that buffers its input to read it (an internally tagged or untagged
-//! enum) nests as deep as that input, so the typed decoder stops past
-//! [`TYPED_DEPTH`] nested containers with a typed refusal rather than
-//! overrunning its thread's stack. A [`crate::Value`] never counts toward
-//! it: values carry any depth.
+//! A typed field's own decode recurses only as deep as its type does,
+//! except for types that buffer their input to read it (an internally
+//! tagged or untagged enum), which nest as deep as that input. A
+//! [`crate::Value`] still builds itself without recursing, whatever its
+//! depth.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,10 +28,6 @@ use crate::value::{Open, Value};
 
 mod de;
 mod ser;
-
-/// How deep a typed field's own containers nest before the typed decoder
-/// refuses it: the decoder's stack floor. A [`crate::Value`] never counts.
-pub const TYPED_DEPTH: usize = 256;
 
 /// Why bytes did not encode or decode.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -60,8 +55,7 @@ impl serde::de::Error for CodecError {
 /// `value`'s encoding.
 ///
 /// # Errors
-/// The value does not encode (a sequence or map of unknown length, or a
-/// serializer's own refusal).
+/// The value does not encode (a serializer's own refusal).
 pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CodecError> {
     let len = encoded_len(value)?;
     let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
@@ -69,7 +63,8 @@ pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CodecError> {
     Ok(out)
 }
 
-/// The bytes `value` encodes to, counted with nothing allocated for them.
+/// The bytes `value` encodes to, counted as they are written; a compound
+/// of unknown length is buffered while it is counted.
 ///
 /// # Errors
 /// As [`to_vec`].
@@ -122,7 +117,8 @@ pub fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, CodecError> {
 
 /// What a receiver takes to read `value` at its peak: the encoding's bytes,
 /// and at most what decoding them allocates beside them
-/// ([`Shape::decoded`]), counted as it is written, with nothing allocated.
+/// ([`Shape::decoded`]), counted as it is written; a compound of unknown
+/// length is buffered while it is counted.
 ///
 /// # Errors
 /// As [`to_vec`].

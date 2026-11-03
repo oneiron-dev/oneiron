@@ -35,9 +35,7 @@ mod runtime;
 #[cfg(unix)]
 pub mod spin;
 
-pub use codec::{
-    CodecError, TYPED_DEPTH, encoded_len, from_slice, from_value, read_cost, to_value, to_vec,
-};
+pub use codec::{CodecError, encoded_len, from_slice, from_value, read_cost, to_value, to_vec};
 
 pub use memory::{ASK_MEMORY_GROW, MemoryAnswer, MemoryAsk};
 
