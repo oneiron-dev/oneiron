@@ -443,7 +443,7 @@ impl AskHandler for Forward {
                 {
                     self.held
                         .lock()
-                        .expect("forward answer leases poisoned")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(lease);
                 }
                 Some(self.staging.take(carried).map_err(failed)?)
