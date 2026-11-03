@@ -459,3 +459,7 @@ pub use ask_types::{
     TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::linear_store::linear_pull_cursor_accepts_masked;
