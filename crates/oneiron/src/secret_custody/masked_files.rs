@@ -33,7 +33,7 @@ use heed::{RoTxn, RwTxn};
 use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::federation::Sensitivity;
+use oneiron_authority::federation::Sensitivity;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
