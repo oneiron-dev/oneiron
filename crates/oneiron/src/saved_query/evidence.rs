@@ -84,8 +84,8 @@ pub struct WakeEvaluationReport {
     pub resume_after: Option<EntityId>,
 }
 
-pub use crate::store::query_memos::VerdictMemoRow;
 pub use crate::store::query_memos::EVIDENCE_HASH_LEN;
+pub use crate::store::query_memos::VerdictMemoRow;
 
 /// Hashes the definition version, its scope, and the relevant evidence.
 ///

@@ -29,7 +29,8 @@ pub enum ParentRanking {
 }
 
 pub use crate::gate::experiment_selection_policy::{
-    SelectionPolicy, StagnationAction, SelectionPolicyScope, SelectionPrecedence, SelectionPolicyRow,
+    SelectionPolicy, SelectionPolicyRow, SelectionPolicyScope, SelectionPrecedence,
+    StagnationAction,
 };
 
 /// Reads the trusted, scoped campaign policy through the same manifest fold

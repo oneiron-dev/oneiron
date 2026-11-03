@@ -9,8 +9,8 @@ use crate::error::Result;
 use super::invalid;
 
 pub use crate::write_envelope::actor_predicate::{
-    PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_FAILURE_MODE,
-    PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT,
+    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE,
+    PREDICATE_ACTOR_SKILL_FIT,
 };
 /// Scope key naming the SKILL half of a [`PREDICATE_ACTOR_SKILL_FIT`] pair.
 /// The scope IS the conflict set: two rows collide iff their skill matches.
