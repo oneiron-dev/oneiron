@@ -1,7 +1,10 @@
 //! Stable CLAIM scope identifiers and their MessagePack representation.
 use super::ClaimSubject;
 use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
-use crate::{EntityId, error::{Error, Result}};
+use crate::{
+    EntityId,
+    error::{Error, Result},
+};
 use rmpv::Value;
 
 /// Reserved value for base reality. Defined in `oneiron-contracts`.

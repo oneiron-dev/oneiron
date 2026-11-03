@@ -22,7 +22,6 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::write_envelope::claim_body::decode_claim_body;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -37,6 +36,7 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb,
     RowLocator, Unresolved,
 };
+use crate::write_envelope::claim_body::decode_claim_body;
 
 /// The carrier an identity op's row is: its body names the actors it
 /// stamps, and the live erase rewrites it in place (`IDENTITY_OPS`).

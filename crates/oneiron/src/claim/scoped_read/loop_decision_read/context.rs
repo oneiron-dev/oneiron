@@ -13,7 +13,7 @@ use super::{LoopDecisionFamily, LoopRead};
 use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
-use crate::federation::{ScopeAxis, ScopeId};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 use crate::gate::ClaimReadView;
 use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
 

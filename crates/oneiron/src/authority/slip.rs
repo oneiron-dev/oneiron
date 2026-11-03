@@ -1,7 +1,7 @@
 //! Host-signed capability slips with holder-signed offline narrowing and proof.
 use super::{AuthorityFold, MAX_WIRE_BYTES, SlipClaims, canonical, invalid_authority};
 use crate::error::Result as EngineResult;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -28,8 +28,8 @@ pub struct SlipCaveat {
         serialize_with = "serialize_pact",
         deserialize_with = "deserialize_pact"
     )]
-    #[schemars(with = "Option<(crate::federation::ScopeId, Vec<u8>)>")]
-    pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    #[schemars(with = "Option<(oneiron_authority::federation::ScopeId, Vec<u8>)>")]
+    pub pact: Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>,
     /// A lower comm reach (FIX 3899): the verifier meets it with the slip's,
     /// so a caveat only lowers whom the holder may message. A wider reach is
     /// a new owner mint.
@@ -70,7 +70,7 @@ impl std::fmt::Debug for CapabilitySlip {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSlip {
     claims: SlipClaims,
-    pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pact: Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>,
     // Only the verifier can prove that no offline narrowing caveat was present.
     unattenuated: bool,
     // Only the verifier knows whether a caveat moved the binding key off the
@@ -79,7 +79,7 @@ pub struct VerifiedSlip {
 }
 impl VerifiedSlip {
     #[must_use]
-    pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
+    pub fn pact(&self) -> Option<&(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)> {
         self.pact.as_ref()
     }
     /// This view met with its guest grant's current effective scope (FIX
@@ -87,7 +87,7 @@ impl VerifiedSlip {
     /// asks for it.
     pub(in crate::authority) fn meet_current_scope(
         mut self,
-        current: &crate::federation::FederationDirectionScope,
+        current: &oneiron_authority::federation::FederationDirectionScope,
     ) -> Self {
         self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
         self
@@ -380,7 +380,7 @@ impl CapabilitySlip {
         };
         let mut binding_key = self.claims.binding_key;
         let mut effective = self.claims.clone();
-        let mut pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)> = None;
+        let mut pact: Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)> = None;
         // An absent named-record bound is universal on generic record reads.
         // Once a caveat supplies a set, its empty meet is Bottom, never universal.
         let mut records_constrained =
@@ -422,7 +422,7 @@ impl CapabilitySlip {
 
 /// A pact bound the caveats carry, as the meet folds it: one grant, its
 /// bounds intersected.
-type PactBound = Option<(crate::EntityId, crate::federation::FederationDirectionScope)>;
+type PactBound = Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>;
 
 /// Meets one authenticated caveat into `effective`: the one meet live
 /// verification and a transferred removal archive's bounds (FIX-LIST 8224)
@@ -434,7 +434,7 @@ fn meet_caveat(
     caveat: &SlipCaveat,
 ) -> EngineResult<()> {
     if caveat.scope.as_ref().is_some_and(|scope| {
-        matches!(&scope.verbs, crate::federation::ScopeAxis::Some(verbs)
+        matches!(&scope.verbs, oneiron_authority::federation::ScopeAxis::Some(verbs)
             if verbs.iter().any(|verb| crate::credential_door::names_a_floor(verb)))
     }) || caveat
         .records
@@ -496,8 +496,8 @@ fn meet_caveat(
 fn witnessed_pact_scope(
     fold: &AuthorityFold,
     grant: &crate::EntityId,
-    requested: &crate::federation::FederationDirectionScope,
-) -> EngineResult<crate::federation::FederationDirectionScope> {
+    requested: &oneiron_authority::federation::FederationDirectionScope,
+) -> EngineResult<oneiron_authority::federation::FederationDirectionScope> {
     let pact = fold.pact_for_grant(grant).ok_or_else(invalid_authority)?;
     let effective = requested.intersect(&pact.effective_scope);
     if pact.status != super::FederationPactStatus::Active
@@ -505,8 +505,8 @@ fn witnessed_pact_scope(
             .federation_grant_bindings
             .get(grant)
             .is_none_or(|ids| ids.len() != 1)
-        || !crate::federation::Ceiling::new(requested.clone())
-            .is_within(&crate::federation::Ceiling::new(effective.clone()))
+        || !oneiron_authority::federation::Ceiling::new(requested.clone())
+            .is_within(&oneiron_authority::federation::Ceiling::new(effective.clone()))
         || effective.worlds.is_bottom()
         || effective.facets.is_bottom()
         || effective.bands.is_bottom()
@@ -559,7 +559,7 @@ impl TransferredBounds {
         id: crate::EntityId,
         position: Option<&Scope>,
         now: u64,
-        served_pact: Option<&crate::federation::FederationDirectionScope>,
+        served_pact: Option<&oneiron_authority::federation::FederationDirectionScope>,
     ) -> bool {
         if now >= self.deadline || self.channel_bound {
             return false;
@@ -582,7 +582,7 @@ impl TransferredBounds {
             position.unwrap_or(&top),
             &self.scope.worlds,
         );
-        record.verbs = crate::federation::ScopeAxis::Some(BTreeSet::from([
+        record.verbs = oneiron_authority::federation::ScopeAxis::Some(BTreeSet::from([
             REMOVAL_ARCHIVE_TRANSFER_VERB.to_owned(),
         ]));
         record.facets.is_narrowing_of(&self.scope.facets)
@@ -613,7 +613,7 @@ impl TransferredBounds {
     pub(crate) fn served_pact_scope(
         &self,
         fold: &AuthorityFold,
-    ) -> Option<crate::federation::FederationDirectionScope> {
+    ) -> Option<oneiron_authority::federation::FederationDirectionScope> {
         let (grant, requested) = self.pact.as_ref()?;
         witnessed_pact_scope(fold, grant, requested).ok()
     }
@@ -667,7 +667,7 @@ pub(crate) struct SignedBounds {
     /// here admits no record at all.
     pub(crate) records_bound: bool,
     /// The pact bound a caveat set: its grant and the scope it requested.
-    pub(crate) pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pub(crate) pact: Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>,
 }
 
 impl CapabilitySlip {
@@ -734,12 +734,12 @@ pub(super) fn unhex(value: &str) -> EngineResult<Vec<u8>> {
 mod tests;
 
 fn serialize_pact<S: serde::Serializer>(
-    pact: &Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pact: &Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
     pact.as_ref()
         .map(|(grant, bound)| {
-            super::encode_value(&crate::federation::federation_direction_scope_value(bound))
+            super::encode_value(&oneiron_authority::federation::federation_direction_scope_value(bound))
                 .map(|bytes| (*grant, bytes))
         })
         .transpose()
@@ -750,17 +750,17 @@ fn serialize_pact<S: serde::Serializer>(
 fn deserialize_pact<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<
-    Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    Option<(crate::EntityId, oneiron_authority::federation::FederationDirectionScope)>,
     D::Error,
 > {
-    let wire = Option::<(crate::federation::ScopeId, Vec<u8>)>::deserialize(deserializer)?;
+    let wire = Option::<(oneiron_authority::federation::ScopeId, Vec<u8>)>::deserialize(deserializer)?;
     wire.map(|(grant, bytes)| {
         let mut cursor = std::io::Cursor::new(&bytes);
         let value = rmpv::decode::read_value(&mut cursor).map_err(serde::de::Error::custom)?;
-        let scope = crate::federation::decode_federation_direction_scope_value(&value)
+        let scope = oneiron_authority::federation::decode_federation_direction_scope_value(&value)
             .map_err(serde::de::Error::custom)?;
         let canonical =
-            super::encode_value(&crate::federation::federation_direction_scope_value(&scope))
+            super::encode_value(&oneiron_authority::federation::federation_direction_scope_value(&scope))
                 .map_err(serde::de::Error::custom)?;
         if canonical != bytes {
             return Err(serde::de::Error::custom("noncanonical pact bound"));
