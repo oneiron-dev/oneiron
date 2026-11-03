@@ -140,7 +140,8 @@ pub use oneiron_model::llm::{
 pub use oneiron_model::llm::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
-    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+    SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
+    WorkPhysical, WorkPriority,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
