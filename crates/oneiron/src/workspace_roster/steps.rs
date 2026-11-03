@@ -643,8 +643,8 @@ pub(super) fn ensure_companion_person(
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
             let stored = &raw[ENTITY_METADATA_HEADER_LEN..];
-            crate::companion::validated_persona_baseline(stored)?;
-            let fields = crate::companion::persona_body_fields(stored)?;
+            crate::serialize::person_identity::validated_persona_baseline(stored)?;
+            let fields = crate::write_envelope::person_identity::body_fields(stored)?;
             let field = |name: &str| {
                 fields
                     .iter()

@@ -21,12 +21,12 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
+use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::code_revision::{CodeRevision, CodeTreeInventory, queue_provenance_id};
 use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire};
 use crate::repo_mutation::proposal::{RepoProposal, RepoProposalStatus};
-use crate::store::code_document_values::CodeDocumentFrontier;
 
 /// What a seal stands on, read from the queue's and checker's rows.
 pub(super) struct SealEvidence {

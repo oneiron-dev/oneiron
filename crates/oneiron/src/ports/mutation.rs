@@ -96,8 +96,8 @@ pub(crate) fn audit_entity_put_in_txn(
             }
         } else if put.entity_type == crate::registry::ENTITY_TYPE_SKILL
             && let (Ok(before), Ok(after)) = (
-                crate::skill::decode_skill_record(prior),
-                crate::skill::decode_skill_record(put.data),
+                crate::write_envelope::skill_record::decode_skill_record(prior),
+                crate::write_envelope::skill_record::decode_skill_record(put.data),
             )
             && before.governance_tier != after.governance_tier
         {

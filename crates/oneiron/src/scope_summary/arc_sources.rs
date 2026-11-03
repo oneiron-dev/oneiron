@@ -17,7 +17,7 @@ use super::doors::{ScopeSources, scope_sources_in_txn};
 use super::purpose::SummaryPurpose;
 use super::request::{ScopeSummaryPlan, ScopeSummaryRequest, ScopeSummaryTarget};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
-use crate::conversation_dag::ScopeSelector;
+use crate::store::conversation_record::ScopeSelector;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault, WriteActor};
 use heed::{RoTxn, RwTxn};

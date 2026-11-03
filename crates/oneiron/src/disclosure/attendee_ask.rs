@@ -21,7 +21,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskReceipt,
     TaskAskSpec, TaskAskTarget,

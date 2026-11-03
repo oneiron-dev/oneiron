@@ -3,12 +3,12 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
 pub(crate) mod class_policy;
-pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
@@ -45,6 +45,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
@@ -290,3 +291,5 @@ use crate::write_envelope::WriteEnvelope;
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) mod voice_ref_limits;

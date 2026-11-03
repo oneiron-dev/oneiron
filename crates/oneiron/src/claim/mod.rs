@@ -48,6 +48,8 @@
 
 mod aging_profiles;
 pub mod code_instruction;
+mod authorship;
+pub(crate) use authorship::claim_author;
 mod core_types;
 mod decay;
 mod deferred;

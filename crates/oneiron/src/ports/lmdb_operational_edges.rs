@@ -28,7 +28,7 @@ impl EdgeStoreMaintenance for Store {
             kind,
             kind.default_weight().unwrap_or(1.0),
             created_at,
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         crate::workspace_roster::validate_project_edge_put(
@@ -141,7 +141,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .ok_or(Error::InvariantViolation("blocks weight"))?;
         let at = super::recorded_at_in_txn(&self.store, txn)?;
         let value =
-            crate::edge::encode_edge_value(kind, weight, at, crate::affect::Vad::NEUTRAL, None)?;
+            crate::edge::encode_edge_value(kind, weight, at, oneiron_contracts::affect::Vad::NEUTRAL, None)?;
         self.store
             .edges_out
             .put(txn, &Store::encode_edge_key(&from, kind, &to), &value)?;

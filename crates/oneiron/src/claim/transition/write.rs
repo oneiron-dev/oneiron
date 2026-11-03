@@ -343,7 +343,7 @@ pub(crate) fn stage_machine_claim_transition(
             kind: EdgeKind::FacetOf,
             tgt: original.scope_facet,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
     crate::batch::apply_ops_with_gate_mode(

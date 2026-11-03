@@ -140,7 +140,7 @@ impl ExportBodyFile {
 pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
     entity_type == crate::registry::ENTITY_TYPE_ASSET
         && std::str::from_utf8(body).is_err()
-        && matches!(crate::skill_hub::decode_source_carrier(body), Ok(None))
+        && matches!(crate::store::skill_source_carrier::decode_source_carrier(body), Ok(None))
         && matches!(
             crate::skill_hub::pack_catalog::decode_source_body(body),
             Ok(None)
@@ -157,7 +157,7 @@ impl ExportBody {
             };
         }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
-            match crate::skill_hub::decode_source_carrier(bytes) {
+            match crate::store::skill_source_carrier::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {
                     return super::ExportHubSource::from_package(&holder, &package)
                         .map_or(Self::Nulled, |source| Self::HubSource(Box::new(source)));

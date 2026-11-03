@@ -8,3 +8,4 @@ pub const CUSTODY_VALUE_ROWS: [&str; 3] = [
     "vault.secrets.rotate",
     "vault.secrets.custody.submit",
 ];
+
