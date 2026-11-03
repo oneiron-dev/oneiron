@@ -97,7 +97,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -158,7 +158,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_OKF;
+        let format = crate::serialize::EXPORT_TARGET_OKF;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }

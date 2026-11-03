@@ -57,6 +57,7 @@ pub mod registry {
     #[cfg(test)]
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
+pub use oneiron_base::request_limits;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
