@@ -216,18 +216,15 @@ def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
 # DEP-5 exception shorthands that have one exact SPDX exception id. Ambiguous
 # or unknown exception names stay NOASSERTION rather than guessing a version.
 DEBIAN_EXCEPTION_TO_SPDX = {
-    "autoconf generic exception": "Autoconf-generic-exception",
-    "automake exception": "Automake-exception-2.0",
+    "autoconf generic exception": "Autoconf-exception-generic",
     "bison exception": "Bison-exception-2.2",
     "classpath exception": "Classpath-exception-2.0",
     "classpath-exception-2.0": "Classpath-exception-2.0",
     "font exception": "Font-exception-2.0",
     "font-exception-2.0": "Font-exception-2.0",
-    "libtool exception": "libtool-exception",
+    "libtool exception": "Libtool-exception",
     "linux-syscall-note exception": "Linux-syscall-note",
     "llvm exception": "LLVM-exception",
-    "openssl exception": "OpenSSL-exception",
-    "openssl-exception": "OpenSSL-exception",
     "texinfo exception": "Texinfo-exception",
 }
 
@@ -236,9 +233,10 @@ def _exception_id(name: str, base: str) -> str | None:
     if name in DEBIAN_EXCEPTION_TO_SPDX:
         return DEBIAN_EXCEPTION_TO_SPDX[name]
     if name in ("autoconf exception", "autoconf-data exception"):
-        if base.lower().startswith("gpl-2"):
+        base_lower = base.lower()
+        if base_lower.startswith("gpl-2"):
             return "Autoconf-exception-2.0"
-        if base.lower().startswith("gpl-3"):
+        if base_lower.startswith(("gpl-3", "gpl3")):
             return "Autoconf-exception-3.0"
     return None
 
