@@ -192,7 +192,7 @@ pub struct VaultConfig {
     /// off the operating system. A phone holds no sealed copy of the vault.
     /// Both presets declare a computer; a phone's host sets
     /// [`crate::authority::MachineDeviceClass::Phone`].
-    pub machine_device_class: crate::authority::MachineDeviceClass,
+    pub machine_device_class: oneiron_authority::authority::MachineDeviceClass,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal ([`crate::world_keys::unlock_page_seal`]), and a new one
@@ -378,7 +378,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
-            machine_device_class: crate::authority::MachineDeviceClass::Computer,
+            machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }
@@ -414,7 +414,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
-            machine_device_class: crate::authority::MachineDeviceClass::Computer,
+            machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }

@@ -639,7 +639,7 @@ impl Vault {
     fn window_update_keys(&self, window_key: &crate::window_key::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::scan_check::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::PackQuarantineRows,
             window_key.as_str().as_bytes(),
             crate::vault::MAX_SYNC_STATE_KEYS as u64,
         );

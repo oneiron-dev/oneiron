@@ -18,7 +18,8 @@ use crate::config::community_graph::{
     CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 
 use super::Store;

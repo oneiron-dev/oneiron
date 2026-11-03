@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use rand_core::RngCore;
 
-use crate::authority::{AuthorityKey, AuthoritySignature, ROLE_OWNER, verify_authority_signature};
+use oneiron_authority::authority::{AuthorityKey, AuthoritySignature, ROLE_OWNER, verify_authority_signature};
 use crate::error::{ClaimError, Error, Result};
 use crate::{EntityId, Vault};
 

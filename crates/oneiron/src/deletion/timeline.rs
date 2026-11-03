@@ -310,7 +310,7 @@ impl Vault {
             crate::scan_check::ScanCount::start(
                 &self.store,
                 &txn,
-                crate::scan_check::EngineScan::TimelineRecords,
+                crate::store::EngineScan::TimelineRecords,
                 anchor.as_bytes(),
             )?
         };

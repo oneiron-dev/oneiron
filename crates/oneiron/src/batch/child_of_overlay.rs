@@ -9,7 +9,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::write_envelope::task_body::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::{EngineScan};
+use crate::scan_check::{ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 

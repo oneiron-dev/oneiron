@@ -31,6 +31,11 @@ pub mod person_identity;
 pub mod companion_subject;
 pub mod companion_task_kind;
 pub mod learning_predicate;
+mod effect_digest;
+mod validation;
+
+pub use effect_digest::EffectDigest;
+pub(crate) use validation::validate_write_envelope;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;

@@ -218,7 +218,7 @@ impl Vault {
         let mut count = crate::scan_check::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::LearnedRangeRows,
+            crate::store::EngineScan::LearnedRangeRows,
             &window,
         )?;
         let query = crate::ports::TimelineQuery {
@@ -571,7 +571,7 @@ impl Vault {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::scan_check::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::PackQuarantineRows,
             prefix.as_bytes(),
             MAX_SYNC_STATE_KEYS as u64,
         );
@@ -624,7 +624,7 @@ impl Vault {
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::scan_check::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::PackQuarantineRows,
             prefix,
             MAX_SYNC_STATE_KEYS as u64,
         );

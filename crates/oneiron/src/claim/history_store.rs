@@ -312,12 +312,12 @@ pub(crate) fn validate_machine_history_put(
             };
             let packet =
                 super::ClaimHistoryHandoff::decode(bytes).map_err(|_| invalid_history())?;
-            let signature = crate::authority::AuthoritySignature {
+            let signature = oneiron_authority::authority::AuthoritySignature {
                 suite: packet.signer.suite(),
                 public_key: packet.signer.clone(),
                 signature: packet.signature.to_vec(),
             };
-            if !crate::authority::verify_authority_signature(
+            if !oneiron_authority::authority::verify_authority_signature(
                 &signature,
                 &packet.transcript().map_err(|_| invalid_history())?,
             ) {
@@ -458,7 +458,7 @@ pub(crate) fn machine_history_ids_for_target(
     let mut count = crate::scan_check::ScanCount::start(
         store,
         txn,
-        crate::scan_check::EngineScan::MachineHistoryTargetRows,
+        crate::store::EngineScan::MachineHistoryTargetRows,
         target.as_bytes(),
     )?;
     let mut ids = Vec::new();

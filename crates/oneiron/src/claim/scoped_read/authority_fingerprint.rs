@@ -24,7 +24,8 @@ use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
 
 use super::{RoomTurnCeiling, ScopedReadActorKey};
-use crate::authority::{HostActionGuard, PeerMachine, VerifiedSlip};
+use crate::authority::{HostActionGuard, VerifiedSlip};
+use crate::machine_destination::{PeerMachine};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::consent::AuthenticatedOwner;

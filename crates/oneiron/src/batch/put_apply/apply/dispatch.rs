@@ -169,10 +169,10 @@ pub(super) fn dispatch_put_type(
                 fixed.posture,
             )?;
         } else {
-            crate::authority::validate_authority_log_entry_body_bytes(data)?;
+            oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
         }
-        let entry = crate::authority::decode_authority_log_entry_body(data)?;
-        let entry_hash = crate::authority::authority_entry_hash(&entry)?;
+        let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
+        let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
         // here, so the store-key bind, the append-only guard, and the
         // cross-type dominance verdict are computed on every import/replay
