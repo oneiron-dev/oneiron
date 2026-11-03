@@ -750,15 +750,19 @@ pub(crate) fn take_reading_in_txn(
 
 /// The latest-round bookkeeping of `hold_in_txn` for an assignment a
 /// Micro selection retry records outside a window (a completed widened
-/// branch's stamp, an owed chunk's enqueue): the newest stamped turn
-/// moves `LATEST` forward under `round` - the carrier attempt's own
-/// round, which its completion applies through the usual door - the
-/// previous latest round retires, stamped turns ride nothing, and
-/// riders their assignment may have changed the value of are released.
-/// Without it a stamped turn left an earlier one holding, and a later
-/// return to its words was consumed as that turn's repeat. `stamped`
-/// carries the readings the caller already recorded as taken; they are
-/// never recomputed here. No round: only the forward move is skipped.
+/// branch's stamp, an owed chunk's enqueue): the stamped turns join
+/// `round`'s membership the way a window's payload does, the newest
+/// stamped turn moves `LATEST` forward under `round` - the carrier
+/// attempt's own round, which its completion applies through the usual
+/// door - the previous latest round retires, stamped turns ride
+/// nothing, and riders their assignment may have changed the value of
+/// are released. Without it a stamped turn left an earlier one
+/// holding, and a later return to its words was consumed as that
+/// turn's repeat; without the membership, erasing the stamped turn
+/// never found the round its later repeats rode. `stamped` carries the
+/// readings the caller already recorded as taken; they are never
+/// recomputed here. No round: membership and the forward move are
+/// skipped.
 pub(crate) fn note_assignment_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -775,6 +779,37 @@ pub(crate) fn note_assignment_in_txn(
         queued.insert(at);
         if latest.as_ref().is_none_or(|(before, ..)| at > *before) {
             latest = Some((at, *reading, *turn));
+        }
+    }
+    if let Some(round_id) = round
+        && !queued.is_empty()
+    {
+        // The stamped turns join the carrier round the way a window's
+        // payload does, so erasing or demoting one later finds the round
+        // and releases the repeats that rode its hold. Append, never
+        // overwrite: the carrier's original members stay members. A
+        // caller that already registered them (owed chunks) makes this
+        // a no-op.
+        let existing = ROUND.get(store, txn, &round_id)?;
+        let mut linked = existing.is_none();
+        let mut round_row = existing.unwrap_or_else(|| ProjectionRound {
+            applied: false,
+            turns: Vec::new(),
+            riders: Vec::new(),
+        });
+        for (_, turn) in &queued {
+            let mut given = GIVEN.get(store, txn, turn)?.unwrap_or_default();
+            if !given.rounds.contains(&round_id) {
+                given.rounds.push(round_id);
+                GIVEN.put(store, txn, turn, &given)?;
+            }
+            if !round_row.turns.contains(turn) {
+                round_row.turns.push(*turn);
+                linked = true;
+            }
+        }
+        if linked {
+            ROUND.put(store, txn, &round_id, &round_row)?;
         }
     }
     if let (Some(round), Some((key, reading, turn))) = (round, latest) {
