@@ -17,12 +17,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, LeaseUnit, PayerPerson, RunAdmission, RunAttribution, RunDeclaration,
     RunReceiptSink,
 };
+use oneiron::llm::{SingleRouteBackend, WorkerKind};
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
@@ -116,7 +116,7 @@ pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
     DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
-    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus,
+    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
@@ -229,6 +229,14 @@ fn build_provider(
         .iter()
         .map(|model| catalog_entry(model, provider))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // Only the EXL3 server reads the host's solo marker (INF 1); a provider
+    // no EXL3 worker row binds (the llama fallback among them) is never
+    // sent a field only EXL3 knows (FIX 6976).
+    let solo = provider.kind == ProviderKind::LocalOpenaiCompat
+        && config
+            .workers
+            .iter()
+            .any(|row| row.kind == WorkerKind::Exl3 && row.binding.provider == name);
     if provider.key_secret.is_some() && provider.kind.generates() {
         let site = site
             .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
@@ -238,6 +246,7 @@ fn build_provider(
             provider,
             catalog,
             output_cap(provider),
+            solo,
             site,
             keys,
         )?)));
@@ -256,8 +265,6 @@ fn build_provider(
                     )
                 })
                 .transpose()?;
-            // Only an own server reads the host's solo marker (INF 1).
-            let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
             let engine_models: BTreeMap<String, ModelId> = catalog
                 .iter()
                 .filter_map(|entry| {

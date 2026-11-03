@@ -13,7 +13,8 @@ use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
 use crate::auth::{CoreAuth, CoreScope};
-use crate::models::QuotaChoice;
+use crate::models::{QuotaChoice, TaggerStatus};
+use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
 pub(crate) mod chat;
@@ -97,12 +98,33 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     if let Err(error) = auth.require(CoreScope::Read) {
         return error.into_response();
     }
+    let mut models = server.ai.models_live_status();
+    models.tagger = server.tagger.as_ref().map(tagger_status);
     Json(serde_json::json!({
         "ai": server.ai.status(),
-        "models": server.ai.models_live_status(),
+        "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
     }))
     .into_response()
+}
+
+/// The host tagger's row (FIX 6914), read from the server's slot as it
+/// stands: what the `[oneironer]` section names, and what serves it now.
+fn tagger_status(slot: &TaggerSlot) -> TaggerStatus {
+    let serving = slot.serving();
+    let card = slot.card();
+    TaggerStatus {
+        provider: slot.config().provider.as_str(),
+        state: if serving.is_some() || card.is_some() {
+            "ready"
+        } else {
+            "configured"
+        },
+        checkpoint_sha16: slot.config().checkpoint_sha16.clone(),
+        card_checkpoint_sha16: card.map(|card| card.checkpoint_sha16),
+        engine: serving.map(|serving| serving.engine.id()),
+        pick: serving.map(|serving| serving.pick.as_str()),
+    }
 }
 
 #[derive(Deserialize)]
