@@ -19,7 +19,8 @@ use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryErro
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::pack_catalog::PackHookBinding;
-use crate::task_verb::sdk::PackPutReceipt;
+use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
+use serde::{Deserialize, Serialize};
 
 /// The one refusal for a binding this caller cannot read the regen of:
 /// unknown, or resting on a row this credential does not read. Neither is
@@ -184,5 +185,48 @@ impl Memory<'_> {
             self.produced_from([source]);
         }
         Ok(put)
+    }
+}
+
+/// What one pack put did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PackPutOutcome {
+    Installed,
+    /// Its code waits for its sandbox to qualify it.
+    Candidate,
+    /// The vault's install rules refused it; `reason` says why.
+    Blocked,
+}
+
+/// `vault.packs.put`'s answer: the outcome, and the install receipt unless
+/// the put was blocked.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PackPutReceipt {
+    pub outcome: PackPutOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<Box<PackInstallReceipt>>,
+}
+
+impl From<PackInstallDisposition> for PackPutReceipt {
+    fn from(disposition: PackInstallDisposition) -> Self {
+        let (outcome, reason, receipt) = match disposition {
+            PackInstallDisposition::Installed(receipt) => {
+                (PackPutOutcome::Installed, None, Some(receipt))
+            }
+            PackInstallDisposition::Candidate(receipt) => {
+                (PackPutOutcome::Candidate, None, Some(receipt))
+            }
+            PackInstallDisposition::Blocked { reason } => {
+                (PackPutOutcome::Blocked, Some(reason), None)
+            }
+        };
+        Self {
+            outcome,
+            reason,
+            receipt,
+        }
     }
 }

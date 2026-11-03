@@ -1,7 +1,7 @@
 //! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
 use std::collections::BTreeMap;
 
-use crate::linkedin_connector::{
+use crate::outbound::linkedin_policy::{
     LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_SEND_DM_VERB,
     LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
 };
