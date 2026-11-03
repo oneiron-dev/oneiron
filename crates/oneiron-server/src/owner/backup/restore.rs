@@ -389,8 +389,8 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<String> {
             } else {
                 format!(
                     "an earlier interrupted restore left its staging directory {} \
-                     without a whole vault in it; the live vault at {} was not \
-                     reached, and the staging directory is left where it is",
+                     without a whole vault in it; the staging directory is left \
+                     where it is",
                     staging.display(),
                     vault_path.display()
                 )
