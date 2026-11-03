@@ -23,7 +23,7 @@ use super::{
 };
 
 pub(super) use crate::memory::web_acquisition::{
-    normalize_url, normalize_link_list, is_web_url, has_userinfo, redact_url_credentials, redact_userinfo_text, validated_web_url,
+    normalize_url, normalize_link_list, is_web_url, has_userinfo, redact_url_credentials, redact_userinfo_text, validated_web_url, REDACTED_USERINFO,
 };
 
 /// Parses a caller-supplied URL into its normalized form.
