@@ -499,7 +499,10 @@ impl Memory<'_> {
             self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
         };
         let born_with = travel.project(text);
-        let content_hash = super::hash_hex(&file.content_hash);
+        // The hash names the copy beside it (FIX 5491): the sighted export's
+        // own `content_hash` stays the stored version's, which its internal
+        // readers (deck doors) bind their edits to.
+        let content_hash = super::hash_hex(blake3::hash(&file.bytes).as_bytes());
         vault.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,
