@@ -50,6 +50,9 @@ qrcode = { version = "=0.14.1", default-features = false }
 wasmtime = { version = "=48.0.3", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "std", "wat"] }
 heed = { workspace = true }
 half = "2"
+# Persistent maps: a resumed authority fold shares its base with the next one
+# (FIX 12308). Already resolved transitively.
+im = "15.1"
 uuid = { workspace = true }
 # BASE deps (not sync-gated): receipts mint — and are attested — in base
 # paths, including the non-sync build (ONE-1140, OD-1/OD-2).
