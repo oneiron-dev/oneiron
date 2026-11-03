@@ -49,17 +49,20 @@ mod xlsx;
 
 pub(crate) use actor_erase::{
     erase_export_actor_in_txn, erase_export_author_actor_in_txn, erase_fork_actor_in_txn,
-    erase_oracle_actor_in_txn, erase_proposal_actor_in_txn,
+    erase_live_edit_ask_group_actor_in_txn, erase_oracle_actor_in_txn, erase_proposal_actor_in_txn,
 };
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
     OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
     ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
-pub(crate) use consent::{DiscardAdmission, MergeAdmission};
+pub(crate) use consent::{DiscardAdmission, LiveEditAdmission, MergeAdmission};
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
-pub(crate) use holder_ask::resolve_holder_ask_in_txn;
+pub(crate) use holder_ask::{
+    LiveEditAskOutcome, guard_live_edit_word, is_live_edit_ask, may_cut_live_edit,
+    resolve_holder_ask_in_txn, resolve_live_edit_holder_ask_in_txn,
+};
 pub use live_units::LivePin;
 pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::live::LandingReceipt;
@@ -128,7 +131,9 @@ use support::{
     open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate, version_key,
     writer,
 };
-pub(crate) use support::{erase_in_txn, fork_waits};
+pub(crate) use support::{
+    erase_in_txn, fork_waits, live_edit_granted, live_edit_refused, live_edit_waits,
+};
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())

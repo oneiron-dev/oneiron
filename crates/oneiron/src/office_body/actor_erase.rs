@@ -4,6 +4,7 @@
 //! own scrub.
 
 use super::consent::{AnsweringAuthority, MEMBERSHIP, MemberVerdict, PROPOSALS, close_if_done};
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::pptx::ORACLE;
 use super::{EXPORT_AUTHORS, EXPORTS, FORKS, ForkState};
 use crate::Vault;
@@ -193,6 +194,45 @@ pub(crate) fn erase_oracle_actor_in_txn(
     }
     for (profile, record) in records {
         ORACLE.put(&vault.store, wtxn, &profile, &record)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from live-edit holder-ask routes (FIX 596): an erased
+/// editor's route goes, and an erased owner leaves the electorate; a route
+/// with no owner left goes too. Artifact and revision stay on surviving
+/// routes, so the next admission builds a truthful fresh route if needed.
+pub(crate) fn erase_live_edit_ask_group_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut deleted = Vec::new();
+    let mut updated = Vec::new();
+    for (group, mut route) in LIVE_EDIT_GROUPS.scan(&vault.store, wtxn)? {
+        if route.editor == *actor {
+            deleted.push(group);
+            continue;
+        }
+        let owners = route.owners.len();
+        route.owners.retain(|owner| owner != actor);
+        if route.owners.len() == owners {
+            continue;
+        }
+        if route.owners.is_empty() {
+            deleted.push(group);
+        } else {
+            updated.push((group, route));
+        }
+    }
+    for group in deleted {
+        LIVE_EDIT_GROUPS.delete(&vault.store, wtxn, &group)?;
+    }
+    for (group, route) in updated {
+        LIVE_EDIT_GROUPS.put(&vault.store, wtxn, &group, &route)?;
     }
     Ok(())
 }

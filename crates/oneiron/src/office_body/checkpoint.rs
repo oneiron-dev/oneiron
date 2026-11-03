@@ -28,6 +28,7 @@ use super::consent::{
     AnsweringAuthority, MEMBERSHIP, MemberAnswer, MemberVerdict, OfficeBodyProposal, PROPOSALS,
     close_if_done,
 };
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::pptx::ORACLE;
 use super::{
     EXPORT_AUTHORS, EXPORTS, FORKS, ForkState, OfficeBodyExportAuthor, OfficeBodyExportRecord,
@@ -279,6 +280,9 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         out.exact(owner, row.at, row.bytes);
     }
     for row in rows::typed_rows(dbs, txn, ORACLE, &mut out)? {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+    }
+    for row in rows::typed_rows(dbs, txn, LIVE_EDIT_GROUPS, &mut out)? {
         out.unclassified(row.at, None, Unresolved::NoOwner);
     }
     Ok(out)
