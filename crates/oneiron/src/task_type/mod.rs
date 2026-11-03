@@ -43,7 +43,8 @@ pub use placement::{
 /// [`TaskTypeRef`] is the spawn/task/receipt stamp spelling of the same
 /// `{node_id, tree_version}` pair; the `From` impls below convert between
 /// them losslessly (both keep a `u64` version, FIX 4432).
-pub use crate::learning::{ROOT_TYPE_NODE, TypeRef};
+pub use crate::receipt::task_type_ref::ROOT_TYPE_NODE;
+pub use crate::receipt::task_type_ref::TypeRef;
 
 /// The seven seed node ids, all children of the root, in canon order.
 pub const SEED_TYPES: [&str; 7] = [

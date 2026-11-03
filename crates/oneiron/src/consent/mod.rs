@@ -47,12 +47,15 @@
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
 //! rewrite, or a byte/status/codec change to the source record.
 
+pub mod approval_proof;
+pub mod tool_scope;
 mod adapters;
 mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
 mod codec;
+pub mod code_wait_state;
 mod contact_clearance;
 mod doors;
 mod effect;
@@ -146,7 +149,7 @@ pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
     person_is_live_for_store_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
-    spend_approve_once_in_txn, standing_grant_is_active_in_txn,
+    spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_row_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,
@@ -182,3 +185,7 @@ use self::codec::{
 };
 #[cfg(test)]
 use self::support::SUBJECT_KIND_AUDIENCE;
+
+pub mod bundle_projection;
+
+pub mod settlement_fact;

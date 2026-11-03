@@ -53,7 +53,7 @@ fn page_key(repo_id: EntityId, request_id: EntityId, page: u64) -> PublishKey {
 
 /// The request id `key` fixes for one repository.
 pub(super) fn keyed_request_id(repo_id: &EntityId, key: &str) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         ORIGIN_PUBLISH_REQUEST_ID_DOMAIN,
         &[repo_id.as_bytes(), key.as_bytes()],
     )

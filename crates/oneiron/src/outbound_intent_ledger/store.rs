@@ -496,14 +496,16 @@ pub(crate) fn record_possible_delivery(
     if marked {
         record.delivery_uncertain = true;
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
-    }
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
-    if marked {
         wtxn.commit().map_err(Error::from)?;
     } else {
         drop(wtxn);
     }
     force_sync(vault)?;
+    // Open only after the state write is durable (FIX 10959): a sealed row
+    // whose key will not open must not lose the mark. On an open error the
+    // caller re-reads the row, as after a post-commit sync error.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     Ok(record)
 }
 
@@ -639,12 +641,15 @@ fn update_pending_recorded_outcome(
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
     also(&mut wtxn, &record)?;
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // A takeover may have abandoned the row: the owner's waiting shed looks
     // again, as at a terminal transition (FIX 10688).
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 10959), as in
+    // `record_possible_delivery`.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }

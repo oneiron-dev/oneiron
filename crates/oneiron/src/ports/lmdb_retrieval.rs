@@ -1,8 +1,9 @@
 //! Configured text-query adapter, including composed session targets.
 use super::{RetrievalIndexExecution, TextQuery, Transactions};
-use crate::{
-    analyzer::MultilingualAnalyzer, error::Result, pipeline::ScoredEntity, store::ManifestDbs,
-};
+use crate::analyzer::MultilingualAnalyzer;
+use crate::error::Result;
+use oneiron_retrieval::pipeline::ScoredEntity;
+use crate::store::ManifestDbs;
 use heed::RoTxn;
 pub(crate) struct TextIndexView<'a, T> {
     target: &'a T,

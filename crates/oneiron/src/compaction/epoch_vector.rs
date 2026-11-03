@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use crate::batch::BatchOp;
-use crate::embed::{
+use crate::store::embedding::{
     Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput, PendingEmbeddingPayload,
 };
 use crate::entity_id::EntityId;
