@@ -14,8 +14,10 @@
 //!   pending-embedding path.
 //! - `route` is the sender's rung id (`model@place`) reconstructed from its
 //!   stored provenance through the one producer (`offer_id`/`offer_place`).
-//!   Reconstruction is a fail-closed heuristic: rows filled behind
-//!   `embedder serve` or a GPU pod spell no stable place and never ride.
+//!   Reconstruction is a fail-closed heuristic: a row filled behind
+//!   `embedder serve` spells no place and never rides; a GPU pod's
+//!   per-lease base spells a place no order can name, so its row rides
+//!   and never matches.
 //!   The receiver never parses the route; its world order admits it by
 //!   whole-string equality or the row re-embeds.
 //! - Admission refuses every insert that is not a whole, well-formed
@@ -95,6 +97,10 @@ fn decode(bytes: &[u8]) -> Result<CarriedVector> {
     Ok(carried)
 }
 
+/// The most dimensions a carried row may name: past every served
+/// embedder, short of a decode a window writer could weaponize.
+const MAX_CARRIED_DIMS: usize = 16_384;
+
 /// The vault-agnostic shape of a whole carrier: a real space id, a route
 /// an order could name, a cloud locality, and a structurally sound EMB-3
 /// row of finite values whose length its `dims` names.
@@ -109,6 +115,12 @@ fn well_formed(carried: &CarriedVector) -> bool {
         || carried.route.chars().any(char::is_control)
         || carried.row.len() < 3
         || (carried.row.len() - 1) % 2 != 0
+        || (carried.row.len() - 1) / 2 > MAX_CARRIED_DIMS
+        || carried
+            .transform
+            .as_ref()
+            .is_some_and(|pin| pin.len() > 512)
+        || carried.provenance.runtime.len() > 2048
     {
         return false;
     }
@@ -159,9 +171,10 @@ pub(crate) fn admit_claim_vector_map(key: Option<&WindowKey>, map: &LoroMap) -> 
 /// provenance: the space id is this vault's own, and the place is the
 /// endpoint its fill answer named, spelled through the one producer the
 /// ladder and the rung build share. `None` wherever the answer named no
-/// endpoint URL (an `embedder serve` candle mark, a per-lease pod URL the
-/// receiver's order cannot name either way) -- the row then never rides,
-/// and the receiver re-embeds. The endpoint's explicit default port is
+/// endpoint URL (an `embedder serve` candle mark) -- the row then never
+/// rides, and the receiver re-embeds. A per-lease pod URL does
+/// reconstruct, to a place no receiver order names: the row rides and
+/// never matches. The endpoint's explicit default port is
 /// kept byte-for-byte, where the rung's own mint normalized it away: such
 /// a route simply matches no order entry. Fail closed throughout.
 fn reconstruct_route(model_id: &str, runtime: &str, locality: ModelLocality) -> Option<String> {
@@ -179,9 +192,12 @@ fn reconstruct_route(model_id: &str, runtime: &str, locality: ModelLocality) -> 
     None
 }
 
-fn read_meta_text(vault: &Vault, key: IndexMetaKey) -> Result<Option<String>> {
-    let rtxn = vault.store.env.read_txn()?;
-    vault.store.port_index_meta_with_raw(&rtxn, key, |bytes| {
+fn read_meta_text(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    key: IndexMetaKey,
+) -> Result<Option<String>> {
+    vault.store.port_index_meta_with_raw(rtxn, key, |bytes| {
         std::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| Error::CorruptedIndex("embedding space record"))
@@ -192,14 +208,20 @@ fn read_meta_text(vault: &Vault, key: IndexMetaKey) -> Result<Option<String>> {
 /// off this device and the window's copy is not already this exact row for
 /// this exact body. Every skip is a row the receiver locally re-embeds:
 /// no body beside it in the window, no settled vector, an on-device fill,
-/// no declared space, or no route its provenance can spell. Commits on
-/// its own; returns whether it wrote.
+/// no declared space, or no route its provenance can spell. Body, row and
+/// marks read in one transaction, so the carrier binds one instant's body
+/// digest to that same instant's row. Commits on its own; returns whether
+/// it wrote.
 pub(crate) fn mirror_claim_vector(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let hex = id.to_hex();
     if !map_contains_binary(&doc.get_map("entities"), &hex) {
         return Ok(false);
     }
-    let Some(raw) = vault.get_raw_unsealed(id)? else {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .get_raw_in(&rtxn, id)?
+        .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
+    else {
         return Ok(false);
     };
     if !EntityMetadataHeader::parse(&raw)
@@ -210,34 +232,34 @@ pub(crate) fn mirror_claim_vector(vault: &Vault, doc: &LoroDoc, id: &EntityId) -
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
         return Ok(false);
     };
-    let (locality_byte, model_locality) = match vault.embedding_locality(id)? {
+    let (locality_byte, model_locality) = match vault.embedding_locality_in_txn(&rtxn, id)? {
         Some(EmbedderLocality::OwnerServer) => (LOCALITY_OWNER_SERVER, ModelLocality::OwnServer),
         Some(EmbedderLocality::ThirdParty) => (LOCALITY_THIRD_PARTY, ModelLocality::ThirdParty),
         _ => return Ok(false),
     };
-    let row = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .port_vector_with_raw(&rtxn, id, |bytes| Ok(bytes.to_vec()))?
-    };
-    let Some(row) = row else {
+    let Some(row) = vault
+        .store
+        .port_vector_with_raw(&rtxn, id, |bytes| Ok(bytes.to_vec()))?
+    else {
         return Ok(false);
     };
-    let Some(model_id) = read_meta_text(vault, IndexMetaKey::ModelId)? else {
+    let Some(model_id) = read_meta_text(vault, &rtxn, IndexMetaKey::ModelId)? else {
         return Ok(false);
     };
-    let Some(provenance) = vault.embedding_provenance(id)? else {
+    let Some(provenance) = vault.embedding_provenance_in_txn(&rtxn, id)? else {
         return Ok(false);
     };
     let Some(route) = reconstruct_route(&model_id, &provenance.runtime, model_locality) else {
         tracing::debug!(claim = %hex, "claim vector spells no route; stays on this machine");
         return Ok(false);
     };
+    if row.len() < 3 || (row.len() - 1) % 2 != 0 {
+        return Ok(false);
+    }
     let Ok(dims) = u64::try_from((row.len() - 1) / 2) else {
         return Ok(false);
     };
-    let transform = match read_meta_text(vault, IndexMetaKey::EmbeddingTransform)? {
+    let transform = match read_meta_text(vault, &rtxn, IndexMetaKey::EmbeddingTransform)? {
         Some(pin) => Some(pin),
         None => vault.config.embedding_transform.clone(),
     };
@@ -251,6 +273,10 @@ pub(crate) fn mirror_claim_vector(vault: &Vault, doc: &LoroDoc, id: &EntityId) -
         provenance,
         row,
     };
+    // Never write a carrier this machine's own admission would refuse.
+    if !well_formed(&carried) {
+        return Ok(false);
+    }
     let map = doc.get_map(CLAIM_VECTORS_MAP);
     if map_get_bytes(&map, &hex)
         .and_then(|bytes| decode(&bytes).ok())

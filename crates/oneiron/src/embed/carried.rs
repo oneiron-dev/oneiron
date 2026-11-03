@@ -19,8 +19,10 @@ use crate::sync::claim_vectors::{LOCALITY_OWNER_SERVER, LOCALITY_THIRD_PARTY, cl
 /// this exact body, in this vault's space at this vault's dimensions,
 /// under no conflicting transform pin, was filled off-device, and its
 /// sender route is one the claim's `worlds` admit. An inheriting world
-/// order admits every route; the space leg below still binds it. A
-/// transform pin is a match key only where both sides pin one.
+/// order admits every route; the space leg below still binds it. The
+/// sender's transform pin must be this vault's exact pin: an unpinned
+/// side's vectors came from the model's own transform, and silence never
+/// stands for the other side's pin.
 pub(crate) fn admit_carried_vector(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -51,9 +53,7 @@ pub(crate) fn admit_carried_vector(
         Some(stored) => Some(stored),
         None => vault.config.embedding_transform.clone(),
     };
-    if let (Some(sender_pin), Some(receiver_pin)) = (&carried.transform, &receiver_pin)
-        && sender_pin != receiver_pin
-    {
+    if carried.transform != receiver_pin {
         return Ok(false);
     }
     Ok(vault

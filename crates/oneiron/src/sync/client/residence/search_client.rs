@@ -54,8 +54,9 @@ impl SyncClient {
 /// falls back to this device's own scan either: its recall already read it.
 ///
 /// With `due`, the caller's deadline, no step runs past it: a search that
-/// reaches it before any home page refuses, and one served in pages keeps
-/// the pages it holds, marked incomplete (FIX 9256).
+/// reaches it before any home page refuses, one served in pages keeps
+/// the pages it holds, marked incomplete (FIX 9256), and the offline
+/// local scan checks it as it goes and keeps what it found.
 pub(crate) async fn search_resident(
     vault: &crate::Vault,
     config: &SyncClientConfig,
@@ -144,6 +145,10 @@ pub(crate) async fn search_resident(
         }
         None if caller.is_some() || scope.is_some() => Err(refused()),
         None => {
+            let past_due = || due.is_some_and(|due| std::time::Instant::now() >= due);
+            if past_due() {
+                return Err(refused());
+            }
             let opened: HashSet<_> = vault
                 .sync_state_keys_with_prefix("ro:e:")
                 .map_err(|e| TransportError::Storage(e.to_string()))?
@@ -162,6 +167,9 @@ pub(crate) async fn search_resident(
             let needle = query.to_lowercase();
             let mut hits = Vec::new();
             for id in &opened {
+                if past_due() {
+                    break;
+                }
                 let Some(item) = super::items::read_thin_item(vault, *id)? else {
                     continue;
                 };
@@ -184,6 +192,9 @@ pub(crate) async fn search_resident(
                 )
                 .map_err(|e| TransportError::Storage(e.to_string()))?
             {
+                if past_due() {
+                    break;
+                }
                 let Some(raw) = vault
                     .get_raw(&hit.id)
                     .map_err(|e| TransportError::Storage(e.to_string()))?
