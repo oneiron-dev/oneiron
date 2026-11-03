@@ -119,6 +119,7 @@ pub use files::files;
 mod history_import;
 mod init;
 pub use init::init;
+pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
 mod reembed;
 pub use reembed::reembed;
 mod account;
@@ -135,7 +136,7 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    DRAIN_GRACE, build_embedder, build_server, sign_root_project, start_desktop_workers,
+    DRAIN_GRACE, BuiltEmbedder, build_embedder, build_server, sign_root_project, start_desktop_workers,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;

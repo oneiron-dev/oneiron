@@ -56,6 +56,7 @@ pub(super) async fn serve_anchored(
         config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
         "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
     );
+    config.config_path = files.as_ref().and_then(|files| files.config.clone());
     use oneiron_vault_contract::host::Host;
     use oneiron_vault_contract::host_adapters::{ActivatedListener, AwakePolicy, DesktopHost};
 
@@ -308,7 +309,11 @@ pub(crate) async fn build_server(
     // One seat, the embedder and the GPU pods send their vault-secret keys
     // through.
     let broker = crate::models::BrokerContext::for_serve(&vault, config);
-    let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
+    let BuiltEmbedder {
+        slot: embedder,
+        gpu_pool,
+        poller: gpu_poller,
+    } = build_embedder(&vault, config, broker.as_ref()).await?;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), None).await?;
 
     // The private feedback endpoint's bearer (FIX 5013): a named vault
@@ -328,6 +333,8 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_model_setup_config(config)
+        .with_gpu_pool(gpu_pool)
         .with_broker(broker)
         .with_owner_host(owner_host)
         .with_browser_guest(
@@ -373,54 +380,75 @@ pub(crate) async fn build_server(
     Ok((sync_server, gpu_poller))
 }
 
+/// One embedder build: its slot, the pool it routes through, and only the
+/// health poller created for a new pool. An existing pool creates no second poller.
+pub(crate) struct BuiltEmbedder {
+    pub(crate) slot: Option<crate::embedder::EmbedderSlot>,
+    pub(crate) gpu_pool: Option<crate::runtime::GpuPool>,
+    pub(crate) poller: Option<tokio::task::JoinHandle<()>>,
+}
+
 /// The embedder slot `config` names, and the GPU pool's health poller,
 /// already running when `[gpu]` names a pool. Plain and embedded serve build
-/// them through [`build_server`]; managed serve builds them here too. A
-/// `key_secret` endpoint, rung or pool sends through `broker`.
+/// them through [`build_server`]; managed serve builds them here too.
 pub(crate) async fn build_embedder(
     vault: &Arc<oneiron::Vault>,
     config: &ServeConfig,
     broker: Option<&crate::models::BrokerContext>,
-) -> anyhow::Result<(
-    Option<crate::embedder::EmbedderSlot>,
-    Option<tokio::task::JoinHandle<()>>,
-)> {
-    // On a blocking thread because the endpoint probe is a blocking HTTP call,
-    // which must not run on a runtime worker.
-    // The batch lane's rented GPU pods (ARCH-0019 §5), when `[gpu]` names
-    // them: the pool polls their health while serve runs, and the endpoint
-    // embedder sends its document batches through a lease on one. A vault
-    // bound to an account has each pod's answer sealed to that account.
-    let gpu = config
-        .gpu
-        .clone()
-        .map(|gpu| crate::runtime::GpuPool::with_broker(gpu, broker))
-        .transpose()?;
-    let gpu_poller = gpu
-        .as_ref()
-        .map(crate::runtime::GpuPool::spawn_health_poller);
+) -> anyhow::Result<BuiltEmbedder> {
+    let vault = Arc::clone(vault);
+    let config = config.clone();
+    let broker = broker.cloned();
+    crate::logging::off_runtime("embedder slot task", move || {
+        build_embedder_on_thread(&vault, &config, broker.as_ref(), None)
+    })
+    .await?
+}
+
+/// The same build on a blocking thread. First-run setup passes the startup
+/// pool when it has one; startup passes `None` and creates the configured pool.
+pub(crate) fn build_embedder_on_thread(
+    vault: &Arc<oneiron::Vault>,
+    config: &ServeConfig,
+    broker: Option<&crate::models::BrokerContext>,
+    existing_gpu: Option<crate::runtime::GpuPool>,
+) -> anyhow::Result<BuiltEmbedder> {
+    let (gpu, poller) = match existing_gpu {
+        Some(pool) => (Some(pool), None),
+        None => {
+            let gpu = config
+                .gpu
+                .clone()
+                .map(|gpu| crate::runtime::GpuPool::with_broker(gpu, broker))
+                .transpose()?;
+            let poller = gpu
+                .as_ref()
+                .map(crate::runtime::GpuPool::spawn_health_poller);
+            (gpu, poller)
+        }
+    };
     // Each pod batch's rows are judged by the vault's world release, held
     // weakly (FIX 9486).
     let release: Arc<dyn crate::embedder::PodRelease> =
         Arc::new(crate::embedder::VaultRelease::new(vault));
-    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok(), release));
-    let embedder_config = config.embedder.clone();
-    let broker = broker.cloned();
-    let embedder = crate::logging::off_runtime("embedder slot task", move || {
-        // The server's sink before a host chooses one: the log.
-        let receipts = Arc::new(crate::models::ServerReceipts::default());
-        let slot = crate::embedder::build_slot_with_broker(
-            embedder_config.as_ref(),
-            receipts,
-            broker.as_ref(),
-        )?;
-        if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
-            crate::embedder::route_batches_through(slot, pool, scope, release)?;
-        }
-        anyhow::Ok(slot)
+    let gpu_route = gpu
+        .as_ref()
+        .map(|pool| (pool.clone(), vault.derivation_scope().ok(), release));
+    // The server's sink before a host chooses one: the log.
+    let receipts = Arc::new(crate::models::ServerReceipts::default());
+    let slot = crate::embedder::build_slot_with_broker(
+        config.embedder.as_ref(),
+        receipts,
+        broker,
+    )?;
+    if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
+        crate::embedder::route_batches_through(slot, pool, scope, release)?;
+    }
+    Ok(BuiltEmbedder {
+        slot,
+        gpu_pool: gpu,
+        poller,
     })
-    .await??;
-    Ok((embedder, gpu_poller))
 }
 
 /// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request

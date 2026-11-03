@@ -66,6 +66,7 @@ impl fmt::Debug for ServeConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServeConfig")
             .field("vault_path", &self.vault_path)
+            .field("config_path", &self.config_path)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

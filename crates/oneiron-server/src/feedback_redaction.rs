@@ -59,7 +59,7 @@ pub(crate) struct OneironerFilter {
 impl OneironerFilter {
     /// The filter over `server`'s tagger slot.
     pub(crate) fn of_server(server: &SyncServer) -> Self {
-        let slot = server.tagger.as_ref();
+        let slot = server.tagger_slot();
         Self {
             encoder: slot.map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
             differs_from_binding: slot.and_then(|slot| unselected_binding(slot, server.vault())),

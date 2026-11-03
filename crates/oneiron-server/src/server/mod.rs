@@ -18,6 +18,7 @@ mod live_runs;
 mod media_door;
 mod media_embedding;
 mod merge_queue_checker;
+mod model_setup;
 mod message_stream;
 mod mirror_pushes;
 mod note_editors;
@@ -58,6 +59,7 @@ pub(crate) use self::live_runs::{
 pub use self::media_door::MediaDoor;
 pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
+pub(crate) use self::model_setup::{ModelSetupConfig, ModelSetupRuntime, ModelSlots, SharedModelSlots};
 pub(crate) use self::note_editors::NoteEditors;
 pub use self::oversight::OversightStartError;
 pub(crate) use self::oversight::{HEALER_OVERSIGHT_EVERY, HealerOversight};

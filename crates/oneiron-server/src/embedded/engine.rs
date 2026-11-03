@@ -105,7 +105,7 @@ pub fn embedded_serve_config(
     dimensions: Option<usize>,
     config_file: Option<&Path>,
 ) -> anyhow::Result<ServeConfig> {
-    crate::config::resolve_serve_config(&ServeArgs {
+    let mut config = crate::config::resolve_serve_config(&ServeArgs {
         config: config_file.map(Path::to_path_buf),
         vault_path: Some(vault_path.to_path_buf()),
         dimensions,
@@ -114,7 +114,9 @@ pub fn embedded_serve_config(
     .context(cause(
         EngineErrorKind::Config,
         "the embedded engine's serve config did not resolve",
-    ))
+    ))?;
+    config.config_path = config_file.map(Path::to_path_buf);
+    Ok(config)
 }
 
 /// The limits an app grants its engine; an absent one is unbounded.

@@ -215,7 +215,7 @@ pub(super) async fn bind(
     if let Some(backend) = compaction.host_backend() {
         let _ = server.ai.host_compaction.set(backend);
     }
-    let embedder = server.embedder.clone();
+    let embedder = server.embedder_slot();
     // Engine C5: a pinned child's compaction reads its live rung through
     // the admission its calls take, on its pick.
     let pinned = Arc::new(LiveStepAdmission {
