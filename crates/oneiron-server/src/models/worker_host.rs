@@ -348,26 +348,6 @@ pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::Snapsho
     let _ = policy;
 }
 
-/// Whether replacement or teardown stopped the queue this worker's launch
-/// binds. A missing worker, launch, device or queue is not a stopped queue.
-pub(super) fn device_stopped(worker_id: &str) -> bool {
-    let Some(host) = HOST.get() else {
-        return false;
-    };
-    let device = host
-        .lock()
-        .get(worker_id)
-        .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone());
-    let Some(device) = device else {
-        return false;
-    };
-    host.admissions
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&device)
-        .is_some_and(|admission| admission.is_stopped())
-}
-
 /// Stops and removes a replaced worker's old device queue only when no hosted
 /// row still binds that device. The shared ledger stays for cross-runtime use.
 fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {

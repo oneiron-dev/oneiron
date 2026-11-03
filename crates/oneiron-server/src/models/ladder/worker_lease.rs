@@ -29,7 +29,7 @@ impl OfferLadder {
         };
         match worker.acquire().await {
             Ok(lease) => {
-                if super::super::worker_host::device_stopped(&worker.spec().worker_id) {
+                if worker.admission_stopped() {
                     drop(lease);
                     Err(RetryableLlmError::DeviceAdmissionStopped.into())
                 } else {
