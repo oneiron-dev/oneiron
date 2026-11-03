@@ -101,6 +101,8 @@ impl Store {
         let claim_id = EntityId::from_bytes(record.claim_id)
             .map_err(|_| Error::CorruptedIndex("owner answer obligation"))?;
         OBLIGATION.put(self, wtxn, &claim_id, record)?;
+        // FIX 12374: every gate write moves the sequence its fingerprints echo.
+        crate::claim::history_seal::bump_gate_sequence_in_txn(self, wtxn)?;
         Ok(())
     }
 
@@ -129,6 +131,8 @@ impl Store {
         if OBLIGATION.delete(self, wtxn, claim_id)? {
             crate::ppr::increment_graph_version(self, wtxn)?;
         }
+        // FIX 12374: every gate write moves the sequence its fingerprints echo.
+        crate::claim::history_seal::bump_gate_sequence_in_txn(self, wtxn)?;
         Ok(())
     }
 }
