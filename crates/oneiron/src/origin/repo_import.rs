@@ -21,7 +21,6 @@ use crate::code_revision::{
     CodeImportAnchor, CodeImportManifest, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK,
     import_snapshot_custody_in_txn, manifest_digest, manifest_id,
 };
-use crate::store::code_snapshot::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -32,6 +31,7 @@ use crate::origin::publication::{
 };
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::store::code_snapshot::RepoRef;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
 

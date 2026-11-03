@@ -1,7 +1,7 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use crate::memory::RecallRequest;
 use super::sdk::VAULT_RECALL_LIMIT_DEFAULT;
+use crate::memory::RecallRequest;
 use crate::memory::{Memory, MemoryResult};
 use crate::retrieval_depth::RecallQueryVectors;
 

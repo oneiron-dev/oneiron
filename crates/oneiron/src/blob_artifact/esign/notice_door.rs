@@ -21,12 +21,12 @@ use super::notice_dispatch::{
 use super::notice_scope::NoticeScope;
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
+use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::outbound::{
-    OutboundDispatchActor, OutboundDispatchGate,
-    OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
+    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchRequest, OutboundIntent,
+    OutboundIntentDraft,
 };
-use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::store::outbound_trigger::OutboundIntentTrigger;
 use serde::{Deserialize, Serialize};
 

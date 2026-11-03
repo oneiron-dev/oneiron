@@ -350,8 +350,8 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
-    ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer, ScopeOpeningKey,
+    ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+    HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,

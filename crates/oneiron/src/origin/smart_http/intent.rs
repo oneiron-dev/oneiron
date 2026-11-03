@@ -13,7 +13,6 @@ use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::retained_reasons::RetainedReasons;
 use crate::Vault;
-use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
 use crate::federation::git_push::GitPushStamp;
@@ -26,6 +25,7 @@ use crate::origin::residence::OriginAuthorityStamp;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
+use crate::store::code_snapshot::RepoRef;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
