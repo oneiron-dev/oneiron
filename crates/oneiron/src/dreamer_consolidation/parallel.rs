@@ -40,9 +40,9 @@ use crate::dreamer_tournament::{
 use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
-use crate::llm::{
-    DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_effect::StepEffectBinding;
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{Result, Vault};
