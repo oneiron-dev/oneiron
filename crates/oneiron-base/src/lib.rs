@@ -18,6 +18,7 @@ pub mod limits;
 pub mod msgpack_shape;
 pub mod panic_report;
 pub mod posterior;
+pub mod registry;
 pub mod retrieval_quality;
 pub mod tokenizer;
 pub mod work_line;

@@ -41822,9 +41822,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 22,
-      "mod": 192,
-      "re-export": 85
+      "crate-vis": 23,
+      "mod": 193,
+      "re-export": 86
      }
     },
     {
@@ -59483,18 +59483,6 @@
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
       "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/registry/mod.rs",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
-     "surface": {
-      "crate-vis": 3,
-      "mod": 1,
-      "re-export": 8
      }
     },
     {
@@ -86216,11 +86204,11 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+     "layout": "dir (no mod.rs)",
+     "purpose": "—"
     },
     "repo_mutation": {
      "files": 48,
@@ -86680,7 +86668,7 @@
    },
    "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5886,
+   "source_files": 5885,
    "test_files": 901
   },
   "oneiron-android": {
@@ -87729,7 +87717,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 14
+      "mod": 15
      }
     },
     {
@@ -87776,6 +87764,16 @@
      "purpose": "Shared Beta posterior bandit seam",
      "surface": {
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/registry.rs",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
+     "surface": {
+      "re-export": 10
      }
     },
     {
@@ -87903,6 +87901,13 @@
      "layout": "file",
      "purpose": "Shared Beta posterior bandit seam"
     },
+    "registry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+    },
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
@@ -87927,7 +87932,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 1
   },
   "oneiron-bench": {
