@@ -37,21 +37,7 @@ use self::routing::Routes;
 pub(in crate::sync) use self::state::staged_births;
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 
-/// Role carried by a member/guest federation import path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FederationAdmissionRole {
-    Member,
-    Guest,
-}
-
-impl FederationAdmissionRole {
-    const fn origin(self) -> &'static str {
-        match self {
-            Self::Member => "federation_admission.member",
-            Self::Guest => "federation_admission.guest",
-        }
-    }
-}
+pub use crate::store::window_protocol::FederationAdmissionRole;
 
 /// How admission grades a federated CLAIM, TURN or CONVERSATION (FIX 360).
 #[cfg(feature = "sync")]

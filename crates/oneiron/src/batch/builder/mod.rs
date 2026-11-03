@@ -56,7 +56,7 @@ pub struct BatchBuilder<'a> {
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
     #[cfg(feature = "sync")]
-    import_tier: crate::sync::client::ImportTier,
+    import_tier: crate::store::window_protocol::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
     /// bodies pass federation admission inside the transaction.
     #[cfg(feature = "sync")]
@@ -118,7 +118,7 @@ impl<'a> BatchBuilder<'a> {
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
             #[cfg(feature = "sync")]
-            import_tier: crate::sync::client::ImportTier::OwnDevice,
+            import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
             federated_puts: Vec::new(),
         }
@@ -157,7 +157,7 @@ impl<'a> BatchBuilder<'a> {
     /// A federated tier sends each one through federation admission inside
     /// the transaction.
     #[cfg(feature = "sync")]
-    pub(crate) fn with_import_tier(mut self, tier: crate::sync::client::ImportTier) -> Self {
+    pub(crate) fn with_import_tier(mut self, tier: crate::store::window_protocol::ImportTier) -> Self {
         self.import_tier = tier;
         self
     }

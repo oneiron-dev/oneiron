@@ -50,6 +50,9 @@ mod aging_profiles;
 pub mod code_instruction;
 mod authorship;
 pub(crate) use authorship::claim_author;
+pub mod learning_predicate;
+pub mod learning_evidence;
+pub mod maintenance_kind;
 pub mod learning_estimate;
 mod core_types;
 pub mod corpus_scope;
@@ -134,3 +137,5 @@ pub(crate) use write_target::validate_claim_write_target_in_txn;
 mod tests;
 
 pub mod reaction_record;
+#[cfg(feature = "sync")]
+pub mod selector_world;

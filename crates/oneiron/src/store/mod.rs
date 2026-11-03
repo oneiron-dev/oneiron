@@ -143,12 +143,23 @@ pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod conversation_body;
 pub mod conversation_record;
+pub mod housekeeping_schedule;
+pub mod housekeeping_report;
+#[cfg(feature = "sync")]
+pub mod document_frame_tags;
+#[cfg(feature = "sync")]
+pub mod window_protocol;
+#[cfg(feature = "sync")]
+pub(crate) mod pad_object_membership;
+#[cfg(feature = "sync")]
+pub mod materialization_event;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 pub mod retained_memory;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod consolidation_scope;
 pub mod setting_seed;

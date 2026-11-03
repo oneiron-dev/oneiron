@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::learning::Anchor;
+use crate::claim::learning_evidence::Anchor;
 use crate::store::setting_seed::CREDIT_DECAY;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{PackAttributionFields, UsedProvenanceEdge};

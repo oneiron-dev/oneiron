@@ -5,6 +5,7 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
+pub mod report_signature;
 mod ambient_alternative;
 mod capability;
 mod connector_reply;
