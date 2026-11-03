@@ -918,22 +918,22 @@ async fn self_inbox_concern_move(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "self.inbox.concern.move",
-        value,
-        &producers,
-    )?;
-    if output
-        .pointer("/receipt/link/kind")
-        .and_then(serde_json::Value::as_str)
-        == Some("note")
-    {
-        server.ai.turn_landed_by(server.vault(), actor, class);
-    }
+    let output = {
+        let is_note_move = value.get("move").and_then(|v| v.get("note")).is_some();
+        let output = facade_invoke(
+            server,
+            call,
+            actor,
+            class,
+            "self.inbox.concern.move",
+            value,
+            &producers,
+        )?;
+        if is_note_move {
+            server.ai.turn_landed_by(server.vault(), actor, class);
+        }
+        output
+    };
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_diagnostics_list(

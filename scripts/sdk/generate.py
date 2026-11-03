@@ -1631,8 +1631,19 @@ def facade_dispatch(facade_rows):
         landed = ''
         if r.get('lands_turn'):
             if name == 'self.inbox.concern.move':
-                landed = ('if output.pointer("/receipt/link/kind").and_then(serde_json::Value::as_str) == Some("note") { '
-                          'server.ai.turn_landed_by(server.vault(), actor, class); }')
+                # P1 REVIEW-4395: decide the wake from the unredacted REQUEST
+                # before post hooks, not from the post-hook output view: a
+                # valid post-hook Redact of /receipt after an Applied/Note
+                # commit would otherwise suppress the note wake, unlike MCP's
+                # typed Applied-with-Note-link check. A Note input that invokes
+                # to Ok is an Applied Note commit (take() maps Note control to
+                # Note link; idempotent retry returns the stored Note receipt;
+                # key reuse with different intent errors), so input Note + Ok
+                # matches MCP exactly. Steer/AskCoach inputs never set the flag.
+                result = ('{ let is_note_move = value.get("move").and_then(|v| v.get("note")).is_some(); '
+                          f'let output = {result} '
+                          'if is_note_move { server.ai.turn_landed_by(server.vault(), actor, class); } '
+                          'output };')
             else:
                 landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
