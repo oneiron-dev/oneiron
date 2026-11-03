@@ -1686,7 +1686,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tests/owner_tier.rs` | test | m | — | — | A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier… |
 | `src/consent/tests/shared_brief.rs` | test | s | — | — | — |
 | `src/consent/tests/stale_proofs.rs` | test | s | — | — | An owner proof acts only while it still holds, checked in the transaction that writes the act… |
-| `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
+| `src/consent/widen/contact_verdict_index.rs` | src | s | 3 crate-vis | — | The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan… |
+| `src/consent/widen/mod.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
 | `src/consent_graduation/api.rs` | src | m | 15 struct · 5 enum · 11 fn | GraduationAnswer, GraduationAnswerReceipt, GraduationAnswerRequest, GraduationChanged, GraduationDemoteRequest, GraduationDemotionReason, GraduationMode, GraduationOffer +12 | Typed consent-graduation public door |
 | `src/consent_graduation/doors.rs` | src | m | 11 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
 | `src/consent_graduation/fold.rs` | src | m | 16 crate-vis | — | Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold |
@@ -1867,9 +1868,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/corpus.rs` | src | s | 1 enum · 2 crate-vis | CorpusScope | Project-axis selection for corpus queries |
 | `src/counterparty_contact/codec.rs` | src | m | 3 fn · 11 crate-vis | — | Counterparty contact MessagePack codecs, claim validators, and normalize helpers |
 | `src/counterparty_contact/doors.rs` | src | m | 6 fn · 5 crate-vis | — | Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply |
+| `src/counterparty_contact/identity_index.rs` | src | s | 3 crate-vis | — | The identity-value index over live `counterparty_contact.identity_ref` heads (FIX 1855): the disclosure… |
 | `src/counterparty_contact/lifecycle.rs` | src | m | 2 fn · 13 crate-vis | — | Counterparty contact cache rematerialization, claim supersession, and opt-out folding |
-| `src/counterparty_contact/mod.rs` | src | s | 6 re-export · 8 crate-vis | — | Counterparty contact record substrate (OF-347 CID-7) |
-| `src/counterparty_contact/storage.rs` | src | m | 2 fn · 15 crate-vis | — | Counterparty contact lookup and party-channel index keys and helpers |
+| `src/counterparty_contact/mod.rs` | src | s | 6 re-export · 9 crate-vis | — | Counterparty contact record substrate (OF-347 CID-7) |
+| `src/counterparty_contact/storage.rs` | src | m | 2 fn · 16 crate-vis | — | Counterparty contact lookup and party-channel index keys and helpers |
 | `src/counterparty_contact/tests.rs` | test | L | — | — | — |
 | `src/counterparty_contact/trusted_contact.rs` | src | m | 6 struct · 4 enum · 10 fn · 4 crate-vis | TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk, TrustedContactAskOutcome, TrustedContactDial, TrustedContactParty, TrustedContactReach +2 | Trusted contact (OF-527): a person names another PERSON to hear a crisis notice |
 | `src/counterparty_contact/trusted_contact_notice.rs` | src | m | 1 struct · 1 enum · 3 fn · 2 const · 4 crate-vis | TrustedContactNotice, TrustedContactNoticeAuthorization | A trusted-contact notice crosses the OF-327 outbound rails like any other engine-staged send: staged with… |
