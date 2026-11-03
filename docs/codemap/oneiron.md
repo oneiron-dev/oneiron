@@ -1718,7 +1718,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/memories_frame.rs` | src | s | 2 fn · 2 crate-vis | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
 | `src/context_board/memories_projection.rs` | src | m | 2 fn · 5 crate-vis | — | MEMORIES projection with source labels, world fences, and one shared render budget |
 | `src/context_board/memory_pins.rs` | src | m | 3 fn · 2 crate-vis | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
-| `src/context_board/mod.rs` | src | s | 25 re-export · 10 crate-vis | — | Typed Context Board render projections |
+| `src/context_board/mod.rs` | src | s | 25 re-export · 11 crate-vis | — | Typed Context Board render projections |
 | `src/context_board/notifications.rs` | src | s | 3 fn · 2 crate-vis | — | Who a pending notification is delivered to: the recipient markers its stored body carries, read one way… |
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
@@ -1755,9 +1755,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/self_brief.rs` | src | m | 8 struct · 2 enum · 12 fn | BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput +2 | Typed turn-one self projection shared by the prefix and mid-run describe call |
 | `src/context_board/stream/events.rs` | src | s | 3 struct · 4 enum · 3 fn · 1 const | BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError, SubscriptionReceipt, SubscriptionScope | Board events and their subscription/delivery classification |
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
-| `src/context_board/stream/mod.rs` | src | s | 6 re-export | — | Board streaming frames, routing and the pending-wake queue |
+| `src/context_board/stream/mod.rs` | src | s | 6 re-export · 1 crate-vis | — | Board streaming frames, routing and the pending-wake queue |
 | `src/context_board/stream/provenance.rs` | src | s | 3 struct · 16 crate-vis | ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent | Verified own-task and child event minting for routed board events |
-| `src/context_board/stream/publish.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | CommittedTaskBoardState | The own-task producer: committed TASK writes become routed board events |
+| `src/context_board/stream/publish.rs` | src | s | 1 struct · 5 fn · 2 crate-vis | CommittedTaskBoardState | The own-task producer: committed TASK writes become routed board events |
 | `src/context_board/stream/registry.rs` | src | m | 2 struct · 13 fn · 1 crate-vis | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
 | `src/context_board/stream/review.rs` | src | s | 1 struct · 4 fn · 2 crate-vis | PendingDiaryReview | The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX… |
 | `src/context_board/stream/routing_tests.rs` | test | s | — | — | Event classification, provenance minting and route_event admission tests |
@@ -3375,7 +3375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/ladder/providers.rs` | src | m | 7 struct · 2 trait · 8 fn · 3 const · 3 crate-vis | DecisionCall, DecisionModel, DecisionPack, DecisionProvider, ModelDecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision +1 | Decision ladder providers and the calls they answer |
 | `src/llm/decision/ladder/roles.rs` | src | s | 4 struct · 4 enum · 2 trait · 5 fn | AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest, ResolvedRole +2 | Decision ladder person asks and the roles they go to |
 | `src/llm/decision/ladder/runner.rs` | src | m | 6 fn · 2 crate-vis | — | Decision ladder runner |
-| `src/llm/decision/ladder/slots.rs` | src | s | 4 fn · 2 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
+| `src/llm/decision/ladder/slots.rs` | src | s | 4 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
 | `src/llm/decision/ladder/tournament.rs` | src | s | 3 crate-vis | — | A choice wider than a provider's option bound, read as a tournament (FIX 11235) |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/locate.rs` | src | s | 1 struct · 4 fn · 1 const | LocatedDecision | Presence before coordinates (owner point 4) |

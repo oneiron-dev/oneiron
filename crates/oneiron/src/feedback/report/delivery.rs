@@ -394,6 +394,7 @@ impl Vault {
             // keeps an unanswered signature no run will ever send, so it reads
             // as no lane's (FIX 11631).
             drop(txn);
+            self.resolve_unrouted_signature_delivered(&issue, now, join_cell)?;
             self.retire_unrouted_signature(Some(&issue))?;
             return Ok(None);
         };
@@ -427,6 +428,7 @@ impl Vault {
             // keeps an unanswered signature no run will ever send, so it reads
             // as no lane's (FIX 11631).
             drop(txn);
+            self.resolve_unrouted_signature_delivered(&issue, now, join_cell)?;
             self.retire_unrouted_signature(Some(&issue))?;
             return Ok(None);
         };
@@ -747,6 +749,60 @@ impl Vault {
             row.as_ref().map(IntentResolution::from_record),
             Some(Ok(IntentResolution::Delivered))
         ))
+    }
+
+    /// Confirms an unrouted lane's frozen send when the outbound ledger already
+    /// reconciled it as delivered (FIX 12381): an Uncertain lane, or a
+    /// NotDelivered lane whose dispatch is Deferred, resolves without resending.
+    /// A confirmed delivery lands on the lane and its signature in one write,
+    /// exactly like the routed resolve (FIX 11629). Any other outcome, a missing
+    /// row, or any other ledger resolution changes nothing.
+    fn resolve_unrouted_signature_delivered(
+        &self,
+        issue: &ReportIssue,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<()> {
+        let ReportRoute::Publisher { publisher_ref } = &issue.route else {
+            return Ok(());
+        };
+        let key = ReportDeliveryKey::signature(&issue.issue_ref, publisher_ref);
+        let row = key.row()?;
+        let txn = self.store.env.read_txn()?;
+        let Some(mut record) = DELIVERIES.get(&self.store, &txn, &row)? else {
+            return Ok(());
+        };
+        drop(txn);
+        let eligible = matches!(record.outcome, Some(ReportDeliveryOutcome::Uncertain))
+            || matches!(
+                &record.outcome,
+                Some(ReportDeliveryOutcome::NotDelivered { dispatch })
+                    if dispatch == OutboundDispatchOutcome::Deferred.as_str()
+            );
+        if !eligible {
+            return Ok(());
+        }
+        if !self.resolve_signature_send_delivered(&record)? {
+            return Ok(());
+        }
+        record.outcome = Some(ReportDeliveryOutcome::Delivered);
+        record.updated_at = now;
+        let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
+        self.with_write_txn_grouped(|txn| {
+            DELIVERIES.put(&self.store, txn, &row, &record)?;
+            if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                record_signature_delivery_in_txn(
+                    self,
+                    txn,
+                    signature,
+                    send_ref,
+                    outcome,
+                    publisher.as_ref(),
+                )
+                .map_err(engine_error)?;
+            }
+            Ok(())
+        })
     }
 
     /// Marks the signature of `issue`'s lane Local when the issue no longer
