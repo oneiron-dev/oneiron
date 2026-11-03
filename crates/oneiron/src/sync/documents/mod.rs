@@ -9,6 +9,7 @@
 
 mod destination;
 mod entity;
+mod note_forks;
 mod note_requests;
 pub(crate) mod note_state;
 mod owner_bodies;
@@ -602,9 +603,18 @@ impl EntityDocument {
                         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?,
                 )
             };
+            // The owner lane also carries the NOTE's pending forks and
+            // proposal membership (FIX 7787), under this same admission.
+            let workflows = if note_head.is_some() && admission_key == OWNER_ADMISSION_KEY {
+                note_forks::section_in(&self.vault, txn, self.id, admission_key, state_copy)?
+            } else {
+                Vec::new()
+            };
             // A NOTE's frames name their head, head sequence and seal.
             let payload = match note_head {
-                Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
+                Some(head) => {
+                    note_state::payload(&self.vault, txn, self.id, head, &bytes, &workflows)?
+                }
                 None => bytes,
             };
             encode_document(

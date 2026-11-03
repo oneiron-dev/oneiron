@@ -8,6 +8,9 @@ side_tables! {
     /// selector/peer. Key: hex32 (entity id) [":" hex32 (NOTE head)] ":" hex64 (blake3 of admission
     /// key).
     SYNC_AD_E: SyncState b"ad:e:" Raw;
+    /// Per-admission NOTE workflow floor: the blake3 of the canonical owner-lane fork/proposal
+    /// section last sent for one NOTE. Key: hex32 (entity id) ":" hex64 (blake3 of admission key).
+    SYNC_AD_NF: SyncState b"ad:nf:" Raw;
     /// A control-plane API key record (HMAC-SHA256 digest, scopes, expiry, revoked flag) keyed by its
     /// own digest. Key: hex64.
     AUTH_CONTROL_KEY: SyncState b"auth:control-key:v1:" Named;
@@ -286,6 +289,10 @@ side_tables! {
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Replica-local NOTE fork marker (empty value): a fork born on this subscribed device,
+    /// never authority state, so an owner frame's absent-fork sweep leaves it. Key: hex32(note)
+    /// ":" hex32(fork).
+    NOTE_FORK_LOCAL: SyncState b"note_fork_local:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;

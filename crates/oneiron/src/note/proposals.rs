@@ -185,6 +185,7 @@ pub(crate) fn erase_fork_actor_in_txn(
                 wtxn,
                 &HexPair(HexId(fork.note), HexId(fork.fork)),
             )?;
+            super::owner_workflows::unmark_local_fork_in_txn(vault, wtxn, fork.note, fork.fork)?;
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
@@ -294,7 +295,13 @@ pub(super) fn remember_fork(
         proposal: None,
         decided: false,
     };
-    NOTE_FORK.put(&vault.store, txn, &fork.head, &record)
+    NOTE_FORK.put(&vault.store, txn, &fork.head, &record)?;
+    // A fork born on a subscribed replica is this device's own: authority
+    // frames must never sweep it as absent home state (FIX 7787).
+    if SYNC_DS_E.contains(&vault.store, txn, &HexId(parent.note))? {
+        super::owner_workflows::mark_local_fork_in_txn(vault, txn, parent.note, fork.head)?;
+    }
+    Ok(())
 }
 
 /// One resolver for both direct edits and proposal routing. Owner authority
@@ -466,8 +473,15 @@ impl Vault {
     }
     fn notify_landed(&self, bundle: &NoteReviewBundle) {
         #[cfg(feature = "sync")]
-        for receipt in &bundle.landed {
-            self.notify_note_document(receipt.note);
+        {
+            for receipt in &bundle.landed {
+                self.notify_note_document(receipt.note);
+            }
+            // A waiting-only open or review moves no head, but its owner
+            // frame must still re-export (FIX 7787).
+            for fork in &bundle.waiting {
+                self.notify_note_document(fork.note);
+            }
         }
         #[cfg(not(feature = "sync"))]
         let _ = bundle;
@@ -526,6 +540,12 @@ impl Vault {
                     remember_fork(self, txn, &parent, &fork, actor.entity_ref(), rewrite)?;
                     Ok(fork.head)
                 })
+            })
+            .inspect(|_| {
+                // A fork alone moves no head; its owner frame re-exports
+                // only on this notice (FIX 7787).
+                #[cfg(feature = "sync")]
+                self.notify_note_document(note);
             })
     }
 }

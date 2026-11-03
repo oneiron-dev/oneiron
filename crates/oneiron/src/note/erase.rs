@@ -2,7 +2,9 @@
 
 use super::documents::{NOTE_HEAD, NOTE_PROPOSAL_DOC};
 use super::lifecycle::NOTE_SEAL;
+use super::owner_workflows::NOTE_FORK_LOCAL;
 use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT};
+use super::sync_rows::SYNC_AD_NF;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result};
 
@@ -65,6 +67,9 @@ pub(crate) fn purge(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: &EntityId) -
     for key in keys {
         removed |= NOTE_PROPOSAL_DOC.delete(&vault.store, txn, &key)?;
     }
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    removed |= NOTE_FORK_LOCAL.delete_from(&vault.store, txn, &key_prefix)? != 0;
+    removed |= SYNC_AD_NF.delete_from(&vault.store, txn, &key_prefix)? != 0;
     let mut metadata = Vec::new();
     for (key, fork) in NOTE_FORK.scan(&vault.store, txn)? {
         if fork.note == *note {
