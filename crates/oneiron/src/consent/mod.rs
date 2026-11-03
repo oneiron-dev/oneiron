@@ -47,6 +47,8 @@
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
 //! rewrite, or a byte/status/codec change to the source record.
 
+pub mod approval_proof;
+pub mod tool_scope;
 mod adapters;
 mod ask_holders;
 mod bound;

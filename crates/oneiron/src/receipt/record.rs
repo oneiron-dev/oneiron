@@ -15,7 +15,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result, StoreError};
-use crate::outbound_intent_ledger::IntentId;
+use crate::receipt::intent_id::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
 use crate::scan_check::{EngineScan, ScanCount};

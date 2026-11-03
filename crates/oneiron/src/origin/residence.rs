@@ -314,7 +314,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             (
                 AUTHORITY.get(&self.store, &txn, &repo_id)?,
-                crate::identity::read_machine_id_in_txn(self, &txn)?,
+                crate::store::install_identity::read_machine_id_in_txn(self, &txn)?,
             )
         };
         let Some(row) = row else {
@@ -347,7 +347,7 @@ impl Vault {
         let Some(row) = AUTHORITY.get(&self.store, txn, &repo_id)? else {
             return Ok(true);
         };
-        let host = crate::identity::read_machine_id_in_txn(self, txn)?;
+        let host = crate::store::install_identity::read_machine_id_in_txn(self, txn)?;
         Ok(!row.mirror
             && row.writer != ORIGIN_ERASED_WRITER
             && host.is_some_and(|host| row.writer == host.to_hex()))

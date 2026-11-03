@@ -21,7 +21,7 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
-use crate::code_document::CodeDocumentFrontier;
+use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::code_revision::{CodeRevision, CodeTreeInventory, queue_provenance_id};
 use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};

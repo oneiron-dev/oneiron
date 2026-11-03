@@ -78,7 +78,7 @@ use reconcile::remote_of;
 use store::{ORIGIN_PUBLISH_MAX_KEY_BYTES, keyed_request_id};
 
 use crate::Vault;
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};

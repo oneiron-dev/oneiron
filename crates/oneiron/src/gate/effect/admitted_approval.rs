@@ -18,7 +18,9 @@
 use super::{ApprovalContext, ExternalEffectGovernance};
 use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
 use crate::gate::{ExternalEffectGateInput, GateOutcome};
-use crate::outbound_intent_ledger::{AdmittedApproval, IntentId, PinnedApproval};
+use crate::consent::approval_proof::AdmittedApproval;
+use crate::receipt::intent_id::IntentId;
+use crate::consent::approval_proof::PinnedApproval;
 
 impl ExternalEffectGovernance {
     /// The actual one-send tap selected under the admission writer lock.
