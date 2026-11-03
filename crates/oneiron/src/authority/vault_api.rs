@@ -394,12 +394,23 @@ impl Vault {
             return Ok(());
         }
         drop(rtxn);
-        self.with_write_txn_grouped(|wtxn| {
-            if super::store_order::backfill_in_txn(&self.store, wtxn)? {
+        let sequenced = self.with_write_txn_grouped(|wtxn| {
+            let sequenced = super::store_order::backfill_in_txn(&self.store, wtxn)?;
+            if sequenced {
                 advance_authority_cache_generation(&self.store, wtxn)?;
             }
-            Ok(())
-        })
+            Ok(sequenced)
+        })?;
+        if sequenced {
+            // A continuation cached before the backfill carries no sequence,
+            // or a stale one after a repair resequence. Dropping the cached
+            // fold makes the next fold start whole and leave a continuation
+            // that resumes by sequence.
+            if let Ok(mut cache) = self.store.authority_fold_cache.lock() {
+                *cache = None;
+            }
+        }
+        Ok(())
     }
 
     /// Advance the persisted authority-observation floor in test fixtures.

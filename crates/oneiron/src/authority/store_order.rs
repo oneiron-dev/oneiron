@@ -28,11 +28,19 @@ const STORE_ORDER: SideTable<u64, [u8; 16], Raw> =
 const STORE_ORDER_STATE: SideTable<(), [u8; 9], Raw> =
     SideTable::new(&side_table::AUTHLOG_STORE_ORDER_STATE);
 
+/// The index's state, read leniently: a state row that does not decode
+/// reads as no state (incomplete, nothing sequenced). The fold then takes
+/// its type-index scan and the backfill resequences from the stored rows;
+/// a damaged derived row never bricks a fold or a put.
 fn read_state(store: &Store, txn: &heed::RoTxn<'_>) -> Result<(bool, u64)> {
-    Ok(match STORE_ORDER_STATE.get(store, txn, &())? {
+    Ok(match STORE_ORDER_STATE.get_lenient(store, txn, &())? {
         Some(bytes) => (
             bytes[0] != 0,
-            u64::from_be_bytes(bytes[1..].try_into().expect("the state is 9 bytes")),
+            u64::from_be_bytes(
+                bytes[1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("authority store order state"))?,
+            ),
         ),
         None => (false, 0),
     })
@@ -104,7 +112,9 @@ pub(super) fn tail_ids_in_txn(
     let mut ids = Vec::new();
     for row in STORE_ORDER.iter_range(store, txn, Bound::Excluded(&after), Bound::Excluded(&next))?
     {
-        let (seq, bytes) = row?;
+        let Ok((seq, bytes)) = row else {
+            return Ok(None);
+        };
         if seq != first + ids.len() as u64 {
             return Ok(None);
         }
@@ -116,39 +126,44 @@ pub(super) fn tail_ids_in_txn(
     Ok((ids.len() as u64 == expected).then_some(ids))
 }
 
-/// The one-shot backfill: sequences every stored AUTHORITY_LOG row the
-/// index does not hold yet, in type-index order (fold order does not depend
-/// on it; the fold sorts each tail itself), then marks the index complete.
-/// Rows first stored after the index landed already hold the low sequences
-/// and are skipped by their ids. Whether it ran: false where the index is
-/// already complete, so the caller advances the fold generation only on
-/// the run that changed the store.
+/// The one-shot backfill, and the index's repair: where the index is not
+/// complete, resequence every stored AUTHORITY_LOG row in type-index
+/// order (fold order does not depend on it; the fold sorts each tail
+/// itself) and mark it complete. Resequencing rather than appending keeps
+/// no bookkeeping to disagree with: a damaged index or state is rebuilt
+/// whole from the stored rows. Whether it ran: false where the index is
+/// already complete, so the caller advances the fold generation and drops
+/// the cached fold only on the run that changed the store - a continuation
+/// cached before it carries no sequence, or a stale one after a repair.
 pub(crate) fn backfill_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<bool> {
-    let (complete, mut next) = read_state(store, txn)?;
+    let (complete, _) = read_state(store, txn)?;
     if complete {
         return Ok(false);
     }
-    let mut sequenced = BTreeSet::new();
-    for seq in 0..next {
-        if let Some(bytes) = STORE_ORDER.get(store, txn, &seq)? {
-            sequenced.insert(bytes);
-        }
-    }
-    let mut fresh = Vec::new();
+    let mut ids = Vec::new();
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
-        let id = id?;
-        if !sequenced.contains(id.as_bytes()) {
-            fresh.push(id);
-        }
+        ids.push(id?);
     }
-    for id in fresh {
+    STORE_ORDER.delete_from(store, txn, &[])?;
+    sequence_all_in_txn(store, txn, ids)?;
+    Ok(true)
+}
+
+/// Sequences `ids` from zero in the given order and marks the index
+/// complete over exactly them.
+fn sequence_all_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<()> {
+    let mut next = 0u64;
+    for id in ids {
         STORE_ORDER.put(store, txn, &next, id.as_bytes())?;
         next = next
             .checked_add(1)
             .ok_or(Error::CorruptedIndex("authority store order exhausted"))?;
     }
-    write_state(store, txn, true, next)?;
-    Ok(true)
+    write_state(store, txn, true, next)
 }
 
 /// The checkpoint rebuild's index: a restore bypasses the put chokepoint
@@ -162,10 +177,7 @@ pub(crate) fn rebuild_in_txn(
     txn: &mut heed::RwTxn<'_>,
     rows: &[(EntityId, Vec<u8>)],
 ) -> Result<()> {
-    let (_, old_next) = read_state(store, txn)?;
-    for seq in 0..old_next {
-        STORE_ORDER.delete(store, txn, &seq)?;
-    }
+    STORE_ORDER.delete_from(store, txn, &[])?;
     let mut ids = BTreeSet::new();
     for (id, raw) in rows {
         let header = EntityMetadataHeader::parse(raw)
@@ -174,10 +186,5 @@ pub(crate) fn rebuild_in_txn(
             ids.insert(*id);
         }
     }
-    let mut next = 0u64;
-    for id in ids {
-        STORE_ORDER.put(store, txn, &next, id.as_bytes())?;
-        next += 1;
-    }
-    write_state(store, txn, true, next)
+    sequence_all_in_txn(store, txn, ids)
 }

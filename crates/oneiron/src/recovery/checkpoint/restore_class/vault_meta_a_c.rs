@@ -40,9 +40,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ARTIFACT_SERVING_BLOB, CONTENT),
     (&t::ARTIFACT_SYNC_OUTBOX, CONTENT),
     (&t::ATTEMPT_PACK_RECEIPT, CONTENT),
-    // The store-order index stays with the live authority rows it sequences (FIX 12369).
-    (&t::AUTHLOG_STORE_ORDER, LIVE),
-    (&t::AUTHLOG_STORE_ORDER_STATE, LIVE),
     (&t::AUTOREASON_BEAM_ONCE, CONTENT),
     (&t::AUTOREASON_BEAM_DEFAULT, CONTENT),
     (&t::AUTHORITY_CHECKPOINT_V2_HEAD, LIVE),
