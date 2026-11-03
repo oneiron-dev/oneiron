@@ -56,6 +56,7 @@ pub mod graph_fs;
 pub(crate) mod hnsw;
 pub mod live_rows;
 pub mod llm;
+pub mod l15s_bench;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
