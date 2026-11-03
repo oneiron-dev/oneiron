@@ -154,10 +154,12 @@ pub(crate) fn telemetry_batch_class<K: AsRef<str>>(
 }
 
 impl Store {
-    /// [`Self::group_write_as`] for a write of `class` (FIX 6730): a content
-    /// write is any write. Any other class runs as a group of its own, so no
-    /// content another write stages rides its commit, and is stamped in its
-    /// own transaction when its rows stay (a refusal's receipt included).
+    /// [`Self::group_write_as`] for a write of `class` (FIX 6730, FIX 9393):
+    /// every member stamps the backup watermark in its own transaction when
+    /// its rows stay (a refusal's receipt included), so a commit shared with
+    /// a write of another class stamps once with content winning the merge.
+    /// Any other class still runs as a group of its own, so no content
+    /// another write stages rides its commit.
     pub(crate) fn group_write_classed<T, E>(
         &self,
         callback: Callback,
@@ -168,7 +170,16 @@ impl Store {
         E: From<Error>,
     {
         if class == BackupWriteClass::Content {
-            return self.group_write_as(callback, None, write);
+            return self.group_write_as(callback, None, |txn| {
+                let rows = write(txn);
+                if matches!(rows, Rows::Discard(_)) {
+                    return rows;
+                }
+                match stamp_backup_commit_in_txn(self, txn, BackupWriteClass::Content) {
+                    Ok(()) => rows,
+                    Err(error) => Rows::Discard(Err(E::from(error))),
+                }
+            });
         }
         self.group_write_as(Callback::Opaque, None, |txn| {
             let rows = write(txn);
