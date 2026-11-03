@@ -280,7 +280,7 @@ pub mod bundle_generations;
 pub use oneiron_store::connector_key_status;
 pub mod file_secret_marks;
 pub(crate) mod key_material;
-pub(crate) mod receive_scan;
+pub(crate) use oneiron_store::receive_scan;
 pub mod secret_record;
 pub mod secret_lease;
 pub mod secret_manifest;
