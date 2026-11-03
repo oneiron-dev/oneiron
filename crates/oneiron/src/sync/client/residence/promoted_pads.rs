@@ -8,9 +8,10 @@
 //! pad as window ingest would; nothing the home asserts is trusted beyond the
 //! row. A window promoted here before asks again, on a reopen or a retain,
 //! while a key of its world this vault's authority names has no pad here; its
-//! promoted copy stays as it is. That ask takes the world's pads as capsules
-//! first (`pad_custody`, FIX 6706), and the promotion's pad rows only while a
-//! key still has no pad here.
+//! promoted copy stays as it is. That ask takes only the pads this vault
+//! lacks, as capsules first (`pad_custody`, FIX 6706), and the promotion's
+//! pad rows only while a key still has no pad here. A world whose pads still
+//! do not land is asked for again only after its backoff (FIX 5178).
 
 use base64::Engine;
 use serde::Deserialize;
@@ -117,10 +118,11 @@ fn land_pad(vault: &Vault, pad: &PadRow) -> crate::Result<()> {
 impl SyncClient {
     /// Asks the home again for the pads of `window`'s world, a window promoted
     /// here before, while a key of the world this vault's authority names has
-    /// no pad here (FIX 3789). The home admits the ask as a promotion, through
-    /// `item` or else the first live row the window holds, and its snapshot is
-    /// not imported. A failure is logged and waits for the next reopen or
-    /// retain.
+    /// no pad here (FIX 3789). The missing pads are asked for by exact key
+    /// first; only while one still has no pad here does the home admit the
+    /// ask as a promotion, through `item` or else the first live row the
+    /// window holds, and its snapshot is not imported. A failure is logged;
+    /// a completed ask that leaves a pad missing backs off (FIX 5178).
     pub(super) async fn catch_up_promoted_pads(
         &mut self,
         window: &WindowKey,
@@ -141,6 +143,26 @@ impl SyncClient {
             return Ok(());
         };
         if !self.vault.world_pads_missing(world).map_err(storage)? {
+            self.promoted_pad_asks.landed(&world);
+            return Ok(());
+        }
+        if !self.promoted_pad_asks.due(&world) {
+            return Ok(());
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        // A home that may not read the window's world is not told its name
+        // (FIX 922 item 11).
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
+        self.hydrate_missing_pads(&mut rpc, window).await;
+        if !self.vault.world_pads_missing(world).map_err(storage)? {
+            self.promoted_pad_asks.landed(&world);
             return Ok(());
         }
         let item = match item {
@@ -157,12 +179,12 @@ impl SyncClient {
                     },
                 );
                 let Some(first) = first else {
+                    self.promoted_pad_asks.missed(world);
                     return Ok(());
                 };
                 first
             }
         };
-        let budgets = residence_budgets(&self.vault)?;
         let selector = self
             .config
             .residence_selector
@@ -170,21 +192,6 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
-        };
-        // A home that may not read the window's world is not told its name
-        // (FIX 922 item 11).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
-        }
-        self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
-            .await;
-        if !self.vault.world_pads_missing(world).map_err(storage)? {
-            return Ok(());
-        }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
                 "residence.promote",
@@ -199,6 +206,11 @@ impl SyncClient {
             return Err(refused());
         }
         land_pads(&self.vault, window, &checked_pads(window, &reply.pads)?);
+        if self.vault.world_pads_missing(world).map_err(storage)? {
+            self.promoted_pad_asks.missed(world);
+        } else {
+            self.promoted_pad_asks.landed(&world);
+        }
         Ok(())
     }
 }

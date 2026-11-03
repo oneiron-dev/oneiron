@@ -65,6 +65,9 @@ pub struct SyncClient {
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
+    /// When each promoted world whose pads still do not open here may be
+    /// asked for again (FIX 5178).
+    pub(super) promoted_pad_asks: super::residence::backoff::Backoff<crate::EntityId>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -187,6 +190,7 @@ impl SyncClient {
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             window_pads: Mutex::default(),
+            promoted_pad_asks: Default::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,

@@ -298,6 +298,34 @@ impl SyncClient {
         }
     }
 
+    /// The pads `window`'s world actually lacks here, by exact key, through
+    /// an already admitted residence socket `rpc` (FIX 5178). A failure is
+    /// logged: the caller still has the promotion's pad-row fallback.
+    pub(super) async fn hydrate_missing_pads(&self, rpc: &mut ResidenceRpc, window: &WindowKey) {
+        let Some(world) = window.world() else {
+            return;
+        };
+        let missing = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|txn| missing_world_pads_in_txn(&self.vault, &txn, world));
+        let keys = match missing {
+            Ok(keys) if keys.is_empty() => return,
+            Ok(keys) => keys,
+            Err(error) => {
+                tracing::warn!(%error, %window, "world pads to hydrate not read");
+                return;
+            }
+        };
+        match hydrate(&self.vault, rpc, window, Ask::Keys(&keys)).await {
+            Ok(hydrated) => log_hydrated(window, &hydrated),
+            Err(error) => tracing::warn!(%error, %window, "promoted world pads not hydrated"),
+        }
+    }
+
     /// Schedules the exact repair of the pads `window`'s world lacks here, the
     /// keys this vault's authority names with no pad here, on a task of its
     /// own: the caller never waits on it. Nothing for a base window, a
