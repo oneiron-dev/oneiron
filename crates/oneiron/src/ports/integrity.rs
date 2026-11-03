@@ -6,8 +6,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::calendar::origin::survives_source_deletion;
 use crate::error::{Error, Result};
 use crate::settings::CarriedWorlds;
-use crate::store::ManifestDbs;
-use crate::store::Store;
+use crate::store::{ManifestDbs, SessionStoreView, Store};
 use heed::{RoTxn, RwTxn};
 pub(super) const DEP: &[u8] = b"ports:dependency:v1:";
 const STALE: &[u8] = b"ports:stale:v1:";
@@ -277,6 +276,196 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
         return Ok(());
     }
     withdraw_words_in_txn(store, txn, summary, &worlds)
+}
+
+/// Withdraws every room-staged epoch summary or ASSET_TEXT that derives from
+/// `source`, before the room deletes that source (FIX 12029). The base hook's
+/// durable sweep, regeneration, cache and sync work has no room equivalent:
+/// ARCH-0052 gives a room no background jobs or history. These twins therefore
+/// take only the room view, so they cannot write base by accident.
+pub(crate) fn withdraw_room_dependents_of_lost_source_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    let prefix = [DEP, source.as_bytes()].concat();
+    for dependent in scan_dependents(view, txn, &prefix)? {
+        let Some(row) = super::EntityStoreRead::port_entity_record(view, txn, &dependent)? else {
+            continue;
+        };
+        let asset_text = row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT;
+        if !asset_text && !epoch_summary_in(view, txn, &dependent)? {
+            continue;
+        }
+        withdraw_room_lost_source_in_txn(view, txn, &dependent, asset_text)?;
+    }
+    Ok(())
+}
+
+/// A room-only source has no base placement to copy. Unknown is the base
+/// fallback's conservative answer, and records the withdrawal for every world.
+fn room_unknown_worlds() -> CarriedWorlds {
+    CarriedWorlds {
+        worlds: std::collections::BTreeSet::new(),
+        unknown: true,
+    }
+}
+
+/// The room half of `mark_one_stale_in_txn`: the same marker and index sheds,
+/// without base-only dreamer, weave, provenance, PPR or pending-embedding work.
+fn mark_room_stale_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let revision = view
+        .entities
+        .get(txn, id.as_bytes())?
+        .map(|raw| {
+            EntityMetadataHeader::parse(&raw)
+                .map(|header| header.learned_at)
+                .ok_or(Error::CorruptedIndex("stale room entity header"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    view.vault_meta
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
+    crate::bm25::deindex_text(view, txn, id)?;
+    let had_vector = view.vectors.delete(txn, id.as_bytes())?;
+    crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
+    crate::hnsw::hnsw_deindex(view, txn, id)?;
+    if had_vector {
+        crate::hnsw::increment_vector_version(view, txn)?;
+    }
+    Ok(())
+}
+
+/// The room half of `record_withdrawn_in_txn`, over the same overlay keys and
+/// value encoding as the base record.
+fn record_room_withdrawn_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    worlds: &CarriedWorlds,
+) -> Result<bool> {
+    if *worlds == CarriedWorlds::default() || !epoch_summary_in(view, txn, id)? {
+        return Ok(false);
+    }
+    let mut recorded = recorded_withdrawn_in(view, txn, id)?.unwrap_or_default();
+    if !recorded.absorb(worlds) {
+        return Ok(false);
+    }
+    view.vault_meta
+        .put(txn, &withdrawn_key(id), &recorded.encode())?;
+    Ok(true)
+}
+
+/// The epoch summaries a room row wrote from `id`, through the same forward
+/// dependency rows as the base walk.
+fn room_epoch_dependents_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &RwTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let prefix = [DEP, id.as_bytes()].concat();
+    let mut epochs = Vec::new();
+    for dependent in scan_dependents(view, txn, &prefix)? {
+        if epoch_summary_in(view, txn, &dependent)? {
+            epochs.push(dependent);
+        }
+    }
+    Ok(epochs)
+}
+
+/// Scrubs one withdrawn room epoch to its canonical keyframe, or to its header
+/// when the old body has no decodable keyframe. There is deliberately no sweep
+/// enqueue, L2 eviction, entity-document erase or mutation-audit row in-room.
+fn scrub_room_epoch_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(row) = super::EntityStoreRead::port_entity_record(view, txn, id)? else {
+        return Ok(());
+    };
+    if row.entity_type != crate::registry::ENTITY_TYPE_SUMMARY || !stale_in_txn(view, txn, id)? {
+        return Ok(());
+    }
+    let form = crate::compaction::stored_epoch_in(view, txn, id, &row.body)?;
+    if !form.may_be() {
+        return Ok(());
+    }
+    if form == crate::compaction::StoredEpoch::Unresolved {
+        record_room_withdrawn_in_txn(view, txn, id, &room_unknown_worlds())?;
+    }
+    let raw = row.encode();
+    let mut scrubbed = raw[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
+    match crate::compaction::erased_form(&raw) {
+        crate::ports::ScrubbedRecord::Shell => {}
+        crate::ports::ScrubbedRecord::WithdrawnEpoch(keyframe) => {
+            scrubbed.extend_from_slice(&keyframe.encode()?);
+        }
+    }
+    if scrubbed == raw {
+        return Ok(());
+    }
+    crate::vault::entity_revision::remove_entity_revisions(view, txn, id)?;
+    crate::batch::delete_short_id_rows_for_id(view, txn, id)?;
+    view.entities.put(txn, id.as_bytes(), &scrubbed)?;
+    Ok(())
+}
+
+/// Withdraws nested room epochs iteratively, as the base worklist does. A room
+/// has no deferred driver, so this runs synchronously in the delete's own txn.
+fn withdraw_room_epochs_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    mut pending: Vec<EntityId>,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
+    while let Some(next) = pending.pop() {
+        let grew = record_room_withdrawn_in_txn(view, txn, &next, worlds)?;
+        let stale = marked_stale_in(view, txn, &next)?;
+        if stale && !grew {
+            continue;
+        }
+        if !stale {
+            mark_room_stale_in_txn(view, txn, &next)?;
+        }
+        pending.extend(room_epoch_dependents_in_txn(view, txn, &next)?);
+        scrub_room_epoch_in_txn(view, txn, &next)?;
+    }
+    Ok(())
+}
+
+/// One dependent losing `source` in a room. ASSET_TEXT marks stale and keeps
+/// its body; an epoch records unknown worlds and keeps only its keyframe.
+fn withdraw_room_lost_source_in_txn(
+    view: &SessionStoreView<'_>,
+    txn: &mut RwTxn<'_>,
+    dependent: &EntityId,
+    asset_text: bool,
+) -> Result<()> {
+    let worlds = room_unknown_worlds();
+    if asset_text {
+        if !marked_stale_in(view, txn, dependent)? {
+            mark_room_stale_in_txn(view, txn, dependent)?;
+            let pending = room_epoch_dependents_in_txn(view, txn, dependent)?;
+            withdraw_room_epochs_in_txn(view, txn, pending, &worlds)?;
+        }
+        return Ok(());
+    }
+    let was_stale = marked_stale_in(view, txn, dependent)?;
+    if !was_stale {
+        mark_room_stale_in_txn(view, txn, dependent)?;
+    }
+    let grew = record_room_withdrawn_in_txn(view, txn, dependent, &worlds)?;
+    if was_stale && !grew {
+        return Ok(());
+    }
+    let pending = room_epoch_dependents_in_txn(view, txn, dependent)?;
+    withdraw_room_epochs_in_txn(view, txn, pending, &worlds)?;
+    scrub_room_epoch_in_txn(view, txn, dependent)
 }
 /// Whether epoch summary `id` still holds words here of a generation at or
 /// below `cutoff`, a withdrawn generation another machine of this vault
