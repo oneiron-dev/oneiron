@@ -78,9 +78,17 @@ pub(super) fn dispatch_put_type(
                 src: fixed.id,
             }));
         }
+        // A sealed transition its validator checked whole (the owner's
+        // restore of a session-bundle claim, FIX 11882, among them) binds
+        // this exact Put as an envelope binds its producer.
+        let transition_binds = match fixed.transition {
+            Some(proof) => proof.matches_body(store, wtxn, &fixed.id, &body)?,
+            None => false,
+        };
         if body.session_tag.is_some()
             && !fixed.replicated
             && !fixed.claim_gate_prechecked
+            && !transition_binds
             && !fixed
                 .refinement_admission
                 .is_some_and(|proof| proof.binds_claim(&fixed.id, data))
