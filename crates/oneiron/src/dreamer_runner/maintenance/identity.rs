@@ -50,6 +50,7 @@ mod erase;
 mod evidence;
 mod hints;
 mod host;
+mod index;
 mod presentation;
 mod recheck;
 mod settle_undo;
@@ -63,6 +64,9 @@ pub use evidence::{
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
 pub(crate) use hints::hinted_mention_in_txn;
 use hints::{hinted_in_txn, put_hint_in_txn};
+pub(super) use index::{
+    INVERSE_BY_SOURCE, inverse_ids, sync_inverse_membership, sync_inverse_sets,
+};
 use presentation::{card, options_in_txn, view_in_txn};
 pub(super) use recheck::run;
 use recheck::{ask_for_mention_in_txn, context_terms, measure_ask};
@@ -71,6 +75,8 @@ use settlement::{
     apply_in_txn, ask_answer_id, dreamer_seal, entity_of_kind_in_txn, escalate_in_txn,
     keep_separate_in_txn, listed_candidates, notify_in_txn, parse_choice, settle_ask_in_txn,
 };
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -439,6 +445,15 @@ pub(super) struct ProvisionalInverse {
     kept_at: u64,
 }
 
+impl ProvisionalInverse {
+    /// Every id whose erase would change this inverse (FIX 10376): the prior
+    /// ask's ids while it stands. The source anchor is none: it stays by
+    /// design, and naming it would pin membership forever.
+    pub(super) fn named_ids(&self) -> BTreeSet<EntityId> {
+        self.prior.as_ref().map(index::ask_ids).unwrap_or_default()
+    }
+}
+
 /// The owner's revert of a kept-separate ask: the ask as it stood before
 /// goes to them as today's question, an inbox Ask with its choice card, as
 /// reverting "keep them separate for now" means "ask me". An ask answered,
@@ -629,6 +644,9 @@ impl Memory<'_> {
                     held.reason = IdentityAskReason::ActNow { effect };
                     held.retry_at = 0;
                     held.kept_separate_at = None;
+                    // No membership sync (FIX 10376): a take-up stamps the
+                    // reason, retry and kept-separate mark only, none of
+                    // which the ask's erase reads.
                     ASKS.put(&vault.store, txn, &key, &held)?;
                 }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
@@ -689,6 +707,7 @@ impl Memory<'_> {
                 });
             }
             measure_ask(vault, &ask);
+            index::sync_ask_membership(&vault.store, txn, &key, None, Some(&ask))?;
             ASKS.put(&vault.store, txn, &key, &ask)?;
             Ok(IdentityActNow::Deciding { ask: key_hex(&key) })
         })
