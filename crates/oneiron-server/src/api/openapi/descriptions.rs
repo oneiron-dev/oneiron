@@ -307,6 +307,10 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Short ref for ASSET and ASSET_TEXT rows. Consumers pass this to the core hydrate resolver.",
             ),
             ("score", "Retrieval score."),
+            (
+                "world_unproven",
+                "True when the row's world cannot be proven; it renders under `MEMORIES world=unknown`.",
+            ),
         ],
     ),
     (

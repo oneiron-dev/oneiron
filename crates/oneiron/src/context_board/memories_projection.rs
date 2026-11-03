@@ -8,7 +8,7 @@ use crate::context_pack::{ContextEntity, ContextPack};
 use crate::disclosure::DisclosureAssembly;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 
 /// Builds the MEMORIES section from an already assembled pack.
@@ -241,6 +241,34 @@ impl crate::Vault {
         ] {
             for entity in entities {
                 let mut row = memory_row(entity, source);
+                // FIX 10563: a retrieved SUMMARY or TASK takes its world from
+                // its birth stamp, read in this projection's own snapshot as
+                // a pin does. A CLAIM keeps its own above; any other kind
+                // keeps the pack's `InWorld` label. Label only.
+                if matches!(entity.entity_type, ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK)
+                    && let Some(record) = crate::ports::EntityStoreRead::port_entity_record(
+                        &self.store,
+                        &rtxn,
+                        &entity.id,
+                    )?
+                {
+                    match crate::federation::record_scope::record_world_in(
+                        &self.store,
+                        &rtxn,
+                        entity.id,
+                        entity.entity_type,
+                        &record.body,
+                    )? {
+                        Some(world) => {
+                            row.world = world.map(|world| world.to_hex());
+                            row.world_unproven = false;
+                        }
+                        None => {
+                            row.world = None;
+                            row.world_unproven = true;
+                        }
+                    }
+                }
                 if entity.entity_type == ENTITY_TYPE_CLAIM {
                     row.question = self
                         .get_claim_in_txn(&rtxn, &entity.id)
