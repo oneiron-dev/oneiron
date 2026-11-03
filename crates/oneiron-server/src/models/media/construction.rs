@@ -88,7 +88,7 @@ impl OpenAiMediaTransport for MediaHttp {
                 (OpenAiMediaMethod::Post, OpenAiMediaBody::Json(body), Some(release)) => {
                     let reply = self
                         .http
-                        .send_json_released(&path, body, release)
+                        .send_json_released(&path, body, release, lease)
                         .await
                         .map_err(|error| match error {
                             HttpReleaseError::Transport(failure) => transport(failure),

@@ -8,7 +8,7 @@
 use std::error::Error as _;
 use std::time::{Duration, Instant};
 
-use super::{DispatchRelease, HttpReleaseError, ReleaseSending, Sending};
+use super::{BudgetLease, DispatchRelease, HttpReleaseError, ReleaseSending, Sending};
 
 /// How soon after its send an exchange whose connection closed with no reply
 /// byte counts as one its upstream never read: far under any model's first
@@ -45,12 +45,14 @@ pub(super) fn send_released<'a>(
     fresh: &reqwest::Client,
     request: reqwest::RequestBuilder,
     release: DispatchRelease<'a>,
+    lease: &'a BudgetLease,
 ) -> ReleaseSending<'a> {
     let fresh = fresh.clone();
     let again = request.try_clone();
     Box::pin(async move {
         release().map_err(HttpReleaseError::Release)?;
         let started = Instant::now();
+        let _attempt = lease.begin_inference_observation();
         let error = match request.send().await {
             Ok(response) => return Ok(response),
             Err(error) => error,
@@ -63,6 +65,7 @@ pub(super) fn send_released<'a>(
             "a request that never reached its provider goes once more on a fresh connection"
         );
         release().map_err(HttpReleaseError::Release)?;
+        let _attempt = lease.begin_inference_observation();
         let (_, request) = again.build_split();
         let request = request.map_err(|error| HttpReleaseError::Transport(error.into()))?;
         fresh

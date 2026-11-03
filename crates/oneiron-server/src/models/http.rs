@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::Stream;
-use oneiron::LlmError;
 use oneiron::llm::DispatchRelease;
+use oneiron::{BudgetLease, LlmError};
 use serde_json::Value as JsonValue;
 
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
@@ -404,12 +404,13 @@ impl ProviderHttp {
         request: impl Fn() -> reqwest::RequestBuilder + 'a,
         plain: Vec<u8>,
         release: DispatchRelease<'a>,
+        lease: &'a BudgetLease,
     ) -> ReleaseSending<'a> {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
-            return never_sent::send_released(&self.fresh, request().body(plain), release);
+            return never_sent::send_released(&self.fresh, request().body(plain), release, lease);
         };
         let (request, resend) = (request(), request());
         let fresh = self.fresh.clone();
@@ -417,13 +418,15 @@ impl ProviderHttp {
             let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
                 .body(encoded);
-            let response = never_sent::send_released(&fresh, request, release.clone()).await?;
+            let response =
+                never_sent::send_released(&fresh, request, release.clone(), lease).await?;
             if !matches!(response.status().as_u16(), 400 | 415) {
                 return Ok(response);
             }
             let refused = response.status();
             drop(response);
-            let response = never_sent::send_released(&fresh, resend.body(plain), release).await?;
+            let response =
+                never_sent::send_released(&fresh, resend.body(plain), release, lease).await?;
             if response.status() != refused {
                 compressor.on.store(false, Ordering::Relaxed);
                 tracing::warn!(
@@ -497,6 +500,7 @@ impl ProviderHttp {
         path: &str,
         json: JsonValue,
         release: DispatchRelease<'_>,
+        lease: &BudgetLease,
     ) -> Result<BytesReply, HttpReleaseError> {
         let plain = serde_json::to_vec(&json).unwrap_or_default();
         let url = self.url(path);
@@ -509,7 +513,7 @@ impl ProviderHttp {
             }
         };
         let response = self
-            .send_body_released(path, request, plain, release)
+            .send_body_released(path, request, plain, release, lease)
             .await?;
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
