@@ -28,7 +28,8 @@ use heed::types::Bytes;
 use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
     self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,

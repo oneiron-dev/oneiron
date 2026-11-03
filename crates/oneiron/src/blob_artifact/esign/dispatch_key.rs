@@ -14,8 +14,8 @@
 //! no-key key chain`).
 
 use super::outbound::EsignOutboundVerb;
-use crate::memory::{MemoryError, MemoryResult};
-use crate::runtime_hooks::InvocationId;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
+use crate::store::verb_invocation::InvocationId;
 use crate::{EntityId, Vault};
 
 /// The BLAKE3 domain of a no-key act's key derived from its invocation.

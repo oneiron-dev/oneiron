@@ -13,8 +13,8 @@ use crate::authority::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{ScopeAxis, ScopeId};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 use super::record::{ForeignWorldPrivacyLink, NewRequest, WorldPrivacyRequestKind as Kind};
 use super::{WorldPrivacyOutcome, direction_in_txn};
