@@ -479,6 +479,10 @@ fn plan_thread(
             )
         }
         ReanchorOutcome::Mapped(at_head) => {
+            let landing_unread = landing.is_some_and(|(version, frontier)| {
+                units_at(units, frontier).is_none()
+                    || matches!(filed.get(version), Some(Filed::Missing | Filed::Unread))
+            });
             let landed = landing.and_then(|(version, frontier)| {
                 let target = units_at(units, frontier)?;
                 let ReanchorOutcome::Mapped(at_export) =
@@ -503,6 +507,10 @@ fn plan_thread(
                 frontier: body_head.to_vec(),
                 locator: at_head,
             };
+            if !stamped && landing.is_some() && !landing_unread && landed.is_none() && moved == body
+            {
+                return Follow::OutOfOrder;
+            }
             if !stamped && landed.is_none() && moved == body {
                 return Follow::Idle;
             }
