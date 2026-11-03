@@ -16,6 +16,7 @@ impl Memory<'_> {
         // What the lane admits from is what the item is projected from: a
         // room's view, or base.
         let content = lane.store_read();
+        let l15_hydrate_read = crate::stage_timing::stage("recall.hydrate_read");
         let ScopedReadResult {
             value: admitted,
             receipt: read,
@@ -104,6 +105,7 @@ impl Memory<'_> {
             let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
             Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;
+        drop(l15_hydrate_read);
         receipt.restrict_with(&read);
         let Some((entity_type, Some(body), Some(view), turn, stale, handle)) = admitted else {
             return Ok(None);
