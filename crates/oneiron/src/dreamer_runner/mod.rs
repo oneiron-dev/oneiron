@@ -4,8 +4,6 @@
 //! (queue leases, local run-tree rows, parked rows, and budget counters) stays
 //! in private LMDB rows and is not sync materialized as vault entities.
 
-pub mod shadow_values;
-pub mod step_replay;
 mod admission;
 mod claim_authoring;
 mod codec;
@@ -22,6 +20,8 @@ mod program;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
+pub mod shadow_values;
+pub mod step_replay;
 mod store;
 mod types;
 mod wake_park;

@@ -40,12 +40,7 @@ impl ManagedWidenTranscript {
     /// Begins the transcript `holder_ref`'s widen action covers on `vault`,
     /// for a body whose spool holds `body_len` bytes.
     #[must_use]
-    pub fn new(
-        spawn_token: &TokenHex,
-        vault: &str,
-        holder_ref: &str,
-        body_len: u64,
-    ) -> Self {
+    pub fn new(spawn_token: &TokenHex, vault: &str, holder_ref: &str, body_len: u64) -> Self {
         let mut key = blake3::derive_key(DOMAIN, spawn_token.expose().as_bytes());
         let mut hasher = blake3::Hasher::new_keyed(&key);
         key.zeroize();

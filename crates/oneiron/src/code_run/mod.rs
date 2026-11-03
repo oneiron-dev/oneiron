@@ -292,12 +292,17 @@ pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
 
-pub use self::dispatcher::{ConnectorAnswerRequest, ConnectorQuestionAnswer, ConnectorAnswerAction};
+pub use self::dispatcher::{
+    ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,
+};
 
-pub use self::consent_wait::{ConnectorCallReply, ConnectorToolResult, CONNECTOR_RESULT_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED, CONNECTOR_QUESTIONS_NOT_RETAINED};
 pub(crate) use self::consent_wait::source as connector_result_source;
+pub use self::consent_wait::{
+    CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
+    CONNECTOR_RESULT_NOT_RETAINED, ConnectorCallReply, ConnectorToolResult,
+};
 
-pub use self::dispatcher::{SecretUseStatus, SecretUseAnswer, SecretUseRecord, kept_reveal_answer};
 pub(crate) use self::dispatcher::kept_reveal_lease;
+pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;

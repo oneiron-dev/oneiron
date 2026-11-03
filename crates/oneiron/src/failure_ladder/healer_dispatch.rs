@@ -1,7 +1,7 @@
 //! Failure-ladder healer routing contract.
 
-use serde::{Deserialize, Serialize};
 use crate::failure_ladder::HealerCase;
+use serde::{Deserialize, Serialize};
 
 /// Which healer a failure scope routes its cases to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,4 +24,3 @@ pub struct DispatchHealer {
     pub run_id: Option<String>,
     pub now: u64,
 }
-
