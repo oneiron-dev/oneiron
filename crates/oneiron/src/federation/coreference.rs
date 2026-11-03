@@ -3,7 +3,7 @@
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use rmpv::Value;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{
     COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,

@@ -2,7 +2,7 @@ use super::*;
 
 use heed::RwTxn;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     EdgeKind, EdgeProvenanceFlags, encode_edge_value, validate_edge_weight,

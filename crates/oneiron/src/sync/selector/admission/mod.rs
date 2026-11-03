@@ -37,21 +37,7 @@ use self::routing::Routes;
 pub(in crate::sync) use self::state::staged_births;
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 
-/// Role carried by a member/guest federation import path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FederationAdmissionRole {
-    Member,
-    Guest,
-}
-
-impl FederationAdmissionRole {
-    const fn origin(self) -> &'static str {
-        match self {
-            Self::Member => "federation_admission.member",
-            Self::Guest => "federation_admission.guest",
-        }
-    }
-}
+pub use crate::store::window_protocol::FederationAdmissionRole;
 
 /// How admission grades a federated CLAIM, TURN or CONVERSATION (FIX 360).
 #[cfg(feature = "sync")]
@@ -483,7 +469,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::receipt::validate_receipt_record_body(id, body)?;
         }
         crate::registry::ENTITY_TYPE_TASK => {
-            crate::habit::task_role_from_body_bytes(body)?;
+            crate::write_envelope::task_body::task_role_from_body_bytes(body)?;
         }
         crate::registry::ENTITY_TYPE_CODE_ARTIFACT => {
             crate::code_artifact::validate_code_artifact_body_bytes(body)?;
@@ -492,7 +478,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
             crate::blob_artifact::validate_blob_artifact_body_bytes(body)?;
         }
         crate::registry::ENTITY_TYPE_SKILL => {
-            crate::skill::decode_skill_record(body)?;
+            crate::write_envelope::skill_record::decode_skill_record(body)?;
         }
         crate::registry::ENTITY_TYPE_AGENT_DEF => {
             let definition = crate::agent_def::decode_agent_definition(body)?;
@@ -511,7 +497,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn validate_sync_identity_body(entity_type: u8, body: &[u8]) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(body)
+        && crate::write_envelope::person_identity::is_identity_facet_body(body)
     {
         return Err(Error::InvalidClaimBody(
             "FACET cannot carry PERSON identity",

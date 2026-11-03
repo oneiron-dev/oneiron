@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm::decision::DecisionAnswer;
+use crate::model_decision::DecisionAnswer;
 
 /// `vault.decisions.asks.answer`'s input: the caller's answer to one ask, as
 /// a holder of the role the ask is at.

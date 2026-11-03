@@ -48,10 +48,23 @@ use super::{
 use crate::authority::AuthorityEntryHash;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{
-    CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
-    KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit,
-    restore_kit,
+use crate::{
+    store::recovery_kit::{
+        CodeKeeping,
+        KitCoverage,
+        KitError,
+        KitId,
+        KitIssue,
+        KitMachine,
+        KitManifest,
+        KitPassphrase,
+        KitPiece,
+        KitPiecePair,
+        KitSecretKind,
+        PieceHome,
+        RestoredKitSecret,
+    },
+    recovery::{issue_recovery_root_kit, restore_kit},
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
