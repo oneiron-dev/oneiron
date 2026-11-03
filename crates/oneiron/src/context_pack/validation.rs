@@ -13,7 +13,7 @@ use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::disclosure::{DisclosureContext, DisclosureMode};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::StoreRead;
 
@@ -307,7 +307,7 @@ fn validate_claim_value_references(
     body: &ClaimBody,
     quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
-    let Some(value) = crate::affect::decode_affect_trigger_claim(body)? else {
+    let Some(value) = crate::write_envelope::affect_trigger::decode_affect_trigger_claim(body)? else {
         return Ok(());
     };
     validate_pack_payload_reference(store, rtxn, &value.trigger_ref(), quarantine_index)

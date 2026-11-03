@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::authority::{ModelOrder, PolicyRevision, ReadLocation, SealedCopies, WorldPrivacy};
 use crate::error::{Error, Result};
-use crate::task_verb::TaskAskHandle;
+use crate::authority::task_ask_handle::TaskAskHandle;
 
 use super::WorldPrivacyOutcome;
 use super::record::{WorldPrivacyRequest, parse_revision};

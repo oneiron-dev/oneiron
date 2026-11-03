@@ -155,6 +155,7 @@ impl EngineNativeExecutor<'_> {
             crate::code_run::ExecutorStorage::Canonical(vault) => vault.pre_compact_hooks(
                 crate::compaction::compact_invocation(run_id.as_bytes(), watermark),
                 self.gated_write.actor().entity_ref(),
+                Some(self.gated_write.host_turn_read_key()),
                 &window,
                 &mut pins,
                 budget,
@@ -166,6 +167,7 @@ impl EngineNativeExecutor<'_> {
                     &binding.route,
                     crate::compaction::compact_invocation(run_id.as_bytes(), watermark),
                     self.gated_write.actor().entity_ref(),
+                    Some(self.gated_write.host_turn_read_key()),
                     &window,
                     &mut pins,
                     budget,

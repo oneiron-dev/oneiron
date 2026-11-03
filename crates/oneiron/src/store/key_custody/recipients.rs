@@ -17,7 +17,8 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason;
 use crate::store::Store;
 
 use super::files::{read_whole, write_once};

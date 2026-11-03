@@ -120,7 +120,9 @@ pub(crate) use gate::{
 };
 pub(crate) use hooks::host_compact_as_owner;
 pub use hooks::{CompactHooks, HOST_COMPACT, check_host_compact_rewrite, compact_invocation};
-pub(crate) use hooks::{post_compact_hooks_in_room, pre_compact_hooks_in_room};
+pub(crate) use hooks::{
+    keep_compact_hooks_in_room, post_compact_hooks_in_room, pre_compact_hooks_in_room,
+};
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
     COMPACTION_STEP_RESPONSE_NAME, SelfLanding, admit_self_landing, admit_self_landing_on,
@@ -552,3 +554,5 @@ pub(crate) fn record_turn_session_membership_in_txn(
 
 #[cfg(test)]
 mod tests;
+
+pub mod host_request;

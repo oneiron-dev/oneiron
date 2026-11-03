@@ -5,11 +5,11 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::error::{Error, GateError, Result};
-use crate::federation::{
+use crate::side_table::{CodecError, RawValue};
+use oneiron_authority::federation::{
     Scope,
     scope_codec::{decode_scope_value, encode_scope_value},
 };
-use crate::side_table::{CodecError, RawValue};
 
 /// Current contact clearance body schema version (prerelease wire format).
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;

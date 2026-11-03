@@ -13,7 +13,7 @@
 //! distinct from Git parentage. No live ref, compare-and-swap value or
 //! automatic ancestor export stands in. Every other revision keeps the
 //! export's own immediate-parent rule, unchanged.
-use crate::code_revision::CodeRevision;
+use crate::store::code_revision_record::CodeRevision;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::{EntityId, Vault};
