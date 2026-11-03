@@ -42020,6 +42020,8 @@ pub struct ArtifactExportFile {
     pub media_type: String,
     #[serde(rename = "content_hash")]
     pub content_hash: String,
+    #[serde(rename = "bytes_hash")]
+    pub bytes_hash: String,
     #[serde(rename = "born_with")]
     pub born_with: std::collections::HashMap<String, String>,
     #[serde(rename = "content_base64")]
@@ -69287,6 +69289,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_origin: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     #[serde(
         rename = "source_title",
         default,

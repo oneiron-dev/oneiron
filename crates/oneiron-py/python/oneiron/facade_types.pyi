@@ -13272,6 +13272,7 @@ class ArtifactExportFile(TypedDict):
     name: str
     media_type: str
     content_hash: str
+    bytes_hash: str
     born_with: BornWith
     content_base64: str
 class AgentSkillInput(TypedDict):
@@ -22376,6 +22377,7 @@ class EffectReceipt(TypedDict):
     action: NotRequired[ReplayAction | None]
     source_url: NotRequired[str | None]
     source_origin: NotRequired[str | None]
+    audience: NotRequired[str | None]
     source_title: NotRequired[str | None]
     tab: NotRequired[str | None]
     result_tab: NotRequired[str | None]

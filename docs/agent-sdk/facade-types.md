@@ -5334,7 +5334,7 @@ export type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string
 /** `oneiron::blob_artifact::verbs::ArtifactExportRequest` */
 export type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null }
 /** `oneiron::blob_artifact::verbs::ArtifactExportFile` */
-export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string }
+export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; bytes_hash: string; born_with: BornWith; content_base64: string }
 /** `oneiron::verbs::agents::AgentSkillInput` */
 export type AgentSkillInput = { skill_id: string; min_version?: string | null }
 /** `oneiron::verbs::agents::AgentMcpInput` */
@@ -8556,7 +8556,7 @@ export type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reaso
 /** `oneiron_browser::verbs::ReceiptOutcome` */
 export type ReceiptOutcome = "unknown"
 /** `oneiron_browser::verbs::EffectReceipt` */
-export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
+export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; audience?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number }
 /** `oneiron_browser::library::secret_slots::SecretParam` */
 export type SecretParam = { name: string; kind: SecretKind }
 /** `oneiron_browser::library::admission::RecentCounts` */
