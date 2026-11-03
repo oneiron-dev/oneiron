@@ -479,6 +479,12 @@ fn steps_value(member: &[MemberStep]) -> Value {
                     Value::from(object),
                     Value::from(generation),
                 ]),
+                // FIX 11550: a PDF object stream's decoded bytes.
+                MemberStep::PdfObjectStream { object, generation } => Value::Array(vec![
+                    Value::from("pdf_object_stream"),
+                    Value::from(object),
+                    Value::from(generation),
+                ]),
             })
             .collect(),
     )
