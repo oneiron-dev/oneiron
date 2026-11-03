@@ -247,8 +247,7 @@ impl ConsolidationExecutor<'_> {
             // Every other failure parks with what the attempt spent, a
             // refused conflict read's paid usage included (FIX 414).
             Err(other) => Ok(super::failure::park_partition_failure_with_spend(
-                other,
-                &mut charges,
+                other, charges,
             )),
         }
     }

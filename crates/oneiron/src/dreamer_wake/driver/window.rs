@@ -88,7 +88,7 @@ impl DreamerWakeDriver<'_> {
         &mut self,
         input: &RunWakePass,
         admitted: &DreamerAdmittedAttempt,
-        line: &str,
+        line: &String,
         spend_meter: &WakeAttemptMeter,
         cancel_requested: bool,
         dispatched: Dispatched,

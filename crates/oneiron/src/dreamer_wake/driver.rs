@@ -30,8 +30,8 @@ use crate::attempt_queue::{AttemptQueue, LandingWarningOutcome, WarnAttemptBudge
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerClaimAuthoringBatchTier, DreamerConsolidationAdmissionOutcome,
-    DreamerConsolidationScope, DreamerMilestoneKind, DreamerRunnerStore, ParkDreamerAttempt,
-    SettleDreamerBudget,
+    DreamerConsolidationScope, DreamerMilestoneKind, DreamerParkCause, DreamerRunnerStore,
+    ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
