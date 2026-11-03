@@ -305,7 +305,7 @@ impl Vault {
             file.version,
             hash_hex(blake3::hash(&file.bytes).as_bytes()),
             by,
-            &crate::share_travel::BornWith::new(),
+            &oneiron_authority::share_travel::BornWith::new(),
         )
     }
 }

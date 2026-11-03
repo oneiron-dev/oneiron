@@ -161,7 +161,7 @@ impl From<MemoryError> for ForeignCodeFailure {
 type ForeignLaunch<'a> = (
     ForeignCodeArtifact<'a>,
     crate::code_sandbox::microvm::ExecutionBudget,
-    std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
 );
 
 #[derive(Deserialize)]
@@ -198,7 +198,7 @@ impl Memory<'_> {
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
-        spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+        spool: std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
         type_feedback: Option<&TypeFeedback>,
     ) -> Result<ForeignCodeRunResult, ForeignCodeFailure> {
         let proof = self.foreign_code_credential()?;

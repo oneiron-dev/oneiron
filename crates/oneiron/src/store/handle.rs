@@ -278,7 +278,7 @@ pub struct StoreCore {
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
-    pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
+    pub(crate) result_memory: RwLock<Arc<crate::store::result_memory::ResultMemoryPool>>,
     /// The inference snapshot admission generation, closing gate, disk line
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
