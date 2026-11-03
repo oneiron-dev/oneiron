@@ -63,6 +63,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault, WriteActor};
 
 use super::host_doors::support::{Listed, internal, naming, off_runtime_listing, refused};
+use crate::api::off_record_rooms::pre_embed_turn;
 use crate::auth::CoreAuth;
 use crate::mcp::{McpCodeExecutionError, OffRecordRunSession};
 use crate::owner::OwnerError;
@@ -410,7 +411,7 @@ pub(crate) async fn vault_off_record_witness(
                     turn: input.turn,
                     summary: input.summary,
                 };
-                return owner_off_record::witness(vault, owner, &request)
+                return owner_off_record::witness(vault, owner, &request, server.embedder.as_ref())
                     .map_err(|error| refusal(VERB, error));
             }
             Caller::Principal { who, credential } => (*who, credential),
@@ -425,17 +426,24 @@ pub(crate) async fn vault_off_record_witness(
             let session = rooms
                 .bind_for(session_ref, who.actor)
                 .map_err(|error| session_refusal(error, session_ref))?;
+            // FIX 3817 (a): the turn's vector is embedded after bind, before
+            // the verb, never under the witness writer.
+            let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
             return memory.witness_into_session_as_member(
                 &session,
                 &input.turn,
                 summary,
                 Some(credential),
+                turn_vector,
             );
         }
         let session = rooms
             .bind_as_creator(session_ref, who)
             .map_err(|error| session_refusal(error, session_ref))?;
-        session.witness_as_creator(&memory, &input.turn, summary, credential)
+        // FIX 3817 (a): the turn's vector is embedded after bind, before the
+        // verb, never under the witness writer.
+        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
+        session.witness_as_creator(&memory, &input.turn, summary, credential, turn_vector)
     })
     .await
 }
