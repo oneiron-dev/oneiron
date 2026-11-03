@@ -26,6 +26,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultWriterLease};
 use tauri::{AppHandle, Manager};
+use zeroize::Zeroizing;
 
 use crate::{
     DESKTOP_ROOT_SECRET_SOURCE, RootSecretSource, SourceFailure, copy, with_effective_secret,
@@ -201,6 +202,7 @@ pub fn root_rekey_confirm(
     install: String,
     secret: String,
 ) -> Result<RekeyConfirmed, String> {
+    let secret = Zeroizing::new(secret);
     let state = app.state::<RekeyState>();
     let _one_at_a_time = state
         .confirming
@@ -211,7 +213,7 @@ pub fn root_rekey_confirm(
         install: EntityId::from_hex(&install)
             .map_err(|_| "the install id is not a machine id".to_owned())?,
     };
-    Ok(confirm(&state, &shown, &secret))
+    Ok(confirm(&state, &shown, &*secret))
 }
 
 fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> RekeyConfirmed {
@@ -257,7 +259,7 @@ fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> Re
             }
         }
         Ok(Some(RootSecretSource::RetainedSlot)) => {
-            replace_retained(state, &owner, shown, &kept, root_key)
+            replace_retained(state, &owner, shown, &*kept, root_key)
         }
     }
 }
@@ -306,16 +308,16 @@ fn validate(
     owner: &AuthenticatedOwner,
     shown: &LocalHostRootContext,
     secret: &str,
-) -> Result<(LocalHostRootValidated, Vec<u8>), String> {
+) -> Result<(LocalHostRootValidated, Zeroizing<Vec<u8>>), String> {
     let text = secret.as_bytes();
     let refusal = match vault.validate_local_host_root_replacement(owner, shown, text) {
-        Ok(validated) => return Ok((validated, text.to_vec())),
+        Ok(validated) => return Ok((validated, Zeroizing::new(text.to_vec()))),
         Err(error) => error.to_string(),
     };
     if let Some(bytes) = parse_hex32(secret)
         && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &bytes)
     {
-        return Ok((validated, bytes.to_vec()));
+        return Ok((validated, Zeroizing::new(bytes.to_vec())));
     }
     Err(refusal)
 }
