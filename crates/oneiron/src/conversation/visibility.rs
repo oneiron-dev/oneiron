@@ -698,9 +698,9 @@ fn gate_claim_anchors_inner(
 /// `private_sources::thread_walk_seen_in`; Vault branches run only when
 /// `vault` is `Some`, otherwise they bail to `Err` (incomplete). Cover
 /// failures are strict here (incomplete) where the readability walk omits
-/// them, since anchors must never under-capture. Missing rows skip and
-/// cycles end via `seen`, as the walk does; corrupt headers, malformed
-/// covers, and scan failures are `Err`.
+/// them, since anchors must never under-capture. Missing rows skip; an
+/// ancestry cycle is `Err`, never a complete capture. Corrupt headers,
+/// malformed covers, and scan failures are `Err`.
 fn anchor_thread_walk_in(
     store: &crate::store::Store,
     vault: Option<&Vault>,
@@ -729,11 +729,27 @@ fn anchor_thread_walk_one_in(
         EngineScan::PrivateThreadAncestryRecords,
         subject.as_bytes(),
     )?;
+    enum AnchorVisit {
+        Enter(EntityId, Option<Vec<u8>>, bool),
+        Leave(EntityId),
+    }
+
     let mut seen: BTreeMap<EntityId, bool> = BTreeMap::new();
+    let mut active = BTreeSet::new();
     let mut placed: BTreeSet<(EntityId, EntityId)> = BTreeSet::new();
     let mut reached: BTreeSet<EntityId> = BTreeSet::new();
-    let mut pending: Vec<(EntityId, Option<Vec<u8>>, bool)> = vec![(subject, None, true)];
-    while let Some((id, revision, source)) = pending.pop() {
+    let mut pending = vec![AnchorVisit::Enter(subject, None, true)];
+    while let Some(visit) = pending.pop() {
+        let (id, revision, source) = match visit {
+            AnchorVisit::Enter(id, revision, source) => (id, revision, source),
+            AnchorVisit::Leave(id) => {
+                active.remove(&id);
+                continue;
+            }
+        };
+        if active.contains(&id) {
+            return Err(Error::EntityNotFound);
+        }
         let bytes = match revision {
             Some(bytes) => bytes,
             None if seen.get(&id).is_some_and(|walked| *walked || !source) => continue,
@@ -750,6 +766,8 @@ fn anchor_thread_walk_one_in(
         if h.entity_type == ENTITY_TYPE_CONVERSATION {
             continue;
         }
+        active.insert(id);
+        pending.push(AnchorVisit::Leave(id));
         let body = bytes.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
         if h.entity_type == crate::registry::ENTITY_TYPE_TASK {
             let Some(vault) = vault else {
@@ -763,11 +781,14 @@ fn anchor_thread_walk_one_in(
                 if !crate::vault::live_entity_row_in_txn(store, txn, &turn)?.is_live() {
                     return Err(Error::EntityNotFound);
                 }
-                pending.push((turn, None, source));
+                pending.push(AnchorVisit::Enter(turn, None, source));
             }
             let (place, refs) = crate::task_verb::room_thread_context_refs(body);
-            pending.extend(place.map(|id| (id, None, false)));
-            pending.extend(refs.into_iter().map(|id| (id, None, source)));
+            pending.extend(place.map(|id| AnchorVisit::Enter(id, None, false)));
+            pending.extend(
+                refs.into_iter()
+                    .map(|id| AnchorVisit::Enter(id, None, source)),
+            );
         }
         if h.entity_type == crate::registry::ENTITY_TYPE_SUMMARY && vault.is_none() {
             return Err(Error::EntityNotFound);
@@ -785,7 +806,11 @@ fn anchor_thread_walk_one_in(
                 return Err(Error::EntityNotFound);
             }
             let answered = counted_edge_ids(store, txn, &id, EdgeKind::RepliesTo, false)?;
-            pending.extend(answered.into_iter().map(|id| (id, None, false)));
+            pending.extend(
+                answered
+                    .into_iter()
+                    .map(|id| AnchorVisit::Enter(id, None, false)),
+            );
             &[EdgeKind::SpawnedBy]
         } else {
             &[
@@ -799,12 +824,19 @@ fn anchor_thread_walk_one_in(
         };
         for kind in kinds {
             let next = counted_edge_ids(store, txn, &id, *kind, false)?;
-            pending.extend(next.into_iter().map(|id| (id, None, source)));
+            pending.extend(
+                next.into_iter()
+                    .map(|id| AnchorVisit::Enter(id, None, source)),
+            );
         }
         if let Some(vault) = vault {
             match crate::scope_summary::body_covers_in_txn(vault, txn, &id, h.entity_type, body) {
                 Ok(Some(covers)) => {
-                    pending.extend(covers.into_iter().map(|id| (id, None, source)));
+                    pending.extend(
+                        covers
+                            .into_iter()
+                            .map(|id| AnchorVisit::Enter(id, None, source)),
+                    );
                 }
                 Ok(None) => {}
                 Err(_) => return Err(Error::EntityNotFound),
@@ -819,7 +851,7 @@ fn anchor_thread_walk_one_in(
             };
             {
                 if let crate::claim::ClaimSubject::Entity(subject) = &claim.subject {
-                    pending.push((*subject, None, source));
+                    pending.push(AnchorVisit::Enter(*subject, None, source));
                 }
                 match crate::scope_summary::merge_summary_ref(&claim) {
                     Ok(None) => {}
@@ -829,7 +861,11 @@ fn anchor_thread_walk_one_in(
                         };
                         match crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim) {
                             Ok(Some(covers)) => {
-                                pending.extend(covers.into_iter().map(|id| (id, None, source)));
+                                pending.extend(
+                                    covers
+                                        .into_iter()
+                                        .map(|id| AnchorVisit::Enter(id, None, source)),
+                                );
                             }
                             Ok(None) => {}
                             Err(_) => return Err(Error::EntityNotFound),
@@ -839,14 +875,22 @@ fn anchor_thread_walk_one_in(
                 }
                 match conversation_summary_covers(&claim) {
                     Ok(Some(covers)) => {
-                        pending.extend(covers.into_iter().map(|id| (id, None, source)));
+                        pending.extend(
+                            covers
+                                .into_iter()
+                                .map(|id| AnchorVisit::Enter(id, None, source)),
+                        );
                     }
                     Ok(None) => {}
                     Err(_) => return Err(Error::EntityNotFound),
                 }
                 match reaction_covers(&claim) {
                     Ok(Some(covers)) => {
-                        pending.extend(covers.into_iter().map(|id| (id, None, source)));
+                        pending.extend(
+                            covers
+                                .into_iter()
+                                .map(|id| AnchorVisit::Enter(id, None, source)),
+                        );
                     }
                     Ok(None) => {}
                     Err(_) => return Err(Error::EntityNotFound),
@@ -857,7 +901,11 @@ fn anchor_thread_walk_one_in(
             if let Some(vault) = vault {
                 match crate::scope_summary::word_sources_in(vault, txn, &id, &bytes) {
                     Ok(crate::scope_summary::WordSources::From(sources)) => {
-                        pending.extend(sources.into_iter().map(|id| (id, None, source)));
+                        pending.extend(
+                            sources
+                                .into_iter()
+                                .map(|id| AnchorVisit::Enter(id, None, source)),
+                        );
                     }
                     Ok(_) => {}
                     Err(_) => return Err(Error::EntityNotFound),
@@ -873,8 +921,9 @@ fn anchor_thread_walk_one_in(
 /// Reached rooms from `subjects` (Store-only): every CONVERSATION reachable
 /// via the six ancestry edges plus Entity claim subjects, unioned over
 /// subjects, each with its own `RoomAncestryRecords` scan. Rooms are
-/// terminals; missing rows skip (as `rooms_of_revision_in` does) while
-/// corrupt headers, malformed claim bodies, and scan failures are `Err`.
+/// terminals; missing rows skip (as `rooms_of_revision_in` does), while an
+/// ancestry cycle, corrupt headers, malformed claim bodies, and scan failures
+/// are `Err`.
 /// Multiple rooms collect (never an ambiguity refusal); the writer session
 /// room is never injected.
 fn anchor_rooms_store_in(
@@ -890,23 +939,40 @@ fn anchor_rooms_store_in(
             EngineScan::RoomAncestryRecords,
             subject.as_bytes(),
         )?;
+        enum RoomVisit {
+            Enter(EntityId),
+            Leave(EntityId),
+        }
+
         let mut seen = BTreeSet::new();
-        let mut pending = vec![*subject];
+        let mut active = BTreeSet::new();
+        let mut pending = vec![RoomVisit::Enter(*subject)];
         let mut rooms = BTreeSet::new();
-        while let Some(id) = pending.pop() {
+        while let Some(visit) = pending.pop() {
+            let id = match visit {
+                RoomVisit::Enter(id) => id,
+                RoomVisit::Leave(id) => {
+                    active.remove(&id);
+                    continue;
+                }
+            };
+            if active.contains(&id) {
+                return Err(Error::EntityNotFound);
+            }
             if !seen.insert(id) {
                 continue;
             }
-            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
-            else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
                 continue;
             };
-            let h = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("room ancestor"))?;
+            let h =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("room ancestor"))?;
             if h.entity_type == ENTITY_TYPE_CONVERSATION {
                 rooms.insert(id);
                 continue;
             }
+            active.insert(id);
+            pending.push(RoomVisit::Leave(id));
             for kind in [
                 EdgeKind::ChildOf,
                 EdgeKind::PartOf,
@@ -915,13 +981,17 @@ fn anchor_rooms_store_in(
                 EdgeKind::SpawnedBy,
                 EdgeKind::BelongsTo,
             ] {
-                pending.extend(counted_edge_ids(store, txn, &id, kind, false)?);
+                pending.extend(
+                    counted_edge_ids(store, txn, &id, kind, false)?
+                        .into_iter()
+                        .map(RoomVisit::Enter),
+                );
             }
             if h.entity_type == ENTITY_TYPE_CLAIM {
                 let body =
                     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
                 if let crate::claim::ClaimSubject::Entity(subject) = body.subject {
-                    pending.push(subject);
+                    pending.push(RoomVisit::Enter(subject));
                 }
             }
         }
