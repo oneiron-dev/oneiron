@@ -20,8 +20,8 @@ use super::rollups::{
 };
 use super::trend_policy::{DetectionDialChanges, SECONDS_PER_DAY, TrendWindow};
 use crate::EntityId;
-use crate::llm::run_admission::LeaseUnit;
-use crate::self_heal::AgentHealthSignal;
+use crate::run_budget::LeaseUnit;
+use crate::store::diagnostic_record::AgentHealthSignal;
 
 /// The trend pass's facet. It rides the Coach's nightly timer jobs
 /// (`MAINTENANCE_FACETS`), deduped per wake, apart from the health review.

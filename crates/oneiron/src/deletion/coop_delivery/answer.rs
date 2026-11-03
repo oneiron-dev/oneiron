@@ -19,7 +19,7 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{LegalHold, LegalHoldKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
-use crate::memory::SafeDeleteReason;
+use crate::deletion::SafeDeleteReason;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{EntityId, Error, Result, Vault};
 

@@ -46,7 +46,8 @@ use crate::error::Result;
 use crate::runtime_hooks::verb::{
     HookRecordsKept, RoomHookCall, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
 };
-use crate::runtime_hooks::{VerbCall, VerbHookPre, VerbHookStop};
+use crate::error::VerbHookStop;
+use crate::runtime_hooks::{VerbCall, VerbHookPre};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::side_table::RoutedDbs;
 use crate::{EntityId, Vault};

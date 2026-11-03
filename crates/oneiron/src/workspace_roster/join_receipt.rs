@@ -14,9 +14,9 @@ use super::join_consent::{
     ConsentPart, ConsentSet, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RequiredParty,
 };
 use super::join_history::{
-    ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, RosterBindingErase,
+    ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, RosterBindingErase, live_join,
 };
-use crate::agent_dispatch::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -550,6 +550,6 @@ impl Vault {
     /// The receipt of one join intent.
     pub fn join_receipt(&self, join_ref: &str) -> Result<Option<JoinReceipt>> {
         let txn = self.store.env.read_txn()?;
-        JOINS.get(&self.store, &txn, &join_ref.to_owned())
+        live_join(&self.store, &txn, join_ref)
     }
 }
