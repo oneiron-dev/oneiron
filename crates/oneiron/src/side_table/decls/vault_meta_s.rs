@@ -207,7 +207,7 @@ side_tables! {
     /// only relays a caller-encoded `&[u8]` (`crate::receipt::send_receipt_txn`
     /// already ran `rmp_serde::to_vec_named` before calling in); binding it
     /// `Named` here would re-encode already-encoded bytes on every write.
-    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored [accepts: crate::side_table::decodes::<Vec<u8>, crate::side_table::Raw>];
+    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored [accepts: crate::store::send_receipt_summary_accepts_masked];
     /// Connector-send attempt audit row. Key: id16 + bytes32.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
@@ -266,7 +266,7 @@ side_tables! {
     /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
     /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
     /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
-    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored [accepts: crate::side_table::decodes::<String, crate::side_table::Raw>];
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored [accepts: crate::settings::model_owner_fallback_accepts_masked];
     /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
