@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 mod backup_signer;
 mod connect;
 mod connect_lifecycle;
-pub use connect_lifecycle::{ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope};
+pub use connect_lifecycle::{
+    ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+};
 mod courtesy;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;

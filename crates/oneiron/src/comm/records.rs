@@ -1,12 +1,12 @@
 //! COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers.
 
-use crate::ports::EntityStoreRead;
 use super::claims::{CommError, CommResult};
 use super::note_comm_record_family_scan;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
@@ -34,22 +34,22 @@ impl RawValue for EventSequence {
 
 pub(super) use crate::write_envelope::communication_record::CommEventKind;
 pub(super) use crate::write_envelope::communication_record::CommRecord;
-pub(super) use crate::write_envelope::communication_record::encode_comm_record;
 pub(super) use crate::write_envelope::communication_record::decode_comm_record;
-pub(super) use crate::write_envelope::communication_record::value_map;
-pub(super) use crate::write_envelope::communication_record::required_string;
 pub(super) use crate::write_envelope::communication_record::elided_string;
 pub(super) use crate::write_envelope::communication_record::elided_u64;
-pub(super) use crate::write_envelope::communication_record::required_u64;
-pub(super) use crate::write_envelope::communication_record::required_bool;
-pub(super) use crate::write_envelope::communication_record::required_entity_ref;
-pub(super) use crate::write_envelope::communication_record::validate_keys;
-pub(super) use crate::write_envelope::communication_record::validate_keys_with_optional;
-pub(crate) use crate::write_envelope::communication_record::validate_key_string;
-pub(super) use crate::write_envelope::communication_record::validate_send_ref;
-pub(super) use crate::write_envelope::communication_record::validate_channel_class;
+pub(super) use crate::write_envelope::communication_record::encode_comm_record;
 pub(super) use crate::write_envelope::communication_record::encode_value;
 pub(super) use crate::write_envelope::communication_record::invalid_claim;
+pub(super) use crate::write_envelope::communication_record::required_bool;
+pub(super) use crate::write_envelope::communication_record::required_entity_ref;
+pub(super) use crate::write_envelope::communication_record::required_string;
+pub(super) use crate::write_envelope::communication_record::required_u64;
+pub(super) use crate::write_envelope::communication_record::validate_channel_class;
+pub(crate) use crate::write_envelope::communication_record::validate_key_string;
+pub(super) use crate::write_envelope::communication_record::validate_keys;
+pub(super) use crate::write_envelope::communication_record::validate_keys_with_optional;
+pub(super) use crate::write_envelope::communication_record::validate_send_ref;
+pub(super) use crate::write_envelope::communication_record::value_map;
 
 /// Re-reads one COMM_RECORD by id. `None` covers every way a snapshot id can
 /// stop naming a record of this family: deleted, retyped, or undecodable.

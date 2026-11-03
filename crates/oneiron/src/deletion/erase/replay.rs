@@ -451,8 +451,8 @@ impl Vault {
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
         use crate::error::{ArtifactError, SecretError, SyncError};
-        use oneiron_contracts::identity_topology::IdentityTopologyRejection;
         use crate::secret_record::CUSTODY_SEAL_REASON;
+        use oneiron_contracts::identity_topology::IdentityTopologyRejection;
         matches!(
             error,
             Error::Registry(

@@ -4,7 +4,6 @@ use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, start_tree_count};
 use crate::Vault;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
@@ -12,6 +11,7 @@ use crate::git_wire::{
     lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 

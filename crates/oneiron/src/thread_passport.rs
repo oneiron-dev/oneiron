@@ -73,31 +73,35 @@ use crate::channel_identity_selection::ChannelIdentityThreadPin;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::write_envelope::communication::CommError;
 use crate::comm::record_comm_thread_event;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::temporal::TimeRange;
+use crate::write_envelope::communication::CommError;
 
-pub use crate::write_envelope::thread_claim::{
-    THREAD_PASSPORT_SCHEMA_VERSION, PREDICATE_THREAD_PASSPORT, PREDICATE_THREAD_ALIAS, MAX_MESSAGE_ID_BYTES, THREAD_REF_PREFIX, MAX_THREAD_REF_BYTES, MAX_THREAD_ALIAS_HOPS, THREAD_PASSPORT_BODY_KEYS, THREAD_ALIAS_BODY_KEYS, CanonicalMessageId, canonical_message_id, canonical_message_id_list, ThreadMask, ThreadPassportInput, ThreadPassport, ThreadPassportResolution, StickyMaskDecision,
-};
 pub use crate::channel_identity_selection::ThreadMaskSelectionExt;
 use crate::write_envelope::thread_claim::*;
+pub use crate::write_envelope::thread_claim::{
+    CanonicalMessageId, MAX_MESSAGE_ID_BYTES, MAX_THREAD_ALIAS_HOPS, MAX_THREAD_REF_BYTES,
+    PREDICATE_THREAD_ALIAS, PREDICATE_THREAD_PASSPORT, StickyMaskDecision, THREAD_ALIAS_BODY_KEYS,
+    THREAD_PASSPORT_BODY_KEYS, THREAD_PASSPORT_SCHEMA_VERSION, THREAD_REF_PREFIX, ThreadMask,
+    ThreadPassport, ThreadPassportInput, ThreadPassportResolution, canonical_message_id,
+    canonical_message_id_list,
+};
 
 mod codec;
 mod graph;
 mod storage;
 mod vault_doors;
 
+pub(crate) use crate::write_envelope::thread_claim::is_thread_claim_predicate;
 pub(crate) use codec::validate_thread_claim_structure;
 use codec::*;
 use graph::*;
 pub(crate) use graph::{canonical_thread_ref_in_txn, thread_aliases_in_txn};
-use storage::*;
-pub(crate) use crate::write_envelope::thread_claim::is_thread_claim_predicate;
 pub(crate) use storage::validate_thread_claim_in_txn;
+use storage::*;
 
 #[cfg(test)]
 mod tests;

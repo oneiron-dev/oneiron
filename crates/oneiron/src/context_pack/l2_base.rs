@@ -14,8 +14,8 @@ use crate::ppr::PprNodeVisibility;
 #[cfg(test)]
 mod tests;
 
-pub use crate::store::l2_evidence::L2BaseSummary;
 pub(crate) use crate::store::l2_evidence::L2BaseCache;
+pub use crate::store::l2_evidence::L2BaseSummary;
 
 /// Select the vault-owned user identity. A generic PERSON row is not proof
 /// that it is this context's user. Its evidence still passes every retrieval,
