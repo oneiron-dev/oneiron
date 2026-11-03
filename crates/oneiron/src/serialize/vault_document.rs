@@ -47,6 +47,9 @@ pub(crate) struct DocumentTail {
     /// archive with their edges.
     pub(crate) unlogged: BTreeSet<EntityId>,
     pub(crate) secrets_included: bool,
+    /// FIX 12066: the custody secrets only the fold knows here, named for
+    /// their holders: the manifest lists them.
+    pub(crate) fold_only_secrets: Vec<EntityId>,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
     /// The rows this export is derived from, as a host lists them beside it
@@ -491,6 +494,7 @@ impl<'v> DocumentWriter<'v> {
             files: Vec::new(),
             diary_holds: tail.diary_holds,
             secrets_included: tail.secrets_included,
+            fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
         };
@@ -499,6 +503,12 @@ impl<'v> DocumentWriter<'v> {
         let mut manifest: WholeVaultDocumentManifest =
             serde_json::from_value(nulled(&manifest, "manifest", 1)?)
                 .map_err(|_| encode_failed())?;
+        // Ids only, added after the pass as the member lists are (FIX 12066).
+        manifest.fold_only_secrets = tail
+            .fold_only_secrets
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
         let sink = match self.cut {
             ExportCut::Archive => {
                 manifest.records = self
