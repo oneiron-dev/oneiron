@@ -91,7 +91,8 @@ impl VaultPressGrants {
                 actor,
                 actor_class,
                 project,
-                // The browser knows no counterparty of a send.
+                // A send reports its own counterparty as it is classified
+                // (FIX 11907); the call's scope itself names none.
                 audience: None,
             },
         }
@@ -101,5 +102,18 @@ impl VaultPressGrants {
 impl PressGrants for VaultPressGrants {
     fn current(&self) -> SendPolicy {
         grants_policy(&self.vault, Some(&self.scope))
+    }
+
+    /// The same live read for a send that reports `audience` - the origin
+    /// of the page it acted on (FIX 11907): only a grant whose audience
+    /// names it covers the send. A send that reports none reads as
+    /// [`Self::current`], keeping today's cover on that axis.
+    fn current_for(&self, audience: Option<&str>) -> SendPolicy {
+        let Some(audience) = audience else {
+            return self.current();
+        };
+        let mut scope = self.scope.clone();
+        scope.audience = Some(audience.to_owned());
+        grants_policy(&self.vault, Some(&scope))
     }
 }
