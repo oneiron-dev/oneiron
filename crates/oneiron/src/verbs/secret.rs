@@ -462,7 +462,11 @@ impl Memory<'_> {
         };
         let asker = self.reveal_asker()?;
         let sight = vault.file_sight(&asker, &file.artifact_id, &file.bytes, why)?;
-        file.bytes = vault.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
+        file.bytes = vault.sighted_asset_bytes_with_digest(
+            std::mem::take(&mut file.bytes),
+            &file.content_hash,
+            sight,
+        )?;
         // FIX 4513: once, after custody read the stored bytes.
         file.bytes = vault.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
         Ok(Some(file))
