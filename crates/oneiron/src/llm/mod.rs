@@ -77,7 +77,9 @@ pub(crate) use step::{
     retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
-pub(crate) use step::{erase_submissions_in_txn, submission_carriage, submission_owners};
+pub(crate) use step::{
+    erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
+};
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,

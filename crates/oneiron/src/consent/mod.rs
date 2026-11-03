@@ -47,12 +47,15 @@
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
 //! rewrite, or a byte/status/codec change to the source record.
 
+pub mod approval_proof;
+pub mod tool_scope;
 mod adapters;
 mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
 mod codec;
+pub mod code_wait_state;
 mod contact_clearance;
 mod doors;
 mod effect;
@@ -182,3 +185,7 @@ use self::codec::{
 };
 #[cfg(test)]
 use self::support::SUBJECT_KIND_AUDIENCE;
+
+pub mod bundle_projection;
+
+pub mod settlement_fact;

@@ -1,7 +1,8 @@
 //! Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils verb, decision and output, and the resolver with its ScopedRead constructor.
 
 use crate::claim::ScopedRead;
-use crate::code_sandbox::{SandboxImportClass, SandboxLinkedImport};
+use crate::store::sandbox_import::SandboxImportClass;
+use crate::store::sandbox_import::SandboxLinkedImport;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::store::RetrievalRunId;
 
@@ -254,7 +255,7 @@ pub struct GraphFsPage {
     pub(super) entries: Vec<GraphFsEntry>,
     pub(super) next_cursor: Option<String>,
     pub(super) byte_count: usize,
-    pub(super) read_receipt: Option<crate::claim::ScopedReadReceipt>,
+    pub(super) read_receipt: Option<oneiron_contracts::claim::ScopedReadReceipt>,
 }
 
 impl GraphFsPage {
@@ -262,11 +263,14 @@ impl GraphFsPage {
     /// directory's body, or each claim a claims listing names. `None` for a
     /// fixed or policy-scanned listing, which makes no point read.
     #[must_use]
-    pub fn read_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
+    pub fn read_receipt(&self) -> Option<&oneiron_contracts::claim::ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
 
-    pub(super) fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
+    pub(super) fn with_read_receipt(
+        mut self,
+        receipt: oneiron_contracts::claim::ScopedReadReceipt,
+    ) -> Self {
         self.read_receipt = Some(receipt);
         self
     }
@@ -383,7 +387,7 @@ pub struct GraphFsCommandOutput {
     pub(super) decision: GraphFsCoreutilsDecision,
     pub(super) decision_reason: String,
     pub(super) telemetry_run_id: Option<RetrievalRunId>,
-    pub(super) read_receipt: Option<crate::claim::ScopedReadReceipt>,
+    pub(super) read_receipt: Option<oneiron_contracts::claim::ScopedReadReceipt>,
 }
 
 impl GraphFsCommandOutput {
@@ -392,7 +396,7 @@ impl GraphFsCommandOutput {
     /// grep read, and the listings an ls or walk read. `None` when the
     /// command made no scoped read (the temporal pushdowns scan by policy).
     #[must_use]
-    pub fn read_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
+    pub fn read_receipt(&self) -> Option<&oneiron_contracts::claim::ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
 
