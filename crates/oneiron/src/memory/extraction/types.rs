@@ -1,5 +1,5 @@
 //! Typed serving payloads and observable extraction receipts.
-use crate::embed::EmbedderLocality;
+use crate::store::embedding::EmbedderLocality;
 use oneiron_contracts::affect::Vad;
 use oneiron_model::llm::ModelId;
 use serde::{Deserialize, Serialize};

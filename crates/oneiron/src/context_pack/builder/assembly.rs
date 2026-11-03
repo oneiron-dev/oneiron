@@ -42,7 +42,7 @@ const DEFAULT_CONTEXT_PACK_DEADLINE: std::time::Duration = std::time::Duration::
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
     pub(crate) embedding_matches:
-        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        std::collections::HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     /// Only the handle returned by successful post-filter finalization.
     pub(crate) run_id: Option<crate::store::RetrievalRunId>,
     /// Whether the vector channel completed.

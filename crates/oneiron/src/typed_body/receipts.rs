@@ -55,7 +55,7 @@ impl StoredReceipt {
                 class,
                 made_by,
             } => {
-                let class = crate::edit_distance::actor_class_from_token(class)?;
+                let class = crate::write_envelope::actor_tokens::actor_class_from_token(class)?;
                 Some((WriteActor::new(*actor, class), made_by))
             }
             Self::Erased { .. } => None,
@@ -85,7 +85,7 @@ pub(super) fn record_in_txn(
     }
     let receipt = StoredReceipt::Live {
         actor: actor.entity_ref(),
-        class: crate::edit_distance::actor_class_token(actor.actor_class()).to_owned(),
+        class: crate::write_envelope::actor_tokens::actor_class_token(actor.actor_class()).to_owned(),
         made_by: made_by.clone(),
     };
     RECEIPTS.put(store, txn, &key, &receipt)

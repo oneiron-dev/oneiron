@@ -7,7 +7,7 @@
 
 use super::CompactionDriver;
 use crate::WriteActor;
-use crate::agent_def::CompactionOwnership;
+use crate::store::agent_record::CompactionOwnership;
 use crate::code_run::{AdmittedLiveFork, LiveCompactionFork};
 use crate::compaction::SelfCompactionUnavailable;
 use oneiron_model::llm::SelfCompactionSource;

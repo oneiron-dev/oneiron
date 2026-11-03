@@ -105,7 +105,7 @@ impl ContextPackTelemetry<'_> {
 
 pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) embedding_matches:
-        HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     pub(in crate::context_pack) vector_completed: bool,
     pub(in crate::context_pack) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
     pub(in crate::context_pack) cited_messages:

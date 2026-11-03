@@ -124,7 +124,7 @@ pub enum SearchProbe {
         /// The declared space's id.
         space: String,
         /// The tower that encoded the query.
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         /// Query embedding, at the space's width.
         embedding: Vec<f32>,
         /// As for [`Self::Vector`].

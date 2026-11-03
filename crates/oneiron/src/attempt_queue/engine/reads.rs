@@ -674,7 +674,7 @@ pub(super) fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRe
 /// 6755), the marker both tries name.
 fn retries_the_same_payload(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
     child.payload == parent.payload
-        || (child.kind == crate::tagging::TAGGING_MARKER_KIND
+        || (child.kind == crate::config::tagging::TAGGING_MARKER_KIND
             && crate::tagging::same_marker_identity(&child.payload, &parent.payload))
 }
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable

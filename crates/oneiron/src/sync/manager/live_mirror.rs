@@ -421,7 +421,7 @@ impl WindowManager {
     /// Drains the setup window's remat markers: each waiting row lands now,
     /// or keeps its marker and waits on.
     fn retry_setup_rows(&self) {
-        let window = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+        let window = WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT);
         if let Err(error) = super::super::quarantine::drain_remat_markers_of(
             &self.vault,
             &self.user_id,
