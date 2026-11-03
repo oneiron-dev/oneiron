@@ -3327,7 +3327,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 11 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 1 crate-vis | — | Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their… |
-| `src/lib.rs` | src | m | 193 mod · 86 re-export · 23 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 192 mod · 87 re-export · 23 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 4 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -3359,8 +3359,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linkedin_lead_preload/tests.rs` | test | m | — | — | — |
 | `src/linkedin_lead_preload/tests/employment.rs` | test | m | 2 crate-vis | — | — |
 | `src/linkedin_lead_preload/tests/source_binding.rs` | test | m | — | — | — |
-| `src/live_rows.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 type · 4 const · 7 crate-vis | LiveRow, LiveRows, LiveWaitedOut | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
-| `src/live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
 | `src/llm/autocheck.rs` | src | m | 5 struct · 1 enum · 1 trait · 7 fn · 2 const · 6 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome, AutoCheckSignals, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper |
 | `src/llm/autocheck/verdict_cache.rs` | src | s | 4 crate-vis | — | The auto check's verdict cache (ARCH-0055, "checker/classifier verdicts key on (content-hash… |
 | `src/llm/budget/mod.rs` | src | s | 1 mod · 2 re-export · 1 crate-vis | — | Vault-local durable RSI budget ledger and resident share ledger (FIX 7767) |
@@ -6293,6 +6291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/tests.rs` | test | m | — | — | ARCH-0073 vault auto-cleanup fixtures (ONE-1931) |
 | `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 9 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
+| `src/vault_live_rows.rs` | src | s | 3 fn | — | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
 | `src/vault_shape/apply.rs` | src | L | 3 struct · 2 enum · 4 fn · 4 crate-vis | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
 | `src/vault_shape/apply/journal.rs` | src | s | 2 fn · 5 crate-vis | — | Every apply's journal: one row per apply, keyed by the frontier of the plan it lands, written after each… |
 | `src/vault_shape/approval.rs` | src | s | 1 struct · 5 crate-vis | ShapeApprovalDependencies | A waiting approval stands on the reach its preview showed (FIX 10200) |
