@@ -5,6 +5,7 @@
 //! its Vault doors. The three birth roads enter through `put_skill_record`:
 //! `skill_convert`, `skill_hub`, and `skill_optimize`.
 
+pub mod learning_judge;
 mod call;
 mod codec;
 mod doors;

@@ -15,8 +15,9 @@ use crate::conversation_dag::{
     selected_thread_in_txn,
 };
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
+use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::dreamer_consolidation::{
-    DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, ScopeSummaryEvidence, scope_summary_evidence_in_txn,
+    ScopeSummaryEvidence, scope_summary_evidence_in_txn,
 };
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::dreamer_runner::{DreamerAttemptPayload};

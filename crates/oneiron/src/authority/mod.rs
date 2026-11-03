@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+pub mod consolidation_evidence;
 mod act_standing;
 mod admission;
 mod adopted_build;

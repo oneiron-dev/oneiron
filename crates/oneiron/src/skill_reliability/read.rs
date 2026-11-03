@@ -13,8 +13,9 @@ use crate::claim::learning_estimate::Estimate;
 use crate::claim::learning_estimate::EstimateValue;
 use crate::claim::learning_estimate::PriorOrigin;
 use crate::receipt::task_type_ref::TypeRef;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::learning::{
-    LearningCell, LearningPredicate, LearningRead,
+    LearningCell, LearningRead,
 };
 use crate::ports::EntityStoreRead;
 use crate::skill::SkillRecord;

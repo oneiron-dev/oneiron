@@ -39,8 +39,8 @@
 //! warm pack verbatim.
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -416,15 +416,7 @@ struct FinalizedCandidates {
 /// at once: one in this many.
 const READER_SLOT_SHARE: u32 = 4;
 
-/// The speculative passes running on threads of their own in one vault. A
-/// pass past its deadline keeps its read snapshot, and with it a reader
-/// slot, until its next checkpoint, so fires that keep missing a stalled
-/// stage would otherwise take every slot the vault has.
-#[derive(Default)]
-pub(crate) struct SpeculativePasses {
-    line: OnceLock<WorkLine<[u8; 32]>>,
-    last_cap: AtomicUsize,
-}
+pub(crate) use crate::vault::speculative_passes::SpeculativePasses;
 
 /// One admitted pass; the fair permit releases when its thread lets it go.
 struct RunningPass(LinePermit);
