@@ -422,6 +422,19 @@ impl Vault {
         let mut row = PROPOSAL
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
+        // A supersede that committed after this caller's first read still
+        // forwards (FIX 2938 race): recheck on the row reloaded under the
+        // repository lock, and forward after dropping the write transaction
+        // (the repository guard is re-entrant on this thread).
+        if row.status == RepoProposalStatus::Superseded {
+            drop(txn);
+            if let Some(successor) = resolve_handles::successor_of(self, id)? {
+                return self.apply_repo_proposal(successor);
+            }
+            return Err(invalid(
+                "proposal requires unanimous independent multi-critic acceptance",
+            ));
+        }
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }

@@ -52,8 +52,12 @@ fn handle_spans(content: &[u8]) -> Vec<(usize, usize, String)> {
             && crate::secret_custody::parse_secret_handle(text).is_ok()
         {
             spans.push((start, end, text.to_owned()));
+            at = end;
+        } else {
+            // An invalid span may wrap a valid one (`[secret note [secret sc1]`);
+            // step past only the opener so nested spans are still detected.
+            at = start + HANDLE_OPEN.len();
         }
-        at = end;
     }
     spans
 }
@@ -97,18 +101,40 @@ pub(super) fn resolved_successor(
     vault: &Vault,
     row: &RepoProposal,
 ) -> Result<Option<RepoProposal>> {
+    // Already resolved (FIX 2938 retry/idempotence): a successor's values land as
+    // bytes, even when a value carries handle syntax.
+    if row.resolves.is_some() {
+        return Ok(None);
+    }
     let (path, content) = row.ordinary_file()?;
     let spans = handle_spans(content);
     if spans.is_empty() {
         return Ok(None);
     }
-    if row.resolves.is_some() {
-        return Err(invalid(
-            "a resolved successor's values carry a further handle",
-        ));
-    }
     let path = path.to_owned();
     let values = spans_values(vault, &spans)?;
+    // The ordinary proposal bound (submit.rs): substitution must not mint an
+    // over-limit successor. Checked arithmetic over ascending non-overlapping spans.
+    let mut resolved_len = content.len();
+    for (start, end, text) in &spans {
+        let value_len = values
+            .iter()
+            .find(|known| &known.0 == text)
+            .expect("every span resolved above")
+            .1
+            .len();
+        resolved_len = resolved_len
+            .checked_sub(end - start)
+            .and_then(|len| len.checked_add(value_len))
+            .ok_or(invalid(
+                "proposal requires bounded content and review lenses",
+            ))?;
+        if resolved_len > 32 * 1024 * 1024 {
+            return Err(invalid(
+                "proposal requires bounded content and review lenses",
+            ));
+        }
+    }
     let resolved = substitute(content, &spans, &values);
     // The original's review carries only onto the proposal it actually
     // judged: the successor must re-redact to the original byte for byte
@@ -145,6 +171,13 @@ pub(super) fn resolved_successor(
         .ok_or(Error::EntityNotFound)?;
     if original.status != RepoProposalStatus::Approved || original.operation_seq.is_some() {
         return Err(invalid("proposal already consumed"));
+    }
+    // A critic erasure committing between the first read and this writer must not
+    // ride into the successor as erased refs again: refuse on any critique change.
+    if original.critiques != row.critiques {
+        return Err(invalid(
+            "proposal critiques changed while resolving handles; submit a fresh proposal",
+        ));
     }
     if PROPOSAL.get(&vault.store, &txn, &successor.id)?.is_none() {
         super::persist::PreparedRepoProposal::new(successor.clone(), encoded)?
