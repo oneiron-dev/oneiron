@@ -516,11 +516,8 @@ fn plot_moved(
                 .any(|line| line.id == Some(other) && plot_key(side_family, line) == (family, at))
         });
     if !targets.is_empty() {
-        // Beside series of another base plot: moved, unless every surviving
-        // base-plot mate joined it there too.
-        if joined {
-            return None;
-        }
+        // Beside series of another base plot: moved, even when every surviving
+        // base-plot mate joined it there too (FIX 12277).
         targets.sort_unstable();
         targets.dedup();
         return Some(targets);
