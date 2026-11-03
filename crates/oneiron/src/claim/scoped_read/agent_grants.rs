@@ -24,7 +24,7 @@ use std::rc::Rc;
 use super::access_gate::HeldAuthority;
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_SECRET_CUSTODY};
 
 /// One reader's live Grants, each id with its Scope.

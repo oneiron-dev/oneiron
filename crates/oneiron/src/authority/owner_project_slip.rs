@@ -3,7 +3,7 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use crate::side_table::{self, Raw, SideTable};
 use crate::workspace_roster::OwnerProjectSigner;
 use std::collections::BTreeSet;

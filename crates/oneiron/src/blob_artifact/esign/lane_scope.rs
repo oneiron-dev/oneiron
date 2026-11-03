@@ -23,7 +23,7 @@ use super::model::{EsignDocument, invalid};
 use super::seal::SealedDocument;
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use crate::memory::{Memory, MemoryResult};
 use crate::{EntityId, Result, Vault};
 

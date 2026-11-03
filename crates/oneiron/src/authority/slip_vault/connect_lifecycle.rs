@@ -11,7 +11,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::federation::{
+use oneiron_authority::federation::{
     Ceiling, FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
 };
 use crate::store::grant_scope_custody;

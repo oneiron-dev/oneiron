@@ -1,39 +1,41 @@
 //! The stored CLAIM body, its MessagePack codec, scope stamps and citations.
 
-use rmpv::Value;
+use super::claim_predicate::{validate_predicate, validate_session_tag};
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
-use super::claim_predicate::{validate_predicate, validate_session_tag};
 use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
     VerdictBasis,
 };
+use rmpv::Value;
 
 mod codec;
 mod evidence_refs;
+pub(crate) mod lexical_query_hint;
+mod made_by;
 mod relationship_scope;
 mod scope;
-pub(crate) mod lexical_query_hint;
 pub(crate) mod scope_stamp;
 mod source_trust;
-mod made_by;
 
 pub use codec::decode_claim_body;
 pub(crate) use codec::encode_claim_body;
 pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
 pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
+pub use made_by::MadeByClass;
 pub use relationship_scope::{
     RelationshipScope, meet_relationship_scopes, relationship_scope_includes,
     relationship_scope_of, relationship_scope_transcript,
 };
 pub(crate) use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
 pub(crate) use scope::{claim_principal_id, validate_known_claim_scope_entries};
-pub use scope_stamp::{base_world_id, default_project_id, substrate_facet_id, PREDICATE_VAULT_DEFAULT_FACET};
-pub use source_trust::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
+pub use scope_stamp::{
+    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+};
 pub(crate) use source_trust::*;
-pub use made_by::MadeByClass;
+pub use source_trust::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
 
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///

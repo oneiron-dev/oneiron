@@ -14088,6 +14088,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 20,
+      "mod": 1,
       "re-export": 13
      }
     },
@@ -14157,6 +14158,16 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/relationship_predicates.rs",
+     "purpose": "Claim predicates and label bounds for member-to-person relationships",
+     "surface": {
+      "const": 3
      }
     },
     {
@@ -34600,22 +34611,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DerivationBindError",
-      "DerivationKey",
-      "DerivationKind",
-      "DerivationOwner",
-      "DerivationScope",
-      "HostedDerivationCache",
-      "SealedOutput"
-     ],
+     "notable": [],
      "path": "src/federation/derivation.rs",
-     "purpose": "Account-sealed hosted derivations",
+     "purpose": "Account-sealed hosted derivations, defined in the storage layer",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
-      "struct": 5
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -34733,7 +34734,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 20,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 20,
       "struct": 2
@@ -35085,10 +35086,10 @@
      "path": "src/federation/relationships.rs",
      "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
      "surface": {
-      "const": 3,
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -35321,10 +35322,11 @@
      "path": "src/federation/stale.rs",
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
-      "const": 3,
+      "const": 1,
       "crate-vis": 9,
       "enum": 1,
       "fn": 9,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -41823,8 +41825,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 23,
-      "mod": 193,
-      "re-export": 86
+      "mod": 192,
+      "re-export": 87
      }
     },
     {
@@ -42289,33 +42291,6 @@
      "notable": [],
      "path": "src/linkedin_lead_preload/tests/source_binding.rs",
      "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LiveRow",
-      "LiveRows",
-      "LiveWaitedOut"
-     ],
-     "path": "src/live_rows.rs",
-     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…",
-     "surface": {
-      "const": 4,
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 5,
-      "struct": 2,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/live_rows/tests.rs",
-     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
      "surface": {}
     },
     {
@@ -63677,6 +63652,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/serialize/grant_fields.rs",
+     "purpose": "Field projections of federation grant records",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/serialize/group_labels.rs",
      "purpose": "Static entity-type to section-label lookup used by every writer",
      "surface": {
@@ -63753,7 +63738,7 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 5
      }
     },
@@ -68486,6 +68471,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DerivationBindError",
+      "DerivationKey",
+      "DerivationKind",
+      "DerivationOwner",
+      "DerivationScope",
+      "HostedDerivationCache",
+      "SealedOutput"
+     ],
+     "path": "src/store/derivation.rs",
+     "purpose": "Account-sealed hosted derivations",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -69506,7 +69512,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 44,
-      "mod": 1,
+      "mod": 3,
       "re-export": 20
      }
     },
@@ -70153,6 +70159,16 @@
      "purpose": "One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_registration_keys.rs",
+     "purpose": "Storage keys for foreign-world registration and stale markers",
+     "surface": {
+      "const": 2
      }
     },
     {
@@ -78307,6 +78323,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_live_rows.rs",
+     "purpose": "The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -85392,7 +85418,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85979,13 +86005,6 @@
      "layout": "file+dir",
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
-    "live_rows": {
-     "files": 2,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
-    },
     "llm": {
      "files": 167,
      "impl_vault": true,
@@ -86323,7 +86342,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86435,7 +86454,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 195,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86588,6 +86607,13 @@
      "layout": "dir",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
+    "vault_live_rows": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]…"
+    },
     "vault_shape": {
      "files": 26,
      "impl_vault": true,
@@ -86668,8 +86694,8 @@
    },
    "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5885,
-   "test_files": 901
+   "source_files": 5889,
+   "test_files": 900
   },
   "oneiron-android": {
    "files": [
@@ -87717,7 +87743,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 15
+      "mod": 16
      }
     },
     {
@@ -87729,6 +87755,37 @@
      "surface": {
       "re-export": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiveLine",
+      "LivePermit",
+      "LiveRow",
+      "LiveRows",
+      "LiveRowsCell",
+      "LiveRowsHolder",
+      "LiveWaitedOut"
+     ],
+     "path": "src/live_rows.rs",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…",
+     "surface": {
+      "const": 4,
+      "enum": 1,
+      "fn": 7,
+      "struct": 5,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/live_rows/tests.rs",
+     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -87880,6 +87937,13 @@
      "layout": "file",
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
+    "live_rows": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
+    },
     "msgpack_shape": {
      "files": 1,
      "impl_vault": false,
@@ -87932,8 +87996,8 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 18,
-   "test_files": 1
+   "source_files": 19,
+   "test_files": 2
   },
   "oneiron-bench": {
    "files": [

@@ -16,7 +16,7 @@ pub use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StandingOutboundGrant {
     /// Canonical grant authority. Resource fields below are narrowing presets.
-    pub authority_scope: crate::federation::Scope,
+    pub authority_scope: oneiron_authority::federation::Scope,
     /// Principal that authenticated the consent action.
     pub principal_ref: String,
     /// OF-336 component that originated the grant.
@@ -50,7 +50,7 @@ impl StandingOutboundGrant {
         read_frontier_hash: [u8; 32],
     ) -> Result<Self> {
         let grant = Self {
-            authority_scope: crate::federation::scope_codec::effect_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::effect_preset(),
             principal_ref: non_empty_string(&intent.principal_ref)?,
             origin_component_id: non_empty_string(&intent.origin_component_id)?,
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
@@ -76,7 +76,7 @@ impl StandingOutboundGrant {
         read_frontier_hash: [u8; 32],
     ) -> Result<Self> {
         let grant = Self {
-            authority_scope: crate::federation::scope_codec::effect_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::effect_preset(),
             principal_ref: non_empty_string(&intent.principal_ref)?,
             origin_component_id: non_empty_string(&intent.origin_component_id)?,
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
