@@ -205,6 +205,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
+    // A carried history read no longer stands for a deleted control (FIX 4296).
+    crate::claim::history_seal::scatter_index_seal_for_delete(store, wtxn, id)?;
     crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
