@@ -60369,7 +60369,7 @@
      "path": "src/result_body/files.rs",
      "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71405,7 +71405,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/bundle/publication.rs",
@@ -117060,7 +117060,7 @@
      "path": "src/oneironer/endpoint.rs",
      "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
