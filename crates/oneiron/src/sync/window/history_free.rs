@@ -622,6 +622,9 @@ fn scrub_for_export(
         crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     let message_docs_scrubbed =
         crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 7791: and an erased claim's carried vector.
+    let claim_vectors_scrubbed =
+        crate::sync::claim_vectors::scrub_claim_vectors(vault, doc, Some(key))?;
     // FIX 2691: and the office proposals of an erased artifact.
     let office_proposals_scrubbed =
         crate::sync::office_proposals::scrub_office_proposals(vault, doc, Some(key))?;
@@ -646,6 +649,7 @@ fn scrub_for_export(
         || room_facts_scrubbed
         || document_pins_scrubbed
         || message_docs_scrubbed
+        || claim_vectors_scrubbed
         || office_proposals_scrubbed
         || origin_claims_scrubbed
         || births_scrubbed

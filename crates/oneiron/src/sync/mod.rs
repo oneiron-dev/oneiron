@@ -34,6 +34,7 @@ pub mod bridge;
 pub mod carrier;
 pub(crate) mod carrier_holds;
 pub(crate) mod carrier_parts;
+pub(crate) mod claim_vectors;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;

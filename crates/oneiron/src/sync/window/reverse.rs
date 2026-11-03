@@ -226,6 +226,7 @@ fn reverse_rematerialize_scan(
     let mut wrote_any = false;
     let mut mirror_sources = BTreeMap::new();
     let mut messages = Vec::new();
+    let mut vectors = Vec::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -523,6 +524,15 @@ fn reverse_rematerialize_scan(
             {
                 messages.push(*id);
             }
+            // FIX 7791: a CLAIM's cloud-filled vector rides beside its body,
+            // mirrored after this pass commits (world windows too; the
+            // route is judged per row at take time).
+            if EntityMetadataHeader::parse(&raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+                && map_contains_binary(&entities_map, &hex_id)
+            {
+                vectors.push(*id);
+            }
         }
 
         backfill_sources.push(*id);
@@ -660,6 +670,10 @@ fn reverse_rematerialize_scan(
     for id in &messages {
         crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
         crate::sync::document_pins::mirror_document_pins(vault, doc, id, window_key)?;
+    }
+    // FIX 7791: each claim vector commits on its own, like a document.
+    for id in &vectors {
+        crate::sync::claim_vectors::mirror_claim_vector(vault, doc, id)?;
     }
     Ok(count)
 }

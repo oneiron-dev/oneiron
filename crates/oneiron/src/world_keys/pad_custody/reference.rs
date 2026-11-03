@@ -156,6 +156,7 @@ mod window {
         "documents",
         "edges",
         "entities",
+        "claim_vectors",
         "message_docs",
         "note_proposals",
         "peer_origins",
