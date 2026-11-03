@@ -1787,7 +1787,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/builder/instruction_files.rs` | src | s | 2 crate-vis | — | A pack's instruction-file handles, resolved in its assembly snapshot |
 | `src/context_pack/builder/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | The fluent [`ContextPackBuilder`] query API and its assembly pipeline |
 | `src/context_pack/builder/pack_run.rs` | src | m | 2 struct · 8 fn · 6 crate-vis | SerializedContextPack, UnfinalizedContextPack | What a pack run produces and how its telemetry row is finalized or discarded |
-| `src/context_pack/builder/query.rs` | src | m | 1 struct · 66 fn · 5 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
+| `src/context_pack/builder/query.rs` | src | m | 1 struct · 69 fn · 5 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
 | `src/context_pack/builder/replay.rs` | src | s | 2 crate-vis | — | Opt-in pack-assembly and terminal-projection settings for offline replay |
 | `src/context_pack/builder/scoped.rs` | src | s | 5 crate-vis | — | Candidate narrowing passthrough to the existing retrieval pipeline |
 | `src/context_pack/builder/selection.rs` | src | s | 1 fn · 3 crate-vis | — | Critical-first row selection under a pack's existing budgets, and the critical accounting a pack reports… |
@@ -1805,7 +1805,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/source_ranking.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | SourceRankingPolicy | PACK data for provenance-aware claim ordering |
 | `src/context_pack/telemetry.rs` | src | s | 2 crate-vis | — | Finalize or discard the retrieval-run row a pack assembly registered |
 | `src/context_pack/tests.rs` | test | XL | — | — | — |
-| `src/context_pack/types.rs` | src | m | 9 struct · 3 enum · 5 fn · 4 const · 4 crate-vis | ContextEntity, ContextPack, ContextPackRetrievalBudget, FieldProfile, PackFormat, PackItemAccounting, PackItemAccountingReason, PackItemTokenStats +4 | Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation… |
+| `src/context_pack/types.rs` | src | m | 9 struct · 3 enum · 5 fn · 4 const · 5 crate-vis | ContextEntity, ContextPack, ContextPackRetrievalBudget, FieldProfile, PackFormat, PackItemAccounting, PackItemAccountingReason, PackItemTokenStats +4 | Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation… |
 | `src/context_pack/validation.rs` | src | m | 13 crate-vis | — | Post-assembly integrity checks over a context pack |
 | `src/context_pack/world_partition.rs` | src | s | 1 const · 4 crate-vis | — | Federated multi-world partitioning and staleness annotation (ARCH-0004 / ARCH-0022 / ONE-1411) |
 | `src/context_projection/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
