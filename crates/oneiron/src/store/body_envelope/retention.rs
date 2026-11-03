@@ -385,10 +385,15 @@ impl Store {
     pub(crate) fn finish_body_custody_retirements(&self) -> Result<()> {
         // The pass's holder snapshot (FIX 9067): read under an intent's
         // write guard, once per holder epoch, instead of the whole holder
-        // directory per intent. A snapshot that does not read defers, as a
-        // per-intent read that failed did.
+        // directory per intent. Only a Retention intent reads it — an
+        // erase owns its cause and no holder read ever defers it, as it
+        // never did. A snapshot that does not read defers a Retention
+        // intent, as a per-intent read that failed did.
         let snapshot: Mutex<Option<(u64, BTreeSet<[u8; 16]>)>> = Mutex::new(None);
         self.finish_custody_retirements(CustodyKind::BodyInstance, |txn, intent| {
+            if intent.cause != RetireCause::Retention {
+                return ready_in_txn(self, txn, intent, &BTreeSet::new());
+            }
             let epoch = self.core.key_custody.holders_epoch();
             let mut held = snapshot.lock().unwrap_or_else(PoisonError::into_inner);
             if held.as_ref().is_none_or(|(at, _)| *at != epoch) {

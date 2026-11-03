@@ -49,8 +49,8 @@ use super::settle::{
     settle_with_reply_in_txn,
 };
 use super::types::{
-    CodeConsentBinding, CodeConsentBrowserAction, CodeConsentPendingEffect,
-    CodeConsentSettleOutcome, CodeConsentWaitRow,
+    CODE_CONSENT_SCHEMA_VERSION, CodeConsentBinding, CodeConsentBrowserAction,
+    CodeConsentPendingEffect, CodeConsentSettleOutcome, CodeConsentWaitRow,
 };
 
 /// The hold a press per send gives a held browser act.
@@ -203,9 +203,14 @@ impl Memory<'_> {
 /// The hold-time facts a browser wait's row keeps (FIX 11908): the exact
 /// rebuild of what `hold_browser_press` composed its digest over, from the
 /// binding and its held act alone. `None` where the row binds no browser
-/// act, its actor class byte names no class, or its frozen input digest is
-/// not the hash of the operands it keeps.
+/// act, predates this schema (its defaulted class and project are no
+/// facts at all, however well they would recompose), its actor class byte
+/// names no class, or its frozen input digest is not the hash of the
+/// operands it keeps.
 fn browser_facts_from_row(binding: &CodeConsentBinding) -> Option<BrowserConsentFacts> {
+    if binding.schema_version != CODE_CONSENT_SCHEMA_VERSION {
+        return None;
+    }
     let action = binding.pending.browser_action()?;
     let actor_class = EdgeActorClass::try_from_u8(action.actor_class)?;
     if *blake3::hash(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
