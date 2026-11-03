@@ -160,7 +160,7 @@ impl ScopedRead<'_> {
         )],
         limit: usize,
         requested: Option<&RetrievalFilter>,
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {

@@ -9,7 +9,7 @@ use crate::entity_id::derived_domains::{
     TASK_ASK_ANSWER, TASK_ASK_INTENT, TASK_ASK_MEMBER, TASK_ASK_ORIGIN,
 };
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
+use crate::write_envelope::task_body::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::side_table::{self, SideTable};

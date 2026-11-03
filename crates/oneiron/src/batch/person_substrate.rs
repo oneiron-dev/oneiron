@@ -86,7 +86,7 @@ pub(crate) fn ensure_person_substrate(
         facet,
         1.0,
         learned_at,
-        crate::affect::Vad::NEUTRAL,
+        oneiron_contracts::affect::Vad::NEUTRAL,
         None,
     )?;
     Ok(())

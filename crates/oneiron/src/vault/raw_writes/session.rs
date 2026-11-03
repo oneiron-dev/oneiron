@@ -32,7 +32,7 @@ use heed::RoTxn;
 
 use super::RawEntityPut;
 use crate::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
 use crate::core_write::CoreWriteLane;
