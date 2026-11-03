@@ -395,9 +395,11 @@ impl AccessGrant {
                 if conversation_ref == conversation
         );
         scoped
-            && self
-                .authority_scope
-                .admits("read", record, &oneiron_authority::federation::Scope::top())
+            && self.authority_scope.admits(
+                "read",
+                record,
+                &oneiron_authority::federation::Scope::top(),
+            )
             && self.validate().is_ok()
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal

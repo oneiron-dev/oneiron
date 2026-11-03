@@ -23,12 +23,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::outbound_consent::DataClass;
-use crate::outbound_consent::tool_call::ToolGrantDataClass;
+use crate::consent::tool_scope::DataClass;
+use crate::consent::tool_scope::ToolGrantDataClass;
 use crate::outbound_grant::{
-    ScopedMcpGrantMintIntent, StandingOutboundGrantStatus,
-    standing_outbound_grant_ids_for_principal, standing_outbound_grant_in_txn,
+    ScopedMcpGrantMintIntent, standing_outbound_grant_ids_for_principal, standing_outbound_grant_in_txn,
 };
+use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 

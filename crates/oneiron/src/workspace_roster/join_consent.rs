@@ -40,8 +40,8 @@ use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_bin
 use crate::conversation::{RoomHost, room_host_in_txn};
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::MembershipStanding;
-use crate::llm::run_admission::LeaseUnit;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::run_budget::LeaseUnit;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 pub use oneiron_contracts::room_join::{

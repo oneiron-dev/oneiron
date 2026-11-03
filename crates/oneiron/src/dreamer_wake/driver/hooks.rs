@@ -157,7 +157,7 @@ impl DreamerWakeDriver<'_> {
                 )
             }
             None => (
-                crate::BudgetExhaustionPolicy::Suspend,
+                oneiron_model::llm::BudgetExhaustionPolicy::Suspend,
                 match self.store.budget(&self.budget_id) {
                     Ok(Some(record)) => json!({
                         "total_units": record.total_units,

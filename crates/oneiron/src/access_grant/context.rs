@@ -112,7 +112,8 @@ impl<'v> AccessContext<'v> {
                     }
                 } else if raw.len() > ENTITY_METADATA_HEADER_LEN {
                     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                    if body.predicate == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
+                    if body.predicate
+                        == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                         && claim_surfaceable(&body)
                         && crate::gate::claim_critical_confirm_settled_in_txn(
                             &vault.store,
