@@ -33,6 +33,7 @@ use crate::Vault;
 use crate::consent::{
     BrowserConsentFacts, BrowserSendScope, EffectDigest, browser_approve_once_digest,
 };
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
@@ -48,8 +49,8 @@ use super::settle::{
     settle_with_reply_in_txn,
 };
 use super::types::{
-    CodeConsentBrowserAction, CodeConsentPendingEffect, CodeConsentSettleOutcome,
-    CodeConsentWaitRow,
+    CODE_CONSENT_SCHEMA_VERSION, CodeConsentBinding, CodeConsentBrowserAction,
+    CodeConsentPendingEffect, CodeConsentSettleOutcome, CodeConsentWaitRow,
 };
 
 /// The hold a press per send gives a held browser act.
@@ -65,6 +66,11 @@ const CODE_WAIT_ASK_UNOPENED: &str = "code_wait_ask_unopened";
 /// Why a held browser act settles as of unknown delivery: an earlier
 /// answered pass admitted it and never settled, so it may have run.
 const CODE_WAIT_PASS_UNSETTLED: &str = "code_wait_pass_unsettled";
+
+/// Why a held browser act is refused at its answer or admission: the
+/// facts its row keeps no longer compose the digest its hold stored
+/// (FIX 11908).
+pub(super) const CODE_WAIT_TARGET_CHANGED: &str = "code_wait_target_changed";
 
 /// The hash domain of a held browser act's admission.
 const BROWSER_ADMISSION_DOMAIN: &[u8] = b"oneiron:code-consent-browser-admission:v1";
@@ -113,7 +119,7 @@ impl Memory<'_> {
     pub fn hold_browser_press(
         &self,
         verb: AgentVerb,
-        action: CodeConsentBrowserAction,
+        mut action: CodeConsentBrowserAction,
     ) -> MemoryResult<Option<EntityId>> {
         let Some(site) = self.code_consent_site().cloned() else {
             return Ok(None);
@@ -148,6 +154,11 @@ impl Memory<'_> {
             operands: action.operands.clone(),
         };
         let digest = *browser_approve_once_digest(&facts)?.as_bytes();
+        // The row keeps the hold-time facts its digest pins (FIX 11908):
+        // the engine's own caller class and the project it resolved, so
+        // admission rebuilds the facts instead of trusting the digest.
+        action.actor_class = facts.scope.actor_class as u8;
+        action.project = facts.scope.project;
         let draft = CodeConsentDraft {
             site,
             verb,
@@ -187,6 +198,51 @@ impl Memory<'_> {
         }
         Ok(Some(wait_id))
     }
+}
+
+/// The hold-time facts a browser wait's row keeps (FIX 11908): the exact
+/// rebuild of what `hold_browser_press` composed its digest over, from the
+/// binding and its held act alone. `None` where the row binds no browser
+/// act, predates this schema (its defaulted class and project are no
+/// facts at all, however well they would recompose), its actor class byte
+/// names no class, or its frozen input digest is not the hash of the
+/// operands it keeps.
+fn browser_facts_from_row(binding: &CodeConsentBinding) -> Option<BrowserConsentFacts> {
+    if binding.schema_version != CODE_CONSENT_SCHEMA_VERSION {
+        return None;
+    }
+    let action = binding.pending.browser_action()?;
+    let actor_class = EdgeActorClass::try_from_u8(action.actor_class)?;
+    if *blake3::hash(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
+        return None;
+    }
+    Some(BrowserConsentFacts {
+        scope: BrowserSendScope {
+            actor: binding.original.actor_ref,
+            actor_class,
+            project: action.project,
+            audience: action.audience.clone(),
+        },
+        run: binding.run_id,
+        attempt: binding.write_receipt_id,
+        ordinal: binding.bridge_seq,
+        class: action.class.clone(),
+        verb: action.act.clone(),
+        page: action.page.clone(),
+        revision: action.document.clone(),
+        target: action.locator.clone(),
+        operands: action.operands.clone(),
+    })
+}
+
+/// Whether a browser wait's rebuilt facts compose the approve-once digest
+/// its hold stored (FIX 11908): the marker an answer mints and admission
+/// spends is the one the hold-time facts named.
+pub(super) fn browser_facts_match_row(binding: &CodeConsentBinding) -> bool {
+    browser_facts_from_row(binding).is_some_and(|facts| {
+        browser_approve_once_digest(&facts)
+            .is_ok_and(|digest| *digest.as_bytes() == binding.effect_digest)
+    })
 }
 
 impl Vault {
@@ -301,6 +357,10 @@ impl Vault {
                     row,
                     &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
                 )?;
+                return Ok(None);
+            }
+            if !browser_facts_match_row(&row.binding) {
+                refuse_browser_wait_in_txn(self, txn, row, &[CODE_WAIT_TARGET_CHANGED])?;
                 return Ok(None);
             }
             let digest = EffectDigest::from_bytes(row.binding.effect_digest);

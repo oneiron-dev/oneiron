@@ -24,6 +24,11 @@ use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 pub(super) const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =
     SideTable::new(&side_table::MODEL_STEP_SUBMISSION);
+/// Whether a masked copy of a `MODEL_STEP_SUBMISSION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn model_step_submission_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Submission, Named>(bytes)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Submission {
