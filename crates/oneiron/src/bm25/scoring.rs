@@ -26,7 +26,7 @@ pub(super) fn score_query_terms(
     // Cache per-field avgdl and per-(doc, field) length so we don't reopen
     // the same DB entries once per query term.
     let mut avgdl_cache: HashMap<u16, f64> = HashMap::new();
-    let mut field_length_cache: HashMap<EntityId, HashMap<u16, u32>> = HashMap::new();
+    let mut field_length_cache: HashMap<EntityId, Vec<(u16, u32)>> = HashMap::new();
     let mut scores: HashMap<EntityId, f64> = HashMap::new();
 
     for query_term in query_terms {
@@ -78,21 +78,23 @@ pub(super) fn score_query_terms(
             // Enforce row-existence for every scored entry, not only those
             // that reach a `CountLengthIncrement` branch — otherwise a
             // NoNorm-only match silently skips the corruption guard.
-            if let Entry::Vacant(v) = field_length_cache.entry(id) {
-                let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
-                let Some(bytes) = raw else {
-                    if union {
-                        continue 'entries;
-                    }
-                    return Err(corrupted_with_diagnostic(
-                        diagnostics,
-                        "missing field lengths for scored doc",
-                        Bm25DiagnosticKind::MissingScoredDocumentMetadata,
-                    ));
-                };
-                let map = decode_field_lengths(&bytes)?;
-                v.insert(map);
-            }
+            let lens = match field_length_cache.entry(id) {
+                Entry::Occupied(o) => o.into_mut(),
+                Entry::Vacant(v) => {
+                    let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
+                    let Some(bytes) = raw else {
+                        if union {
+                            continue 'entries;
+                        }
+                        return Err(corrupted_with_diagnostic(
+                            diagnostics,
+                            "missing field lengths for scored doc",
+                            Bm25DiagnosticKind::MissingScoredDocumentMetadata,
+                        ));
+                    };
+                    v.insert(super::codec::decode_field_lengths_vec(&bytes)?)
+                }
+            };
 
             let mut x_t_d = 0.0_f64;
 
@@ -105,9 +107,8 @@ pub(super) fn score_query_terms(
                     continue;
                 }
 
-                let lens = field_length_cache
-                    .get(&id)
-                    .expect("field-lengths row loaded above for this entry id");
+                // `lens` is this entry's lengths row, loaded once above.
+                // Reverse scan matches HashMap last-wins on duplicate field ids.
                 // The posting-entry-implies-row invariant applies per-field:
                 // a referenced `fid` must have an entry in the length row,
                 // including on NoNorm channels where the value is unused.
@@ -115,7 +116,12 @@ pub(super) fn score_query_terms(
                 // overlay-only channels), so absence is corruption. Silently
                 // defaulting would yield `norm = 1 - b = 0.25` for the
                 // default `b=0.75` — a 4× artificial boost.
-                let stored_len = match lens.get(fid).copied() {
+                let stored_len = match lens
+                    .iter()
+                    .rev()
+                    .find(|pair| pair.0 == *fid)
+                    .map(|(_, n)| *n)
+                {
                     None if union => continue 'entries,
                     None => {
                         return Err(corrupted_with_diagnostic(

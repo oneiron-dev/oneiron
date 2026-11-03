@@ -283,6 +283,28 @@ pub(super) fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
     Ok(map)
 }
 
+/// Vec-returning twin of [`decode_field_lengths`] for the scoring hot path:
+/// identical validation and errors, but no per-row hash table build — the
+/// caller reverse-scans the tiny pair list, matching `HashMap` last-wins.
+pub(super) fn decode_field_lengths_vec(raw: &[u8]) -> Result<Vec<(u16, u32)>> {
+    if raw.is_empty() {
+        return Err(corrupted("empty field lengths row"));
+    }
+    if !raw.len().is_multiple_of(FIELD_LENGTH_LEN) {
+        return Err(corrupted("per-doc field lengths has invalid byte length"));
+    }
+    let (chunks, rem) = raw.as_chunks::<FIELD_LENGTH_LEN>();
+    debug_assert!(rem.is_empty());
+    let mut out = Vec::with_capacity(chunks.len());
+    for &[b0, b1, b2, b3, b4, b5] in chunks {
+        out.push((
+            u16::from_be_bytes([b0, b1]),
+            u32::from_le_bytes([b2, b3, b4, b5]),
+        ));
+    }
+    Ok(out)
+}
+
 pub(super) fn read_field_stats(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
