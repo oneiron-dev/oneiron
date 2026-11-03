@@ -6,7 +6,7 @@
 use super::gpu::{
     GPU_RENEW_SECONDS, GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
 };
-use crate::models::BrokerContext;
+use crate::models::{BrokerContext, is_cloud_node};
 use oneiron::federation::derivation::{DerivationScope, SealedOutput};
 use oneiron_broker::{CallHeader, Shape};
 use rand_core::RngCore;
@@ -325,6 +325,7 @@ impl GpuPool {
                 path.to_owned(),
                 Vec::new(),
                 pod.to_owned(),
+                is_cloud_node(),
                 &[],
             )
         };

@@ -19,7 +19,10 @@ use oneiron::engine_executor::{
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::task_type::TaskTypeRef;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelLocality, Vault, WriteActor};
+use oneiron::{
+    BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
+};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -310,6 +313,12 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
     /// Host-owned capability profile, never taken from execute_code arguments.
     fn seat_facet(&self) -> Option<&str> {
+        None
+    }
+    /// The models this host's router serves now, with where each runs (FIX
+    /// 2745): a seat birth admits only these. The default serves no set
+    /// (legacy and fixture providers), and the birth admits all, as before.
+    fn seat_served(&self) -> Option<BTreeMap<ModelId, ModelLocality>> {
         None
     }
     /// The host's type-feedback service (FIX 8277), shared by every run;
@@ -1035,6 +1044,9 @@ fn seat_for(
     // The run's read scope (FIX 11768): the birth pre-filters to the routes
     // these worlds' orders name. Empty inherits, as before.
     task.worlds = worlds;
+    // The models the host's router serves now (FIX 2745): the birth admits
+    // only these. None serves no set, and the birth admits all, as before.
+    task.served = provider.seat_served();
     match pin {
         // A typed run is born on its description route when one applies (FIX 11307).
         SeatPin::Base(Some(type_ref)) => {
@@ -1115,6 +1127,8 @@ fn engine_seat_task(
         listed,
         // Stamped by `seat_for` from the run's read scope (FIX 11768).
         worlds: Vec::new(),
+        // Stamped by `seat_for` from the host's served set (FIX 2745).
+        served: None,
     }
 }
 
