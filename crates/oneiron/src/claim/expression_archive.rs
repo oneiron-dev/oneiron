@@ -145,10 +145,6 @@ impl ExpressionPreferenceArchive {
         })
     }
 
-    pub(crate) fn subject(&self) -> EntityId {
-        self.rows[0].subject
-    }
-
     pub(crate) fn ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.rows.iter().map(|row| row.id)
     }
