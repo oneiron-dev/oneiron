@@ -21,10 +21,10 @@ mod content;
 #[cfg(feature = "sync")]
 mod content_landed;
 #[cfg(feature = "sync")]
-pub(crate) mod forward_version;
-#[cfg(feature = "sync")]
 mod content_window;
 mod doors;
+#[cfg(feature = "sync")]
+pub(crate) mod forward_version;
 mod kit;
 mod kit_piece;
 mod machine;

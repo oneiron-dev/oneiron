@@ -20,12 +20,12 @@ use zeroize::Zeroizing;
 
 use super::document_import::parse_id;
 use crate::Vault;
-use oneiron_authority::authority::{ActSurface};
 use crate::authority::{OpenedSecretSupplement, SecretSupplementImport};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::secret_record::{ArchiveSameId};
-use crate::secret_custody::{archive_same_custody_in_txn};
+use crate::secret_custody::archive_same_custody_in_txn;
+use crate::secret_record::ArchiveSameId;
+use oneiron_authority::authority::ActSurface;
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("secret supplement import: {reason}"))

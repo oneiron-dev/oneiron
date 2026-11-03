@@ -14,29 +14,29 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::communication::{
-    KEY_JOINED, KEY_REACHABLE, KEY_REASON, KEY_SCOPE, KEY_SEND_REF, KEY_ISSUED_AT, KEY_VALID_TO,
+    KEY_ISSUED_AT, KEY_JOINED, KEY_REACHABLE, KEY_REASON, KEY_SCOPE, KEY_SEND_REF, KEY_VALID_TO,
 };
 
-pub use crate::write_envelope::communication::COMM_SCHEMA_VERSION;
-pub use crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT;
-pub use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
-pub use crate::write_envelope::communication::PREDICATE_COMM_THREAD_MEMBER;
-pub use crate::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA;
-pub use crate::write_envelope::communication::PREDICATE_COMM_SEND_OVERRIDE;
 pub use crate::write_envelope::communication::COMM_CLAIM_PREDICATES;
-pub(super) use crate::write_envelope::communication::KEY_SCHEMA_VERSION;
-pub(super) use crate::write_envelope::communication::KEY_PARTY_REF;
+pub use crate::write_envelope::communication::COMM_SCHEMA_VERSION;
+pub use crate::write_envelope::communication::ClaimClassDescriptorRow;
+pub use crate::write_envelope::communication::CommClearOptOutOutcome;
+pub use crate::write_envelope::communication::CommError;
+pub use crate::write_envelope::communication::CommResult;
 pub(super) use crate::write_envelope::communication::KEY_CHANNEL_CLASS;
-pub(super) use crate::write_envelope::communication::KEY_THREAD_REF;
 pub(super) use crate::write_envelope::communication::KEY_OCCURRED_AT;
 pub(super) use crate::write_envelope::communication::KEY_OPTED_OUT;
 pub(super) use crate::write_envelope::communication::KEY_PARTY_KEY;
-pub use crate::write_envelope::communication::CommError;
-pub use crate::write_envelope::communication::CommResult;
-pub use crate::write_envelope::communication::CommClearOptOutOutcome;
-pub use crate::write_envelope::communication::SendOverrideScope;
+pub(super) use crate::write_envelope::communication::KEY_PARTY_REF;
+pub(super) use crate::write_envelope::communication::KEY_SCHEMA_VERSION;
+pub(super) use crate::write_envelope::communication::KEY_THREAD_REF;
+pub use crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH;
+pub use crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT;
+pub use crate::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA;
+pub use crate::write_envelope::communication::PREDICATE_COMM_SEND_OVERRIDE;
+pub use crate::write_envelope::communication::PREDICATE_COMM_THREAD_MEMBER;
 pub use crate::write_envelope::communication::SendOverrideMatch;
-pub use crate::write_envelope::communication::ClaimClassDescriptorRow;
+pub use crate::write_envelope::communication::SendOverrideScope;
 pub use crate::write_envelope::communication::claim_class_descriptors;
 
 /// Typed value carried by one claim in the `comm.*` family.

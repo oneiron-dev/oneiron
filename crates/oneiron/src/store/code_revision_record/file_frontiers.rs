@@ -1,8 +1,8 @@
 //! Pure tested-file frontier map validation and codecs.
 
 use super::CodeRevision;
-use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::error::{ArtifactError, Error, Result};
+use crate::store::code_document_values::CodeDocumentFrontier;
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
