@@ -16,12 +16,12 @@ use super::{
 use crate::Vault;
 use crate::authority::{HolderExportNeed, HolderExportRequest};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
 use crate::write_envelope::WriteActor;
 
@@ -429,7 +429,7 @@ impl Vault {
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Some(claim) = body.bytes()
-                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the

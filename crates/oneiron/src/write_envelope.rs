@@ -4,15 +4,17 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use crate::claim::ClaimApprovalStatus;
-use crate::claim::ClaimBody;
-use crate::claim::ClaimLifecycleStatus;
-use crate::claim::ClaimSource;
-use crate::claim::ClaimSubject;
-use crate::claim::RelationshipScope;
 use crate::entity_id::EntityId;
+use crate::write_envelope::claim_body::ClaimBody;
+use crate::write_envelope::claim_body::ClaimSubject;
+use crate::write_envelope::claim_body::RelationshipScope;
+use oneiron_contracts::claim::ClaimApprovalStatus;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
+use oneiron_contracts::claim::ClaimSource;
 
 pub mod carry_forward;
+pub mod claim_body;
+pub mod claim_predicate;
 
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;
@@ -292,7 +294,7 @@ pub struct ClaimCandidate {
     subject: ClaimSubject,
     value: Value,
     confidence: f32,
-    confidence_details: Option<crate::claim::ConfidenceDetails>,
+    confidence_details: Option<oneiron_contracts::claim::ConfidenceDetails>,
     salience: Option<f32>,
     evidence: Option<Value>,
     valid_from: Option<u64>,
@@ -350,7 +352,10 @@ impl ClaimCandidate {
     /// (FIX 7761); without them the stored claim carries the house band of
     /// its number.
     #[must_use]
-    pub fn with_confidence_details(mut self, details: crate::claim::ConfidenceDetails) -> Self {
+    pub fn with_confidence_details(
+        mut self,
+        details: oneiron_contracts::claim::ConfidenceDetails,
+    ) -> Self {
         self.confidence_details = Some(details);
         self
     }
@@ -372,15 +377,21 @@ impl ClaimCandidate {
     /// Adds typed document citations beside the candidate's other evidence
     /// (ARCH-0032, FIX 904). The write pins each one that verifies against
     /// its document in the write's own snapshot.
-    pub fn with_evidence_refs(mut self, refs: &[crate::claim::EvidenceRef]) -> crate::Result<Self> {
-        let key = crate::claim::EVIDENCE_REFS_KEY;
+    pub fn with_evidence_refs(
+        mut self,
+        refs: &[crate::write_envelope::claim_body::EvidenceRef],
+    ) -> crate::Result<Self> {
+        let key = crate::write_envelope::claim_body::EVIDENCE_REFS_KEY;
         let mut entries = match self.evidence.take() {
             Some(Value::Map(entries)) => entries,
             None => Vec::new(),
             Some(_) => return Err(crate::Error::InvalidClaimBody("evidence must be a map")),
         };
         entries.retain(|(name, _)| name.as_str() != Some(key));
-        entries.push((Value::from(key), crate::claim::public_evidence_value(refs)?));
+        entries.push((
+            Value::from(key),
+            crate::write_envelope::claim_body::public_evidence_value(refs)?,
+        ));
         self.evidence = Some(Value::Map(entries));
         Ok(self)
     }
@@ -487,7 +498,7 @@ impl ClaimCandidate {
         mut self,
         weight: Option<f32>,
     ) -> crate::Result<Self> {
-        let key = crate::claim::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
+        let key = crate::write_envelope::claim_body::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
         let mut entries = match self.scope.take() {
             Some(Value::Map(entries)) => entries,
             None => Vec::new(),

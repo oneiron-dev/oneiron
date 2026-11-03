@@ -171,9 +171,12 @@ impl Store {
             return Ok(false);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let body = crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?;
             if !crate::claim::claim_surfaceable(&body)
-                || body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
+                || body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
             {
                 return Ok(false);
             }

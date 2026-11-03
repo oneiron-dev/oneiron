@@ -14,7 +14,8 @@
 //! A host that packs several vaults into one process reads per-tenant numbers
 //! through `vault.diagnostics()` with no further change.
 
-use crate::attempt_queue::{AttemptQueueCleanupMetrics, AttemptQueueCleanupMetricsSnapshot};
+use crate::store::attempt_cleanup::AttemptQueueCleanupMetrics;
+use crate::store::attempt_cleanup::AttemptQueueCleanupMetricsSnapshot;
 use crate::bm25::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
 use crate::failure_signals::FailureSignalCounts;
 use crate::gate::GateMetrics;

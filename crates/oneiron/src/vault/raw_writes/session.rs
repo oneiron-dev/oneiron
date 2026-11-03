@@ -35,7 +35,6 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
-use crate::claim::ClaimSource;
 use crate::core_write::CoreWriteLane;
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
@@ -47,6 +46,7 @@ use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarge
 use crate::store::SessionStoreView;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use oneiron_contracts::claim::ClaimSource;
 
 mod composed_reads;
 
@@ -380,7 +380,7 @@ impl Memory<'_> {
     /// for an actor no session binds: no verified caller, so the put keeps
     /// the local write's gate, as an unbound host write does.
     fn raw_claim_envelope(&self, data: &[u8]) -> crate::Result<Option<WriteEnvelope>> {
-        let Ok(body) = crate::claim::decode_claim_body(data, false) else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(data, false) else {
             return Ok(None);
         };
         if let Some(envelope) = self.host_envelope(body.approval)? {
@@ -559,7 +559,9 @@ fn read_on_base<R>(error: Error) -> MemoryResult<Option<R>> {
 }
 
 /// The CLAIM bodies `ops` put, in op order, as their room stages them.
-fn staged_claims(ops: &[RawOp<'_>]) -> crate::Result<Vec<crate::claim::ClaimBody>> {
+fn staged_claims(
+    ops: &[RawOp<'_>],
+) -> crate::Result<Vec<crate::write_envelope::claim_body::ClaimBody>> {
     let mut claims = Vec::new();
     for op in ops {
         if let RawOp::Put(put) = op

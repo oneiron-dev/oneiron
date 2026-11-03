@@ -4,7 +4,6 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -13,6 +12,8 @@ use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 
 use super::publication_types::{
     ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN, ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,

@@ -19,9 +19,6 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimSource, ClaimSubject, decode_claim_body, encode_claim_body,
-};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -33,6 +30,8 @@ use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 impl Vault {
     /// Validates a whole-vault archive (OF-222) and the document its records
@@ -1296,7 +1295,7 @@ pub(super) fn import_edge(
     Ok(EdgeImport::Landed)
 }
 
-fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
+fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body::ClaimBody> {
     let body = decode_claim_body(bytes, true)?;
     if crate::subject_model::is_subject_model_predicate(&body.predicate) {
         crate::subject_model::imported_subject_body(&body)

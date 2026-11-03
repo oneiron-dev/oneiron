@@ -351,10 +351,10 @@ fn provenance_subject(row: &ExportEntity) -> Option<(EntityId, u8, EntityId)> {
         .body
         .to_bytes()
         .ok()
-        .and_then(|bytes| crate::claim::decode_claim_body(&bytes, true).ok())
+        .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, true).ok())
         .map(|claim| claim.subject)
     {
-        Some(crate::claim::ClaimSubject::Edge {
+        Some(crate::write_envelope::claim_body::ClaimSubject::Edge {
             source,
             kind,
             target,
@@ -390,12 +390,14 @@ pub(super) fn entity_omission(row: &ExportEntity) -> Result<Option<EntityOmissio
     } else if super::expression_import::is_expression(row) {
         Some(ImportRefusalReason::LocalExpressionWriterRequired)
     } else if row.entity_type == ENTITY_TYPE_CLAIM
-        && crate::claim::decode_claim_body(&row.body.to_bytes()?, false).is_err()
-        && !crate::claim::decode_claim_body(&row.body.to_bytes()?, true).is_ok_and(|body| {
-            crate::subject_model::imported_subject_body(&body).is_ok()
-                || crate::actor_claims::imported_actor_body(&body).is_ok()
-                || crate::skill_reliability::imported_reliability_body(&body).is_ok()
-        })
+        && crate::write_envelope::claim_body::decode_claim_body(&row.body.to_bytes()?, false)
+            .is_err()
+        && !crate::write_envelope::claim_body::decode_claim_body(&row.body.to_bytes()?, true)
+            .is_ok_and(|body| {
+                crate::subject_model::imported_subject_body(&body).is_ok()
+                    || crate::actor_claims::imported_actor_body(&body).is_ok()
+                    || crate::skill_reliability::imported_reliability_body(&body).is_ok()
+            })
     {
         Some(ImportRefusalReason::OwningClaimAdapterRequired)
     } else {

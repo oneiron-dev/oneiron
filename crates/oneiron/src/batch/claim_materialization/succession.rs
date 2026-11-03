@@ -6,11 +6,13 @@ use rmpv::Value;
 use super::demotion::successor_body;
 use super::{ClaimMaterialization, binding_error};
 use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimSource, ClaimSuccession, decode_claim_body, encode_claim_body};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
+use crate::write_envelope::claim_body::{
+    ClaimBody, ClaimSuccession, decode_claim_body, encode_claim_body,
+};
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
     WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,
@@ -18,6 +20,7 @@ use crate::write_envelope::{
     envelope_carried_evidence, write_envelope_evidence,
 };
 use crate::{EntityId, Vault};
+use oneiron_contracts::claim::ClaimSource;
 
 /// The writer that births a claim successor. A successor is written under
 /// this writer's own authority and stamp, never its predecessor's author's:
@@ -338,7 +341,7 @@ impl ClaimMaterialization {
             crate::gate::check_unattributed_claim_lineage(&next, &lineage, &policy)?;
         }
         let mut claim_of = None;
-        if let crate::claim::ClaimSubject::Entity(subject) = prior.subject {
+        if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject) = prior.subject {
             let mut weight = None;
             for entry in crate::ports::EdgeStoreRead::port_edges(
                 &vault.store,

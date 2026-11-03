@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
 use super::manifest_types::{
     PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
@@ -263,7 +263,7 @@ pub(super) fn hash_policy_frontier_v0(
     // The shipped row and an absent legacy row resolve identically. Only a
     // behavior change contributes a new domain tag, preserving existing
     // no-review-policy consent bindings.
-    if resolution.slide_review_policy != crate::llm::decision::SlideReviewPolicy::default() {
+    if resolution.slide_review_policy != crate::model_decision::SlideReviewPolicy::default() {
         let mut slide_policy = Vec::new();
         rmpv::encode::write_value(&mut slide_policy, &resolution.slide_review_policy.rows())
             .map_err(|_| Error::InvariantViolation("slide review policy frontier encoding"))?;
@@ -609,9 +609,11 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "authority_scope");
         hash_opt_value(
             hasher,
-            Some(&crate::federation::scope_codec::encode_scope_value(
-                &grant.authority_scope,
-            )?),
+            Some(
+                &oneiron_authority::federation::scope_codec::encode_scope_value(
+                    &grant.authority_scope,
+                )?,
+            ),
         )?;
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;

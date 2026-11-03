@@ -110,6 +110,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
 mod report;
@@ -121,9 +122,13 @@ mod search_hybrid;
 mod search_temporal;
 mod search_vector;
 mod session_reads;
+pub use session_reads::{CreateNoteRequest, EntityRequest, HydrateRequest, QueryBm25Request};
+mod secret_sight;
 mod session_writes;
 mod shape_card_doors;
 mod shape_doors;
+pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
+pub use shape_doors::DescribeRequest;
 mod signal_extraction;
 mod structural;
 mod subscriptions;
@@ -241,10 +246,11 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
-    PeoplePage, PersonRequest,
+    GrantAskedRow, GrantRequestedScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
@@ -281,7 +287,10 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
-pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub use reads::{
+    ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VAULT_RECEIPTS_PAGE_MAX,
+    VaultReceiptsPage,
+};
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
