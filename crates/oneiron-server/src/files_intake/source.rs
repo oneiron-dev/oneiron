@@ -181,17 +181,40 @@ pub(crate) fn rescan(
     let (mut notes, mut name_only, mut facts, mut skipped, mut unopened_dirs, mut vault_covers) =
         read_for_rescan(source, folder, &mut counts, prior, Some(vault.path()))?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
+    // A row a partial scan left pending (a Files source's ledger meta behind
+    // what this scan read, or none) still owes its links: when no unreadable
+    // folder could hold an included file, read whole so they reconcile
+    // (REVIEW-4381 P1). A folder that still would not open retries it on a
+    // later scan.
+    let pending = source.files.is_some()
+        && standings.iter().zip(notes.iter()).any(|(standing, note)| {
+            *standing == ImportedNoteStanding::Unchanged
+                && facts.get(note.path.as_str()).is_some_and(|read| {
+                    ledger
+                        .iter()
+                        .find(|file| file.path == note.path)
+                        .is_some_and(|file| {
+                            file.meta.is_none_or(|meta| {
+                                (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
+                            })
+                        })
+                })
+        });
     // A new note's inbound links, and a changed note's outbound ones, come
     // from the whole folder, skipped files included: with a new or changed
     // note the folder is read again, whole, so no live edge reads as dropped
     // when the rescan reconciles a superseded note's links (FIX 1363).
-    if !skipped.is_empty()
+    if (!skipped.is_empty()
         && standings.iter().any(|standing| {
             matches!(
                 standing,
                 ImportedNoteStanding::New | ImportedNoteStanding::Changed
             )
-        })
+        }))
+        || (pending
+            && unopened_dirs
+                .iter()
+                .all(|dir| !dir_can_hold_included(&source.include, dir)))
     {
         counts = NoteCounts::default();
         (
@@ -259,7 +282,13 @@ pub(crate) fn rescan(
             .or_insert_with(Vec::new)
             .push(link.to.clone());
     }
-    let links_complete = skipped.is_empty() && unopened_dirs.is_empty();
+    // An unreadable folder holds the links incomplete only when an
+    // included file could wait under it; any other unreadable folder still
+    // guards retraction and is still reported (REVIEW-4381 P2).
+    let links_complete = skipped.is_empty()
+        && unopened_dirs
+            .iter()
+            .all(|dir| !dir_can_hold_included(&source.include, dir));
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut titles = TitleCounts::default();
@@ -318,6 +347,7 @@ pub(crate) fn rescan(
             missing,
             raw_hashes,
             facts,
+            whole: links_complete,
         },
     )?;
     // Skipped files keep what the ledger holds: each counts as unchanged,
@@ -538,6 +568,27 @@ pub(crate) fn canonical_folder(path: &Path) -> anyhow::Result<String> {
 /// pattern matches it.
 fn included(patterns: &[String], path: &str) -> bool {
     patterns.is_empty() || patterns.iter().any(|pattern| matches(pattern, path))
+}
+
+/// Whether an unreadable folder could hold a file `include` keeps
+/// (REVIEW-4381 P2). A pattern starting with `**` reaches every folder; any
+/// other pattern reaches only a folder its literal prefix names or sits
+/// under, so a leading `*` never reaches below the top folder.
+fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
+    patterns.is_empty()
+        || patterns.iter().any(|pattern| {
+            if pattern.starts_with("**") {
+                return true;
+            }
+            let literal = pattern
+                .find(|cell: char| cell == '*' || cell == '?')
+                .map_or(pattern.as_str(), |at| &pattern[..at]);
+            let literal = literal.strip_suffix('/').unwrap_or(literal);
+            !literal.is_empty()
+                && (dir == literal
+                    || dir.starts_with(&format!("{literal}/"))
+                    || literal.starts_with(&format!("{dir}/")))
+        })
 }
 
 /// Whether `pattern` matches all of `path`: `*` within a name, `**` across

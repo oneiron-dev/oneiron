@@ -80,6 +80,7 @@ impl Vault {
             missing,
             raw_hashes,
             facts,
+            whole,
         } = rescan;
         let key = source_key(&folder);
         let source = self
@@ -98,6 +99,7 @@ impl Vault {
             new,
             links,
             (&raw_hashes, &facts),
+            whole,
             &mut report,
         )?;
         for file in &present {
@@ -131,6 +133,7 @@ impl Vault {
         notes: Vec<ImportedNote>,
         links: Vec<ImportedNoteLink>,
         read: (&HashMap<String, String>, &HashMap<String, FileFacts>),
+        whole: bool,
         report: &mut FolderRescanReport,
     ) -> Result<()> {
         if notes.is_empty() {
@@ -143,7 +146,7 @@ impl Vault {
             links,
             name_only: Vec::new(),
         };
-        match self.land_folder_batch(owner, landing, &batch, read) {
+        match self.land_folder_batch(owner, landing, &batch, read, whole) {
             Ok(links) => {
                 report.landed += batch.notes.len();
                 report.links += links;
@@ -162,7 +165,7 @@ impl Vault {
                 links: Vec::new(),
                 name_only: Vec::new(),
             };
-            match self.land_folder_batch(owner, landing, &alone, read) {
+            match self.land_folder_batch(owner, landing, &alone, read, whole) {
                 Ok(_) => report.landed += 1,
                 Err(error) => {
                     report.fail(error);
@@ -211,6 +214,7 @@ impl Vault {
         landing: &Landing<'_>,
         batch: &ImportedNoteBatch,
         (raw_hashes, facts): (&HashMap<String, String>, &HashMap<String, FileFacts>),
+        whole: bool,
     ) -> Result<usize> {
         validate_batch(batch)?;
         let kinds = batch
@@ -250,7 +254,15 @@ impl Vault {
                     landed_links: Vec::new(),
                     raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
-                    meta: next_meta(old, facts.get(&note.path).copied(), at, Some(at)),
+                    // A partial read lands no meta: the row stays pending,
+                    // so the mtime shortcut re-reads it and a later whole
+                    // read reconciles the links this scan left alone
+                    // (REVIEW-4381 P1).
+                    meta: if whole {
+                        next_meta(old, facts.get(&note.path).copied(), at, Some(at))
+                    } else {
+                        None
+                    },
                     original: None,
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
@@ -308,27 +320,32 @@ impl Vault {
                     )
             });
             if !retracted && let Some(same) = row.as_ref().filter(|row| row.file_hash == hash) {
-                report.unchanged += 1;
-                let facts_moved = facts.is_some_and(|facts| {
-                    same.meta.is_none_or(|meta| {
-                        (meta.bytes, meta.modified_at) != (facts.bytes, facts.modified_at)
-                    })
-                });
-                if same.raw_hash == raw_hash && !facts_moved {
-                    return Ok(());
+                // A partial read never takes the equal-hash shortcut: the
+                // row stays pending, so a later whole read reconciles the
+                // links this scan left alone (REVIEW-4381 P1).
+                if file.links.is_some() {
+                    report.unchanged += 1;
+                    let facts_moved = facts.is_some_and(|facts| {
+                        same.meta.is_none_or(|meta| {
+                            (meta.bytes, meta.modified_at) != (facts.bytes, facts.modified_at)
+                        })
+                    });
+                    if same.raw_hash == raw_hash && !facts_moved {
+                        return Ok(());
+                    }
+                    // Only the bytes moved (a PDF's metadata, a file written again
+                    // with the same text): the ledger takes their revision, and
+                    // the note keeps its text.
+                    let mut same = same.clone();
+                    same.raw_hash = raw_hash;
+                    drop(txn);
+                    return self.with_write_txn(|txn| {
+                        let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                        let indexed_at = same.meta.and_then(|meta| meta.indexed_at);
+                        same.meta = next_meta(same.meta, facts, at, indexed_at);
+                        FILES.put(&self.store, txn, &key, &same)
+                    });
                 }
-                // Only the bytes moved (a PDF's metadata, a file written again
-                // with the same text): the ledger takes their revision, and
-                // the note keeps its text.
-                let mut same = same.clone();
-                same.raw_hash = raw_hash;
-                drop(txn);
-                return self.with_write_txn(|txn| {
-                    let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-                    let indexed_at = same.meta.and_then(|meta| meta.indexed_at);
-                    same.meta = next_meta(same.meta, facts, at, indexed_at);
-                    FILES.put(&self.store, txn, &key, &same)
-                });
             }
             let raw = self.get_raw_in(&txn, &id)?;
             if raw.is_none() {
@@ -396,12 +413,14 @@ impl Vault {
                     }
                 }
             }
-            // A file the host could not resolve whole keeps its row pending:
-            // its hash and meta stay, so the mtime shortcut re-reads it and
-            // the equal-hash return does not skip it, and a later whole read
-            // reconciles the links this scan left alone.
+            // The observed content hash is always today's read: the
+            // equal-hash shortcut must never match a stale hash after the
+            // file changed and came back (REVIEW-4381 P1). A file the host
+            // could not resolve whole still keeps its row pending through
+            // its meta, so the mtime shortcut re-reads it, and a later
+            // whole read reconciles the links this scan left alone.
+            row.file_hash = hash.clone();
             if file.links.is_some() {
-                row.file_hash = hash.clone();
                 row.landed_hash = hash;
             }
             row.state = FolderFileState::Landed;
@@ -490,12 +509,10 @@ impl Vault {
         if untouched && row.landed_hash.is_empty() {
             row.landed_hash = current_hash;
         }
-        // As above: a file the host could not resolve whole keeps its
-        // row pending, so a later whole read reconciles the links left alone
-        // despite the mtime and equal-hash shortcuts.
-        if file.links.is_some() {
-            row.file_hash = hash;
-        }
+        // As above, the content hash is always today's read; only the meta
+        // stays behind on a partial read, keeping the row pending so a later
+        // whole read reconciles the links left alone (REVIEW-4381 P1).
+        row.file_hash = hash;
         self.with_write_txn(|txn| {
             if file.links.is_some() {
                 let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
