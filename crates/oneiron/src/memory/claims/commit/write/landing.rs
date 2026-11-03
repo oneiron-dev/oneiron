@@ -180,7 +180,7 @@ impl Memory<'_> {
                 Some(crate::edge::EdgeKind::ClaimOf),
                 None,
             )?
-            .collect::<Result<Vec<_>>>()?
+            .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .find(|edge| edge.target == subject)
             .map(|edge| edge.weight);
