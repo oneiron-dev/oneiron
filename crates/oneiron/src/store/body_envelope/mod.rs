@@ -353,15 +353,16 @@ impl BodyDir {
     /// Rebuilds the sparse line index of the body `digest`, `len` bytes long, as
     /// `row` names it (FIX 1186b): streams the existing file whole, counts 64 KiB
     /// blocks, checks length and digest, then publishes the derived sidecar.
-    /// `None` on any open, read, layout or digest failure; on success `Some(index)`
-    /// even when the best-effort publish fails, so the caller can use it. No
-    /// missing/short/corrupt detection and no trigger lives here.
+    /// `None` on any open, read, layout or digest failure. On success returns
+    /// the index and whether its best-effort publication is readable now, so a
+    /// detached caller can keep a failed publish queued. No missing/short/corrupt
+    /// detection and no trigger lives here.
     pub(crate) fn rebuild_line_index(
         &self,
         digest: &[u8; 32],
         len: u64,
         row: Option<&BodyKeyRow>,
-    ) -> Option<Vec<u64>> {
+    ) -> Option<(Vec<u64>, bool)> {
         let mut file = self.open_reader(digest, len, row).ok()??;
         let mut counter = frames::LineCounter::default();
         let mut hasher = blake3::Hasher::new();
@@ -403,6 +404,7 @@ impl BodyDir {
         } else {
             self.write_line_index(&super::body_file_name(digest), &index);
         }
-        Some(index)
+        let published = self.line_index_of(digest, len, row).is_some();
+        Some((index, published))
     }
 }

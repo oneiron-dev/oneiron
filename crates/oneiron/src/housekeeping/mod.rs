@@ -43,7 +43,7 @@ use crate::error::Result;
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first fourteen;
+/// One sweep the housekeeping pass knows. The engine runs the first fifteen;
 /// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +84,10 @@ pub enum HousekeepingSweep {
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
+    /// Rebuilds whole-body line indexes reads found missing or short (FIX
+    /// 1186b): a read notes the body, this sweep streams it once and
+    /// publishes the derived sidecar.
+    BodyLineIndexRebuild,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -139,7 +143,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -154,6 +158,7 @@ impl HousekeepingSweep {
         Self::SecretLiftHistory,
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
+        Self::BodyLineIndexRebuild,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -179,6 +184,7 @@ impl HousekeepingSweep {
             Self::SecretLiftHistory => "secret_lift_history",
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
+            Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -201,7 +207,8 @@ impl HousekeepingSweep {
     /// left unfinished at a pass's deadline is due again at once. Owed claim
     /// VAD work runs at open, for an approval a stopped process left, and
     /// every fifteen minutes. The found-key drain looks for due notices every
-    /// fifteen minutes.
+    /// fifteen minutes. The line-index rebuild drain looks for queued bodies
+    /// every fifteen minutes.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -218,7 +225,8 @@ impl HousekeepingSweep {
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
             | Self::SecretLiftHistory
-            | Self::FoundKeyNotices => engine(15 * MINUTE),
+            | Self::FoundKeyNotices
+            | Self::BodyLineIndexRebuild => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,

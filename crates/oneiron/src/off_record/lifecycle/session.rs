@@ -993,6 +993,13 @@ impl OffRecordSession<'_> {
         self.vault.pin_result_body(digest)
     }
 
+    /// Notes a detached line-index rebuild for the body `digest` in this
+    /// session's vault (FIX 1186b): the session arm's forward, beside
+    /// [`Self::pin_result_body`].
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        self.vault.note_body_line_index_rebuild(digest, len)
+    }
+
     /// The custody read guard of this session's vault, for a body read that
     /// opens an instance's key: taken before its snapshot and held through
     /// the key's last use (FIX 6019), as a vault read takes it.

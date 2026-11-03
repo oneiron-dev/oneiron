@@ -783,9 +783,26 @@ impl<'a> ExecutorStorage<'a> {
                 Ok((binding.session.body_dirs()?, key))
             })?,
         };
-        Ok(dirs
+        let found = dirs
             .iter()
-            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref())))
+            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref()));
+        // A missing or short index notes one detached rebuild (FIX 1186b) and
+        // reads as today: the sweep rebuilds, never this read. `Some` and
+        // `Err` never enqueue; correctly-sized-but-bad counts return `Some`
+        // above and never reach here.
+        if found.is_none() {
+            match self {
+                Self::Canonical(vault) => {
+                    vault.note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+                Self::Session(binding) => {
+                    binding
+                        .session
+                        .note_body_line_index_rebuild(output.raw_blake3, output.raw_len);
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// A writer for one result body, where this run's bodies go.
