@@ -293,8 +293,9 @@ pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
 /// the bytes no reader shows read clean to the write door; a container whose
-/// only key sits in those bytes is served its copy rebuilt at its root
-/// without them, once that copy reads clean (FIX 11553, 12268). A masked
+/// only key sits in those bytes, at any depth, is served its copy rebuilt
+/// through the whole tree without them, once that copy reads clean (FIX
+/// 11553, 12268, 12279). A masked
 /// copy is read by the write door's rules before it is served (FIX 2480); a
 /// file this reader cannot be served masked is
 /// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
@@ -343,13 +344,19 @@ pub(crate) fn sighted_bytes_in_txn(
         let Some(reason) = secret_scan::write_tree_hit(&bytes, digest) else {
             return Ok(bytes);
         };
+        // A key in what a reader shows is refused either way: the rebuild
+        // keeps those bytes and the rescan refuses its copy, so it is
+        // refused here, before the rebuild pays for the same answer (FIX
+        // 12280). Only the refusal's timing changes; a key no live member
+        // holds reads no hit here and takes the rebuild below unchanged.
+        if secret_scan::live_content_hit(&bytes, digest).is_some() {
+            return Err(masked_copy_withheld(reason));
+        }
         // A key only in the bytes no reader shows is gone from the copy
-        // rebuilt at the root, which leaves them out as a marked file's copy
-        // does: that copy is served once the write door's scan reads it
-        // clean. A key in what a reader shows, or in a member container's
-        // own hidden bytes, stays in it, and the file is refused (FIX 11553,
-        // 12268).
-        let Some(copy) = secret_scan::root_rebuilt_copy(&bytes) else {
+        // rebuilt through the whole tree, which leaves them out at every
+        // level as a marked file's copy does: that copy is served once the
+        // write door's scan reads it clean (FIX 11553, 12268, 12279).
+        let Some(copy) = secret_scan::tree_rebuilt_copy(&bytes, digest) else {
             return Err(masked_copy_withheld(reason));
         };
         if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
