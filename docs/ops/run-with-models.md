@@ -561,9 +561,11 @@ unless its entry names the codec its route decodes: `request_compression =
 `request_compression = false` to send plain. If a compressed body is answered
 400 or 415, it is sent once more, plain; when that answer differs, the
 provider sends plain until restart. For a `key_secret` provider the credential
-broker compresses instead, after its checks and just before its one send: gzip
+broker compresses instead, after its checks and just before its send: gzip
 level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
-16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
+16 KiB and smaller rules, except on a cloud node, where it sends plain. A gzip
+body answered 400 or 415 is sent once more, plain; when that answer differs,
+the broker sends plain until restart. A `key_secret` entry takes no
 `request_compression`.
 
 Our own model servers decode compressed bodies once built or started for it
