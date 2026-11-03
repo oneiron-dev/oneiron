@@ -748,6 +748,27 @@ pub(crate) fn take_reading_in_txn(
     GIVEN.put(&vault.store, txn, turn, &given)
 }
 
+/// Whether `turn` is still live and still reads as `frozen` in `txn`:
+/// the guard a widened stamp owes the gap since its branch opened
+/// (FIX 12246). A turn erased in that gap must get no stamp at all -
+/// recording its erased words' digest would undo the erasure's
+/// delete - and a turn whose words moved on must not be marked read
+/// at a reading it no longer has. Liveness is checked before
+/// equality: a gone turn reads as the empty set, which would equal an
+/// empty frozen reading. The live reading is a comparand only; it is
+/// never stamped.
+pub(crate) fn reading_current_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    frozen: [u8; 32],
+) -> Result<bool> {
+    if turn_key_in_txn(&vault.store, txn, turn)?.is_none() {
+        return Ok(false);
+    }
+    Ok(turn_statements_in_txn(vault, txn, turn)?.is_some_and(|live| reading(&live) == frozen))
+}
+
 /// The latest-round bookkeeping of `hold_in_txn` for an assignment a
 /// Micro selection retry records outside a window (a completed widened
 /// branch's stamp, an owed chunk's enqueue): the stamped turns join

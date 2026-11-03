@@ -163,8 +163,10 @@ impl ConsolidationExecutor<'_> {
 
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an
     /// accepted commit it also records the frozen readings this branch's
-    /// widening assigned (`widened`) as taken, with the latest-round
-    /// bookkeeping that assignment owes under this attempt's own round
+    /// widening assigned (`widened`) as taken - only for widened turns
+    /// still live and still reading as frozen when the stamp runs -
+    /// with the latest-round bookkeeping that assignment owes under
+    /// this attempt's own round
     /// (`widened_round`), in the stamp's own commit after the candidates'
     /// (FIX 12246).
     async fn commit_candidates(
@@ -191,10 +193,21 @@ impl ConsolidationExecutor<'_> {
             // A failed stamp never fails the commit the extraction already
             // landed; it only costs a later duplicate extraction.
             let stamped = ctx.vault.with_write_txn_grouped(|txn| {
+                // A widened turn erased or rewritten since the branch
+                // opened is not stamped at its frozen reading: an erasure
+                // in the gap already deleted its row, and moved-on words
+                // re-enter through the usual doors.
+                let mut current = Vec::new();
                 for (turn, reading) in widened {
+                    if crate::dreamer_wake::reading_current_in_txn(ctx.vault, txn, turn, *reading)?
+                    {
+                        current.push((*turn, *reading));
+                    }
+                }
+                for (turn, reading) in &current {
                     crate::dreamer_wake::take_reading_in_txn(ctx.vault, txn, turn, *reading)?;
                 }
-                crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, widened)
+                crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, &current)
             });
             if let Err(error) = stamped {
                 tracing::warn!(
