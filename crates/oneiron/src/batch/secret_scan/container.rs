@@ -506,8 +506,13 @@ pub(crate) fn served_masked_copy(
     handles: &PlaceHandles,
     digest: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>> {
-    masked_copy_in(bytes, places, Some(handles), Budget::new().with_root_digest(digest))
-        .map_err(withheld)
+    masked_copy_in(
+        bytes,
+        places,
+        Some(handles),
+        Budget::new().with_root_digest(digest),
+    )
+    .map_err(withheld)
 }
 
 /// The copy a serving door's masked reader may be served of `bytes`, a
