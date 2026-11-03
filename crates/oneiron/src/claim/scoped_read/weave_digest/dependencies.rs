@@ -5,12 +5,16 @@
 //! sealed pads, so the card's copy depends on every row its answer froze
 //! (FIX 9220). A hard delete of one scrubs the text from the period's
 //! copy (`rewrite.rs`); a served copy whose row is gone is scrubbed again
-//! at serve, so a missed index entry never serves erased text.
+//! at serve, so a missed index entry never serves erased text. A draft
+//! that predates `source_rows` names no rows; its live card's erase mark
+//! judges it at serve instead (FIX 10432).
 use std::collections::BTreeSet;
 
 use super::{ScopedRead, WeaveItem, WeaveReport, loop_decisions, report_sources};
 use crate::EntityId;
-use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
+use crate::dreamer_runner::maintenance::agent_health::{
+    AgentHealthCard, live_coach_draft_erased_in_txn,
+};
 use crate::error::Result;
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
@@ -43,6 +47,16 @@ fn draft_sources(card: &AgentHealthCard) -> BTreeSet<EntityId> {
     card.draft_source_rows()
 }
 
+/// Whether `card`'s copy holds draft text from an answer that predates
+/// `source_rows` (FIX 10432): unknown provenance, which only the live
+/// card's erase mark can judge at serve.
+fn draft_predates_sources(card: &AgentHealthCard) -> bool {
+    card.coach
+        .as_ref()
+        .and_then(|ask| ask.answer.as_ref())
+        .is_some_and(|answer| answer.draft.is_some() && answer.source_rows.is_none())
+}
+
 /// Scrubs a card's draft text, its diagnosis and proposal, from this copy
 /// and marks it, the copy's answer as the live card's scrub does (FIX
 /// 9221); the draft's route and target and the card's other fields stay.
@@ -67,7 +81,10 @@ pub(super) fn scrub_draft_of(item: &mut WeaveItem, source: &EntityId) -> bool {
 /// The serve-time recheck of each card's draft in a served copy: a draft
 /// written from a row now erased or stale, by its tombstone, is scrubbed
 /// from the copy served, whether or not the erase index named the period.
-/// The period and the card still serve.
+/// A draft that predates `source_rows` names no rows the tombstone check
+/// can judge, so the live card's erase mark judges it instead (FIX 10432):
+/// the text clears here, not just the flag. The period and the card still
+/// serve.
 fn scrub_erased_drafts_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -82,6 +99,10 @@ fn scrub_erased_drafts_in(
             continue;
         };
         if *draft_erased {
+            continue;
+        }
+        if draft_predates_sources(card) && live_coach_draft_erased_in_txn(store, txn, card)? {
+            scrub_draft(card, draft_erased);
             continue;
         }
         let mut gone = false;
