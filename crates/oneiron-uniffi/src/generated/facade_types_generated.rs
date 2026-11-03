@@ -69287,6 +69287,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_origin: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     #[serde(
         rename = "source_title",
         default,
