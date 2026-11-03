@@ -51,8 +51,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
+use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::provenance::body::{
-    BodyLocation, BodyRef, BodyState, OwnedBody, owned_body_in_txn, publish_body_in_txn,
+    owned_body_in_txn, publish_body_in_txn,
     release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
@@ -241,7 +242,7 @@ pub(crate) const ASSET_FILE_PLANE: bool = false;
 fn asset_file_kind(body: &[u8]) -> Option<AssetFileKind> {
     if !crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
         || crate::batch::secret_scan::is_container(body)
-        || crate::skill_hub::refinement_carrier_payload(body).is_some()
+        || crate::store::refinement_carrier::refinement_carrier_payload(body).is_some()
     {
         return None;
     }

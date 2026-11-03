@@ -68,8 +68,11 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::error::Error;
+use crate::store::setting_seed::GROUP_COMMIT_MAX_WRITES;
+use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
+use crate::store::setting_seed::SettingSpec;
 use crate::learning_setting::{
-    GROUP_COMMIT_MAX_WRITES, GROUP_COMMIT_WINDOW_MS, SettingSpec, setting_value_in_txn,
+    setting_value_in_txn,
 };
 
 use super::legal_hold::RefusalBatch;

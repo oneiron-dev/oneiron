@@ -108,7 +108,7 @@ fn change_id(owner: EntityId, base: u64, step: CoachStep, now: u64) -> Result<En
     let base = base.to_be_bytes();
     let now = now.to_be_bytes();
     let step = format!("{step:?}");
-    crate::codebase::entity_id_from_hash_material(
+    crate::store::code_snapshot::entity_id_from_hash_material(
         CHANGE_ID_DOMAIN,
         &[
             owner.as_bytes().as_slice(),

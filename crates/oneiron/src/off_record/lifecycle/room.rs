@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::batch::BatchOp;
-use crate::code_run::ResultOccurrence;
+use crate::store::result_manifest::ResultOccurrence;
 use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

@@ -29,7 +29,7 @@ use super::{
     Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
 };
 use crate::error::Error;
-use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
+use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
 
 /// What the walk does next, the last frame first.
 enum Frame {
@@ -360,20 +360,45 @@ fn reader_rebuilt(
     }
 }
 
-/// `bytes`, a `container`, encoded again by its own reader around every
-/// member as read, no member entered (FIX 11553, 12268): what its reader
-/// reads as no member (a PDF's superseded revisions, a ZIP's bytes outside
-/// its central directory's entries) is left out, as it is from a marked
-/// file's copy. The copy is held to the byte floor as every rebuilt copy
-/// is.
-pub(super) fn rebuild_root(container: Kind, bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
-    let mut keep =
-        |_: MemberStep, _: &[u8], _: &mut Budget| -> Walked<Option<Vec<u8>>> { Ok(None) };
-    let copy = reader_rebuilt(container, bytes, budget, &mut keep)?;
-    if budget.copy_over(copy.len()) {
-        return Err(over_budget());
+/// The serving rebuild's transform (FIX 12279): transform nothing, enter
+/// every container. `transform` sees each place's bytes before `descends`
+/// is asked, so it records the paths that read as containers; every live
+/// member is then built (a container rebuilt by its own reader, anything
+/// else kept whole), so the bytes no reader shows are left out at every
+/// level, not the root alone. A member inside hidden bytes is never read
+/// as a live member, so it is dropped with them, never rebuilt.
+#[derive(Default)]
+struct RebuildAll {
+    containers: Vec<Vec<MemberStep>>,
+}
+
+impl RetainedLeafTransform for RebuildAll {
+    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
+        if classify(&bytes).is_some() {
+            self.containers.push(path.to_vec());
+        }
+        Ok(bytes)
     }
-    Ok(copy)
+
+    fn descends(&self, path: &[MemberStep]) -> bool {
+        self.containers.iter().any(|at| at.as_slice() == path)
+    }
+
+    fn reaches(&self, _path: &[MemberStep]) -> bool {
+        true
+    }
+}
+
+/// `bytes`, a container, encoded again by its own reader around every
+/// member's rebuilt copy, at every depth (FIX 11553, 12268, 12279): what a
+/// reader reads as no member (a PDF's superseded revisions, a ZIP's bytes
+/// outside its central directory's entries) is left out at each level, as
+/// it is from a marked file's copy. Every member's decoding counts against
+/// the one `budget`. The caller reads the copy clean before serving it,
+/// and unrebuilt nested bytes are never in it: a member the walk did not
+/// build is in no copy at all, the walk having stopped instead.
+pub(super) fn rebuild_tree(bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
+    rebuild_with(bytes, &mut RebuildAll::default(), budget)
 }
 
 /// Hands each member `container`'s reader reads in `bytes` to `each`.

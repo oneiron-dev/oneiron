@@ -4,6 +4,8 @@
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
 mod contracts;
+mod read_result;
+pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
 mod retrieval;
 pub(crate) use lmdb_retrieval::text_index;

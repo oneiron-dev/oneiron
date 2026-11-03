@@ -1,6 +1,8 @@
 //! LMDB audit, dependency, content-addressed blob and queue adapters.
 use super::*;
-use crate::attempt_queue::*;
+use crate::attempt_queue::{AttemptId, AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome};
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::blob_artifact::{blob_artifact_asset_entity_id, blob_artifact_asset_ref_key};
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};

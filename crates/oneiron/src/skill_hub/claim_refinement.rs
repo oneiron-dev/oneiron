@@ -8,6 +8,7 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{package_codec::invalid, shared_gate::checked_useful_decision};
+use crate::model_decision::{AnswerContract, DecisionClass, DecisionQuestion, Reversibility};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -22,9 +23,7 @@ use crate::{
     edge::EdgeActorClass,
     entity_id::EntityId,
     error::{Error, Result},
-    llm::decision::{
-        AnswerContract, DecisionClass, DecisionQuestion, Reversibility, TypedDecision,
-    },
+    llm::decision::TypedDecision,
     skill_optimize::held_out_receipt_set_digest,
     store::Store,
     temporal::TimeRange,

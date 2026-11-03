@@ -2,7 +2,7 @@
 //! (FIX 3520).
 
 use crate::error::Result;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 

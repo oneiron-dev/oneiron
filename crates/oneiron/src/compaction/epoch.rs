@@ -299,7 +299,9 @@ impl EpochPlacement {
         txn: &mut heed::RwTxn<'_>,
         summary: EntityId,
     ) -> Result<()> {
-        let world = self.world.unwrap_or_else(crate::claim::base_world_id);
+        let world = self
+            .world
+            .unwrap_or_else(oneiron_contracts::claim::base_world_id);
         let facet = match self.facet {
             Some(facet) => facet,
             None => crate::claim::default_facet_in(store, txn)?,
@@ -910,7 +912,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
                         kind: EdgeKind::DerivedFrom,
                         tgt: *target,
                         weight: 1.0,
-                        vad: crate::affect::Vad::NEUTRAL,
+                        vad: oneiron_contracts::affect::Vad::NEUTRAL,
                     },
                 ),
             )?;

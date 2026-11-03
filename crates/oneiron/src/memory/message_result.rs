@@ -16,11 +16,14 @@ use serde_json::Value;
 use super::structural::kind_string_for_type;
 use super::*;
 
-use crate::claim::{CallerLocality, ClaimReadStatus, ScopedReadResult};
-use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, ExecutorStorage, ResultFacet, ResultRead,
-    result_refusal, unknown_handle,
-};
+use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead, ScopedReadResult};
+use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
+use crate::store::result_manifest::CodeRunRawOutput;
+use crate::code_run::ExecutorStorage;
+use crate::memory::result_facet::ResultFacet;
+use crate::code_run::ResultRead;
+use crate::code_run::result_refusal;
+use crate::code_run::unknown_handle;
 use crate::engine_executor::{JsResultRef, JsResultTarget};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -91,7 +94,7 @@ impl Memory<'_> {
             .and_then(|view| view.body)
             .filter(|body| body.get("is_visible").and_then(Value::as_bool) == Some(true))
         else {
-            if let Some(reply) = self.read_room_message_result(*message, facet, input)? {
+            if let Some(reply) = self.read_room_message_result(&lane, *message, facet, input)? {
                 return Ok(reply);
             }
             return Err(MemoryError::not_found("message not found").with_read_receipt(receipt));
@@ -120,11 +123,13 @@ impl Memory<'_> {
 
     /// [`Self::read_message_result`] of `message` as an overlay MESSAGE of
     /// the off-record room session this surface binds (FIX 3620), for the
-    /// principal it binds the session for. They must be on the room's roster
-    /// and their membership must have shown the MESSAGE when it was said, as
-    /// their copy of the talk shows its result. Its body is read through the
-    /// room's storage on the route the read captures, checked against the
-    /// participant on every read, as a run in the room reads it: only a body
+    /// principal it binds the session for. Their credential-backed lane must
+    /// admit the overlay MESSAGE through the session view, they must be on the
+    /// room's roster, and their membership must have shown the MESSAGE when it
+    /// was said, as their copy of the talk shows its result. Its body is read
+    /// through the room's storage on the route the read captures, checked
+    /// against the participant on every read, as a run in the room reads it:
+    /// only a body
     /// the room's producer run holds at the path the MESSAGE names resolves,
     /// withheld as the canonical read withholds one, by the rows that run's
     /// answers were served from and by the marks the room keeps on the
@@ -134,6 +139,7 @@ impl Memory<'_> {
     /// nothing more.
     fn read_room_message_result(
         &self,
+        lane: &ScopedRead<'_>,
         message: EntityId,
         facet: Option<ResultFacet>,
         input: Value,
@@ -145,7 +151,18 @@ impl Memory<'_> {
             .vault
             .off_record_session_vault()
             .bind_for(session_ref, reader)
-            .and_then(|session| room_held_result(&session, message, reader));
+            .and_then(|session| {
+                let view = session.read_view()?;
+                let admitted = self
+                    .vault
+                    .scoped_read_in_session(lane.actor_key().clone(), &view)
+                    .with_claim_status(ClaimReadStatus::Recorded)
+                    .is_ref_readable(&message)?;
+                if !admitted {
+                    return Ok(None);
+                }
+                room_held_result(&session, message, reader)
+            });
         let held = match held {
             Ok(Some(held)) => held,
             Ok(None) | Err(Error::OffRecord(_)) => return Ok(None),
