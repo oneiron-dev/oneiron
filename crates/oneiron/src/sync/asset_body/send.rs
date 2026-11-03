@@ -13,7 +13,7 @@ use super::stored_body_is;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
-use crate::result_body::ResultBodyPin;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::store::asset_file_in_txn;
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::transport::{
@@ -62,21 +62,25 @@ impl Sending {
     pub(super) fn open(peer: &AssetBodyPeer<'_>, want: &AssetBodyWant) -> Result<Option<Self>> {
         let Some(window) = WindowKey::try_new(&want.body.window) else {
             return Ok(None);
-        };
+        ,
+};
         let Some(doc) = (peer.window)(&window) else {
             return Ok(None);
-        };
+        ,
+};
         let id = want.body.entity;
         let Some(carrier) = map_get_bytes(&doc.get_map("entities"), &id.to_hex()) else {
             return Ok(None);
-        };
+        ,
+};
         let Some(body) = bound_in(&doc, &id, &carrier).filter(|body| {
             body.carrier_blake3 == want.body.carrier_blake3
                 && body.body_blake3 == want.body.body_blake3
                 && body.len == want.body.len
         }) else {
             return Ok(None);
-        };
+        ,
+};
         if TombstoneIndex::build(&doc.get_map("tombstones")).contains(&id) {
             return Ok(None);
         }
@@ -89,14 +93,16 @@ impl Sending {
         }
         let Some(raw) = vault.store.port_entity_raw(&txn, &id)? else {
             return Ok(None);
-        };
+        ,
+};
         let Some(header) = carrier
             .get(..ENTITY_METADATA_HEADER_LEN)
             .and_then(|header| <[u8; ENTITY_METADATA_HEADER_LEN]>::try_from(header).ok())
             .filter(|header| raw.get(..ENTITY_METADATA_HEADER_LEN) == Some(&header[..]))
         else {
             return Ok(None);
-        };
+        ,
+};
         if !stored_body_is(&vault.store, &txn, &id, &raw, &body.facts())? {
             return Ok(None);
         }
@@ -108,7 +114,8 @@ impl Sending {
                     (Source::File(Box::new(file)), Some(pin))
                 }
                 None => (Source::Row(header), None),
-            };
+            ,
+};
         Ok(Some(Self {
             attempt: want.attempt,
             body,
@@ -143,7 +150,8 @@ impl Sending {
         let mut sent = Sent {
             frames: Vec::new(),
             ended: false,
-        };
+        ,
+};
         for _ in 0..frames.max(1) {
             if self.sent == self.body.len {
                 let complete = *self.hasher.finalize().as_bytes() == self.body.body_blake3;
@@ -157,7 +165,8 @@ impl Sending {
                     tracing::warn!(%entity, %error, "asset body send stopped");
                     return self.end(sent, false);
                 }
-            };
+            ,
+};
             self.hasher.update(&bytes);
             sent.frames.push(
                 encode_asset_body_data(&AssetBodyData {

@@ -26,7 +26,7 @@ use super::{
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;
-use crate::runtime_hooks::VerbHookStop;
+use crate::error::VerbHookStop;
 use crate::{EntityId, LlmRequest, Vault, WriteActor};
 
 mod log;
@@ -358,7 +358,8 @@ impl ConversationFlight<'_> {
                 self.driver.abandon();
                 ConversationFlightOutcome::Refused(refusal.detail)
             }
-        };
+        ,
+};
         backend.end_flight();
         outcome
     }
@@ -393,7 +394,8 @@ fn run_pass(
                 let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
                 return (Pass::Refused(refusal), spent);
             }
-        };
+        ,
+};
         if let Some(execution) = execution.as_mut() {
             calls.append(&mut execution.calls);
         }

@@ -24,7 +24,7 @@ use super::scope::tree_admitted_in;
 use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::secret_custody::SecretSight;
-use crate::share_travel::{BornWith, BornWithField, TravelChoice, TravelKind};
+use oneiron_authority::share_travel::{BornWith, BornWithField, TravelChoice, TravelKind};
 use crate::{EntityId, Error};
 
 /// The schema a lens pack file names.
@@ -122,7 +122,8 @@ impl Memory<'_> {
                 "a reader narrowed to some worlds or facets is given a lens's frozen tree only within the lens's scope",
                 &["Export the lens on a credential that reads its scope or the whole vault."],
             )
-        };
+        ,
+};
         let vault = self.vault();
         let (record, tree, prompt_ref, prompt_readable, in_scope) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
@@ -146,7 +147,8 @@ impl Memory<'_> {
                     tree_admitted_in(vault, &read, &txn, &lens)?
                 });
             (record, tree, prompt_ref, prompt_readable, in_scope)
-        };
+        ,
+};
         if !in_scope {
             return Err(outside());
         }
@@ -159,14 +161,16 @@ impl Memory<'_> {
                     self.born_with_text_for_reader(&lens_ref, &birth.made_by, &travel)?
                 }
                 None => vault.born_with_text_for_another(&lens_ref, None)?,
-            };
+            ,
+};
             // The intent prompt is the prompt NOTE's text: it leaves only
             // with a reader who reads that NOTE.
             if !prompt_readable {
                 text.remove(&BornWithField::IntentPrompt);
             }
             text
-        };
+        ,
+};
         let born_with = travel.project(text);
         let file = LensPackFile {
             schema: LENS_PACK_SCHEMA.to_owned(),
@@ -176,7 +180,8 @@ impl Memory<'_> {
             compiled: serde_json::from_str(&tree)
                 .map_err(|_| Error::CorruptedIndex("lens proposal record"))?,
             born_with,
-        };
+        ,
+};
         let pack_json = serde_json::to_string(&file)
             .map_err(|_| Error::InvalidConfig("lens pack did not encode".into()))?;
         let content_hash = blake3::hash(pack_json.as_bytes()).to_hex().to_string();

@@ -17,7 +17,7 @@ use zeroize::Zeroizing;
 
 use super::{CustodyRequirement, CustodySourceAt, admit_recovery, refused};
 use crate::entity_id::EntityId;
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
+use crate::store::restore_admission::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
 use crate::store::key_custody::head::CustodyOpener;
 use crate::store::key_custody::identity::{CustodyKind, CustodySubject};
@@ -110,19 +110,22 @@ impl Store {
         let position = CustodyRequirement {
             position: required.position.clone(),
             required: Vec::new(),
-        };
+        ,
+};
         let opener = CustodyOpener {
             root: source.root,
             data_key: Some(data_key),
             machine: source.machine,
-        };
+        ,
+};
         let target = source.reader();
         let admitted = admit_recovery(&position, &target, &opener, source.anchor)?;
         let mut pads = AdmittedWorldPads {
             live: BTreeMap::new(),
             retired: BTreeSet::new(),
             note: admitted.note(),
-        };
+        ,
+};
         for id in &admitted.retired {
             if let Some(item) = pad_item(id.subject()) {
                 pads.retired.insert(item);
@@ -136,7 +139,8 @@ impl Store {
         for (id, secret) in &admitted.live {
             let Some(item) = pad_item(id.subject()) else {
                 continue;
-            };
+            ,
+};
             if admitted.retires(id) {
                 pads.retired.insert(item);
                 continue;

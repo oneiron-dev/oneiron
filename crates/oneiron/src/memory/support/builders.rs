@@ -99,7 +99,7 @@ impl Memory<'_> {
     /// Binds the logical verb's id a transport carried in, so a verb hook
     /// fires once for it however many wrappers it crosses.
     #[must_use]
-    pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
+    pub fn with_invocation(mut self, invocation: crate::store::verb_invocation::InvocationId) -> Self {
         self.invocation = Some(invocation);
         self
     }
@@ -145,7 +145,7 @@ impl Memory<'_> {
 
     /// The code-mode step the bound origin's call is, if any (FIX 11683):
     /// only the dispatcher puts one there.
-    pub(crate) fn host_step(&self) -> Option<crate::runtime_hooks::InvocationId> {
+    pub(crate) fn host_step(&self) -> Option<crate::store::verb_invocation::InvocationId> {
         self.host_origin.as_ref()?.step
     }
 
@@ -248,7 +248,8 @@ impl Memory<'_> {
             let principal = match &self.read_proof {
                 Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
                 None => Some(self.actor),
-            };
+            ,
+};
             self.vault
                 .off_record_session_is_anonymous_for(session, principal)
         })
@@ -263,13 +264,14 @@ impl Memory<'_> {
         let principal = match &self.read_proof {
             Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
             None => Some(self.actor),
-        };
+        ,
+};
         Some((session, principal))
     }
 
     /// The logical verb's id a host bound, if any.
     #[must_use]
-    pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
+    pub fn invocation(&self) -> Option<crate::store::verb_invocation::InvocationId> {
         self.invocation
     }
 
@@ -338,12 +340,14 @@ impl Memory<'_> {
         use crate::runtime_hooks::verb::{
             VerbAskCredential, VerbAskCredentialRef, VerbAskCredentialSource,
             VerbAskCredentialWitness, VerbAskDoor,
-        };
+        ,
+};
         let door = self.credential_door.as_ref()?;
         let room = match door {
             VerbAskDoor::Facade { room } => *room,
             VerbAskDoor::Mcp { .. } | VerbAskDoor::McpOwner { .. } => None,
-        };
+        ,
+};
         let rebuilt = self.credential
             && self.room_turn.as_ref().map(|turn| turn.room) == room
             && self
@@ -369,12 +373,14 @@ impl Memory<'_> {
                 }
                 VerbAskCredentialWitness::AttestedOwner { holder }
             }
-        };
+        ,
+};
         let reference = VerbAskCredentialRef {
             instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
-        };
+        ,
+};
         Some(VerbAskCredential::new(reference, witness))
     }
 
@@ -394,7 +400,8 @@ impl Memory<'_> {
         {
             Some(VerbAskCredentialSource::AttestedOwner { holder }) => Some(*holder),
             _ => None,
-        };
+        ,
+};
         let holder = named.or(self.attested_owner)?;
         (self.credential
             && self.invocation_slip.is_none()

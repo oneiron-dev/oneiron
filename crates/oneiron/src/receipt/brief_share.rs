@@ -29,10 +29,12 @@ pub(super) fn brief_share_receipts(
             let Some((share, admission)) = read_share_history_in_txn(&vault.store, txn, &id)?
             else {
                 return Ok(());
-            };
+            ,
+};
             let Some(gate) = vault.store.gate_decision_in_txn(txn, admission.gate_id)? else {
                 return Ok(());
-            };
+            ,
+};
             let trace = crate::receipt::gate_decision_receipt(&gate).policy_trace;
             let travel = crate::share_travel::brief_travel_in_txn(vault, txn, &id)?;
             let created = brief_share_receipt(
@@ -64,7 +66,7 @@ fn brief_share_receipt(
     id: EntityId,
     share: &ShareView,
     admission: &ShareAdmission,
-    travel: &crate::share_travel::TravelChoice,
+    travel: &oneiron_authority::share_travel::TravelChoice,
     trace: &[String],
     occurred_at: u64,
     revoked: bool,

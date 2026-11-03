@@ -33,7 +33,7 @@ pub struct BriefView {
     pub citations: Vec<BriefCitationView>,
     /// The brief's born-with text its share lets travel (OF-491); empty in
     /// the owner's own view, where nothing leaves.
-    pub born_with: crate::share_travel::BornWith,
+    pub born_with: oneiron_authority::share_travel::BornWith,
 }
 
 impl Vault {
@@ -125,7 +125,8 @@ impl Vault {
                 value: None,
                 receipt: read.read_receipt(None, 0)?,
             })
-        };
+        ,
+};
         listed.push(share_id);
         // The viewer is resolved before the brief handle is parsed or its
         // NOTE loaded, so a share this viewer cannot see answers unresolved
@@ -133,7 +134,8 @@ impl Vault {
         let Some(authorized) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &[])?
         else {
             return unresolved();
-        };
+        ,
+};
         let id = EntityId::from_hex(&authorized.brief_ref)
             .map_err(|_| invalid("brief handle must name a vault NOTE"))?;
         listed.push(id);
@@ -142,7 +144,8 @@ impl Vault {
         let Some(resolved) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &refs)?
         else {
             return unresolved();
-        };
+        ,
+};
         // The pins judged here are this brief's; a resolution naming another
         // brief does not lend them its visible claims.
         if resolved.brief_ref != authorized.brief_ref {
@@ -192,7 +195,8 @@ impl Vault {
                 value: None,
                 receipt,
             });
-        };
+        ,
+};
         if super::decode_note_body(&raw)?.kind != NoteKind::Plugin("brief".into()) {
             return Err(invalid("NOTE is not a brief"));
         }
@@ -206,7 +210,8 @@ impl Vault {
             (self.note_document(id)?, LiftedKeys::default())
         } else {
             self.note_document_keys(id)?
-        };
+        ,
+};
         let shown = |text: &str| keys.masked(text).unwrap_or_else(|| text.to_owned());
         let mut citations = Vec::new();
         for pin in document
@@ -221,7 +226,8 @@ impl Vault {
                 claim.value
             } else {
                 None
-            };
+            ,
+};
             let live = match admitted {
                 Some(body) => {
                     listed.push(pin.document);
@@ -233,7 +239,8 @@ impl Vault {
                         .transpose()?
                 }
                 None => None,
-            };
+            ,
+};
             let Some(live) = live else {
                 // A redacted reference reveals neither current lifecycle nor
                 // whether hidden evidence was edited or erased.
@@ -251,7 +258,8 @@ impl Vault {
                     quote: None,
                 });
                 continue;
-            };
+            ,
+};
             let resolved = self.resolve_note_pin(pin);
             let drifted = !matches!(&resolved, Ok(NoteSpanResolution::Mapped { .. }));
             let source_moved = self
@@ -292,7 +300,7 @@ impl Vault {
             value: Some(BriefView {
                 instrument,
                 citations,
-                born_with: crate::share_travel::BornWith::new(),
+                born_with: oneiron_authority::share_travel::BornWith::new(),
             }),
             receipt,
         })

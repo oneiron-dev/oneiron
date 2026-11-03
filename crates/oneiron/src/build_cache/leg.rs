@@ -1,6 +1,6 @@
 //! Build/verify runner: durable action-key reservation prevents duplicate dispatch.
 use super::*;
-use crate::checkout::CheckoutTaskClass;
+use crate::store::checkout_task::CheckoutTaskClass;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError};
@@ -224,7 +224,8 @@ impl BuildCache<'_> {
         let (cached, hit) = match self.put(action, candidate)? {
             BuildCachePutOutcome::Stored(value) => (value, false),
             BuildCachePutOutcome::Existing(value) => (value, true),
-        };
+        ,
+};
         Ok(leg(cached, class, hit))
     }
 }

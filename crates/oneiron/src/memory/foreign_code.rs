@@ -161,7 +161,7 @@ impl From<MemoryError> for ForeignCodeFailure {
 type ForeignLaunch<'a> = (
     ForeignCodeArtifact<'a>,
     crate::code_sandbox::microvm::ExecutionBudget,
-    std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
 );
 
 #[derive(Deserialize)]
@@ -198,7 +198,7 @@ impl Memory<'_> {
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
-        spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+        spool: std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
         type_feedback: Option<&TypeFeedback>,
     ) -> Result<ForeignCodeRunResult, ForeignCodeFailure> {
         let proof = self.foreign_code_credential()?;
@@ -290,7 +290,8 @@ impl Memory<'_> {
             network: manifest.network.clone(),
             generation: manifest.generation.clone(),
             fence_proven: !manifest.fence_unproven && manifest.fence_proof.is_some(),
-        };
+        ,
+};
         let (receipt_ref, proposals) = self.with_verified_actor_write_txn(|txn| {
             // Every authority check guarding these receipts shares their writer.
             if !self.vault.capability_slip_is_live_in_txn(txn, proof)? {
@@ -370,7 +371,8 @@ impl Memory<'_> {
                                 kind as u8,
                                 target.to_hex()
                             ),
-                        };
+                        ,
+};
                         ForeignCodeEffect::ClaimCandidate {
                             claim: super::ClaimInput {
                                 id: Some(claim.id.to_hex()),
@@ -399,7 +401,8 @@ impl Memory<'_> {
                             },
                         }
                     }
-                };
+                ,
+};
                 let mut proposal = ForeignCodeProposal {
                     proposal_ref: delta.id().to_hex(),
                     receipt_ref: String::new(),
@@ -407,7 +410,8 @@ impl Memory<'_> {
                     source: ForeignCodeSource::Generated,
                     approval: ForeignCodeApproval::Proposed,
                     effect,
-                };
+                ,
+};
                 let body = serde_json::to_string(&proposal)
                     .map_err(|_| MemoryError::bad_request("foreign proposal cannot be encoded"))?;
                 let digest = *blake3::hash(body.as_bytes()).as_bytes();

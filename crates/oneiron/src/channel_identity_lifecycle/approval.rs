@@ -54,7 +54,7 @@ use crate::channel_identity::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::{ApprovalTarget, ChannelIdentityLifecycleFacts, ExternalEffectGateInput};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -362,7 +362,8 @@ impl KeptLifecycleRequest {
             identity_retiring: done.identity_retiring,
             approval_digest: None,
             request_ref: Some(request_ref),
-        };
+        ,
+};
         Some(LifecycleApplied::Replayed(result, done.view))
     }
 }
@@ -442,7 +443,8 @@ impl Vault {
             row.actor == Some(actor)
                 && row.verb == verb
                 && row.input_digest.as_deref() == Some(input_digest.as_str())
-        };
+        ,
+};
         let new_row = || -> Result<KeptLifecycleRequest> {
             let (identity_id, requested_at) = mint()?;
             Ok(KeptLifecycleRequest {
@@ -454,7 +456,8 @@ impl Vault {
                 request_digest: None,
                 completion: None,
             })
-        };
+        ,
+};
         let mut request_ref = named.unwrap_or_else(EntityId::now);
         let mut kept = self.keep_lifecycle_request(request_ref, &matches, &new_row)?;
         if matches!(kept, Kept::Unreadable) {
@@ -462,7 +465,8 @@ impl Vault {
             kept = match self.keep_lifecycle_request(request_ref, &matches, &new_row)? {
                 Kept::Unreadable => Kept::Ready(new_row()?),
                 kept => kept,
-            };
+            ,
+};
         }
         let state = match kept {
             Kept::Ready(row) => LifecycleCallState::Ready {
@@ -483,7 +487,8 @@ impl Vault {
                 }
             }
             Kept::Conflict | Kept::Unreadable => LifecycleCallState::Conflict,
-        };
+        ,
+};
         Ok(LifecycleCall { request_ref, state })
     }
 
@@ -500,20 +505,23 @@ impl Vault {
     ) -> Result<LifecycleApplied> {
         let Some(request_digest) = lifecycle_request_digest(&request) else {
             return self.apply_channel_identity_lifecycle_gated(request, None);
-        };
+        ,
+};
         let actor = request.actor.actor_entity_ref;
         let verb = request.intent.verb().as_str();
         let identity_id = request.intent.identity_id();
         let requested_at = match &request.intent {
             ChannelIdentityLifecycleIntent::Provision(intent) => intent.identity.state_changed_at(),
             _ => request.requested_at,
-        };
+        ,
+};
         let matches = |row: &KeptLifecycleRequest| {
             row.actor == actor
                 && row.verb == verb
                 && row.identity_id == identity_id
                 && row.request_digest.as_deref() == Some(request_digest.as_str())
-        };
+        ,
+};
         let new_row = || -> Result<KeptLifecycleRequest> {
             Ok(KeptLifecycleRequest {
                 actor,
@@ -524,7 +532,8 @@ impl Vault {
                 request_digest: Some(request_digest.clone()),
                 completion: None,
             })
-        };
+        ,
+};
         let mut request_ref = request_ref.unwrap_or_else(EntityId::now);
         let kept = match self.keep_lifecycle_request(request_ref, &matches, &new_row)? {
             // Today's path: a call of its own, under a fresh ref.
@@ -533,7 +542,8 @@ impl Vault {
                 self.keep_lifecycle_request(request_ref, &matches, &new_row)?
             }
             kept => kept,
-        };
+        ,
+};
         match kept {
             Kept::Completed(row) => row.replay(request_ref).ok_or(Error::InvariantViolation(
                 "a completed channel identity lifecycle request kept no receipt",
@@ -638,7 +648,8 @@ fn drop_requests_in_txn(
             .and_then(|key| EntityId::from_bytes(key).ok())
         else {
             continue;
-        };
+        ,
+};
         if !REQUESTS.decode_value(&value).is_ok_and(|row| keep(&row)) {
             dropped.push(request_ref);
         }

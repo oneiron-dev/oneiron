@@ -12,7 +12,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::vault::Vault;
 
 /// What a delivered reveal keeps for the step that collected it (FIX
@@ -130,10 +130,12 @@ impl Vault {
                     handle: row.handle.clone(),
                     class: row.class()?,
                     effector: format!("model:{}", asker.connection()),
-                };
+                ,
+};
                 crate::secret_lease::reread_reveal_lease_in_txn(self, txn, &authority, &lease)?
             }
-        };
+        ,
+};
         Ok(SecretRevealWait {
             decision: if value.is_some() {
                 SecretRevealDecision::Granted

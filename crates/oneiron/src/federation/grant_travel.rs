@@ -19,7 +19,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncProtocolValidation, SyncSelectorValidation};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::share_travel::{GrantTravel, TravelChoice, travelled_value};
+use oneiron_authority::share_travel::TravelChoice;
+use crate::share_travel::{GrantTravel, travelled_value};
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
 };
@@ -104,7 +105,8 @@ impl GrantTravelAct<'_> {
             GRANT_TRAVEL_CLEAR_REASON
         } else {
             GRANT_TRAVEL_SET_REASON
-        };
+        ,
+};
         let mut record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
@@ -126,7 +128,8 @@ impl GrantTravelAct<'_> {
             read_frontier_hash: self.frontier,
             context: Default::default(),
             redacted_at: None,
-        };
+        ,
+};
         vault
             .store
             .append_fresh_gate_decision_in_txn(txn, &mut record)

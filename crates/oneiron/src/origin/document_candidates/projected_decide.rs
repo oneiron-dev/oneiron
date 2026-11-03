@@ -36,7 +36,8 @@ use super::projected_tree::{
 };
 use super::{CandidateQueue, MODE_GITLINK, PreparedPushCandidate};
 use crate::code_document::CodeFileMetadataEdit;
-use crate::code_revision::{CodeRevisionFork, CodeTreeBlob, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::code_revision::{CodeRevisionFork, CodeTreeInventory};
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid, GitWire, GitWireRepo};
@@ -91,15 +92,18 @@ impl Vault {
         let source = &row.source;
         let Some(new_hex) = &source.new_oid else {
             return held(HeldShape, "ref_deleted");
-        };
+        ,
+};
         let Some(old_hex) = &source.old_oid else {
             return held(HeldBase, "no_old_tip");
-        };
+        ,
+};
         let ingress_dir =
             projection_ingress_dir(self, projection.canonical_store, projection.graph)?;
         let Some(ingress) = wire.existing_projection_ingress(&ingress_dir)? else {
             return held(HeldShape, "ingress_missing");
-        };
+        ,
+};
         if ingress.identity().as_hex() != source.object_store {
             return held(HeldShape, "ingress_missing");
         }
@@ -119,7 +123,8 @@ impl Vault {
         })?
         else {
             return Ok(None);
-        };
+        ,
+};
         match record.status {
             OriginPublicationStatus::Prepared => return Ok(None),
             OriginPublicationStatus::Published => {}
@@ -137,10 +142,12 @@ impl Vault {
             Ok(admitted) => admitted,
             Err(Error::Refused(_)) => return held(HeldShape, "push_not_admitted"),
             Err(error) => return Err(error),
-        };
+        ,
+};
         let Some(pusher) = record.actor_id.id() else {
             return held(HeldShape, "pusher_erased");
-        };
+        ,
+};
         if row.operations.is_empty() {
             return held(HeldShape, "no_change");
         }
@@ -158,15 +165,18 @@ impl Vault {
                 &old,
                 GitObjectKind::Commit,
             )?
-        };
+        ,
+};
         let [canonical_old] = originals.as_slice() else {
             return held(HeldBase, "no_exact_base_or_ambiguous_base");
-        };
+        ,
+};
         // CALL L on the canonical store, from the ORIGINAL only.
         let base = match self.resolve_push_candidate_base(wire, canonical, queue, canonical_old)? {
             Ok(base) => base,
             Err(hold) => return Ok(Some(Err((hold, None)))),
-        };
+        ,
+};
         let tested = base
             .revision
             .tested_queue
@@ -219,14 +229,16 @@ impl Vault {
         let facts = {
             let txn = self.store.env.read_txn()?;
             RepoMarkFacts::read_in_txn(self, &txn, RepoSecretMarkLookup::ReadableClaims)?
-        };
+        ,
+};
         let mut places: BTreeMap<&str, (KeyPlaces, bool)> = BTreeMap::new();
         for path in &changed {
             let (Some((original_oid, _)), Some((copy_oid, _))) =
                 (original_entries.get(*path), copy_entries.get(*path))
             else {
                 continue;
-            };
+            ,
+};
             if original_oid == copy_oid {
                 continue;
             }
@@ -244,7 +256,8 @@ impl Vault {
                 } else {
                     addressed
                 }
-            };
+            ,
+};
             let copy_bytes = copy_files
                 .get(*path)
                 .map_or(&[][..], |file| file.content.as_slice());
@@ -284,7 +297,8 @@ impl Vault {
                     }
                 }
                 _ => None,
-            };
+            ,
+};
             inputs.push(ProjectedFileInput {
                 path: (*path).to_owned(),
                 original,
@@ -309,11 +323,13 @@ impl Vault {
             canonical_base: Some(canonical_old.as_str().to_owned()),
             canonical_target_tree: None,
             files: translated.iter().map(|file| file.pin.clone()).collect(),
-        };
+        ,
+};
         let is_conflict = |file: &&super::projected_files::ProjectedCandidateFile| {
             file.after
                 == ProjectedCanonicalAfter::Held(RepoProjectionHoldCause::ProjectionEditConflict)
-        };
+        ,
+};
         // CALL GRANT-CONFLICT-REPLACEMENT (FIX 10271): a conflict file a
         // live grant covers for the push's recipient takes its exact
         // submitted bytes below, its cause kept for the live recheck.
@@ -355,7 +371,8 @@ impl Vault {
                 ProjectedCanonicalAfter::Held(_) => new_files
                     .get(path)
                     .map(|submitted| submitted.content.clone()),
-            };
+            ,
+};
             // Present at the submitted mode while the push keeps the path.
             let after = new_entries
                 .get(path)
@@ -367,7 +384,8 @@ impl Vault {
             let entry = match after {
                 Some((bytes, mode)) => Some((write_blob(wire, canonical, bytes, now)?, *mode)),
                 None => None,
-            };
+            ,
+};
             blob_ids.insert(path.clone(), entry);
         }
         let target = rebuild_tree(wire, canonical, Some(&original_tree), &blob_ids, now, true)?
@@ -399,7 +417,8 @@ impl Vault {
                     mode: *mode,
                 }),
                 _ => None,
-            };
+            ,
+};
             if before
                 .iter()
                 .chain(after_blob.iter())
@@ -436,7 +455,8 @@ impl Vault {
                 Some(received_file_operation(proposal, source_operation)?)
             } else {
                 None
-            };
+            ,
+};
             files.push((
                 ResolvedCandidateFile {
                     source_operation,
@@ -479,11 +499,13 @@ impl Vault {
                 })
                 .collect(),
             created_at: row.received_at,
-        };
+        ,
+};
         let prepared = match self.prepare_received_files_proposal(canonical, input)? {
             Ok(prepared) => prepared,
             Err(_) => return held_with(HeldShape, "base_snapshot_refused", pins),
-        };
+        ,
+};
         let hold = super::projected::refresh_projected_candidate_hold(&pins, pins.hold_cause());
         Ok(Some(Ok(PreparedPushCandidate {
             candidate: CodePushCandidate {

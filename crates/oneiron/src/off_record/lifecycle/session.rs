@@ -251,7 +251,8 @@ impl OffRecordSession<'_> {
         let saver = match target {
             RouteTarget::Base => state.saver.clone(),
             RouteTarget::Overlay | RouteTarget::Discard => None,
-        };
+        ,
+};
         Ok((SessionWriteRoute::mint(&self.entry.overlay, target)?, saver))
     }
 
@@ -424,7 +425,8 @@ impl OffRecordSession<'_> {
                 self.vault
                     .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
             (search, false)
-        };
+        ,
+};
         let started = (search.started_at, search.started);
         self.register_search(
             route,
@@ -764,7 +766,8 @@ impl OffRecordSession<'_> {
                 wtxn,
                 entry,
             )
-        };
+        ,
+};
         let (segment, written) = self.vault.with_write_txn_grouped(|wtxn| {
             let segment = overlay.install_txn_segment()?;
             self.participant_in_txn(wtxn)?;
@@ -824,7 +827,8 @@ impl OffRecordSession<'_> {
             let segment = match target {
                 RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
                 RouteTarget::Base | RouteTarget::Discard => None,
-            };
+            ,
+};
             route.revalidate()?;
             let view = self.vault.store.session_view(overlay.clone())?;
             accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
@@ -885,7 +889,8 @@ impl OffRecordSession<'_> {
             let segment = match target {
                 RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
                 RouteTarget::Base | RouteTarget::Discard => None,
-            };
+            ,
+};
             route.revalidate()?;
             let view = self.vault.store.session_view(overlay.clone())?;
             accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
@@ -989,7 +994,7 @@ impl OffRecordSession<'_> {
     }
 
     /// Pins the result body `digest` in this session's vault (OF-597).
-    pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> crate::result_body::ResultBodyPin {
+    pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> crate::store::result_body_pins::ResultBodyPin {
         self.vault.pin_result_body(digest)
     }
 
@@ -1028,7 +1033,7 @@ impl OffRecordSession<'_> {
     }
 
     /// A share of the result-memory pool for one run in this session.
-    pub(crate) fn result_share(&self) -> crate::result_memory::ResultShare {
+    pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
     }
 

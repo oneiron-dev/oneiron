@@ -25,9 +25,9 @@ use super::{
     ESCROW_RETIRED, ESCROW_SPOOLED, EscrowRetirement, STATE, StoredWrap, VaultKeyWrapKind, WRAPS,
     WrapTransition, check_name,
 };
+use crate::store::restore_admission::{Rejected, RestoreAdmissionReason as R, because};
 use crate::recovery::checkpoint::{
-    AddedRecipient, EscrowRole, RecipientAdmissionFacts, RecipientRetirementDisposition, Rejected,
-    RestoreAdmissionReason as R, RestorePlan, RetiredBy, RetiredRecipient, because,
+    AddedRecipient, EscrowRole, RecipientAdmissionFacts, RecipientRetirementDisposition, RestorePlan, RetiredBy, RetiredRecipient,
 };
 use crate::store::RecipientRetirement;
 use crate::world_keys::{OpenedDataKey, refused};
@@ -284,7 +284,8 @@ impl Vault {
         let wraps: BTreeMap<String, StoredWrap> = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             WRAPS.scan(&self.store, &txn)?.into_iter().collect()
-        };
+        ,
+};
         let added = fresh
             .into_iter()
             .map(|recipient| {
@@ -319,7 +320,8 @@ impl Vault {
                 RecipientRetirementDisposition::Journaled { epoch, seqs }
             }
             RecipientCustody::LocalOnly(note) => RecipientRetirementDisposition::LocalOnly { note },
-        };
+        ,
+};
         Ok(RecipientAdmissionFacts {
             added,
             retired,
@@ -362,11 +364,13 @@ impl Vault {
                         label: retiring.label.clone(),
                         removed_wrap,
                         retired_at,
-                    };
+                    ,
+};
                     ESCROW_RETIRED.put(&self.store, txn, &retiring.label, &receipt)?;
                     receipt
                 }
-            };
+            ,
+};
             retired.push(RetiredRecipient {
                 label: retiring.label.clone(),
                 fingerprint: retiring.fingerprint,

@@ -116,7 +116,8 @@ impl CanonicalSnapshot {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
             refused: None,
-        };
+        ,
+};
         // Room for the envelope header, sealed once the payload is written.
         std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
         rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;
@@ -306,9 +307,7 @@ pub(super) fn parse_id(value: &str) -> Result<[u8; 16]> {
 pub(super) fn pack<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("canonical encoding"))
 }
-pub(super) fn invalid(reason: &'static str) -> Error {
-    ArtifactError::InvalidRecoveryArtifact(reason).into()
-}
+pub(super) use crate::store::canonical_document::invalid;
 
 /// The artifact's one buffer: a write past its budget is refused, and the
 /// buffer never reserves past the budget either.

@@ -17,8 +17,9 @@
 //! safe; never a manifest that was not proved, and never an approval.
 use std::collections::BTreeMap;
 
+use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
 use crate::code_revision::{
-    CodeImportAnchor, CodeImportManifest, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK,
+    CodeImportAnchor, CodeImportManifest, CodeTreeInventory,
     import_snapshot_custody_in_txn, manifest_digest, manifest_id,
 };
 use crate::codebase::RepoRef;
@@ -144,7 +145,8 @@ impl Vault {
             receive_provenance: record.provenance_claim_id,
             snapshot: imported.code_artifact_id,
             snapshot_fork_hash: bytes_to_hex_lower(&imported.snapshot.fork_hash),
-        };
+        ,
+};
         let digest = manifest_digest(&anchor_value, &blobs);
         let manifest_ref = manifest_id(&digest)?;
         let manifest = CodeImportManifest {
@@ -152,7 +154,8 @@ impl Vault {
             anchor: anchor_value,
             inventory_digest: bytes_to_hex_lower(&CodeTreeInventory::blob_digest(&blobs)),
             digest,
-        };
+        ,
+};
         // Physical first: the chosen commit and every ancestor are kept
         // before any claim names them.
         self.pin_origin_object(

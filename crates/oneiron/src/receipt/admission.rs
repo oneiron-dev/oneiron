@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding_in_txn};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::side_table::{self, Named, SideTable};
 use crate::work_line::LineObserver;
 use crate::{EdgeActorClass, EntityId, Vault};
@@ -149,7 +149,8 @@ impl AdmissionTracker {
                 accepted_at: at,
                 updated_at: at,
                 state: AdmissionStatus::Held { reason: None },
-            };
+            ,
+};
             ADMISSIONS.put(
                 vault.as_ref(),
                 txn,
@@ -169,7 +170,8 @@ impl AdmissionTracker {
         self.vault.with_write_txn_grouped(|txn| {
             let Some(mut stored) = ADMISSIONS.get(&self.vault.store, txn, &self.key)? else {
                 return Err(crate::Error::CorruptedIndex("admission intent missing"));
-            };
+            ,
+};
             if stored.receipt.state.terminal() {
                 return Ok(());
             }
@@ -194,7 +196,8 @@ impl AdmissionTracker {
                 code: code.to_owned(),
                 reason: reason.to_owned(),
             },
-        };
+        ,
+};
         self.update(state, false).map_err(MemoryError::from)
     }
 
@@ -231,7 +234,8 @@ impl Vault {
                     stored.receipt.updated_at = self.store.clock.now_recorded_at();
                     stored.receipt.state = AdmissionStatus::Interrupted {
                         reason: "host restarted before settlement was observed; inspect effects before a new intent".to_owned(),
-                    };
+                    ,
+};
                     ADMISSIONS.put(self, txn, &key, &stored)?;
                 }
             }

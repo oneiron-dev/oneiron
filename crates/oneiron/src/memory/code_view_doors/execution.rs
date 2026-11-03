@@ -3,7 +3,7 @@ use super::*;
 use crate::WriteActor;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::build_cache::{ActionResult, ArtifactVersionRef, BuildCacheResult};
-use crate::checkout::CheckoutTaskClass;
+use crate::store::checkout_task::CheckoutTaskClass;
 use crate::temporal::TimeRange;
 
 impl Memory<'_> {
@@ -59,7 +59,8 @@ impl Memory<'_> {
         let class = match input.spec.class {
             CodeBuildClass::Build => CheckoutTaskClass::Build,
             CodeBuildClass::Verify => CheckoutTaskClass::Verify,
-        };
+        ,
+};
         let leg = set
             .build_pinned(input.view.view, &cache, class, &action, &key, |path, _| {
                 if reuse_only {
@@ -126,7 +127,8 @@ impl Memory<'_> {
             let occurred = TimeRange { start: at, end: at };
             let provenance = BlobVersionProvenance::AgentRun {
                 run_ref: build_id.to_hex(),
-            };
+            ,
+};
             let mut store = |name: &str, bytes: &[u8]| -> MemoryResult<ArtifactVersionRef> {
                 let id = EntityId::now();
                 let body = BlobArtifactBody::new(name, "application/octet-stream")
@@ -151,7 +153,8 @@ impl Memory<'_> {
                     )
                 })?;
                 ArtifactVersionRef::new(id, version.version).map_err(cache_error)
-            };
+            ,
+};
             let mut references = BTreeMap::new();
             for (path, bytes) in outputs {
                 let reference = store(path.as_str(), &bytes)?;
@@ -161,12 +164,14 @@ impl Memory<'_> {
                 None
             } else {
                 Some(store("stdout", &output.stdout)?)
-            };
+            ,
+};
             let stderr_ref = if output.stderr.is_empty() {
                 None
             } else {
                 Some(store("stderr", &output.stderr)?)
-            };
+            ,
+};
             let exit_code = output.status.code().unwrap_or(-1);
             let manifest = serde_json::to_vec(&serde_json::json!({
                 "build": build_id.to_hex(), "view": input.view.view, "repo": input.view.repo,

@@ -27,8 +27,9 @@ pub use self::types::{
 use self::handles::PreviewIdentity;
 use super::export_input::{ExportGap, ExportPromotion, export_message};
 use super::tree::OriginTreeFile;
+use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
 use crate::code_revision::{
-    CodeImportManifest, CodeRevision, CodeTreeBlob, CodeTreeInventory, MODE_GITLINK, manifest_id,
+    CodeImportManifest, CodeRevision, CodeTreeInventory, manifest_id,
     materialize_code_revision_tree,
 };
 use crate::entity_id::bytes_to_hex_lower;
@@ -140,7 +141,8 @@ impl Vault {
             before: BTreeMap::new(),
             after: BTreeMap::new(),
             sources: revision_sources(revision),
-        };
+        ,
+};
         let mut base = self.pin_preview_base(
             git,
             repo,
@@ -164,7 +166,8 @@ impl Vault {
                  green_revision, or the received candidate's revision_refs.",
             ));
             return Ok(pinned);
-        };
+        ,
+};
         if tested.store != store {
             return Err(Error::InvariantViolation(
                 "engine commit belongs to another object store or inventory",
@@ -211,7 +214,8 @@ impl Vault {
         let target = captured.blobs;
         let Some(base) = base else {
             return Ok(pinned);
-        };
+        ,
+};
         if !pinned.blockers.is_empty() {
             return Ok(pinned);
         }
@@ -273,11 +277,13 @@ impl Vault {
                 blobs: BTreeMap::new(),
                 leaves: BTreeMap::new(),
             }));
-        };
+        ,
+};
         let object = || CodeExportBlockingSource::Object {
             object_store: store.to_owned(),
             oid: commit.as_str().to_owned(),
-        };
+        ,
+};
         if !published {
             blockers.push(CodeExportPreviewBlocker::new(
                 object(),
@@ -300,7 +306,8 @@ impl Vault {
                  published commit.",
             ));
             return Ok(None);
-        };
+        ,
+};
         let captured = CodeTreeInventory::capture_pinned(self, git, repo, commit, &tree)?;
         let mut supported = true;
         for (path, _) in captured
@@ -340,11 +347,13 @@ impl Vault {
                 "Import the source commit again with vault.code.import, then seal and preview \
                  its checked baseline.",
             )
-        };
+        ,
+};
         let Some(stored) = self.get_codebase_snapshot_in_txn(&txn, &snapshot)? else {
             blockers.push(gone("the imported snapshot is gone"));
             return Ok(false);
-        };
+        ,
+};
         if bytes_to_hex_lower(&stored.fork_hash) != manifest.anchor.snapshot_fork_hash {
             blockers.push(gone(
                 "the imported snapshot no longer holds its manifest's fork",
@@ -539,7 +548,8 @@ fn changed_files(
         let changed = match (old, new) {
             (Some(old), Some(new)) => old.git_oid != new.git_oid || old.mode != new.mode,
             _ => true,
-        };
+        ,
+};
         if changed {
             files.push(CodeExportFileDelta {
                 path: path.clone(),

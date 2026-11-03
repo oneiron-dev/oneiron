@@ -499,7 +499,7 @@ pub struct VaultConfig {
     /// sealed to its host's recipient (FIX 6598): only a host sets one,
     /// from the recipient its supervisor delivered, never from the owner's
     /// settings. Both presets seal none, a self-hosted vault's way.
-    pub checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing,
+    pub checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -633,7 +633,8 @@ impl Bm25RankProfile {
         let mut config = Bm25Config {
             formula: self.formula,
             ..Bm25Config::default()
-        };
+        ,
+};
 
         for &(channel, weight) in &self.weight_overrides {
             let slot = scored_slot(channel, "weight.reserved_channel")?;
@@ -700,7 +701,7 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -736,7 +737,7 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -747,14 +748,15 @@ impl VaultConfig {
     #[must_use]
     pub fn with_checkpoint_host_holds_recipient(
         mut self,
-        recipient: Option<crate::recovery::checkpoint::HostHoldsRecipient>,
+        recipient: Option<crate::store::checkpoint_host_recipient::HostHoldsRecipient>,
     ) -> Self {
         self.checkpoint_host_holds = match recipient {
             Some(recipient) => {
-                crate::recovery::checkpoint::HostHoldsSealing::To(Box::new(recipient))
+                crate::store::checkpoint_host_recipient::HostHoldsSealing::To(Box::new(recipient))
             }
-            None => crate::recovery::checkpoint::HostHoldsSealing::RecipientMissing,
-        };
+            None => crate::store::checkpoint_host_recipient::HostHoldsSealing::RecipientMissing,
+        ,
+};
         self
     }
 }

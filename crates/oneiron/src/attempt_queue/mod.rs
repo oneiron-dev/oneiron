@@ -17,6 +17,7 @@ mod borrowed_lease;
 mod budget_hold;
 mod cancel;
 mod completion;
+pub mod run_signal;
 mod encoding;
 mod engine;
 mod executor;

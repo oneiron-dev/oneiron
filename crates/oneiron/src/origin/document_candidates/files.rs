@@ -11,7 +11,8 @@ use super::super::tree::{OriginTreeFile, read_tree_files};
 use super::{Held, MODE_GITLINK};
 use crate::EntityId;
 use crate::code_document::{CodeFileMetadataEdit, CodeFilePresence};
-use crate::code_revision::{CodeRevision, CodeTreeBlob, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::code_revision::{CodeRevision, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::repo_mutation::received_file_operation;
@@ -128,7 +129,8 @@ pub(super) fn prepare_push_candidate_documents(
             Some(received_file_operation(proposal, source_operation)?)
         } else {
             None
-        };
+        ,
+};
         files.push((
             ResolvedCandidateFile {
                 source_operation,

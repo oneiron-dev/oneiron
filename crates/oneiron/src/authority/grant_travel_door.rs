@@ -12,7 +12,7 @@
 //! success.
 
 use crate::error::{Error, Result};
-use crate::share_travel::TravelChoice;
+use oneiron_authority::share_travel::TravelChoice;
 use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
@@ -144,7 +144,8 @@ impl Vault {
         let at = TimeRange {
             start: now,
             end: now,
-        };
+        ,
+};
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         let counted = after

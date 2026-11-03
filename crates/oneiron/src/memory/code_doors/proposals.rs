@@ -5,8 +5,8 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
 use crate::repo_mutation::proposal::RepoProposalReview;
-use crate::repo_mutation::{
-    RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationRequest,
+use crate::store::repo_fork::RepoForkHash;
+use crate::repo_mutation::{ RepoMutationOperation, RepoMutationOplogEntry, RepoMutationRequest,
     RepoMutationStatus,
 };
 

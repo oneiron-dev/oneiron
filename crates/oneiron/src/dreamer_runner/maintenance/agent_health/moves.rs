@@ -32,7 +32,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     MessagePersonReceipt, MessagePersonRequest,
 };
-use crate::run_tree::RunSignalState;
+use crate::attempt_queue::run_signal::RunSignalState;
 use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_linked};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
@@ -492,7 +492,8 @@ fn record_in_txn(
                 subject: card.subject,
                 attempt: card.attempt,
                 link: link(&landing.landed, card.attempt),
-            };
+            ,
+};
             card.moves_taken.push(receipt.clone());
             card.updated_at = receipt.at;
             CARDS.put(&vault.store, txn, card_key, &card)?;
@@ -582,7 +583,8 @@ fn take(
                 task_ref: task.to_hex(),
                 instruction: instruction.to_owned(),
                 key: steer_key(actor, &handle, key),
-            };
+            ,
+};
             // FIX 8534: a card that recorded its attempt steers that run,
             // never the TASK's later try; one with none steers the live run.
             let attempt = card
@@ -592,7 +594,8 @@ fn take(
             let owner = match taker {
                 Taker::Agent => None,
                 Taker::Owner(owner) => Some(owner),
-            };
+            ,
+};
             steer_linked(
                 memory,
                 owner,
@@ -670,7 +673,8 @@ impl MoveWrite<'_, '_> {
             payload: self.payload,
             observed: self.observed,
             landed,
-        };
+        ,
+};
         let outcome = record_in_txn(self.memory.vault(), txn, self.card_key, &landing)?;
         self.recorded.set(Some(outcome));
         Ok(())
@@ -699,7 +703,8 @@ impl Vault {
     ) -> MemoryResult<ConcernMoveOutcome> {
         let Some((key, control)) = control_of(&input.r#move) else {
             return Ok(self.ask_coach_on_agent_health_card(owner, &input.card)?);
-        };
+        ,
+};
         let card_key = parse_card_ref(&input.card).ok_or_else(|| {
             MemoryError::bad_request("card is a health: handle from a concern row")
         })?;

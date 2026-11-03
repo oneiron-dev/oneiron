@@ -46,7 +46,8 @@ use crate::error::Result;
 use crate::runtime_hooks::verb::{
     HookRecordsKept, RoomHookCall, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
 };
-use crate::runtime_hooks::{VerbCall, VerbHookPre, VerbHookStop};
+use crate::error::VerbHookStop;
+use crate::runtime_hooks::{VerbCall, VerbHookPre};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::side_table::RoutedDbs;
 use crate::{EntityId, Vault};
@@ -229,7 +230,8 @@ impl Vault {
     ) -> SessionHookKey {
         let Some((session, principal)) = binding else {
             return SessionHookKey::Process;
-        };
+        ,
+};
         let session = session.trim();
         let registry = &self.store.off_record_sessions;
         let key = principal

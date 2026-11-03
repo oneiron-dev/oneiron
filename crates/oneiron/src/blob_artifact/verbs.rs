@@ -40,7 +40,7 @@ use crate::memory::{
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
 use crate::secret_custody::SecretSight;
-use crate::share_travel::{BornWith, TravelChoice, TravelKind};
+use oneiron_authority::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -486,7 +486,8 @@ impl Memory<'_> {
         )?
         else {
             return Ok(None);
-        };
+        ,
+};
         // The owner's export comes back to the owner, a download or a save to
         // their own machine: the owner's own read (OF-222). Any other
         // caller's leaves for another party: it reads nothing of a world kept
@@ -497,7 +498,8 @@ impl Memory<'_> {
             vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
         } else {
             self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
-        };
+        ,
+};
         let born_with = travel.project(text);
         // The hash names the copy beside it (FIX 5491): the sighted export's
         // own `content_hash` stays the stored version's, which its internal
@@ -550,12 +552,14 @@ impl Memory<'_> {
                 )
                 .into());
             }
-        };
+        ,
+};
         let vault = self.vault();
         let born = match &source {
             BornFromSource::Trigger(trigger) => vault.rows_born_from(&trigger.row())?,
             BornFromSource::AgentRun(_) => Vec::new(),
-        };
+        ,
+};
         // Each born row is named by the kind its row is; one whose kind no
         // longer reads is listed in `born` alone.
         let born_records = born
@@ -686,7 +690,8 @@ impl Memory<'_> {
                         )
                         .into());
                     }
-                };
+                ,
+};
                 Ok((target, image, unit.renderer.clone()))
             })
             .collect::<MemoryResult<Vec<_>>>()?;
@@ -752,7 +757,8 @@ impl Memory<'_> {
             run_ref: &input.run_ref,
             // The comment writer stamps epoch milliseconds.
             at: at.saturating_mul(1000),
-        };
+        ,
+};
         let run = self
             .vault()
             .review_blob_artifact_slides(&artifact, &request)
@@ -772,7 +778,8 @@ impl Memory<'_> {
                 at,
             )?),
             None => None,
-        };
+        ,
+};
         // Each answered unit's judgment and comment, from the manifest the
         // held proposal keeps.
         let (judgments, comments) = run
@@ -877,7 +884,8 @@ impl Memory<'_> {
             deadline: started
                 + std::time::Duration::from_millis(input.deadline_ms.unwrap_or(300_000)),
             run_ref: &input.run_ref,
-        };
+        ,
+};
         let vault = self.vault();
         let run = match &input.units {
             ArtifactAskUnits::SheetRows {
@@ -959,7 +967,8 @@ impl Memory<'_> {
                             sight: self.secret_sight()?,
                         },
                     )?
-                };
+                ,
+};
                 run.refused.extend(unread.iter().map(|item| UnitRefusal {
                     unit: serde_json::json!({
                         "file": item.artifact.to_hex(),
@@ -970,7 +979,8 @@ impl Memory<'_> {
                 }));
                 run
             }
-        };
+        ,
+};
         let proposed = match &run.proposal {
             Some(proposal) => Some(vault.retain_edit_proposal(
                 &artifact,
@@ -981,12 +991,14 @@ impl Memory<'_> {
                 at,
             )?),
             None => None,
-        };
+        ,
+};
         let outcome = ArtifactAskOutcome {
             proposed,
             abstained: run.abstained,
             refused: run.refused,
-        };
+        ,
+};
         Ok((outcome, run.read_rows))
     }
 
@@ -1024,7 +1036,8 @@ impl Memory<'_> {
         }
         let decider = AdmittedDecider {
             decisions: std::sync::Mutex::new(input.decisions.iter().cloned().collect()),
-        };
+        ,
+};
         let (outcome, read) = self.artifacts_ask_run(&input.ask, &decider, dial, policy)?;
         self.produced_from(read);
         Ok(outcome)
@@ -1095,7 +1108,8 @@ impl Memory<'_> {
             bytes,
             report: input.report.clone(),
             made_by: input.made_by.clone(),
-        };
+        ,
+};
         Ok(self.vault().propose_native_output(
             &entity(&input.artifact_ref)?,
             &output,

@@ -89,7 +89,8 @@ impl Store {
             rtxn.commit()?;
             drop(db_open_guard);
             Self::assemble(env, raw, registered_path, config)?
-        };
+        ,
+};
 
         verify_existing_hnsw_config(&store, config)?;
         verify_existing_embedding_model(&store, config.embedding_model.as_deref())?;
@@ -133,7 +134,8 @@ impl Store {
                         .and_then(|part| part.try_into().ok())
                         .map(u64::from_be_bytes)
                         .ok_or(Error::CorruptedIndex("recorded clock floor"))
-                };
+                ,
+};
                 match bytes.len() {
                     8 => {
                         clock.observe_floor(half(0)?)?;
@@ -157,7 +159,8 @@ impl Store {
                 binding.as_deref(),
                 archived,
             )?
-        };
+        ,
+};
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             key_custody,
@@ -197,7 +200,7 @@ impl Store {
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
-                crate::result_memory::ResultMemoryPool::new(
+                crate::store::result_memory::ResultMemoryPool::new(
                     config
                         .limits
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
@@ -236,7 +239,8 @@ impl Store {
             #[cfg(not(unix))]
             _env: env,
             _registered_path: registered_path,
-        };
+        ,
+};
         Ok(Self {
             entities: OverlayDb::canonical(core.raw.entities),
             edges_out: OverlayDb::canonical(core.raw.edges_out),
@@ -308,7 +312,8 @@ impl Store {
             self.seed_default_policy_manifest_if_unset(&mut wtxn)?
         else {
             return Ok(());
-        };
+        ,
+};
         let read_frontier_hash = post_write_policy.read_frontier_hash()?;
         if read_frontier_hash == [0; 32] {
             return Err(Error::CorruptedIndex("default policy manifest frontier"));
@@ -342,7 +347,8 @@ impl Store {
             read_frontier_hash,
             context: Default::default(),
             redacted_at: None,
-        };
+        ,
+};
         self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;
         Ok(wtxn.commit()?)
     }
@@ -371,7 +377,8 @@ impl Store {
         let policy = match self.seed_default_policy_manifest_if_unset(&mut wtxn)? {
             Some((_, seeded)) => seeded,
             None => crate::gate::resolve_policy_manifest(self, &wtxn)?,
-        };
+        ,
+};
         wtxn.abort();
         Ok(policy)
     }
@@ -502,7 +509,8 @@ impl Store {
                 !self.gate_decision_claim_index_backfill_complete_in_txn(txn)?
                     && self.gate_decision_ledger_is_empty_in_txn(txn)?,
             )
-        };
+        ,
+};
         {
             let rtxn = self.env.read_txn()?;
             if !needs_flag(&rtxn)? {

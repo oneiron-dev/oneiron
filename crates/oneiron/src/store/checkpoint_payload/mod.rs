@@ -30,7 +30,7 @@ use oneiron_crypto::Purpose;
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason};
+use crate::store::restore_admission::{Rejected, RestoreAdmissionReason};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{

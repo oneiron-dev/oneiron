@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use super::{CodePushSourceLink, MergeQueue, QueueExportHold, QueueExportHoldReason};
 use crate::code_document::CodeDocumentFrontier;
-use crate::code_revision::{CodePathRetirement, CodeRevision, CodeTreeBlob, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::code_revision::{CodePathRetirement, CodeRevision, CodeTreeInventory};
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire};
 use crate::repo_mutation::proposal::RepoProposal;
@@ -40,7 +41,8 @@ impl MergeQueue<'_> {
         let mut tree = FileBundleTree {
             documents: Vec::new(),
             removed: Vec::new(),
-        };
+        ,
+};
         for (index, file) in source.files.iter().enumerate() {
             if file.content.is_none() {
                 tree.removed.push(file.path.clone());
@@ -55,14 +57,16 @@ impl MergeQueue<'_> {
                     "{}: a bundle file has no reviewed state",
                     file.path
                 ));
-            };
+            ,
+};
             let operation = source.file_operation(index)?;
             let Some(receipt) = self.vault.code_file_edit_receipt(operation)? else {
                 return unreviewed(format!(
                     "{}: a bundle file has no document receipt",
                     file.path
                 ));
-            };
+            ,
+};
             if receipt.session_id != source.session || receipt.after.path != file.path {
                 return unreviewed(format!(
                     "{}: a bundle document receipt is not its bundle's",
@@ -105,7 +109,8 @@ impl MergeQueue<'_> {
         }
         let Some(parent_tree) = parent.and_then(|parent| parent.tested_queue.as_ref()) else {
             return unreviewed("a file bundle landed with no tested parent".to_owned());
-        };
+        ,
+};
         let before = CodeTreeInventory::entries(
             wire,
             &self.repo,
@@ -121,7 +126,8 @@ impl MergeQueue<'_> {
                         "{}: a bundle removal names no predecessor",
                         file.path
                     ));
-                };
+                ,
+};
                 let bytes = wire.read_object(&self.repo, &GitOid::parse_hex(oid.clone())?)?;
                 let operation = source.file_operation(index)?;
                 let document = self
@@ -145,7 +151,8 @@ impl MergeQueue<'_> {
             }
             let Some(candidate) = source.received_candidate() else {
                 continue;
-            };
+            ,
+};
             // The tree a complete link names: the submitted one, or a masked
             // copy's canonical translated target (FIX 7608 2b-ii-B2, P8).
             if let Some((link, target_tree)) = self

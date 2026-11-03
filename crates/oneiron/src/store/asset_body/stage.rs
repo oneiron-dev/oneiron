@@ -18,7 +18,7 @@ use crate::batch::secret_scan::{KnownStreamFinder, StreamKnown};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::result_body::ResultBodyPin;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::secret_custody::KnownValues;
 use crate::store::body_store::SecretScan;
 use crate::store::{
@@ -126,7 +126,8 @@ impl StageMeter {
             blake3: *self.hasher.finalize().as_bytes(),
             len: self.len,
             xxh32: self.xxh32.digest(),
-        };
+        ,
+};
         let opaque =
             !self.utf8.text() && opaque_head(&self.head) && self.secrets.finish().is_none();
         let known = self
@@ -164,7 +165,8 @@ impl Utf8Stream {
         while self.carry_len > 0 && !self.broken {
             let Some((first, after)) = bytes.split_first() else {
                 return;
-            };
+            ,
+};
             self.carry[self.carry_len] = *first;
             self.carry_len += 1;
             bytes = after;
@@ -293,7 +295,8 @@ impl crate::Vault {
                 Ok(read) => read,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(error.into()),
-            };
+            ,
+};
             let bytes = &frame[..read];
             meter.feed(bytes);
             if let Some(spill) = &mut spill {
@@ -304,11 +307,13 @@ impl crate::Vault {
                 let body = match mint.filter(|_| ASSET_FILE_PLANE) {
                     Some(mint) => BodySpill::create(&dir, Some(mint.mint()?))?,
                     None => BodySpill::ephemeral(&dir)?,
-                };
+                ,
+};
                 let mut opened = Spill {
                     dir: &dir,
                     body: Some(body),
-                };
+                ,
+};
                 opened.write(&inline)?;
                 opened.write(bytes)?;
                 inline = Vec::new();
@@ -323,10 +328,12 @@ impl crate::Vault {
             key: None,
             known: StreamKnown::default(),
             _pin: None,
-        };
+        ,
+};
         let Some(spill) = spill else {
             return Ok(staged(Staged::Inline(inline)));
-        };
+        ,
+};
         let spilled = spill.finish(&facts)?;
         let held = match spilled.reader() {
             Ok(held) => held,
@@ -334,7 +341,8 @@ impl crate::Vault {
                 dir.discard(spilled.temp());
                 return Err(error);
             }
-        };
+        ,
+};
         if !opaque || !ASSET_FILE_PLANE || mint.is_none() {
             // Read whole, as a slice put holds it: the batch door judges it.
             dir.discard(spilled.temp());
@@ -409,7 +417,8 @@ impl crate::Vault {
         let bytes = match &staged.body {
             Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
             Staged::File(_) => std::borrow::Cow::Owned(staged.to_vec()?),
-        };
+        ,
+};
         batch
             .put(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
             .apply(txn)
@@ -468,9 +477,11 @@ impl crate::Vault {
             let bytes = match &staged.body {
                 Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
                 Staged::File(_) => std::borrow::Cow::Owned(staged.to_vec()?),
-            };
+            ,
+};
             batch.put_replicated(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
-        };
+        ,
+};
         put.apply(txn)?;
         if matches!(staged.body, Staged::File(_)) {
             crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(

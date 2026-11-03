@@ -116,6 +116,19 @@ pub mod ports {
     };
 }
 
+pub mod canonical_document;
+pub mod checkout_task;
+pub mod checkpoint_host_recipient;
+pub mod custody_retirement_status;
+pub mod proposal_spool;
+pub mod recovery_write_budget;
+pub mod restore_admission;
+pub mod result_body_pins;
+pub mod result_memory;
+pub mod verb_invocation;
+pub mod code_tree_blob;
+pub mod repo_fork;
+pub mod sandbox_import;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;

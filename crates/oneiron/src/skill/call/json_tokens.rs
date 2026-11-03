@@ -16,7 +16,7 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
 use crate::limit_ask::LimitWatch;
-use crate::result_memory::{ResultHold, ResultShare};
+use crate::store::result_memory::{ResultHold, ResultShare};
 
 /// How many answer bytes one read takes from the spool, and the step the
 /// check's holds grow by. A processing chunk, never a maximum on the answer
@@ -94,7 +94,8 @@ impl Holds<'_> {
     fn cover(&mut self, bytes: usize) {
         let Some(memory) = self.memory else {
             return;
-        };
+        ,
+};
         if bytes <= self.covered {
             return;
         }
@@ -126,7 +127,8 @@ impl<R: Read> Input<R> {
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                     Err(error) => return Err(error.into()),
                 }
-            };
+            ,
+};
             self.at = 0;
             self.digest.update(&self.chunk[..self.end]);
             if self.end == 0 {
@@ -185,7 +187,8 @@ impl<R: Read> Input<R> {
             }
             b'1'..=b'9' => Some(u64::from(lead - b'0')),
             _ => return Err(Fault::Syntax),
-        };
+        ,
+};
         while let Some(digit @ b'0'..=b'9') = self.peek()? {
             self.at += 1;
             significand = significand
@@ -284,11 +287,13 @@ impl<R: Read> Input<R> {
                         0x1_0000 + ((unit - 0xD800) << 10) + (low - 0xDC00)
                     }
                     _ => unit,
-                };
+                ,
+};
                 char::from_u32(point).ok_or(Fault::Syntax)?
             }
             _ => return Err(Fault::Syntax),
-        };
+        ,
+};
         Ok(Some(decoded))
     }
 
@@ -312,7 +317,8 @@ impl<R: Read> Input<R> {
         let quote = match first {
             Some(byte) => byte,
             None => self.token()?,
-        };
+        ,
+};
         if quote != b'"' {
             return Err(Fault::Syntax);
         }
@@ -357,7 +363,8 @@ impl Utf8 {
             0xF1..=0xF3 => (3, 0x80, 0xBF),
             0xF4 => (3, 0x80, 0x8F),
             _ => return Err(Fault::Syntax),
-        };
+        ,
+};
         Ok(())
     }
 }
@@ -430,7 +437,8 @@ impl<'s> Frame<'s> {
                 }
             }
             _ => Members::AnyKeys,
-        };
+        ,
+};
         Self {
             members,
             matched: shape.is_none_or(|shape| shape.is_object() || is_kind(shape, "object")),
@@ -443,7 +451,8 @@ impl<'s> Frame<'s> {
         let item = match shape {
             Some(JsonValue::Array(items)) if items.len() == 1 => Some(&items[0]),
             _ => None,
-        };
+        ,
+};
         Self {
             members: Members::Array(item),
             matched: shape.is_none_or(|shape| item.is_some() || is_kind(shape, "array")),
@@ -493,8 +502,10 @@ impl<'s, R: Read> Checker<'s, '_, R> {
                     return match self.input.next()? {
                         None => Ok(matched),
                         Some(_) => Err(Fault::Syntax),
-                    };
-                };
+                    ,
+};
+                ,
+};
                 frame.matched &= matched;
             }
             done = self.step()?;
@@ -508,7 +519,8 @@ impl<'s, R: Read> Checker<'s, '_, R> {
         let close = match frame.members {
             Members::Array(_) => b']',
             Members::Fields { .. } | Members::AnyKeys => b'}',
-        };
+        ,
+};
         if byte == close {
             return self.close().map(Some);
         }
@@ -551,7 +563,8 @@ impl<'s, R: Read> Checker<'s, '_, R> {
                 self.input.key(first, frame.judged, None)?;
                 (None, None)
             }
-        };
+        ,
+};
         self.value(value_first, child)
     }
 
@@ -561,7 +574,8 @@ impl<'s, R: Read> Checker<'s, '_, R> {
         let byte = match first {
             Some(byte) => byte,
             None => self.input.token()?,
-        };
+        ,
+};
         let matched = match byte {
             b'{' => {
                 self.open(Frame::object(shape));
@@ -592,7 +606,8 @@ impl<'s, R: Read> Checker<'s, '_, R> {
                 kind(shape, "null")
             }
             _ => return Err(Fault::Syntax),
-        };
+        ,
+};
         Ok(Some(matched))
     }
 
