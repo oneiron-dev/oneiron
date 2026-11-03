@@ -477,7 +477,6 @@ pub(crate) fn media_vector_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
 
 pub(super) use crate::store::embedding::space_key;
 use crate::store::embedding::validate_space_id;
-use crate::store::embedding::validate_space_id;
 
 pub(crate) fn embedding_space_in_txn(
     store: &impl SideTableDbs,
