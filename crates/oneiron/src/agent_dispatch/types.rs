@@ -8,9 +8,7 @@ use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
 use crate::failure_ladder::HealerCase;
 
-/// Payload-level attempt type carried inside the `"dreamer"` queue kind —
-/// invisible to existing dreamer consumers, which match on their own types.
-pub const AGENT_DISPATCH_ATTEMPT_TYPE: &str = "agent.dispatch";
+pub use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 
 /// Envelope-provenance key carrying the dispatched agent's label on
 /// milestone claims (the B1 attribution home). The milestone machinery
@@ -471,27 +469,7 @@ pub enum KillOutcome {
     Proposed(KillProposal),
 }
 
-/// Which healer a failure scope routes its cases to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HealerSlot {
-    /// No healer: the case goes only to the human surface. It is an explicit
-    /// typed outcome, never a silently dropped case.
-    Reserved,
-    /// The Coach, the second base agent (ARCH-0066 #coach): the default slot.
-    /// The case also wakes one Coach heal attempt on the Dreamer's runner.
-    Coach,
-    /// Lowercase-hex EntityId spelling.
-    AgentDef { agent_def_ref: String },
-}
-
-/// Caller input for [`AgentDispatcher::dispatch_healer_slot`](crate::agent_dispatch::AgentDispatcher::dispatch_healer_slot).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchHealer {
-    pub slot: HealerSlot,
-    pub case: HealerCase,
-    pub run_id: Option<String>,
-    pub now: u64,
-}
+pub use crate::failure_ladder::healer_dispatch::{DispatchHealer, HealerSlot};
 
 /// How much a spawn cares (ARCH-0079 #spawn): the same five words vendors
 /// use for reasoning effort, so a model reads `care: xhigh` without

@@ -13,7 +13,9 @@ use crate::ports::EntityStoreRead;
 use crate::store::{EngineScan};
 use crate::scan_check::{ScanCount};
 use crate::vault::edges::{ancestors_in, subtree_in, would_create_cycle_in};
-use crate::{ContextPackBuilder, PipelineBuilder, ScoredEntity};
+use crate::ContextPackBuilder;
+use crate::PipelineBuilder;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 impl Memory<'_> {
     /// [`crate::Vault::search_text`], over the room's overlay ∪ base while

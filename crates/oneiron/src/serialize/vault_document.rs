@@ -265,8 +265,8 @@ impl<'v> DocumentWriter<'v> {
                     blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                     bytes: output.raw_len,
                     kind: match output.kind {
-                        crate::code_run::CodeRunOutputKind::Text => "text",
-                        crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        crate::store::result_manifest::CodeRunOutputKind::Text => "text",
+                        crate::store::result_manifest::CodeRunOutputKind::Binary => "binary",
                     }
                     .to_owned(),
                     lines: output.lines,

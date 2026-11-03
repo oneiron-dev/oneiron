@@ -152,7 +152,7 @@ fn dispatch_charge_in_txn(
     let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload) else {
         return Ok(None);
     };
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return Ok(None);
     }
     let Ok(input) = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input) else {

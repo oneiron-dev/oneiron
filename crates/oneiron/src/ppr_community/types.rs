@@ -1,7 +1,7 @@
 //! Community query-scoring shells and the lower graph vocabulary.
 
 use std::collections::HashMap;
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 pub use crate::config::community_graph::types::*;
 
 pub struct CommunityBoostContext<'a> {

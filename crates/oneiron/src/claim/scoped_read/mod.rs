@@ -15,8 +15,8 @@ use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
-use oneiron_contracts::gate::{RetrievalFilter};
-use crate::pipeline::ScoredEntity;
+use oneiron_contracts::gate::RetrievalFilter;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 

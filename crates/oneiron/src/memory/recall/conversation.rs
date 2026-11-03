@@ -14,7 +14,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::pipeline::{CandidateGate, SnapshotCandidateFilter};
+use crate::store::retrieval_values::CandidateGate;
+use crate::store::retrieval_values::SnapshotCandidateFilter;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,

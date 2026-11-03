@@ -208,6 +208,11 @@ mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
 mod retrieval_telemetry;
+pub mod retrieval_values;
+pub mod result_manifest;
+pub(crate) mod reader_fold_receipt;
+pub(crate) mod task_body_checks;
+pub mod retrieval_policy;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;

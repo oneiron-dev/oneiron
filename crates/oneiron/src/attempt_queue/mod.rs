@@ -33,6 +33,7 @@ mod result;
 mod settlement;
 mod telemetry;
 mod types;
+pub mod dispatch_payload;
 mod validate;
 #[cfg(test)]
 pub(crate) use validate::validate_lease_owner;

@@ -136,7 +136,7 @@ pub(super) fn validate_public_raw_put(
             // wrong. Both doors run it: an engine settle body is coherent by
             // construction, so this costs the internal path nothing and
             // closes the raw path completely.
-            crate::task_verb::reject_incoherent_task_terminal(data)?;
+            crate::store::task_body_checks::reject_incoherent_task_terminal(data)?;
             // A deadline already past is a task born expired, and the facade
             // refuses one. The PUBLIC raw door joins that invariant, against
             // the same clock the row is stamped with — the facade compares
@@ -150,7 +150,7 @@ pub(super) fn validate_public_raw_put(
             // invariant, and the board derives `Expired`, which is the truth
             // about that row.
             if door == RawPutDoor::Public {
-                crate::task_verb::reject_born_expired_task_deadline(data, learned_at)?;
+                crate::store::task_body_checks::reject_born_expired_task_deadline(data, learned_at)?;
             }
         }
         _ => {}

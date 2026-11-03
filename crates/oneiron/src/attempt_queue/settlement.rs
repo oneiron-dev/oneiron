@@ -77,7 +77,7 @@ impl AttemptQueue<'_> {
         if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND
             && crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_ok_and(
                 |payload| {
-                    payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                    payload.attempt_type == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
                 },
             )
         {

@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::pipeline::WorldAuthoritySet;
+use crate::claim::world_access::WorldAuthoritySet;
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 /// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
