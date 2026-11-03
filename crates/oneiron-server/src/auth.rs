@@ -700,6 +700,30 @@ impl CoreAuth {
         false
     }
 
+    /// Whether the waiter's credential is still live when its invocation
+    /// replays the first call's reply (FIX 12439). Only the account-key
+    /// shape, an instrument with no verified slip, jti, managed owner or
+    /// managed person, judges its fresh cached lease again here
+    /// ([`Self::facade_reuse_stands`]): a miss, punch or expiry returns
+    /// false directly and never falls back to the vault-wide check. Every
+    /// other shape returns today's [`Self::credential_is_live`] unchanged,
+    /// so every other caller and every admitted replay stays as before.
+    pub(crate) fn facade_replay_credential_is_live(
+        &self,
+        server: &SyncServer,
+        parts: &Parts,
+    ) -> bool {
+        if self.instrument.is_some()
+            && self.verified_slip.is_none()
+            && self.jti.is_none()
+            && self.managed_owner.is_none()
+            && self.managed_person.is_none()
+        {
+            return self.facade_reuse_stands(server, parts);
+        }
+        self.credential_is_live(server.vault())
+    }
+
     /// The host's own root slip, when this caller presented one (FIX 2222):
     /// the full, unattenuated slip the host minted to itself, no child of it
     /// and no slip cut from it for someone else. Whether it is live, and
