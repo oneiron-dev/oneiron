@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::agent_def::{CompactionOwnership, MemoryProfile};
+use crate::{store::agent_record::CompactionOwnership, agent_def::MemoryProfile};
 use crate::context_pack::SerializedContextPack;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

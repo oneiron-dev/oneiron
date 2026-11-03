@@ -1151,7 +1151,7 @@ fn imported_body(
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
-            body.ceiling = crate::agent_def::AgentCeiling::Proposed;
+            body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::agent_def::encode_agent_definition(&body)
         }
         _ => Ok(bytes),

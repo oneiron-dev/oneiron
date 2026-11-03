@@ -116,6 +116,7 @@ pub mod ports {
     };
 }
 
+pub mod agent_record;
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;

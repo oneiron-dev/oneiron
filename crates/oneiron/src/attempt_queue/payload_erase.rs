@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AGENT_DEF_BODY_KEYS;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
 use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
     decode_agent_dispatch_input, record_dispatch_input,

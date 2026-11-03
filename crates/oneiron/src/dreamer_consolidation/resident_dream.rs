@@ -17,7 +17,7 @@
 use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::actor_claims::ResidentCraftCandidate;
-use crate::agent_def::DreamingMode;
+use crate::store::agent_record::DreamingMode;
 use crate::agent_inbox_lens::{AgentInboxDiaryReview, ResolvedInboxText};
 use crate::dreamer_runner::{
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
