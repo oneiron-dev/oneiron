@@ -31,7 +31,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/msgpack_shape.rs` | src | s | 1 struct · 1 enum · 1 fn | OverBudget, ShapeBudget | A budget check of untrusted MessagePack before it is decoded |
 | `src/panic_report.rs` | src | s | 1 fn · 1 const | — | The content-free panic report a host installs before it opens a vault |
 | `src/posterior.rs` | src | s | 2 re-export | — | Shared Beta posterior bandit seam |
-| `src/registry.rs` | src | s | 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
+| `src/registry.rs` | src | s | 1 mod · 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
+| `src/registry/pack_namespaces.rs` | src | s | 3 const | — | Stable pack provenance and structural-kind short-id namespaces |
 | `src/request_limits.rs` | src | s | 14 fn · 14 const | — | Request boundary limits and pure validators |
 | `src/retrieval_quality.rs` | src | s | 1 re-export | — | Retrieval quality report vocabulary |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 3 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
