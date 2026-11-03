@@ -32,4 +32,3 @@ pub(crate) fn invalid_owner() -> Error {
         "residentActor must name one valid actor entity id",
     ))
 }
-

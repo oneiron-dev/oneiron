@@ -28,4 +28,3 @@ pub enum SkillPackageFormat {
     /// partial or absent; any capabilities still come from the source, not a grant.
     Native,
 }
-

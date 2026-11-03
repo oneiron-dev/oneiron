@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 use rmpv::Value;
 use super::SkillCapabilitySurface;
+use super::package::MAX_CAPABILITY_TEXT_BYTES;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{CodecError, RawValue};
 use crate::write_envelope::skill_source::support::{
-    decode_value, encode_value, exact_map, required_value,
+    decode_value, encode_value, exact_map, required_value, validate_text,
 };
 
 impl RawValue for SkillCapabilitySurface {
@@ -99,4 +100,3 @@ fn decode_string_set(value: &Value) -> Result<BTreeSet<String>> {
     }
     Ok(decoded)
 }
-

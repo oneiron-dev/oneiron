@@ -111,4 +111,3 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
     wtxn.commit()?;
     Ok(())
 }
-

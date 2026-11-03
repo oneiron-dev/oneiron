@@ -221,4 +221,3 @@ fn validate_native_source(package: &HubPackage) -> Result<()> {
     }
     Ok(())
 }
-

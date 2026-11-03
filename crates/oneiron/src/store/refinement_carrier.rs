@@ -7,4 +7,3 @@ pub(crate) const MAGIC: &[u8] = b"oneiron.refinement-receipt.v1\0";
 pub(crate) fn refinement_carrier_payload(bytes: &[u8]) -> Option<&[u8]> {
     bytes.strip_prefix(MAGIC)?.get(32..)
 }
-

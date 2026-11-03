@@ -12,4 +12,3 @@ pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         )
 }
-
