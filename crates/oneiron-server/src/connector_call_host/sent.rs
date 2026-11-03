@@ -36,6 +36,7 @@ impl Sent {
             error: None,
             resume: None,
             remote_task: None,
+            held: None,
         }
     }
 
