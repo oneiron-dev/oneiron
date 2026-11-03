@@ -253,7 +253,7 @@ pub(crate) fn validate_summary_put(
     Ok(())
 }
 
-pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
+pub(crate) fn merge_summary_ref(body: &crate::write_envelope::claim_body::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
     if body.predicate != "merge.summary" {
         return Ok(None);
     }
@@ -756,7 +756,7 @@ pub(crate) fn body_covers_in_txn(
 fn merge_summary_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<ScopeSummaryBody>> {
     let Some((turn, summary)) = merge_summary_ref(body)? else {
         return Ok(None);
@@ -773,7 +773,7 @@ fn merge_summary_in_txn(
 pub(crate) fn merge_covers_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?.map(|summary| summary.covers))
 }
@@ -783,7 +783,7 @@ pub(crate) fn merge_covers_in_txn(
 pub(crate) fn merge_word_sources_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?
         .map(|summary| word_sources(&summary).copied().collect()))
