@@ -337,7 +337,7 @@ pub(crate) fn stamp_attempt(
     }
     // The generic runner also carries independent agent dispatch. Those jobs
     // retain their own principals and are NOT base-agent facets.
-    if facet == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+    if facet == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
         || (record.kind != super::DREAMER_RUNNER_ATTEMPT_KIND
             && !record.kind.starts_with("dreamer.")
             && !record.kind.starts_with("coach."))

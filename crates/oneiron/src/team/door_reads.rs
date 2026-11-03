@@ -9,10 +9,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchTarget, SpawnPlanReceipt,
-    decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
-};
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::agent_dispatch::AgentDispatchInput;
+use crate::agent_dispatch::AgentDispatchTarget;
+use crate::agent_dispatch::SpawnPlanReceipt;
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::agent_dispatch::load_team_type_tree_in_txn;
+use crate::agent_dispatch::team_pattern;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
 use crate::critic::review::{
     DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,

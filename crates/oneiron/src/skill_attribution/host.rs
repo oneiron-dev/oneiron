@@ -32,9 +32,9 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
-};
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::agent_dispatch::AgentDispatchTarget;
+use crate::agent_dispatch::decode_agent_dispatch_input;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;

@@ -486,7 +486,7 @@ impl JobPresence {
     /// work, so it leaves the board.
     #[must_use]
     pub fn from_run_tree_node(node: &RunTreeNode) -> Option<JobPresence> {
-        if node.worker_kind == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+        if node.worker_kind == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
             return None;
         }
 

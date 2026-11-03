@@ -19,7 +19,9 @@ use super::type_tree_upkeep::{
     TEAM_SHAPE_CHARGES_FAILED_TEAMS, TEAM_SHAPE_GATE_ADMITS, TeamShapeReserve, TreeGateOutcome,
     TypeEvidence, recount,
 };
-use crate::agent_dispatch::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME, load_team_type_tree};
+use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
+use crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME;
+use crate::agent_dispatch::load_team_type_tree;
 use crate::attempt_queue::{AttemptId, ManifestEntry};
 use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
