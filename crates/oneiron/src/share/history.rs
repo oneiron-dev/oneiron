@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use super::{ADMISSIONS, Share, ShareAdmission, read_share_in_txn, stored_share_in_txn};
 use crate::Vault;
 use crate::access_grant::{
-    AccessGrant, AccessGrantScope, decode_access_grant_body, decode_erased_share_body,
-    encode_erased_share_body,
+    AccessGrant, AccessGrantScope, decode_access_grant_body, decode_erased_grant_body,
+    encode_erased_grant_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -105,7 +105,7 @@ pub(crate) fn read_share_history_in_txn(
     let Some(raw) = grant_row_in_txn(store, txn, id)? else {
         return Ok(None);
     };
-    let Ok(terms) = decode_erased_share_body(&raw) else {
+    let Ok(terms) = decode_erased_grant_body(&raw) else {
         return Ok(None);
     };
     let AccessGrantScope::SharedBrief {
@@ -177,7 +177,7 @@ pub(super) fn erase_recipient_in_txn(
 ) -> Result<()> {
     match ACTOR_ERASE_SHARE_RECIPIENT {
         ShareRecipientErase::KeepInertHistory => {
-            vault.apply_access_grant_body(wtxn, id, at, encode_erased_share_body(grant)?)
+            vault.apply_access_grant_body(wtxn, id, at, encode_erased_grant_body(grant)?)
         }
     }
 }
