@@ -46546,7 +46546,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 27,
       "re-export": 63
      }
@@ -47050,6 +47050,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/conversation.rs",
+     "purpose": "Conversation and PERSON narrowing for one recall selection",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -47107,7 +47117,7 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 11,
       "re-export": 5,
@@ -47177,7 +47187,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/recall/selection.rs",
@@ -56885,6 +56895,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/provenance/conversation_sources.rs",
+     "purpose": "The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/provenance/derived_attachment.rs",
      "purpose": "Validate generated support evidence at the provenance write door",
      "surface": {
@@ -56984,7 +57004,7 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 4,
       "re-export": 4
      }
@@ -85717,7 +85737,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 321,
+     "files": 322,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85885,7 +85905,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86412,7 +86432,7 @@
    },
    "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5854,
+   "source_files": 5856,
    "test_files": 902
   },
   "oneiron-android": {
