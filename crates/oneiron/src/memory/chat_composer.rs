@@ -8,7 +8,7 @@
 
 use super::*;
 
-use crate::llm::{BudgetGuard, BudgetLease};
+use oneiron_model::llm::{BudgetGuard, BudgetLease};
 use crate::retrieval_depth::RecallExecution;
 
 /// What the host composer is handed: the question and the retrieved pack, and

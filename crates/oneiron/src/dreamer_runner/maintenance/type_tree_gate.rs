@@ -25,7 +25,8 @@ use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::{ArtifactError, ErrorKind};
-use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::llm::decision::{ TypedDecision};
+use crate::model_decision::DecisionQuestion;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
     GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay,

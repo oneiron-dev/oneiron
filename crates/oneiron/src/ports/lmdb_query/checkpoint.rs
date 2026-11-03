@@ -102,7 +102,7 @@ fn is_note(value: &[u8]) -> bool {
 /// response; an origin claim names its actor with no lossless split.
 fn claim_placement(body: &[u8]) -> Placement {
     match decode_claim_body(body, true) {
-        Ok(claim) if claim.predicate == crate::llm::DREAMER_STEP_PREDICATE => {
+        Ok(claim) if claim.predicate == crate::model_step_record::DREAMER_STEP_PREDICATE => {
             Placement::Other(OtherClient::Response)
         }
         Ok(claim) if OriginClaimKind::of(&claim.predicate).is_some() => {

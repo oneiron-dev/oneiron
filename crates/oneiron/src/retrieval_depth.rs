@@ -30,7 +30,7 @@
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::BudgetLease;
+use oneiron_model::llm::BudgetLease;
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
 use crate::pipeline::ScoredEntity;
 use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};

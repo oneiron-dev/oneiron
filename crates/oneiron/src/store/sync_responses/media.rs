@@ -22,8 +22,8 @@ use serde::Serialize;
 
 use super::ResponseStamps;
 use crate::entity_id::EntityId;
-use crate::llm::media::{MediaJobState, MediaPart, MediaRequest};
-use crate::llm::{FatalLlmError, LlmError};
+use oneiron_model::llm::media::{MediaJobState, MediaPart, MediaRequest};
+use oneiron_model::llm::{FatalLlmError, LlmError};
 use crate::store::{ResponseCarriage, ResponseScan};
 
 const REQUEST: &str = "request";

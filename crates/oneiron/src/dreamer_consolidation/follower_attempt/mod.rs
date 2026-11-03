@@ -22,9 +22,11 @@ use crate::dreamer_wake::follower::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakeRecipePolicy};
 use crate::llm::{
-    DurableStepContext, DurableStepError, LlmRequest, LlmResponse, ModelLocality, StepOutcome,
     call_as_step_checked,
 };
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
+use oneiron_model::llm::{LlmRequest, LlmResponse, ModelLocality};
 use crate::{EntityId, Error, Result};
 
 /// Why a follower call parks on a deterministic fallback.

@@ -29,7 +29,7 @@ use super::{TURNS, invalid};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::error::{Error, Result};
-use crate::llm::run_admission::DeclaredMaximum;
+use crate::run_budget::DeclaredMaximum;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, LegacyJson, SideTable};

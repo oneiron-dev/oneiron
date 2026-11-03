@@ -2,7 +2,7 @@
 //! receipt. No writer states completeness: a reply is complete only when its
 //! latest generation ended final and for a reason that finishes an answer.
 use super::*;
-use crate::FinishReason;
+use oneiron_model::llm::FinishReason;
 use crate::error::Result;
 use crate::memory::MemoryResult;
 use serde::Serialize;

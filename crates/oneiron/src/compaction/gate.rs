@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::FinishReason;
+use oneiron_model::llm::FinishReason;
 use crate::tokenizer::count_context_pack_tokens;
 
 use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage};

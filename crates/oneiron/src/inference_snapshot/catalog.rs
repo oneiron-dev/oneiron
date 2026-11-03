@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::llm::{
+use oneiron_model::llm::{
     CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
 };
 use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable, SideTableDbs};

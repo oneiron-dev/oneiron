@@ -39,7 +39,7 @@ use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::{Scope, ScopeResource};
+use oneiron_model::llm::{Scope, ScopeResource};
 use crate::{EntityId, Error, Result, Vault};
 
 mod finding_identity;

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent_dispatch::{AgentDispatcher, CareLevel, CoordinationPattern, SpawnOverride};
 use crate::code_run::SelfSpawnAsk;
 use crate::consent::AuthenticatedOwner;
-use crate::llm::ModelId;
+use oneiron_model::llm::ModelId;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::task_type::TaskTypeRef;
 use crate::team::{
