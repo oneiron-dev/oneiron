@@ -11,7 +11,7 @@ use crate::batch::secret_scan;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::provenance::made_by::{
+use crate::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
 use crate::write_envelope::WriteActor;

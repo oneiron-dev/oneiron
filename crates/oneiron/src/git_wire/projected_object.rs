@@ -39,7 +39,7 @@ use super::{
     GitOid, GitRefPublication, GitWire, GitWireCommitOutcome, GitWireObjectWrite, GitWireOperation,
     GitWireRepo, GitWireResult, lock_repository,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 

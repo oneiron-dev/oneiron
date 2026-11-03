@@ -17,10 +17,10 @@ use super::{
     RepoSymbolsReleaseOutput, RepoSymbolsRenewInput, RepoSymbolsRenewOutput, repo_target,
 };
 use crate::code_symbol::code_symbol_entity_id;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::task_verb::{SymbolLease, SymbolLeaseFence, SymbolLeaseRun};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// The largest lifetime a run declares: the largest integer a JavaScript
 /// number holds exactly, so the guest's number is the engine's.

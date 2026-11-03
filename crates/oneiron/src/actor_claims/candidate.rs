@@ -27,8 +27,10 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_inbox_lens::{
-    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+use crate::{
+    inbox::view_values::AgentInboxItemKind,
+    agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::{AgentInboxParticipant, InboxImpact},
 };
 use crate::attempt_queue::AttemptId;
 use crate::batch::EntityMetadataHeader;

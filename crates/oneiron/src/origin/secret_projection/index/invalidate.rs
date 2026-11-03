@@ -23,7 +23,7 @@ use heed::RwTxn;
 
 use super::RepoIndexMarks;
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 
