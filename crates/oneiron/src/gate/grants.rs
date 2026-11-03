@@ -1,3 +1,4 @@
+use crate::claim::ClaimRecordScope;
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
 

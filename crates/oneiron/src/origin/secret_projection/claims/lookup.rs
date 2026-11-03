@@ -16,7 +16,8 @@ use super::{
     decode_place, derive_id, entity, field, git_oid, ingress_store_key, text,
 };
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitObjectKind, GitOid};

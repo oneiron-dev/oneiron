@@ -694,7 +694,7 @@ impl Vault {
     /// This is the exact count primitive for deterministic paginated list
     /// metadata. It does not materialize entity IDs or read entity bodies.
     pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
-        self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
+        self.count_entities_by_type_at(entity_type, crate::settings::CallerLocality::OnDevice)
     }
 
     /// [`Self::count_entities_by_type`] for a caller whose rows go to

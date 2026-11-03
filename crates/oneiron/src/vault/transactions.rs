@@ -168,7 +168,7 @@ impl Vault {
     ) -> Result<Option<u64>> {
         self.latest_learned_at_excluding_entity_types_at(
             excluded_types,
-            crate::claim::CallerLocality::OnDevice,
+            crate::settings::CallerLocality::OnDevice,
         )
     }
 

@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use crate::claim::ClaimLifecycleStatus;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -95,7 +95,7 @@ fn row_window(
     let world = if pad {
         crate::world_keys::pad_body_world(raw).and_then(Result::ok)
     } else {
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
             .ok()
             .and_then(|body| body.world)
     };

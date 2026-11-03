@@ -13807,63 +13807,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ClaimBody",
-      "ClaimSubject",
-      "SessionClaimBundle",
-      "SessionClaimBundleClaim"
-     ],
+     "notable": [],
      "path": "src/claim/core_types.rs",
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, and the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 18,
-      "enum": 1,
-      "fn": 4,
-      "re-export": 3,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/claim/core_types/codec.rs",
-     "purpose": "The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CursorSpan",
-      "EvidenceKind",
-      "EvidenceRef"
-     ],
-     "path": "src/claim/core_types/evidence_refs.rs",
-     "purpose": "Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary…",
-     "surface": {
       "crate-vis": 4,
-      "enum": 1,
       "fn": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/claim/core_types/relationship_scope.rs",
-     "purpose": "CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of…",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 4,
-      "type": 1
+      "re-export": 1
      }
     },
     {
@@ -14092,10 +14044,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/claim/lexical_query_hint.rs",
-     "purpose": "Codec primitives for `core.lexical.query_hint` side records",
+     "purpose": "—",
      "surface": {
-      "const": 1,
-      "crate-vis": 8
+      "re-export": 1
      }
     },
     {
@@ -14141,7 +14092,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DreamerIsolationClass"
@@ -14149,33 +14100,23 @@
      "path": "src/claim/predicate_grammar.rs",
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
-      "const": 13,
-      "crate-vis": 6,
+      "const": 11,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 2
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "ExpressionKeigo",
-      "ExpressionPreferenceChange",
-      "ExpressionPreferenceKind",
-      "ExpressionPreferenceOrigin",
-      "ExpressionPreferenceSet",
-      "ExpressionPreferenceValue",
-      "ExpressionPreferenceWriteResult",
-      "ExpressionRegister"
-     ],
+     "notable": [],
      "path": "src/claim/predicate_validators.rs",
      "purpose": "Structural validators for the predicates this module owns itself, rather than delegating to a domain module…",
      "surface": {
-      "const": 23,
-      "crate-vis": 10,
-      "enum": 5,
-      "fn": 2,
-      "struct": 3
+      "crate-vis": 6,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -14223,22 +14164,24 @@
      "kind": "src",
      "notable": [],
      "path": "src/claim/scope.rs",
-     "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
+     "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ClaimRecordScope"
+     ],
      "path": "src/claim/scope_stamp.rs",
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
-      "const": 1,
-      "crate-vis": 6,
-      "fn": 6,
-      "re-export": 1
+      "crate-vis": 3,
+      "fn": 3,
+      "re-export": 1,
+      "trait": 1
      }
     },
     {
@@ -14273,15 +14216,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CallerLocality",
       "ScopedReadActorKey"
      ],
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
       "crate-vis": 46,
-      "enum": 1,
       "fn": 10,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -14573,16 +14515,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ScopedReadResult"
-     ],
+     "notable": [],
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
-      "re-export": 1,
-      "struct": 1
+      "fn": 1,
+      "re-export": 2
      }
     },
     {
@@ -15102,17 +15041,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "ClaimDemotion",
-      "ClaimDemotionAction",
-      "ClaimDemotionRung"
-     ],
+     "notable": [],
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 26,
-      "enum": 2,
-      "struct": 1
+      "crate-vis": 14,
+      "re-export": 1
      }
     },
     {
@@ -25616,6 +25550,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerExcludedConversations"
+     ],
+     "path": "src/dreamer_consolidation/excluded_conversations.rs",
+     "purpose": "Operator-set conversations that stay out of Dreamer consolidation",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25887,7 +25835,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 31,
-      "mod": 4,
+      "mod": 5,
       "re-export": 25
      }
     },
@@ -30865,46 +30813,14 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DecodedEdgeValue",
-      "EdgeConfirmationStatus",
-      "EdgeInfo",
-      "EdgeProvenanceFlags",
-      "EdgeValueLayout"
-     ],
-     "path": "src/edge.rs",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
-     "surface": {
-      "crate-vis": 20,
-      "enum": 2,
-      "fn": 2,
-      "re-export": 2,
-      "struct": 3
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "EdgeKind"
-     ],
-     "path": "src/edge/kind.rs",
-     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
-     "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
      "notable": [],
-     "path": "src/edge/tests.rs",
-     "purpose": "—",
-     "surface": {}
+     "path": "src/edge_regeneration.rs",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "L",
@@ -39616,7 +39532,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/inbox/resolve.rs",
@@ -40790,11 +40706,11 @@
      "path": "src/learning/mod.rs",
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…",
      "surface": {
-      "const": 6,
+      "const": 5,
       "crate-vis": 6,
       "fn": 1,
       "mod": 11,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -41906,9 +41822,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 23,
       "mod": 193,
-      "re-export": 83
+      "re-export": 86
      }
     },
     {
@@ -56520,7 +56436,7 @@
      "purpose": "Transaction-composable storage ports",
      "surface": {
       "crate-vis": 21,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -56559,6 +56475,19 @@
       "struct": 3,
       "trait": 8,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopedReadResult"
+     ],
+     "path": "src/ports/read_result.rs",
+     "purpose": "Values paired with the scope receipt of the read that produced them",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -57194,7 +57123,6 @@
      "kind": "src",
      "notable": [
       "MadeBy",
-      "MadeByClass",
       "MadeByInput",
       "MadeByInputRole",
       "MadeByPredicate",
@@ -57205,8 +57133,9 @@
      "purpose": "Rule A provenance vocabulary shared by text commits and retrieval",
      "surface": {
       "crate-vis": 1,
-      "enum": 4,
-      "fn": 5,
+      "enum": 3,
+      "fn": 2,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -59554,18 +59483,6 @@
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
       "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/registry/mod.rs",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
-     "surface": {
-      "crate-vis": 3,
-      "mod": 1,
-      "re-export": 8
      }
     },
     {
@@ -64261,6 +64178,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CallerLocality",
       "ReadDestination",
       "RecipientChoice",
       "RecipientLimit",
@@ -64271,7 +64189,7 @@
      "purpose": "Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh…",
      "surface": {
       "crate-vis": 5,
-      "enum": 3,
+      "enum": 4,
       "fn": 14,
       "struct": 2
      }
@@ -70271,11 +70189,11 @@
      "path": "src/subject_model.rs",
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 9,
       "enum": 2,
       "fn": 12,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -76651,6 +76569,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_work_line.rs",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
      "surface": {
@@ -81921,26 +81849,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LineCrossing",
-      "LineObserver",
-      "LinePermit",
-      "TaskWorkTurn",
-      "WaitTimedOut",
-      "WorkLine"
-     ],
-     "path": "src/work_line.rs",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
-     "surface": {
-      "const": 2,
-      "fn": 21,
-      "struct": 4,
-      "trait": 2
-     }
-    },
-    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -84285,7 +84193,7 @@
      "surface": {
       "crate-vis": 27,
       "fn": 27,
-      "mod": 1,
+      "mod": 3,
       "re-export": 1,
       "struct": 5
      }
@@ -84304,6 +84212,152 @@
       "enum": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/codec.rs",
+     "purpose": "The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CursorSpan",
+      "EvidenceKind",
+      "EvidenceRef"
+     ],
+     "path": "src/write_envelope/claim_body/evidence_refs.rs",
+     "purpose": "Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/lexical_query_hint.rs",
+     "purpose": "Codec primitives for `core.lexical.query_hint` side records",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MadeByClass"
+     ],
+     "path": "src/write_envelope/claim_body/made_by.rs",
+     "purpose": "The provenance class a stored claim offers to readers",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimBody",
+      "ClaimSubject",
+      "SessionClaimBundle",
+      "SessionClaimBundleClaim"
+     ],
+     "path": "src/write_envelope/claim_body/mod.rs",
+     "purpose": "The stored CLAIM body, its MessagePack codec, scope stamps and citations",
+     "surface": {
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 1,
+      "fn": 3,
+      "re-export": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/relationship_scope.rs",
+     "purpose": "CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/scope.rs",
+     "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/scope_stamp.rs",
+     "purpose": "Stable CLAIM scope identifiers and their MessagePack representation",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimDemotion",
+      "ClaimDemotionAction",
+      "ClaimDemotionRung"
+     ],
+     "path": "src/write_envelope/claim_body/source_trust.rs",
+     "purpose": "CLAIM scope-map values used by write envelopes and stored-body codecs",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExpressionKeigo",
+      "ExpressionPreferenceChange",
+      "ExpressionPreferenceKind",
+      "ExpressionPreferenceOrigin",
+      "ExpressionPreferenceSet",
+      "ExpressionPreferenceValue",
+      "ExpressionPreferenceWriteResult",
+      "ExpressionRegister"
+     ],
+     "path": "src/write_envelope/claim_predicate.rs",
+     "purpose": "Predicate grammar and the engine-owned predicate vocabulary used by stored claims",
+     "surface": {
+      "const": 27,
+      "crate-vis": 11,
+      "enum": 5,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -85338,7 +85392,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 121,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85611,7 +85665,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85659,12 +85713,12 @@
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
-    "edge": {
-     "files": 3,
+    "edge_regeneration": {
+     "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
      "files": 85,
@@ -85837,7 +85891,7 @@
     "inbox": {
      "files": 13,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
@@ -86073,7 +86127,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86150,11 +86204,11 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+     "layout": "dir (no mod.rs)",
+     "purpose": "—"
     },
     "repo_mutation": {
      "files": 48,
@@ -86443,6 +86497,13 @@
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
+    "task_work_line": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
+    },
     "team": {
      "files": 15,
      "impl_vault": false,
@@ -86583,13 +86644,6 @@
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
-    "work_line": {
-     "files": 1,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
-     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
-    },
     "workspace_roster": {
      "files": 125,
      "impl_vault": true,
@@ -86605,17 +86659,17 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
     "write_envelope": {
-     "files": 2,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5878,
-   "test_files": 902
+   "source_files": 5885,
+   "test_files": 901
   },
   "oneiron-android": {
    "files": [
@@ -87561,6 +87615,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecodedEdgeValue",
+      "EdgeConfirmationStatus",
+      "EdgeInfo",
+      "EdgeProvenanceFlags",
+      "EdgeValueLayout",
+      "Regeneration",
+      "StrictEdgeRecord"
+     ],
+     "path": "src/edge.rs",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
+     "surface": {
+      "const": 4,
+      "enum": 3,
+      "fn": 13,
+      "mod": 1,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EdgeKind"
+     ],
+     "path": "src/edge/kind.rs",
+     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edge/kind_tables.rs",
+     "purpose": "Exhaustive tables over [`EdgeKind`]",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edge/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -87608,7 +87717,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 12
+      "mod": 15
      }
     },
     {
@@ -87661,6 +87770,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/registry.rs",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
+     "surface": {
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/retrieval_quality.rs",
      "purpose": "Retrieval quality report vocabulary",
      "surface": {
@@ -87682,6 +87801,26 @@
       "fn": 3,
       "trait": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LineCrossing",
+      "LineObserver",
+      "LinePermit",
+      "TaskWorkTurn",
+      "WaitTimedOut",
+      "WorkLine"
+     ],
+     "path": "src/work_line.rs",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
+     "surface": {
+      "const": 2,
+      "fn": 19,
+      "struct": 4,
+      "trait": 2
+     }
     }
    ],
    "modules": {
@@ -87698,6 +87837,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
+    },
+    "edge": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "entity_id": {
      "files": 1,
@@ -87755,6 +87901,13 @@
      "layout": "file",
      "purpose": "Shared Beta posterior bandit seam"
     },
+    "registry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
+    },
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
@@ -87768,12 +87921,19 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
+    },
+    "work_line": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     }
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 13,
-   "test_files": 0
+   "source_files": 18,
+   "test_files": 1
   },
   "oneiron-bench": {
    "files": [
@@ -108381,7 +108541,7 @@
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {

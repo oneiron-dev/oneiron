@@ -27,7 +27,7 @@ pub fn redact_messagepack_credentials(value: &mut rmpv::Value) -> bool {
 /// evidence and scope) read as a secret together, in their MessagePack form
 /// and before any projection; a reader then serves none of them. A reader
 /// serves the predicate as the text it is, so it is read as that text.
-pub fn claim_reads_as_secret(body: &crate::claim::ClaimBody) -> bool {
+pub fn claim_reads_as_secret(body: &crate::write_envelope::claim_body::ClaimBody) -> bool {
     let predicate = rmpv::Value::from(body.predicate.as_str());
     let mut parts = vec![&body.value];
     parts.extend(body.evidence.as_ref());
@@ -45,8 +45,8 @@ pub fn write_door_refuses_body(bytes: &[u8]) -> bool {
 
 /// [`write_door_refuses_body`] over a claim as the write door reads a claim
 /// candidate: its encoding.
-pub fn write_door_refuses_claim(body: &crate::claim::ClaimBody) -> bool {
-    match crate::claim::encode_claim_body(body) {
+pub fn write_door_refuses_claim(body: &crate::write_envelope::claim_body::ClaimBody) -> bool {
+    match crate::write_envelope::claim_body::encode_claim_body(body) {
         Ok(bytes) => write_door_refuses_body(&bytes),
         Err(_) => true,
     }

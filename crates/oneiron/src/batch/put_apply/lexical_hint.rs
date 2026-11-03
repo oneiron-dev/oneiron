@@ -2,7 +2,7 @@
 
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, lexical_query_hint_claim_id};
 use crate::{
-    claim::ClaimBody,
+    write_envelope::claim_body::ClaimBody,
     entity_id::EntityId,
     error::{Error, Result},
     store::Store,
@@ -17,13 +17,13 @@ pub(super) fn validate_lexical_query_hint(
 ) -> Result<()> {
     if !id
         .as_bytes()
-        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        .starts_with(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX)
     {
         return Err(Error::InvalidClaimBody(
             "lexical query hint claim id must use LH prefix",
         ));
     }
-    let hint_value = crate::claim::decode_lexical_query_hint_value(&body.value)?;
+    let hint_value = crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(&body.value)?;
     let target = hint_value.target;
     let expected_id = lexical_query_hint_claim_id(&target, &hint_value.query)?;
     if expected_id != id {
@@ -36,7 +36,7 @@ pub(super) fn validate_lexical_query_hint(
             "lexical query hint claims must be stale",
         ));
     }
-    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
+    if body.lifecycle != oneiron_contracts::claim::ClaimLifecycleStatus::Active {
         return Err(Error::InvalidClaimBody(
             "lexical query hint claims must be active",
         ));
@@ -57,13 +57,13 @@ pub(super) fn validate_lexical_query_hint(
             ));
         }
         let Ok(target_body) =
-            crate::claim::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
+            crate::write_envelope::claim_body::decode_claim_body(&target_raw[ENTITY_METADATA_HEADER_LEN..], true)
         else {
             return Err(Error::InvalidClaimBody(
                 "lexical query hint target must be claim",
             ));
         };
-        if target_body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+        if target_body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT {
             return Err(Error::InvalidClaimBody(
                 "lexical query hint target must not be synthetic hint",
             ));

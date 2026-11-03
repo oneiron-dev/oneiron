@@ -3,7 +3,7 @@
 //! how far into that page it got, and where the next file's lines resume, so
 //! a page that its output or scan limit cut picks up exactly where it stopped.
 
-use crate::claim::ScopedReadReceipt;
+use oneiron_contracts::claim::ScopedReadReceipt;
 use crate::error::Result;
 
 use super::coreutils_text::{LinePosition, join_graph_path, page_lines};

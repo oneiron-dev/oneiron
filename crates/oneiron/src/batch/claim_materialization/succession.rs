@@ -6,7 +6,10 @@ use rmpv::Value;
 use super::demotion::successor_body;
 use super::{ClaimMaterialization, binding_error};
 use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimSource, ClaimSuccession, decode_claim_body, encode_claim_body};
+use crate::write_envelope::claim_body::{
+    ClaimBody, ClaimSuccession, decode_claim_body, encode_claim_body,
+};
+use oneiron_contracts::claim::ClaimSource;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
@@ -338,7 +341,7 @@ impl ClaimMaterialization {
             crate::gate::check_unattributed_claim_lineage(&next, &lineage, &policy)?;
         }
         let mut claim_of = None;
-        if let crate::claim::ClaimSubject::Entity(subject) = prior.subject {
+        if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject) = prior.subject {
             let mut weight = None;
             for entry in crate::ports::EdgeStoreRead::port_edges(
                 &vault.store,

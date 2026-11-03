@@ -1,7 +1,8 @@
 //! Credential-bound adapters. Text storage, grants and fork settlement stay in EntityDoc.
 
 use super::public_types::*;
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, PointRead};
+use crate::ports::ScopedReadResult;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
 use crate::memory::{Memory, MemoryError, MemoryResult};

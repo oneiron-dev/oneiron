@@ -619,10 +619,9 @@ pub(crate) fn bind_peer(
     actor: WriteActor,
     at: u64,
 ) -> Result<()> {
-    use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-        PREDICATE_ACTOR_PEER_BINDING,
-    };
+    use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+    use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+    use crate::claim::PREDICATE_ACTOR_PEER_BINDING;
     let mut body = ClaimBody::new(
         PREDICATE_ACTOR_PEER_BINDING,
         ClaimSubject::Entity(actor.entity_ref()),

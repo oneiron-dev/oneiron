@@ -14,7 +14,7 @@ use super::{
     ExportPack,
 };
 use crate::Vault;
-use crate::claim::ClaimSubject;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
 use crate::error::{Error, Result};
 use crate::registry::{
@@ -138,7 +138,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         if section == Section::Claim
             && let Ok(body) = row.body.to_bytes()
-            && let Ok(claim) = crate::claim::decode_claim_body(&body, false)
+            && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(&body, false)
             && let ClaimSubject::Entity(subject) = claim.subject
         {
             let mut key = subject.as_bytes().to_vec();

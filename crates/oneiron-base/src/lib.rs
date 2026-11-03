@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod analyzer;
 pub mod distance;
+pub mod edge;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
@@ -17,8 +18,10 @@ pub mod limits;
 pub mod msgpack_shape;
 pub mod panic_report;
 pub mod posterior;
+pub mod registry;
 pub mod retrieval_quality;
 pub mod tokenizer;
+pub mod work_line;
 
 pub fn unix_seconds_now() -> u64 {
     SystemTime::now()
