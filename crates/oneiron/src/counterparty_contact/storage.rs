@@ -462,7 +462,7 @@ pub(super) fn contact_deleted_in_txn(
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, contact_id)?.deleted)
 }
 
-fn claim_body_in_txn(
+pub(super) fn claim_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
