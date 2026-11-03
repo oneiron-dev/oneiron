@@ -61,9 +61,11 @@
   All of it is additive: without a `DecodeAdmission` every load and decode
   runs upstream's code.
   - `src/decode_admission.rs` (new): the `DecodeAdmission` trait (`admit`
-    before each allocation, `decoded` to observe an output length),
+    before each allocation, defaulted `release`/`transfer` for local reuse,
+    `decoded` to observe an output length),
     `DecodeAdmissionError` (`MemoryFloor { needed, available }`, `Deadline`,
-    `Cancelled`), the admitted growth helper, the codec working-state charge
+    `Cancelled`), the admitted growth helper (releases the replaced capacity
+    after a successful realloc), the codec working-state charge
     and the `BTreeMap` node charge. `src/lib.rs` exports both types.
   - `src/error.rs`: `Error::DecodeAdmission`.
   - `src/load_options.rs`: `LoadOptions::decode_admission` (default `None`;
