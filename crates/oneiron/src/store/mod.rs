@@ -441,3 +441,9 @@ pub mod sandbox_contract;
 pub mod critic_lens;
 
 pub mod verb_domain;
+
+pub mod reaction_predicate;
+
+pub mod repo_proposal_record;
+
+pub mod repo_import_predicate;

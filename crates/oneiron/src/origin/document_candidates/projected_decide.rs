@@ -48,8 +48,8 @@ use crate::origin::secret_projection::claims::RepoProjectionClaim;
 use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::RepoProjectedFileCopy;
 use crate::origin::secret_projection::git::projection_ingress_dir;
-use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{
+use crate::store::repo_proposal_record::RepoProposedFile;
+use crate::store::repo_proposal_record::{
     ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
 use crate::file_secret_marks::KeyPlaces;

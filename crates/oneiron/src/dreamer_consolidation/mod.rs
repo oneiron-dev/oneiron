@@ -226,5 +226,3 @@ use rmpv::Value;
 use std::collections::BTreeSet;
 
 mod value_projection;
-
-pub mod claim_cluster;

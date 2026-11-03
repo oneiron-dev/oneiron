@@ -15,7 +15,7 @@ use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::store::code_revision_record::{CodeRevision, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
-use crate::repo_mutation::received_file_operation;
+use crate::store::repo_proposal_record::received_file_operation;
 
 fn presence(blob: Option<&CodeTreeBlob>) -> CodeFilePresence {
     blob.map_or_else(CodeFilePresence::absent, |blob| {

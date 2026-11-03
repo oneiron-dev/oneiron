@@ -31,9 +31,10 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SESSION;
-use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{
-    PreparedRepoProposal, ReceivedFilesProposalInput, received_proposal_id,
+use crate::store::repo_proposal_record::RepoProposedFile;
+use crate::{
+    repo_mutation::PreparedRepoProposal,
+    store::repo_proposal_record::{ReceivedFilesProposalInput, received_proposal_id},
 };
 use crate::{EntityId, TimeRange, Vault};
 

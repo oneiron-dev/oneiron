@@ -38,8 +38,11 @@ use crate::merge_queue::{
     MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::{
-    RepoProposal, RepoProposalOperation, RepoProposalReview, RepoProposalStatus,
+use crate::{
+    repo_mutation::proposal::RepoProposal,
+    store::repo_proposal_record::RepoProposalOperation,
+    repo_mutation::proposal::RepoProposalReview,
+    store::repo_proposal_record::RepoProposalStatus,
 };
 use crate::{store::repo_mutation_record::RepoMutationOperation, repo_mutation::RepoMutationRequest};
 use crate::task_verb::SymbolLease;

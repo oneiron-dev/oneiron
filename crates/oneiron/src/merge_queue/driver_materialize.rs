@@ -22,7 +22,7 @@ use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv,
 };
-use crate::repo_mutation::proposal::RepoProposalOperation;
+use crate::store::repo_proposal_record::RepoProposalOperation;
 
 /// What the overlap preflight found for one batch.
 pub(super) enum QueueOverlapFinding {
