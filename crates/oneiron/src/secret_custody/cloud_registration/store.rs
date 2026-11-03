@@ -499,6 +499,43 @@ impl Vault {
     }
 }
 
+impl Store {
+    /// Drops every value-free `Erasing` row whose owner-authorized erase has
+    /// finished, without requiring the original owner door to run again.
+    /// Whether any row was dropped.
+    ///
+    /// # Errors
+    /// Storage and custody faults: the next finisher pass retries.
+    pub(crate) fn drop_finished_cloud_registration_erasing_rows(&self) -> Result<bool> {
+        let finished = {
+            let txn = self.env.read_txn()?;
+            let slots = rows_in_txn(self, &txn)?
+                .into_iter()
+                .filter_map(|(slot, row)| {
+                    (row.phase == CloudRegistrationPhase::Erasing).then_some(slot)
+                })
+                .collect::<Vec<_>>();
+            finished_in_txn(self, &txn, &slots)?
+        };
+        if finished.is_empty() {
+            return Ok(false);
+        }
+        self.with_write_txn(|wtxn| {
+            let mut dropped = false;
+            for slot in &finished {
+                let erasing = ROWS
+                    .get(self, &*wtxn, slot)?
+                    .is_some_and(|row| row.phase == CloudRegistrationPhase::Erasing);
+                if erasing && self.credential_erase_finished_in_txn(&*wtxn, slot)? {
+                    ROWS.delete(self, wtxn, slot)?;
+                    dropped = true;
+                }
+            }
+            Ok(dropped)
+        })
+    }
+}
+
 /// The slots among `slots` whose erase has finished here (KS-6 part 2).
 fn finished_in_txn(store: &Store, txn: &RoTxn<'_>, slots: &[EntityId]) -> Result<Vec<EntityId>> {
     let mut finished = Vec::new();

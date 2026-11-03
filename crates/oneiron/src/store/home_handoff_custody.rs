@@ -280,10 +280,15 @@ pub(crate) fn mint(
 /// actor owes that holder's retirement whatever happens next.
 ///
 /// # Errors
-/// A key this custody does not hold live, and custody and sealing faults.
+/// A key this custody does not hold live or whose actor's erase is staged,
+/// and custody and sealing faults.
 pub(crate) fn export(s: &Store, k: KeyRef, target: &LiveTarget) -> Result<TransitSeal> {
     let custody = custody(s)?;
     let item = custody.erasable_by_ref(&k.0)?.ok_or_else(unknown_key)?;
+    let txn = s.env.read_txn()?;
+    if retirement_in_txn(s, &txn, &item.subject(&custody)?)?.is_some() {
+        return Err(unknown_key());
+    }
     let secret = custody.read_erasable(&item)?;
     custody.record_holder(&k.0, &target.machine)?;
     let mut plain = Zeroizing::new(Vec::with_capacity(TRANSIT_LEN));
