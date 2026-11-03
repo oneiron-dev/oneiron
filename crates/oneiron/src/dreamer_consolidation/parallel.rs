@@ -25,8 +25,9 @@ use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_camp
 use crate::autoreason_campaign::beam_promotion::default_strategy;
 use crate::autoreason_campaign::research::bound_research_roots;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::critic::{
-    CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict, LensCatalog,
+use crate::{
+    critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
+    store::critic_lens::LensCatalog,
 };
 use crate::dreamer_runner::{
     DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringGateDecision,

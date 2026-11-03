@@ -3,7 +3,8 @@ use crate::store::repo_fork::RepoForkHash;
 use crate::{
     contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     error::Result,
-    repo_mutation::{ RepoMutationOutcome}};
+    store::repo_mutation_record::RepoMutationOutcome,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -106,7 +106,7 @@ impl OriginClaimKind {
             Self::Admission => RECEIVE_PACK_ADMISSION_PREDICATE,
             Self::Outcome => RECEIVE_PACK_OUTCOME_PREDICATE,
             Self::ExternalImportSource => {
-                crate::repo_mutation::external_import::EXTERNAL_IMPORT_SOURCE_PREDICATE
+                crate::store::repo_import_predicate::EXTERNAL_IMPORT_SOURCE_PREDICATE
             }
         }
     }

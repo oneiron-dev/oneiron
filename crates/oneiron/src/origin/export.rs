@@ -240,8 +240,8 @@ impl Vault {
     fn document_files(
         &self,
         repo: &GitWireRepo,
-        revision: &crate::code_revision::CodeRevision,
-        metadata: &crate::code_revision::CodeCommitMetadata,
+        revision: &crate::store::code_revision_record::CodeRevision,
+        metadata: &crate::store::code_commit_metadata::CodeCommitMetadata,
     ) -> Result<BTreeMap<String, OriginTreeFile>> {
         if revision.file_frontiers.is_empty() {
             return Err(Error::InvariantViolation(

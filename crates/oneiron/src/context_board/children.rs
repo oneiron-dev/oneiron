@@ -8,10 +8,10 @@ use super::frame::MAX_BOARD_ROW_BYTES;
 use super::one_line_token;
 use super::people::PeopleView;
 use super::tasks::{TaskIntentPresence, label_preview};
-use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
+use crate::context_board::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::run_tree::RunTreeNode;
+use crate::attempt_queue::run_tree_view::RunTreeNode;
 
 /// Role token for a child that has agent-dispatch children of its own.
 const AGENT_ROLE_LEAD: &str = "lead";

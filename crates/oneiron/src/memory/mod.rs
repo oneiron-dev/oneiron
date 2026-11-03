@@ -414,3 +414,5 @@ pub mod state_index;
 
 #[cfg(feature = "sync")]
 pub(crate) mod resolved_recall_scope;
+
+pub mod claim_cluster;
