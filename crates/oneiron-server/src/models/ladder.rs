@@ -32,8 +32,8 @@ use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunOverageSource, RunPermit,
-    offer_id, offer_place,
+    CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied,
+    RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_place,
 };
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -250,6 +250,23 @@ pub struct OfferLadder {
     /// What the call met on the ladder it fell back from, when this ladder
     /// is that fallback's call-local copy.
     prefix: ReceiptPrefix,
+}
+
+/// The serving rung's host-attested custody (FIX 11893): a local payer on
+/// device, or on its own server with no key. A keyed owner endpoint stays
+/// paid. Budget rules keep reading the offer directly; this value only
+/// annotates host work and receipts.
+fn physical_for(binding: &OfferBinding) -> WorkPhysical {
+    let free_route = match binding.locality {
+        ModelLocality::OnDevice => true,
+        ModelLocality::OwnServer => binding.custody == KeyCustody::Keyless,
+        ModelLocality::ThirdParty => false,
+    };
+    if binding.payer == Payer::Local && free_route {
+        WorkPhysical::KeylessOwnServer
+    } else {
+        WorkPhysical::Paid
+    }
 }
 
 impl OfferLadder {
@@ -1405,7 +1422,12 @@ impl OfferLadder {
                 return Ok(Sent::Failed);
             }
         };
-        let (bound, permit) = self.admit(call.run, rung, call.request, call.selector, false)?;
+        let rung_run = call.run.with_work_context({
+            let mut context = call.run.work_context();
+            context.physical = physical_for(&rung.offer.binding);
+            context
+        });
+        let (bound, permit) = self.admit(&rung_run, rung, call.request, call.selector, false)?;
         if !may_send() {
             // Unsent: only the gate starts a lease, so this pays nothing.
             settle_failed(permit);
@@ -1435,9 +1457,7 @@ impl OfferLadder {
             settle_failed(permit);
             return Ok(Sent::Held);
         };
-        let gate = call
-            .run
-            .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &bound);
         // The caller's deadline ends the send too (FIX 7792): the rung is
         // settled, its reservation spent once it went out. Its reply is read
@@ -2007,7 +2027,12 @@ impl OfferLadder {
             settle_failed(permit);
             return Flow::On;
         };
-        let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let rung_run = run.with_work_context({
+            let mut context = run.work_context();
+            context.physical = physical_for(&rung.offer.binding);
+            context
+        });
+        let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &call);
         let ended = match gate.stream(call, permit.lease()) {
             Ok(stream) => {
