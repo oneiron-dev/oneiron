@@ -38,4 +38,3 @@ pub enum PeerMachine {
     /// is never read as this machine or as one of the owner's.
     Unknown,
 }
-

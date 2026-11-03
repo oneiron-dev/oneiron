@@ -1,11 +1,11 @@
 //! Pure complete-tree partition, digest and recorded mode vocabulary.
 
-use std::collections::{BTreeMap, BTreeSet};
 use super::CodeRevision;
-use crate::store::code_document_values::CodeDocumentFrontier;
-use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
 use crate::error::{ArtifactError, Error, Result};
 use crate::git_wire::GitOid;
+use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A captured complete tree: documents by id with their modes, and blobs
 /// by path. A read-only value: it issues, reviews and promotes nothing

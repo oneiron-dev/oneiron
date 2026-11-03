@@ -96,5 +96,4 @@ impl EngineScanThreshold for EngineScan {
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
-
 }

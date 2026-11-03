@@ -3,8 +3,8 @@
 //! a catalog's description never budgets every one of its tools alike.
 //! Entry: `scoped_tool_effect_in_txn`. Defines its own items.
 
-use crate::error::Result;
 use crate::connector_key::budget_class::BudgetClass;
+use crate::error::Result;
 use crate::store::Store;
 
 use super::lifecycle::scoped_server_call_class_in_txn;

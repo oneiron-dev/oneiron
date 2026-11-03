@@ -15,7 +15,7 @@ use super::shape::{
 use crate::Vault;
 use crate::batch::BatchBuilder;
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::memory::{Memory};
+use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// One entity put in a batch.

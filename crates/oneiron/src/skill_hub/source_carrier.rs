@@ -10,12 +10,12 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::skill::SkillContentHash;
 
-pub(super) use crate::store::skill_source_carrier::{
-    canonical_source_package, source_carrier_id,
-};
+pub(super) use crate::store::skill_source_carrier::{canonical_source_package, source_carrier_id};
 pub(crate) use crate::store::skill_source_carrier::{decode_source_carrier, encode_source_carrier};
 #[cfg(feature = "sync")]
-pub(crate) use crate::store::skill_source_carrier::{source_carrier_holder, source_carrier_matches_id};
+pub(crate) use crate::store::skill_source_carrier::{
+    source_carrier_holder, source_carrier_matches_id,
+};
 
 pub(crate) fn validate_hub_source_carrier_put(
     store: &crate::store::Store,

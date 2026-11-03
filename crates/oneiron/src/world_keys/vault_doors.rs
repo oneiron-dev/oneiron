@@ -8,8 +8,8 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
 use crate::authority::{MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey};
 use crate::entity_id::EntityId;
-use crate::identity::InstallSignerDerive;
 use crate::error::{Error, Result, SecretError};
+use crate::identity::InstallSignerDerive;
 use crate::vault::Vault;
 
 impl Vault {

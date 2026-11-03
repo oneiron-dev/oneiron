@@ -1,9 +1,12 @@
 //! LinkedIn seat policy values consumed by outbound admission.
-use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 mod seat;
-pub use seat::{LinkedInAccountRiskLimits, LinkedInSeatDispatchState, LinkedInKillSwitchState, LinkedInSeatSandboxPolicy, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision};
+pub use seat::{
+    LinkedInAccountRiskLimits, LinkedInKillSwitchState, LinkedInSeatDispatchState,
+    LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
+};
 
 /// Stable Oneiron channel key for LinkedIn.
 pub const LINKEDIN_CHANNEL: &str = "linkedin";
@@ -26,7 +29,8 @@ pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS: u32 = 180;
 /// Upper bound for human-cadence jitter between sends.
 pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS: u32 = 900;
 
-pub(crate) const LINKEDIN_SEAT_VERB_CATALOG: &[&str] = &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
+pub(crate) const LINKEDIN_SEAT_VERB_CATALOG: &[&str] =
+    &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
 
 pub(crate) const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
 
@@ -175,8 +179,6 @@ impl LinkedInSandboxHostConfig {
         self
     }
 }
-
-
 
 pub(crate) fn bounded_ref(
     value: String,

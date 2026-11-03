@@ -221,7 +221,11 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
         crate::write_envelope::communication_record::validate_comm_record_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_DIAGNOSTIC {
-        crate::store::diagnostic_record::validate_diagnostic_event_admission(&fixed.id, fixed.occurred, data)?;
+        crate::store::diagnostic_record::validate_diagnostic_event_admission(
+            &fixed.id,
+            fixed.occurred,
+            data,
+        )?;
         crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;

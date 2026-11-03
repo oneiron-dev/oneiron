@@ -320,7 +320,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        if let Some(content_hash) = crate::write_envelope::skill_record::decode_skill_record(body)?.content_hash {
+        if let Some(content_hash) =
+            crate::write_envelope::skill_record::decode_skill_record(body)?.content_hash
+        {
             crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
                 store,
                 wtxn,

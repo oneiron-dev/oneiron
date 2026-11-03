@@ -1,8 +1,8 @@
 //! Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and
 //! the share of the budget the answer keeps.
-use crate::store::embedding::InputKind;
 use crate::error::{Error, Result};
 use crate::rerank::Reranker;
+use crate::store::embedding::InputKind;
 
 pub use crate::store::retrieval_deadline::RetrievalDeadline;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -86,8 +86,8 @@ pub struct RecallExecution<'a> {
     pub render_budget: Option<usize>,
 }
 
-use serde::{Deserialize, Serialize};
 use crate::store::RetrievalTurn;
+use serde::{Deserialize, Serialize};
 
 /// Opt-in stage capture and the actual host turn whose retrieval is being observed.
 /// The vault's capture setting remains authoritative; this cannot turn it on.

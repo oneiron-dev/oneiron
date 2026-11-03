@@ -1,6 +1,5 @@
 //! Counterparty hydration plus send-override and do-not-contact fold.
 
-use crate::write_envelope::communication::SendOverrideMatch;
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, normalize_channel_class,
 };
@@ -8,6 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::input::{ExternalEffectGateInput, ExternalEffectPolicyRisk};
 use crate::store::Store;
+use crate::write_envelope::communication::SendOverrideMatch;
 
 /// Receipt reason for a deny whose only restrictive source is a CA-01
 /// `comm.do_not_contact` head. Inside `store.rs`'s closed `counterparty_*`

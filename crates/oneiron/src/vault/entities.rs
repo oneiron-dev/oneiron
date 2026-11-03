@@ -6,13 +6,13 @@ use crate::deletion::HydratedShortIdDeletion;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use crate::store::retrieval_values::RetrievalWithTelemetry;
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::ports::EntityStoreRead;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
+use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use std::time::Instant;
 
 /// Most ids one [`Vault::entities_by_type_page`] hands back.

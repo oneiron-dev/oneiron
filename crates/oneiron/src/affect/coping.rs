@@ -18,9 +18,13 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 
-pub use crate::write_envelope::coping_outcome::{COPING_OUTCOME_PREDICATE, CopingStrategy, CopingOutcomeValue, CopingOutcomeRecord, CopingOutcomeUpdate, coping_delta_successful, coping_outcome_value, decode_coping_outcome_value, decode_coping_outcome_claim, coping_outcome_claim_candidate};
-pub(crate) use crate::write_envelope::coping_outcome::validate_coping_outcome_claim_structure;
 use crate::write_envelope::coping_outcome::coping_outcome_evidence_value;
+pub(crate) use crate::write_envelope::coping_outcome::validate_coping_outcome_claim_structure;
+pub use crate::write_envelope::coping_outcome::{
+    COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue,
+    CopingStrategy, coping_delta_successful, coping_outcome_claim_candidate, coping_outcome_value,
+    decode_coping_outcome_claim, decode_coping_outcome_value,
+};
 
 impl Vault {
     /// Updates an active `coping.outcome` claim from two turn-level VAD

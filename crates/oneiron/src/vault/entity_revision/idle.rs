@@ -177,7 +177,8 @@ impl Vault {
             };
             if current.live != input.source_revision_ref
                 || read_entity_revision_in_txn(self, &txn, &input.entity, ReadMode::Live)?.is_none()
-                || crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)? != epoch
+                || crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)?
+                    != epoch
             {
                 report.superseded.push(input.entity);
                 continue;

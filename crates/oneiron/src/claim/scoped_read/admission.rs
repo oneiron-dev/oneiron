@@ -172,7 +172,10 @@ impl<'a> ScopedRead<'a> {
     /// (FIX 8245 judges the two apart). Generic records have no proved
     /// channel context. Channel-bound credentials must use their typed
     /// adapter instead of losing a caveat.
-    pub(super) fn credential_channel_allows(&self, claims: &oneiron_authority::authority::SlipClaims) -> bool {
+    pub(super) fn credential_channel_allows(
+        &self,
+        claims: &oneiron_authority::authority::SlipClaims,
+    ) -> bool {
         claims.channels.is_empty()
             || self
                 .actor_key

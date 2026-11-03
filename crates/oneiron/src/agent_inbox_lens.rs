@@ -17,7 +17,7 @@ use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::self_heal::AgentHealthSignal;
 
 pub use crate::inbox::view_values::{
-    AGENT_INBOX_LENS_SCHEMA_VERSION, InboxImpact, AgentInboxItemKind,
+    AGENT_INBOX_LENS_SCHEMA_VERSION, AgentInboxItemKind, InboxImpact,
 };
 
 /// What a concern row is about: the agent the card is on, its signal and

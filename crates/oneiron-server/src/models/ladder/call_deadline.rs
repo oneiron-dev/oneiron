@@ -17,7 +17,7 @@ use oneiron::{
 };
 use tokio::time::Instant;
 
-use super::super::media::{MediaAnswer, RungVoices};
+use super::super::media::{MediaAnswer, MediaDispatchRelease, RungVoices};
 use super::super::walk::Walk;
 use super::{Call, OfferLadder};
 
@@ -184,7 +184,20 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices)
+        self.media_from(run, request, selector, deadline, true, voices, None)
+            .await
+    }
+
+    pub(in crate::models) async fn media_by_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+        voices: Option<&RungVoices>,
+        deadline: CallDeadline,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaAnswer> {
+        self.media_from(run, request, selector, deadline, true, voices, release)
             .await
     }
 }

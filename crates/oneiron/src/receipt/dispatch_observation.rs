@@ -5,8 +5,8 @@ use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundDispatchResult;
 use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
-use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use serde::{Deserialize, Serialize};
 
 const OBSERVATIONS: SideTable<DispatchObservationKey, DispatchObservation, Raw> =

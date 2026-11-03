@@ -11,9 +11,9 @@ use heed::RoTxn;
 use super::row_birth_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::write_envelope::provenance::made_by::MadeByInputRole;
 use crate::store::ManifestDbs;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::write_envelope::provenance::made_by::MadeByInputRole;
 
 /// The rows `row`'s birth names as prompt inputs: the rows a model's prompt
 /// carried when it wrote `row`'s words. Empty for a row born with none, or

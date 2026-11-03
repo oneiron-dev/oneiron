@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::Vault;
-use oneiron_contracts::affect::Vad;
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops, apply_ops_with_gate_mode,
 };
@@ -17,6 +16,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 impl Vault {
     /// Writes a typed CLAIM (type 0) entity with full structural validation
