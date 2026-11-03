@@ -60,8 +60,8 @@ fn state(reason: &'static str) -> Error {
 fn denied() -> Error {
     Error::Record(RecordError::ConversationDenied)
 }
-use crate::store::conversation_body::encode;
 use crate::store::conversation_body::decode;
+use crate::store::conversation_body::encode;
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);

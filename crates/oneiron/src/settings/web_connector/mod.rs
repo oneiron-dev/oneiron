@@ -1,6 +1,6 @@
 //! Web provider selection and content-free usage vocabulary.
-use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 mod provider;
 pub use provider::{FetchRoute, ResultRetention, WebProvider, WebProviderProfile};
@@ -94,7 +94,6 @@ impl WebConnectorSetting {
     }
 }
 
-
 /// Rows one read returns when its caller names no count.
 pub const USAGE_READ_DEFAULT_LIMIT: u32 = 100;
 /// The most rows one read returns.
@@ -178,4 +177,3 @@ pub struct WebConnectorUsagePage {
     /// How many returned rows are unpriced.
     pub unpriced: u32,
 }
-

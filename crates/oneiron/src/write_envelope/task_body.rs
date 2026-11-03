@@ -1,8 +1,8 @@
 //! TASK roles, canonical body fields, and deterministic check-in streak values.
 
-use std::io::Cursor;
-use rmpv::Value;
 use crate::error::{Error, RecordError, Result};
+use rmpv::Value;
+use std::io::Cursor;
 
 pub(crate) const TASK_BODY_ROLE_KEY: &str = "role";
 

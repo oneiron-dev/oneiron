@@ -1,7 +1,7 @@
 //! Mandatory read receipts. Responses carry the requested/ceiling/intersection tuple.
 use super::ScopedRead;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
-use oneiron_contracts::gate::{RetrievalFilter};
+use oneiron_contracts::gate::RetrievalFilter;
 use std::collections::BTreeSet;
 
 pub use oneiron_contracts::claim::{ReadScope, ScopedReadReceipt};

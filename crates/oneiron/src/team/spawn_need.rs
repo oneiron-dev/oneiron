@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::team::spawn_override::SpawnOverride;
+use serde::{Deserialize, Serialize};
 
 /// How much a spawn cares (ARCH-0079 #spawn): the same five words vendors
 /// use for reasoning effort, so a model reads `care: xhigh` without
@@ -226,4 +226,3 @@ impl SpawnNeed {
             .map(|o| *o.value())
     }
 }
-
