@@ -2250,10 +2250,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/browser_programs.rs` | src | m | 2 struct · 1 fn · 1 const | CoachBrowserProgramsReport, CoachBrowserRepairPending | The Coach's browser programs (CUA E8, FIX 7605): each night, fixed code reads the solved-run evidence that… |
 | `src/dreamer_runner/maintenance/browser_programs/induction.rs` | src | m | 6 crate-vis | — | Deterministic induction for the Coach's browser programs (CUA E8): one candidate program from two solved… |
 | `src/dreamer_runner/maintenance/calibration_asks.rs` | src | s | 1 const · 1 crate-vis | — | Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): "On uncertainty… |
-| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 36 const · 1 re-export · 11 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
+| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 36 const · 1 re-export · 12 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
 | `src/dreamer_runner/maintenance/coach/eval_measurement.rs` | src | s | 1 fn · 1 crate-vis | — | The Coach's eval measurement job (FIX 574, OF-578): one per request digest, queued when the measurement is… |
 | `src/dreamer_runner/maintenance/coach/person_threshold.rs` | src | s | 1 fn | — | Q3 tuning as the Coach (ARCH-0076 #ask, FIX 8708): every requested override record is read, a page at a… |
-| `src/dreamer_runner/maintenance/coach/think_threshold.rs` | src | s | 1 trait · 2 fn · 1 crate-vis | ThinkThresholdPolicy | Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later… |
+| `src/dreamer_runner/maintenance/coach/think_threshold.rs` | src | s | 1 trait · 2 fn · 2 crate-vis | ThinkThresholdPolicy | Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later… |
 | `src/dreamer_runner/maintenance/coach_diagnostic.rs` | src | m | 1 struct · 1 enum · 2 fn · 3 const · 8 crate-vis | ProducerFixDraft, ProducerTarget | The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6) |
 | `src/dreamer_runner/maintenance/coach_heal.rs` | src | m | 2 struct · 1 enum · 1 trait · 3 fn · 2 const · 9 crate-vis | CoachHealAuthor, HealDecisions, HealRoute, IssuesRun | The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418) |
 | `src/dreamer_runner/maintenance/coach_learning.rs` | src | s | 2 fn · 2 const · 2 crate-vis | — | The Coach's own record (ARCH-0066 #coach: "calibration, meta-learning"): each anchored outcome of the… |
@@ -3886,7 +3886,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/archive_read.rs` | src | s | 2 crate-vis | — | Whether an archived NOTE was read since its archive (OF-073, FIX 2419; CALLS "FIX 2419 NOTE read since… |
 | `src/note/birth.rs` | src | s | 4 crate-vis | — | Deterministic NOTE birth on the shared document registry's first load |
 | `src/note/brief_doors.rs` | src | s | 3 struct · 1 fn | AuthorBriefRequest, BriefClaimCitation, BriefKindStamp | Typed claim-citing brief authoring over the existing NOTE pin and write doors |
-| `src/note/brief_view.rs` | src | s | 2 struct · 4 fn | BriefCitationView, BriefView | Fresh brief views: current ledger state, cursor drift, and one renderer |
+| `src/note/brief_view.rs` | src | m | 2 struct · 4 fn | BriefCitationView, BriefView | Fresh brief views: current ledger state, cursor drift, and one renderer |
 | `src/note/carrier_erase.rs` | src | s | 8 crate-vis | — | A NOTE workflow row as a carrier holds it (FIX 3878): a window's copy, or a recovery artifact's |
 | `src/note/checkpoint.rs` | src | s | 5 crate-vis | — | The checkpoint getter of NOTE rows (KS7-2): each NOTE's head, head documents, overrides and seal under its… |
 | `src/note/checkpoint/body.rs` | src | s | 6 crate-vis | — | A NOTE core's author in its raw entity row (FIX 6072, Engine R2): the `author_ref` of the pinned four-key… |
@@ -3981,6 +3981,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/tests.rs` | test | XL | — | — | — |
 | `src/office_body/actor_erase.rs` | src | s | 4 crate-vis | — | An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records… |
 | `src/office_body/author_token.rs` | src | s | 5 crate-vis | — | A DOCX export's default author (FIX 4513, Engine ruling B 10-19): the bytes carry an opaque token, not the… |
+| `src/office_body/author_token/carrier.rs` | src | s | 3 crate-vis | — | Byte-bound DOCX revision-author carriers over the existing export rows |
 | `src/office_body/checkpoint.rs` | src | m | 3 crate-vis | — | The checkpoint getter of office bodies (KS7-2): each artifact's office head, deck fork records, export… |
 | `src/office_body/consent.rs` | src | m | 9 struct · 4 enum · 2 fn · 1 const · 18 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader +5 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
 | `src/office_body/docx.rs` | src | m | 2 struct · 2 enum · 6 crate-vis | BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp | The DOCX body inside its Loro document, schema 1 |
@@ -4008,7 +4009,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/records.rs` | src | s | 8 struct · 2 enum · 1 fn · 7 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind +2 | Office body records and side-table bindings |
 | `src/office_body/resources.rs` | src | s | 1 trait · 3 fn · 3 crate-vis | DocumentMemory | The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `src/office_body/support.rs` | src | s | 18 crate-vis | — | Shared office body storage, validation and projection helpers |
-| `src/office_body/verbs.rs` | src | m | 21 struct · 3 enum · 14 fn · 5 crate-vis | DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap, OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest +16 | `vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, "An agent authors through… |
+| `src/office_body/verbs.rs` | src | L | 21 struct · 3 enum · 14 fn · 5 crate-vis | DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap, OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest +16 | `vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, "An agent authors through… |
 | `src/office_body/xlsx.rs` | src | s | 5 struct · 1 enum · 4 crate-vis | BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp | Live XLSX body model and module seam |
 | `src/office_body/xlsx/apply.rs` | src | s | 1 crate-vis | — | Application of one live XLSX operation |
 | `src/office_body/xlsx/axis.rs` | src | m | 7 crate-vis | — | Live XLSX axis edits and formula retargeting |
