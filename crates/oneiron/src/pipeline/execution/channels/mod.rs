@@ -30,7 +30,7 @@ use super::super::budget::{
     truncate_under_world_share, withhold_undisclosed,
 };
 use super::super::builder::PipelineBuilder;
-use super::super::capabilities::{memory_candidate_count, partition_capabilities};
+use super::super::capabilities::{memory_candidate_count, partition_capabilities_with_meta};
 use super::super::channels::{execute_phonetic, fusion_fetch_limit};
 use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
@@ -768,6 +768,7 @@ impl PipelineBuilder<'_> {
                 &acc.media_evidence,
                 &mut empty_reason,
                 overrides.skip_ret01_abstain,
+                &mut metadata_cache,
             )?;
             drop(l15_fusion_prepare);
             crate::stage_timing::record(
@@ -1071,10 +1072,11 @@ impl PipelineBuilder<'_> {
         media_evidence: &super::super::budget::MediaEvidence,
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
+        metadata_cache: &mut EntityMetadataCache,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
         let l15_prepare_partition = crate::stage_timing::stage("pipe.fusion_prepare_partition");
         let mut capabilities = if self.context_pack_budget.is_some() {
-            partition_capabilities(
+            partition_capabilities_with_meta(
                 scores,
                 self.vault,
                 &self.read,
@@ -1082,6 +1084,7 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.skill_executor.as_deref(),
                 self.skill_reliability_query.as_ref(),
+                metadata_cache,
             )?
         } else {
             Vec::new()
@@ -1091,7 +1094,6 @@ impl PipelineBuilder<'_> {
             return Ok(capabilities);
         }
         let floors = self.no_match_floors();
-        let mut metadata_cache = EntityMetadataCache::default();
         let mut kind_of = |id: &crate::EntityId| -> Result<Option<u8>> {
             Ok(metadata_cache
                 .get(&self.read, rtxn, id)?
