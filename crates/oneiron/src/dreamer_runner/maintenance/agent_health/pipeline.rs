@@ -299,9 +299,13 @@ fn detect(
     findings.extend(check_repeat::check_repeat_findings(
         vault, &streams, dispatched, attempts, book, since,
     )?);
+    // A lease older than the lookback reads back to its claim for
+    // `silent` alone (FIX 8374): the shared read above stays windowed, so
+    // every other detector judges the window it always judged.
+    let extended = call_evidence::claim_bound_activities(vault, dispatched, attempts, since)?;
     let (silent, refreshes) = silent_findings(
         vault,
-        &SilenceCalls::Actors(&calls, unread_calls),
+        &SilenceCalls::Actors(&calls, unread_calls, &extended),
         dispatched,
         attempts,
         traps,

@@ -53,7 +53,7 @@ const ACTOR: &str = "actor";
 /// The field the author an export showed fills, as its text.
 const AUTHOR: &str = "author";
 
-/// A proposal member's fields: this, the member fork's id, then its role.
+/// A proposal member's fields: this, its artifact and fork ids, then its role.
 const MEMBER: &str = "member ";
 
 /// The roles of a member's answer: who called the settlement, and the
@@ -100,20 +100,20 @@ fn take_proposal_actors(record: &mut OfficeBodyProposal) -> Vec<(String, EntityI
     let mut actors = Vec::new();
     take(&mut record.header.opener, OPENER.to_owned(), &mut actors);
     for member in &mut record.members {
-        let fork = member.fork.to_hex();
+        let key = format!("{}:{}", member.artifact.to_hex(), member.fork.to_hex());
         take(
             &mut member.opener,
-            format!("{MEMBER}{fork} {OPENER}"),
+            format!("{MEMBER}{key} {OPENER}"),
             &mut actors,
         );
         if let Some(answer) = &mut member.answer {
             take(
                 &mut answer.caller,
-                format!("{MEMBER}{fork} {CALLER}"),
+                format!("{MEMBER}{key} {CALLER}"),
                 &mut actors,
             );
             if let AnsweringAuthority::Word { person } = &mut answer.by {
-                take(person, format!("{MEMBER}{fork} {PERSON}"), &mut actors);
+                take(person, format!("{MEMBER}{key} {PERSON}"), &mut actors);
             }
         }
     }
@@ -124,14 +124,14 @@ fn put_proposal_actor(record: &mut OfficeBodyProposal, field: &str, actor: Entit
     if field == OPENER {
         return fill(&mut record.header.opener, actor);
     }
-    let (fork, role) = field
+    let (key, role) = field
         .strip_prefix(MEMBER)
         .and_then(|rest| rest.split_once(' '))
         .ok_or_else(rows::bad_part)?;
     let member = record
         .members
         .iter_mut()
-        .find(|member| member.fork.to_hex() == fork)
+        .find(|member| format!("{}:{}", member.artifact.to_hex(), member.fork.to_hex()) == key)
         .ok_or_else(rows::bad_part)?;
     let slot = match (role, &mut member.answer) {
         (OPENER, _) => &mut member.opener,
@@ -216,9 +216,9 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     // erased.
     let mut waiting = BTreeMap::new();
     for row in rows::typed_rows(dbs, txn, PROPOSALS, &mut out)? {
-        let (artifact, proposal) = row.key;
+        let proposal = row.key;
         let header = &row.value.header;
-        if header.artifact != artifact || header.proposal != proposal {
+        if header.proposal != proposal {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
@@ -226,10 +226,10 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             if let (MemberVerdict::Waiting, BodyActor::Actor(opener)) =
                 (member.verdict, member.opener)
             {
-                waiting.insert((artifact, member.fork), opener);
+                waiting.insert((member.artifact, member.fork), opener);
             }
         }
-        let owner = OwnerRef::entity(&artifact);
+        let owner = OwnerRef::entity(&header.artifact);
         rows::split_actors(&mut out, owner, PROPOSALS, row, take_proposal_actors)?;
     }
     for row in rows::typed_rows(dbs, txn, MEMBERSHIP, &mut out)? {
