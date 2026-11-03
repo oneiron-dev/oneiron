@@ -14,11 +14,11 @@
 //! A host that packs several vaults into one process reads per-tenant numbers
 //! through `vault.diagnostics()` with no further change.
 
+use crate::failure_signals::FailureSignalCounts;
+use crate::gate::GateMetrics;
 use crate::store::attempt_cleanup::AttemptQueueCleanupMetrics;
 use crate::store::attempt_cleanup::AttemptQueueCleanupMetricsSnapshot;
 use crate::store::text_index::diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
-use crate::failure_signals::FailureSignalCounts;
-use crate::gate::GateMetrics;
 
 use super::replay_only_commits::ReplayOnlyCommits;
 use super::{GroupCommitCounters, GroupCommitStats};

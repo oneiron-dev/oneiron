@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, HashSet};
 
 use heed::RoTxn;
 
-use oneiron_contracts::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::validate_ppr_vad_alpha;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::ManifestDbs;
+use oneiron_contracts::affect::Vad;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::VAD_PROPAGATION_EVIDENCE;
 use super::policy::{

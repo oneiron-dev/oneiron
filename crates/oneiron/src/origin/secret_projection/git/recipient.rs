@@ -40,8 +40,8 @@ use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::origin::secret_marks::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup,
 };
+use crate::secret_custody::RepoFileRevealTarget;
 use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
-use crate::secret_custody::{RepoFileRevealTarget};
 
 /// One marked file a recipient's live grant covers: its exact byte path
 /// and ORIGINAL blob, the ORIGINAL its grant target names and its marks.

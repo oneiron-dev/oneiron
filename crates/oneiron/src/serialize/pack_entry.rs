@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use crate::context_board::AssembledContext;
-use crate::serialize::context_entity::ContextEntity;
 use crate::context_pack::ContextPack;
+use crate::context_pack::PackStats;
+use crate::serialize::context_entity::ContextEntity;
+use crate::serialize::pack_accounting::TokenAllocation;
 use crate::serialize::pack_format::FieldProfile;
 use crate::serialize::pack_format::PackFormat;
-use crate::context_pack::PackStats;
-use crate::serialize::pack_accounting::TokenAllocation;
 
 use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};

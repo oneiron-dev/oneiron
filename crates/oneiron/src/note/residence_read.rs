@@ -4,9 +4,9 @@ use super::documents::{NoteDocument, invalid};
 use super::reads::read_view;
 use super::{NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView};
 use crate::authority::VerifiedSlip;
+use crate::memory::residence_item::{OpenedItem, ThinItem};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::settings::ReadDestination;
-use crate::memory::residence_item::{OpenedItem, ThinItem};
 use crate::{Vault, WriteActor};
 
 /// The residence host has already checked the owner's own credential. It
@@ -97,11 +97,9 @@ fn thin_note_view(
     }
     // The state envelope names the head, its sequence, its seal and the
     // NOTE's own overrides before the document (FIX 2401, FIX 3819).
-    let envelope = crate::note::frame_envelope::NoteStateEnvelope::decode(
-        thin.entity_id,
-        frame.payload,
-    )
-    .map_err(|_| invalid("opened NOTE head"))?;
+    let envelope =
+        crate::note::frame_envelope::NoteStateEnvelope::decode(thin.entity_id, frame.payload)
+            .map_err(|_| invalid("opened NOTE head"))?;
     let (head, snapshot) = (envelope.head, envelope.document);
     // The read ends here: the overrides below need a write.
     drop(txn);

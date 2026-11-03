@@ -11,7 +11,7 @@ use super::{
     EsignGetRequest, EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView,
     EsignSealedView, document_id,
 };
-use crate::memory::{Memory};
+use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 impl Memory<'_> {

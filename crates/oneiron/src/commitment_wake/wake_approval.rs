@@ -6,10 +6,10 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, session_claim_producer,
 };
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, OutboundDraftInput, OutboundIntentReceipt};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::wake_event::{

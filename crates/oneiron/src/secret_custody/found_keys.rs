@@ -69,7 +69,6 @@ const DUE: SideTable<EntityId, u64, Named> = SideTable::new(&side_table::SECRET_
 
 pub use crate::secret_record::FoundKeyAction;
 
-
 pub use crate::secret_record::FoundKeySettled;
 
 /// One record's notice as the owner reads it: the record, and each key the

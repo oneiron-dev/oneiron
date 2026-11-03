@@ -85,7 +85,6 @@ use crate::temporal::TimeRange;
 
 use crate::write_envelope::WriteActor;
 
-pub mod spend_scope;
 mod codec;
 mod companion_bind;
 mod intent;
@@ -93,6 +92,7 @@ mod records;
 mod runner;
 mod scrub;
 mod sharing;
+pub mod spend_scope;
 mod steps;
 mod work_companion;
 

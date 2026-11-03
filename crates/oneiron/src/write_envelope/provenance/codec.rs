@@ -7,10 +7,10 @@ use super::{
     KEY_SUPERSESSION_STATUS, KEY_VALID_FROM, KEY_VALID_TO, REASONING_EFFORT_MAX_BYTES,
     SupersessionStatus,
 };
-use crate::write_envelope::claim_body::unit_interval_f32;
 use crate::edge::{EdgeActorClass, EdgeConfirmationStatus};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ClaimError, Error, Result};
+use crate::write_envelope::claim_body::unit_interval_f32;
 use rmpv::Value;
 
 /// Decoded `edge.provenance` value record — EXACTLY the ten pinned fields

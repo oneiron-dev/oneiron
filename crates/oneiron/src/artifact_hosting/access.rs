@@ -300,7 +300,8 @@ impl Vault {
                     let hash = *blake3::hash(&bytes).as_bytes();
                     (bytes, None, hash)
                 } else {
-                    let asset = crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
+                    let asset =
+                        crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
                     let bytes = match self.sighted_body_file_in_txn(
                         txn,
                         &asset,

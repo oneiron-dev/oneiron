@@ -1,10 +1,12 @@
 //! Immutable shadow-run artifact, request-part and evidence vocabulary.
 
-use serde::{Deserialize, Serialize};
 use crate::compaction::output::OutputRef;
-use crate::dreamer_runner::step_replay::{CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule};
+use crate::dreamer_runner::step_replay::{
+    CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ReplayRoutePin, StepReplayCapsule,
+};
 use crate::store::result_manifest::CodeRunRawOutput;
 use crate::{EntityId, LlmUsage};
+use serde::{Deserialize, Serialize};
 
 /// The algorithm an artifact digest is a digest of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

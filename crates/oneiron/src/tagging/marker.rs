@@ -21,7 +21,6 @@ use crate::{EntityId, Vault};
 
 pub use crate::config::tagging::TAGGING_MARKER_KIND;
 
-
 const MARKER_ID_DOMAIN: &[u8] = b"oneiron.tagging.marker.v2\0";
 /// Probes for a free marker id: its digest names a sequence number no other
 /// marker drew, so only a chance collision needs another.
@@ -36,10 +35,12 @@ const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
 /// has one successor, so only a chance collision needs another.
 const MAX_RETRY_GENERATIONS: u32 = 16;
 
-pub use crate::config::tagging::{
-    DEFAULT_LIVE_WINDOW_TOKENS, MAX_LIVE_WINDOW_TOKENS, DEFAULT_TRACES_PER_TURN, MAX_TRACES_PER_TURN, DEFAULT_TRACE_MAX_AGE_SECS, TaggingTraceHistory, TaggingMode, label_kind_admitted, TaggingMarkerConfig,
-};
 pub(super) use crate::config::tagging::is_checkpoint;
+pub use crate::config::tagging::{
+    DEFAULT_LIVE_WINDOW_TOKENS, DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN,
+    MAX_LIVE_WINDOW_TOKENS, MAX_TRACES_PER_TURN, TaggingMarkerConfig, TaggingMode,
+    TaggingTraceHistory, label_kind_admitted,
+};
 
 /// What one marker names: a turn owed one pass by one tagger checkpoint,
 /// and by the stack pinned beside it, if any; and the class the pass is owed

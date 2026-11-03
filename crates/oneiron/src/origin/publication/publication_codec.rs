@@ -4,13 +4,13 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
 use crate::side_table::{self, Named, Raw, SideKey, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};

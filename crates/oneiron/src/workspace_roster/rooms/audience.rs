@@ -128,7 +128,9 @@ pub(crate) fn names_actor_in(
     let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
     Ok(
         crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)?
-            .filter(|anchor| anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person)
+            .filter(|anchor| {
+                anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person
+            })
             .is_some_and(|anchor| ids.contains(&anchor.subject_ref)),
     )
 }

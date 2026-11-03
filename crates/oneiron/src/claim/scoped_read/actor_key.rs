@@ -564,7 +564,10 @@ impl ScopedReadActorKey {
     /// other record as base reality. The ceiling only narrows: it meets any
     /// the key already holds.
     #[must_use]
-    pub(crate) fn within_worlds(mut self, worlds: crate::claim::world_access::WorldAuthoritySet) -> Self {
+    pub(crate) fn within_worlds(
+        mut self,
+        worlds: crate::claim::world_access::WorldAuthoritySet,
+    ) -> Self {
         self.worlds = Some(match self.worlds.take() {
             Some(held) => held.meet(&worlds),
             None => worlds,

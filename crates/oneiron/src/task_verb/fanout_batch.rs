@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use super::create_origin::task_create_origin_in_txn;
 use super::fanout_launch::{LaunchPayload, WaveLaunchGate, wave_launch_ref};
-use crate::agent_dispatch::FanoutStatement;
-use crate::task_verb::FanoutLaunchReceipt;
 use super::{TaskTerminalDisposition, VaultWaveTaskPort};
+use crate::agent_dispatch::FanoutStatement;
 use crate::agent_dispatch::{AgentDispatcher, SpendRead, SpendScope, SpendState};
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::claim::ClaimReadStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::task_verb::FanoutLaunchReceipt;
 use crate::wave_orchestration::{
     PlannedTask, WAVE_PLAN_SCHEMA_VERSION, WaveOrchestrator, WavePlan,
 };

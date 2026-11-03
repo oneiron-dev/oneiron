@@ -7,12 +7,12 @@ use heed::RwTxn;
 use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
-use crate::write_envelope::task_body::TaskRole;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 #[derive(Debug, Default)]
 pub(super) struct ChildOfBatchOverlay {
@@ -642,8 +642,9 @@ pub(super) fn validate_immutable_task_record(
     data: &[u8],
     body_changed: bool,
 ) -> Result<()> {
-    let old_role =
-        crate::write_envelope::task_body::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
+    let old_role = crate::write_envelope::task_body::task_role_from_body_bytes(
+        &old_record[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     let new_role = crate::write_envelope::task_body::task_role_from_body_bytes(data)?;
     // A habit check-in and an engine-authored authority fact (the proof of a
     // task's owner) are immutable: only an exact echo, local or replicated,

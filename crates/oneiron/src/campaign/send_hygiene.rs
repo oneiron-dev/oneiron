@@ -51,7 +51,9 @@ use crate::temporal::TimeRange;
 // Suppression
 // ---------------------------------------------------------------------------
 
-pub use crate::write_envelope::cohort_claims::suppression::{SuppressionCause, SuppressionInput, SuppressionReceipt};
+pub use crate::write_envelope::cohort_claims::suppression::{
+    SuppressionCause, SuppressionInput, SuppressionReceipt,
+};
 
 /// Suppresses one person on one channel, atomically.
 ///
@@ -282,15 +284,15 @@ fn put_hygiene_claim_in_txn(
 // List-Unsubscribe (RFC 2369 + RFC 8058)
 // ---------------------------------------------------------------------------
 
+pub use crate::outbound_intent_ledger::email_headers::EMAIL_CHANNEL;
+pub use crate::outbound_intent_ledger::email_headers::HYGIENE_HEADERS_PAYLOAD_FIELD;
 pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE;
 pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE_POST;
 pub use crate::outbound_intent_ledger::email_headers::LIST_UNSUBSCRIBE_POST_ONE_CLICK;
-pub use crate::outbound_intent_ledger::email_headers::EMAIL_CHANNEL;
-pub use crate::outbound_intent_ledger::email_headers::HYGIENE_HEADERS_PAYLOAD_FIELD;
 pub use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
-pub use crate::outbound_intent_ledger::email_headers::list_unsubscribe_headers;
-pub(crate) use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
 pub(crate) use crate::outbound_intent_ledger::email_headers::frozen_payload_hygiene_headers;
+pub(crate) use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
+pub use crate::outbound_intent_ledger::email_headers::list_unsubscribe_headers;
 
 // ---------------------------------------------------------------------------
 // Sticky sender

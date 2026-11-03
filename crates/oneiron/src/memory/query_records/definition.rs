@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::filter::{FilterAst, MatcherSpec};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use super::filter::{FilterAst, MatcherSpec};
 
 /// Schema version of the definition shape this build reads and writes.
 pub const SAVED_QUERY_SCHEMA_VERSION: u32 = 1;

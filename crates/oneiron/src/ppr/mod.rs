@@ -2,9 +2,9 @@ mod cache_evict;
 mod cache_store;
 mod community;
 mod policy;
+pub(crate) mod project_weight;
 mod query;
 mod walk;
-pub(crate) mod project_weight;
 
 pub(crate) use self::cache_evict::evict_ppr_cache_page;
 pub(crate) use self::cache_store::{

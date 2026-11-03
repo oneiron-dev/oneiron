@@ -1,7 +1,7 @@
 //! Tested code file frontiers, text edits and Git metadata edits.
 
-use serde::{Deserialize, Serialize};
 use crate::error::{ArtifactError, Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// One tested file state. The operation fold includes each operation's
 /// durable stamp, which names no actor: the actor is on its receipts.
@@ -203,4 +203,3 @@ pub(crate) enum CodeDocumentRows {
     /// One ingress receipt's edit.
     Ingress,
 }
-

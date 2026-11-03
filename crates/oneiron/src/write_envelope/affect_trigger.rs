@@ -2,10 +2,10 @@
 
 use rmpv::Value;
 
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
 pub const AFFECT_TRIGGER_PREDICATE: &str = "affect.trigger";
 const AFFECT_TRIGGER_KEY_AFFECTED_PERSON: &str = "affectedPerson";
 const AFFECT_TRIGGER_KEY_TRIGGER_REF: &str = "triggerRef";

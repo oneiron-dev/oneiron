@@ -42,8 +42,7 @@ impl AttemptQueueRetryReason {
         }
     }
 
-    pub(crate) const fn metric_values() -> [Self; ATTEMPT_QUEUE_RETRY_REASON_COUNT]
-    {
+    pub(crate) const fn metric_values() -> [Self; ATTEMPT_QUEUE_RETRY_REASON_COUNT] {
         [Self::LeaseTimeout, Self::RetryBackoff, Self::DueLater]
     }
 }
@@ -105,10 +104,7 @@ impl AttemptQueueCleanupReport {
         self.retry_reasons[reason.metric_index()].count
     }
 
-    pub(crate) fn increment_retry_reason(
-        &mut self,
-        reason: AttemptQueueRetryReason,
-    ) {
+    pub(crate) fn increment_retry_reason(&mut self, reason: AttemptQueueRetryReason) {
         self.retry_reasons[reason.metric_index()].count += 1;
     }
 }

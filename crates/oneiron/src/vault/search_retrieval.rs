@@ -4,7 +4,6 @@ use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
 use crate::error::{Error, Result};
 use crate::store::retrieval_values::RetrievalWithTelemetry;
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
     RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
@@ -13,6 +12,7 @@ use crate::store::{
     RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
 use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder};
+use oneiron_retrieval::pipeline::ScoredEntity;
 use std::time::Instant;
 
 /// One scored search plus the timing its telemetry row is built from.
