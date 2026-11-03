@@ -2794,14 +2794,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptQueueCleanupMetricsSnapshot"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/telemetry.rs",
      "purpose": "Per-vault cleanup counters, cleanup span emission, and the shared invalid-transition error constructor",
      "surface": {
-      "crate-vis": 5,
-      "struct": 1
+      "crate-vis": 3,
+      "re-export": 1
      }
     },
     {
@@ -2916,26 +2914,18 @@
      "notable": [
       "AbandonAttempt",
       "AbandonOutcome",
-      "AttemptEvent",
       "AttemptId",
-      "AttemptInterventionEffect",
-      "AttemptInterventionKind",
       "AttemptPlacement",
       "AttemptRecord",
-      "AttemptResultRef",
       "AttemptState",
-      "ClaimAttempt",
       "ClaimOutcome",
       "CompleteAttempt",
       "CompleteOutcome",
-      "EnqueueAttempt",
       "EnqueueOutcome",
       "FailAttempt",
       "FailOutcome",
       "InterveneAttempt",
       "InterveneOutcome",
-      "ManifestEntry",
-      "ManifestKind",
       "PlannedBinding",
       "PlannedExactness",
       "RetryAttempt",
@@ -2945,29 +2935,21 @@
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
-      "crate-vis": 9,
-      "enum": 11,
-      "fn": 25,
-      "re-export": 2,
-      "struct": 16
+      "crate-vis": 8,
+      "enum": 8,
+      "fn": 16,
+      "re-export": 8,
+      "struct": 11
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptQueueCleanupReport",
-      "AttemptQueueRetryReason",
-      "AttemptQueueRetryReasonCount",
-      "CleanupAttemptLeases"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types/cleanup.rs",
-     "purpose": "Lease-cleanup input and report types for the attempt queue, split from [`super`] by move only",
+     "purpose": "Lease-cleanup input and report vocabulary retained at the store layer",
      "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 2,
-      "struct": 3
+      "re-export": 1
      }
     },
     {
@@ -20157,6 +20139,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BudgetClass"
+     ],
+     "path": "src/connector_key/budget_class.rs",
+     "purpose": "Persisted accounting class of an outbound effect",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ChannelMessageSubscription"
      ],
      "path": "src/connector_key/channel_subscription.rs",
@@ -20509,7 +20505,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
       "crate-vis": 13,
-      "mod": 2,
+      "mod": 3,
       "re-export": 16
      }
     },
@@ -20869,6 +20865,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/consent/approval_proof.rs",
+     "purpose": "Gate-attested owner approval carriers and retained proof families",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/consent/ask_holders.rs",
      "purpose": "Scope ask recipients resolved from live, owner-stamped action grants",
      "surface": {
@@ -21192,7 +21198,7 @@
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 5,
-      "mod": 3,
+      "mod": 5,
       "re-export": 15
      }
     },
@@ -21303,6 +21309,28 @@
      "path": "src/consent/tests/stale_proofs.rs",
      "purpose": "An owner proof acts only while it still holds, checked in the transaction that writes the act…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DataClass",
+      "ScopedMcpBatchVerdict",
+      "ScopedMcpCall",
+      "ScopedMcpCallContext",
+      "ScopedMcpConsentDecision",
+      "ScopedMcpEscalationReason",
+      "ScopedMcpGrantRef",
+      "ToolGrantDataClass"
+     ],
+     "path": "src/consent/tool_scope.rs",
+     "purpose": "Payload-aware scope axes, consent decisions, and batch evaluation",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 7,
+      "struct": 4
+     }
     },
     {
      "bucket": "s",
@@ -36831,6 +36859,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FanoutApprovalMode"
+     ],
+     "path": "src/gate/fanout_mode.rs",
+     "purpose": "Fan-out approval policy dial and its stable wire spelling",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/gate/fanout_policy.rs",
      "purpose": "Manifest-backed fan-out policy composition; no executable defaults",
@@ -36920,7 +36961,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 68,
+      "crate-vis": 69,
       "mod": 1,
       "re-export": 8
      }
@@ -53449,7 +53490,6 @@
       "OutboundDispatchActor",
       "OutboundDispatchError",
       "OutboundDispatchGate",
-      "OutboundDispatchOutcome",
       "OutboundDispatchPolicyRisk",
       "OutboundDispatchRequest",
       "OutboundDispatchResult",
@@ -53463,8 +53503,9 @@
      "purpose": "Outbound dispatch inputs and outcomes",
      "surface": {
       "crate-vis": 5,
-      "enum": 4,
-      "fn": 35,
+      "enum": 3,
+      "fn": 34,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
      }
@@ -53498,18 +53539,15 @@
      "kind": "src",
      "notable": [
       "OutboundIntent",
-      "OutboundIntentDraft",
-      "OutboundIntentSource",
-      "OutboundIntentTrigger"
+      "OutboundIntentDraft"
      ],
      "path": "src/outbound/intent.rs",
      "purpose": "Outbound intent wire vocabulary",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "fn": 15,
-      "re-export": 1,
-      "struct": 3
+      "fn": 7,
+      "re-export": 2,
+      "struct": 2
      }
     },
     {
@@ -53865,14 +53903,12 @@
     {
      "bucket": "L",
      "kind": "src",
-     "notable": [
-      "FanoutApprovalMode"
-     ],
+     "notable": [],
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 27,
-      "enum": 1
+      "crate-vis": 26,
+      "re-export": 1
      }
     },
     {
@@ -54276,21 +54312,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DataClass",
-      "ScopedMcpBatchVerdict",
-      "ScopedMcpCall",
-      "ScopedMcpCallContext",
-      "ScopedMcpConsentDecision",
-      "ScopedMcpEscalationReason",
-      "ScopedMcpGrantRef"
-     ],
+     "notable": [],
      "path": "src/outbound_consent/scope.rs",
-     "purpose": "Payload-aware scope axes, consent decisions, and batch evaluation",
+     "purpose": "Payload-aware scope vocabulary and pure evaluation live with consent",
      "surface": {
-      "enum": 3,
-      "fn": 6,
-      "struct": 4
+      "re-export": 1
      }
     },
     {
@@ -54318,16 +54344,15 @@
       "HeaderGrantRequirement",
       "MutationIntent",
       "PreparedToolCall",
-      "ToolCallDescriptor",
-      "ToolGrantDataClass"
+      "ToolCallDescriptor"
      ],
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 17,
-      "enum": 3,
-      "fn": 18,
-      "re-export": 1,
+      "crate-vis": 15,
+      "enum": 2,
+      "fn": 17,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -54372,9 +54397,9 @@
      "path": "src/outbound_grant/codec.rs",
      "purpose": "MessagePack body codec plus private key and decode helpers",
      "surface": {
-      "const": 2,
-      "crate-vis": 27,
-      "fn": 2
+      "crate-vis": 25,
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -54543,7 +54568,7 @@
      "path": "src/outbound_intent_ledger/pinned_approval.rs",
      "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x ruling 8, CALLS `FIX 6424 pinned Pending proof retention`): the owner's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
@@ -54667,11 +54692,10 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BudgetChargeMarker",
-      "BudgetClass",
       "FrozenOutboundCall",
       "IntentDispatchResult",
       "IntentEscalation",
@@ -54698,11 +54722,12 @@
      "purpose": "Version consts, domain types, record impls, and listing/escalation/report types",
      "surface": {
       "const": 2,
-      "crate-vis": 19,
-      "enum": 9,
-      "fn": 22,
+      "crate-vis": 15,
+      "enum": 8,
+      "fn": 20,
+      "re-export": 2,
       "struct": 14,
-      "type": 2
+      "type": 1
      }
     },
     {
@@ -58111,6 +58136,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/receipt/dispatch_identity.rs",
+     "purpose": "Frozen dispatch receipt identity and approval field vocabulary",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/dispatch_observation.rs",
      "purpose": "Passive OF-327 per-try audit observations; never resend authority",
      "surface": {
@@ -58198,6 +58233,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/intent_id.rs",
+     "purpose": "Stable identifier for a durable outbound intent",
+     "surface": {
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -58254,7 +58299,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 20,
-      "mod": 1,
+      "mod": 3,
       "re-export": 18
      }
     },
@@ -64125,6 +64170,7 @@
      "purpose": "Context-pack serialization",
      "surface": {
       "crate-vis": 11,
+      "mod": 1,
       "re-export": 5
      }
     },
@@ -64136,6 +64182,17 @@
      "purpose": "\"Export to OKF\" (OF-222): the vault as an Open Knowledge Format v0.1 bundle for importing into other tools",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/outbound_grant_fields.rs",
+     "purpose": "Standing outbound grant schema keys and serialization field profiles",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4
      }
     },
     {
@@ -68475,6 +68532,83 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AttemptQueueCleanupMetricsSnapshot",
+      "AttemptQueueCleanupReport",
+      "AttemptQueueRetryReason",
+      "AttemptQueueRetryReasonCount",
+      "CleanupAttemptLeases"
+     ],
+     "path": "src/store/attempt_cleanup.rs",
+     "purpose": "Per-store attempt cleanup reports and content-free counters",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptEvent",
+      "AttemptInterventionEffect",
+      "AttemptInterventionKind",
+      "ClaimAttempt",
+      "EnqueueAttempt"
+     ],
+     "path": "src/store/attempt_inputs.rs",
+     "purpose": "Queue admission inputs and durable intervention vocabulary",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_lease.rs",
+     "purpose": "Lease-owner validation for queued-work storage ports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ManifestEntry",
+      "ManifestKind"
+     ],
+     "path": "src/store/attempt_manifest.rs",
+     "purpose": "Retained pack-manifest entries for queued work",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptResultRef"
+     ],
+     "path": "src/store/attempt_result.rs",
+     "purpose": "Validated durable result references for queued work",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/backup_change.rs",
      "purpose": "What a commit changed for the backup watermark (FIX 6730): a write that moves nothing an owner backs up (a…",
@@ -69898,7 +70032,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 44,
-      "mod": 3,
+      "mod": 10,
       "re-export": 20
      }
     },
@@ -70074,11 +70208,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "OutboundDispatchOutcome"
+     ],
+     "path": "src/store/outbound_outcome.rs",
+     "purpose": "Stable outcome vocabulary for outbound dispatch observations",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/outbound_send_receipt.rs",
      "purpose": "Outbound gate bindings, durable send receipts, and the delivered-send idempotency index",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundIntentSource",
+      "OutboundIntentTrigger"
+     ],
+     "path": "src/store/outbound_trigger.rs",
+     "purpose": "Source tags and trigger envelopes for outbound intent records",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -85943,14 +86105,14 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 35,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86216,7 +86378,7 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export"
     },
     "gate": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86540,7 +86702,7 @@
     "outbound_intent_ledger": {
      "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
     },
@@ -86650,7 +86812,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 36,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86797,7 +86959,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86909,7 +87071,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 197,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -87161,9 +87323,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 117,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5920,
+   "source_files": 5934,
    "test_files": 900
   },
   "oneiron-android": {
