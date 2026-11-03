@@ -444,7 +444,7 @@ pub(super) fn put_reference_refusal_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     facts: &ReferenceRefusalFacts,
-    reason: crate::memory::RefusalReason,
+    reason: crate::receipt::RefusalReason,
     at: u64,
 ) -> Result<()> {
     if vault.store.port_entity_record(txn, &id)?.is_some() {

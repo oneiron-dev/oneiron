@@ -372,7 +372,7 @@ fn format_short_id(entity: &ContextEntity) -> String {
     match entity.source_revision_ref {
         Some(revision) => format!(
             "{reference}@{}",
-            crate::memory::RevisionRef(revision).to_hex()
+            crate::vault::RevisionRef(revision).to_hex()
         ),
         None => reference,
     }

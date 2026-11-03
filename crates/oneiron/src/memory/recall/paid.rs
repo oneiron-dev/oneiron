@@ -350,7 +350,7 @@ impl Memory<'_> {
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
         media: &[RecallMediaSeed<'_>],
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,

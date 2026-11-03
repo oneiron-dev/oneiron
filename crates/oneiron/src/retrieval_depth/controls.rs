@@ -64,7 +64,7 @@ pub struct RecallExecution<'a> {
     /// The affect the query is asked in (OF-423): emotion congruence scales
     /// each candidate's final score by it, as on the context pack. Every
     /// pass of one recall carries the same one, so its passes rank alike.
-    pub query_affect: Option<crate::affect::Vad>,
+    pub query_affect: Option<oneiron_contracts::affect::Vad>,
     /// Receives the pack this recall answers with if its door stops waiting
     /// at the deadline during the scope census: the assembled items, marked
     /// partial. The door itself published the empty pack it answers with

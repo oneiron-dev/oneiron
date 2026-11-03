@@ -9,7 +9,7 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, CheckoutResult, CheckoutTeardownInspection,
     GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
 };
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 use crate::error::Error;
 
 impl GitWire<'_> {

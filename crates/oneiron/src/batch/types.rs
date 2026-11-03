@@ -3,7 +3,7 @@ use std::str;
 use heed::RwTxn;
 use rmpv::Value;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::edge::{DecodedEdgeValue, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Result;

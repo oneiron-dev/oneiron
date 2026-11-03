@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
-use crate::sync::residence::ResolvedRecallSelection;
+use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
 
 impl ScopedRead<'_> {
     /// Ranks `window` rows for `query` at `as_of` (unix seconds), narrowed by

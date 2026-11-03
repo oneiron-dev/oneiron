@@ -320,8 +320,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        if let Some(content_hash) = crate::skill::decode_skill_record(body)?.content_hash {
-            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+        if let Some(content_hash) = crate::write_envelope::skill_record::decode_skill_record(body)?.content_hash {
+            crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
                 store,
                 wtxn,
                 id,
@@ -330,7 +330,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
         }
     }
     crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
-    let mut cleanup = crate::affect::VadAnnotationCleanup::default();
+    let mut cleanup = crate::write_envelope::vad_annotation::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
         wtxn,

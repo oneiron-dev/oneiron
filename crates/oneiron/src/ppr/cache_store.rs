@@ -213,7 +213,7 @@ fn publish_deferred_ppr_cache_write(
 pub(crate) fn drop_rebuildable_ppr_cache(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-) -> Result<crate::slim::HeapDropReport> {
+) -> Result<crate::heap_drop::HeapDropReport> {
     let mut ppr_cache_rows = 0_u64;
     let mut ppr_dependency_rows = 0_u64;
     let mut estimated_reclaimed_bytes = 0_u64;
@@ -238,11 +238,11 @@ pub(crate) fn drop_rebuildable_ppr_cache(
     store.ppr_cache().clear(wtxn)?;
     store.ppr_cache_deps.clear(wtxn)?;
 
-    Ok(crate::slim::HeapDropReport {
+    Ok(crate::heap_drop::HeapDropReport {
         ppr_cache_rows,
         ppr_dependency_rows,
         estimated_reclaimed_bytes,
-        ..crate::slim::HeapDropReport::default()
+        ..crate::heap_drop::HeapDropReport::default()
     })
 }
 /// Evicts `ppr_cache` rows that are stale-flagged, malformed, older than

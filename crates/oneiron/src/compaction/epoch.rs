@@ -912,7 +912,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
                         kind: EdgeKind::DerivedFrom,
                         tgt: *target,
                         weight: 1.0,
-                        vad: crate::affect::Vad::NEUTRAL,
+                        vad: oneiron_contracts::affect::Vad::NEUTRAL,
                     },
                 ),
             )?;

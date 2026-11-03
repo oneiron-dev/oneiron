@@ -684,7 +684,7 @@ impl Vault {
                 kind: EdgeKind::ClaimOf,
                 tgt: subject.source,
                 weight: CLAIM_OF_DEFAULT_WEIGHT,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             },
         ];
         let mut bindings = vec![binding];

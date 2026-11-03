@@ -8,7 +8,7 @@ pub(super) struct OldRecord {
     pub(super) consolidation_dirty: bool,
     /// Whether the row was stored before this put (FIX 11925).
     pub(super) stored_before: bool,
-    pub(super) previous_skill_record: Option<crate::skill::SkillRecord>,
+    pub(super) previous_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
     pub(super) optimizer_birth_marker: Option<crate::side_table::StagedRow>,
 }
 

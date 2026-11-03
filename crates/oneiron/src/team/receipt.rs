@@ -23,7 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_optimize::union_source_rows;
+use crate::attempt_queue::source_rows::union_source_rows;
 use crate::task_type::TypeTree;
 
 use super::pattern::{TeamAxis, TeamPattern, model_mix, pattern_cell};

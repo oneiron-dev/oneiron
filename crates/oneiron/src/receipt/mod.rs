@@ -29,6 +29,8 @@ mod projection;
 mod questions;
 mod record;
 mod reference_refusal;
+mod refusal_reason;
+pub use refusal_reason::RefusalReason;
 mod send_receipt_txn;
 mod served_form;
 mod session;

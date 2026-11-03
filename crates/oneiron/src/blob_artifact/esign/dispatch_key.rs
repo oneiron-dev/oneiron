@@ -14,7 +14,7 @@
 //! no-key key chain`).
 
 use super::outbound::EsignOutboundVerb;
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::{EntityId, Vault};
 

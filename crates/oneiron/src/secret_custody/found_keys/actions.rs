@@ -13,7 +13,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{MemoryResult, SafeDeleteReason};
+use oneiron_contracts::memory::{MemoryResult};
+use crate::deletion::{SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };

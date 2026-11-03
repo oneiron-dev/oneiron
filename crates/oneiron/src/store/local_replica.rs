@@ -52,13 +52,13 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::sync::WindowKey;
+use crate::window_key::WindowKey;
 use crate::sync::bridge::format_edge_key;
 use crate::sync::loro_support::{
-    TombstoneIndex, doc_from_snapshot, import_doc, map_contains_binary,
-};
+    TombstoneIndex, };
+use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
 use crate::sync::residence::residence_window_for_blob;
-use crate::sync::window_rows::{
+use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
@@ -500,7 +500,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
         vault,
         txn,
         *turn,
-        crate::memory::extraction::ExtractionWork::Bulk,
+        crate::store::ExtractionWork::Bulk,
     )?;
     crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
@@ -551,10 +551,10 @@ fn remove_member(
         store.short_ids_reverse.delete(txn, id.as_bytes())?;
     }
     if header.entity_type == registry::ENTITY_TYPE_SKILL
-        && let Ok(record) = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
+        && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
         && let Some(content_hash) = record.content_hash
     {
-        crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+        crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
             store,
             txn,
             id,

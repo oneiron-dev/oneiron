@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use heed::RoTxn;
 
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::validate_ppr_vad_alpha;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
