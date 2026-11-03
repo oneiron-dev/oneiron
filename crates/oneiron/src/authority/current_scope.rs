@@ -17,11 +17,11 @@ use super::*;
 use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{
-    FederationGrant, FederationGrantScope,
-};
-use oneiron_authority::federation::{FederationDirectionScope, Scope, ScopeAxis, selector_range_of};
+use crate::federation::{FederationGrant, FederationGrantScope};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_authority::federation::{
+    FederationDirectionScope, Scope, ScopeAxis, selector_range_of,
+};
 
 /// A narrowing widens back by its own party only, within the dual-signed
 /// ceiling; any other widening takes an epoch-advancing dual-signed re-pact

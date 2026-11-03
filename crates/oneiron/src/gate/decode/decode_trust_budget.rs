@@ -16,7 +16,7 @@ use crate::gate::resolution::{
     GateDecisionRetentionPolicy, GateRetentionOverrideCeiling, GateRetentionPrecedence,
     GateRetentionRow, GateRetentionScope,
 };
-use crate::llm::{
+use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
 };
 

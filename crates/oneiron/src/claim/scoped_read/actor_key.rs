@@ -113,7 +113,8 @@ pub(crate) struct RoomTerms {
     /// The facets the room limits its reads to (owner ruling FACET-READ): its
     /// project's slice facet, met with what each later snapshot finds there.
     /// `All` is a room with no facet.
-    pub(crate) facets: oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>,
+    pub(crate) facets:
+        oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>,
     /// The met clearance of the members that bring one (ILDF2), and of an
     /// Owner or Admin reading a private thread off the room (FIX 6497):
     /// `None` while only the owner and the vault's own agents are in the meet.
@@ -704,7 +705,9 @@ impl ScopedReadActorKey {
 
     /// A slip's Scope as every read door checks a proof of it: one that
     /// names `core:read` names `read` too.
-    pub(crate) fn read_authority(scope: &oneiron_authority::federation::Scope) -> oneiron_authority::federation::Scope {
+    pub(crate) fn read_authority(
+        scope: &oneiron_authority::federation::Scope,
+    ) -> oneiron_authority::federation::Scope {
         let mut authority = scope.clone();
         if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut authority.verbs
             && verbs.contains("core:read")
@@ -749,9 +752,12 @@ impl ScopedReadActorKey {
 
     /// Whether the read's verified credential grants only some worlds.
     pub(crate) fn has_world_ceiling(&self) -> bool {
-        self.authority
-            .as_ref()
-            .is_some_and(|granted| !matches!(granted.worlds, oneiron_authority::federation::ScopeAxis::All))
+        self.authority.as_ref().is_some_and(|granted| {
+            !matches!(
+                granted.worlds,
+                oneiron_authority::federation::ScopeAxis::All
+            )
+        })
     }
 
     #[must_use]

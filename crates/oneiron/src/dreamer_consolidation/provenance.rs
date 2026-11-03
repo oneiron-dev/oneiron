@@ -133,7 +133,7 @@ impl KeptDecision {
     /// The answer the Dreamer acts on: the holder's when the decision went up
     /// the role chain, the ladder's otherwise. None while the ask waits.
     #[must_use]
-    pub fn answer(&self) -> Option<&crate::llm::decision::DecisionAnswer> {
+    pub fn answer(&self) -> Option<&crate::model_decision::DecisionAnswer> {
         match &self.ask {
             Some(ask) => ask.answer.as_ref().map(|answer| &answer.answer),
             None => Some(&self.decision.answer),

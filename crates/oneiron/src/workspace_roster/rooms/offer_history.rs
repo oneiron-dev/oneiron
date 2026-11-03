@@ -19,7 +19,7 @@ use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
-use crate::llm::run_admission::DeclaredMaximum;
+use crate::run_budget::DeclaredMaximum;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::{RequiredParty, RosterActor, RosterBindingErase};

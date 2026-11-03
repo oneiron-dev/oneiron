@@ -26,7 +26,7 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::llm::OpenTrapWait;
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 
 mod apply;
 mod ask;

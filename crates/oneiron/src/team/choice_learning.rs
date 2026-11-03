@@ -22,7 +22,7 @@ use crate::learning::{
 };
 use crate::learning_setting::SettingScope;
 use crate::learning_setting_choice::{ChoiceValue, SpawnChoice};
-use crate::llm::ModelId;
+use oneiron_model::llm::ModelId;
 
 use super::payoff::PATTERN_EXPLORATION;
 use super::receipt::{ReceiptScan, TeamReceipt, team_receipts_in_txn};

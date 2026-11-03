@@ -63,11 +63,11 @@ use crate::gate::resolution::{
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::llm::{
+use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
+use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
     parse_failure_rules,
 };
-use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_class_policy::{parse_act_policy, parse_wait_policy};
 use super::decode_map_util::{
@@ -152,7 +152,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) connector_class_role: ConnectorClassRole,
     pub(in crate::gate) connector_class_precedence: Option<ConnectorClassPrecedence>,
 
-    pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) slide_review_policy: crate::model_decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
     pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
@@ -436,7 +436,7 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
                         return None;
                     };
                     let holder = required_string(fields, "holder_ref")?;
-                    if !crate::llm::manifest::valid_teacher_probe_holder_ref(&holder) {
+                    if !crate::teacher_probe_policy::valid_holder_ref(&holder) {
                         return None;
                     }
                     let floor =
@@ -453,7 +453,7 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
     }
     let minimum = minimum.filter(|floor| (1..=1_000_000).contains(floor))?;
     let holders = holders.unwrap_or_default();
-    if probe_id != Some(crate::llm::manifest::TEACHER_PROBE_ID)
+    if probe_id != Some(crate::teacher_probe_policy::TEACHER_PROBE_ID)
         || holders
             .values()
             .any(|floor| *floor < minimum || *floor > 1_000_000)

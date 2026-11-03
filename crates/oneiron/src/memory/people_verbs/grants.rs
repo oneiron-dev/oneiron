@@ -7,8 +7,8 @@ use super::{
     GrantAskedRow, hex_opt, hex_ref, unix_ms,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
-use oneiron_authority::federation::Scope;
 use crate::memory::{Memory, MemoryResult};
+use oneiron_authority::federation::Scope;
 
 /// Policy hook (CALLS "OF-1379 ask authority", open): the authority an ask
 /// requests is the read of the resource it names, never the whole vault.
