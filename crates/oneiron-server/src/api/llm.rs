@@ -310,6 +310,11 @@ pub(crate) fn record_raw_response(
         usage: response.usage.clone(),
         finish_reason: response.finish_reason,
         receipt_ref: None,
+        actor: run.principal(),
+        produced_pending: false,
+        tool_rounds: false,
+        rounds_truncated: false,
+        replay_of: None,
         source_rows,
         produced_rows: response
             .reply_assertions

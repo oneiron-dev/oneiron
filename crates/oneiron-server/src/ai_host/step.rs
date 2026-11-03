@@ -22,21 +22,27 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
+use oneiron::code_run::ReadWorldUnknown;
+use oneiron::code_run::model_call::{
+    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
+    record_model_call_in_txn,
+};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
-    WriteActor,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
-use crate::models::ModelRuntime;
+use crate::models::{ModelRuntime, OfferLadder};
 use crate::server::SyncServer;
 
 mod secret_use;
@@ -643,6 +649,7 @@ impl StepRunner {
             live.book_and_revise();
             true
         };
+        let capture_request = request.clone();
         let generated = match &uses {
             Some(uses) => uses
                 .converse(runtime, &call.ladder, &run, &live, request)
@@ -695,6 +702,17 @@ impl StepRunner {
                 });
             }
         };
+        record_workflow_response(
+            vault,
+            &call.ladder,
+            &run,
+            &capture_request,
+            &response,
+            served,
+            attempt,
+            actor,
+            tool_rounds,
+        );
         let text: String = response
             .message
             .content
@@ -709,5 +727,89 @@ impl StepRunner {
             tool_rounds,
             planner_craft_rows,
         })
+    }
+}
+
+/// Best-effort final-answer capture for FIX 12516. Intermediate self.use
+/// rounds are explicitly marked truncated and get their own later slice.
+#[allow(clippy::too_many_arguments)]
+fn record_workflow_response(
+    vault: &Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    served: ModelId,
+    attempt: &AttemptRecord,
+    actor: WriteActor,
+    tool_rounds: bool,
+) {
+    let digests = match model_call_digests(request) {
+        Ok(digests) => digests,
+        Err(error) => {
+            tracing::warn!(%error, "workflow model-call digests failed");
+            return;
+        }
+    };
+    let (mut rung, route) = ladder.model_call_binding();
+    rung.model = served;
+    let source_rows = run.source_rows();
+    let input_parts = if source_rows.is_none() {
+        vec![ModelCallInputPart::Unknown {
+            reason: "workflow-step sources are unknown".to_owned(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let record = ModelCallRecord {
+        schema: 1,
+        attempt: attempt.id,
+        lease_generation: attempt.attempt_count,
+        call_index: u64::from(tool_rounds) + 1,
+        digests,
+        route,
+        rung,
+        issuing_login: None,
+        organization: None,
+        project: None,
+        credential_id: None,
+        response_id: None,
+        thread_id: None,
+        previous_response_id: None,
+        store: None,
+        captured_at: vault.now_recorded_at(),
+        usage: response.usage.clone(),
+        finish_reason: response.finish_reason.clone(),
+        receipt_ref: None,
+        actor: Some(actor.entity_ref()),
+        produced_pending: response.reply_assertions.created.is_empty(),
+        tool_rounds,
+        rounds_truncated: tool_rounds,
+        replay_of: attempt
+            .retry_of
+            .map(|parent| (parent, attempt.attempt_count.saturating_sub(1))),
+        source_rows: source_rows.unwrap_or_default(),
+        produced_rows: response
+            .reply_assertions
+            .created
+            .iter()
+            .map(|record| record.id)
+            .collect(),
+        input_parts,
+        reasoning: response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| ModelCallReasoningPart::from_terminal(part, None, None))
+            .collect(),
+        read_world_epoch: None,
+        read_worlds: None,
+        read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        tools_present: !request.tools.is_empty(),
+        summary_requested: false,
+        erased: false,
+    };
+    if let Err(error) = vault.with_write_txn_grouped(|txn| record_model_call_in_txn(txn, &record)) {
+        tracing::warn!(%error, "workflow model-call record failed");
     }
 }
