@@ -237,6 +237,77 @@ fn send_trap_signal_in_txn(
 ///
 /// Fail-closed validation (ruling L8, uniform including the durable path):
 /// the head must be `sent`; the anchor must be THIS trap's `created` record
+/// The only two resume failures a delivery may skip (FIX 1503).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrapConsumePrecheck {
+    Proceed,
+    SkipOtherOwner,
+    SkipOrphanPark,
+}
+
+/// Read-only wake precheck: validates the same anchor, binding and lineage,
+/// then classifies only OtherOwner and literal-absence OrphanPark. Every other
+/// error stays hard. No trap row, park row, lease or peer binding is mutated.
+pub(crate) fn trap_consume_precheck_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    store: &crate::dreamer_runner::DreamerRunnerStore<'_>,
+    trap: &TrapRef,
+) -> Result<TrapConsumePrecheck> {
+    let (head_id, head) = trap_head_in_txn(vault, wtxn, &trap.trap_claim_id)?;
+    if head.state == DreamerTrapState::Consumed {
+        return Ok(TrapConsumePrecheck::Proceed);
+    }
+    let anchor = vault
+        .get_claim_in_txn(wtxn, &trap.trap_claim_id)?
+        .ok_or(invalid_trap("dreamer trap created record missing"))?;
+    let anchor_decoded = decode_trap_claim_value(&anchor.value)?;
+    if anchor_decoded.state != DreamerTrapState::Created {
+        return Err(invalid_trap("dreamer trap anchor must be a created record"));
+    }
+    let binding = trap_binding_read_in_txn(vault, wtxn, &trap.trap_claim_id)?
+        .ok_or(invalid_trap("dreamer trap binding missing"))?;
+    if binding.park_owner != trap_park_owner(&trap.trap_claim_id) {
+        return Err(invalid_trap(
+            "dreamer trap consume requires an attempt-scoped binding",
+        ));
+    }
+    if head.step_hash != binding.step_hash
+        || anchor_decoded.step_hash != binding.step_hash
+        || trap.step_hash != binding.step_hash
+    {
+        return Err(invalid_trap("dreamer trap signal hash mismatch"));
+    }
+    if head.attempt_id != binding.attempt_id || anchor_decoded.attempt_id != binding.attempt_id {
+        return Err(invalid_trap(
+            "dreamer trap signal names a different attempt",
+        ));
+    }
+    require_lineage_chains_to_anchor_in_txn(vault, wtxn, &head_id, &trap.trap_claim_id)?;
+    Ok(
+        match store.resume_precheck_in_txn(wtxn, binding.attempt_id, &binding.park_owner)? {
+            crate::dreamer_runner::ResumePrecheck::Proceed => TrapConsumePrecheck::Proceed,
+            crate::dreamer_runner::ResumePrecheck::SkipOtherOwner => {
+                TrapConsumePrecheck::SkipOtherOwner
+            }
+            crate::dreamer_runner::ResumePrecheck::SkipOrphanPark => {
+                TrapConsumePrecheck::SkipOrphanPark
+            }
+        },
+    )
+}
+
+/// Retires this trap's delegation peer binding, if one exists, during a
+/// delivery skip. Other traps' bindings are untouched (C2/C4).
+pub(crate) fn retire_peer_wait_binding_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: &EntityId,
+    trap_claim_id: &EntityId,
+) -> Result<()> {
+    peer_wait_binding_delete_in_txn(vault, wtxn, task_ref, trap_claim_id)
+}
+
 /// (a record in any other state cannot anchor a consume); the binding —
 /// attempt id, step hash, and park owner — is re-derived from the PRIVATE row
 /// written when the trap opened on this device, never from caller-supplied
