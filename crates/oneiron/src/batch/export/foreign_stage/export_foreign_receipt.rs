@@ -3,7 +3,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::sync::selector::FederationAdmissionRole;
+use crate::store::window_protocol::FederationAdmissionRole;
 use crate::window_key::WindowKey;
 
 pub const VAULT_IMPORT_RECEIPT_KEY_PREFIX: &str = "vault_import_receipt:v1:";

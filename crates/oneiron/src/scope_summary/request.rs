@@ -11,9 +11,10 @@ use super::doors::{
 use super::purpose::SummaryPurpose;
 use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{
-    AppendFailure, actor_in_txn, prove_branch_span,
+     actor_in_txn, prove_branch_span,
     selected_thread_in_txn,
 };
+use crate::store::conversation_record::AppendFailure;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::dreamer_consolidation::{
