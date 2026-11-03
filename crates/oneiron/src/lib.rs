@@ -10,21 +10,19 @@
     )
 )]
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub mod config;
 pub mod deletion;
 pub mod edge;
 pub mod entity_id;
-pub mod error;
+pub use oneiron_base::error;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
-pub(crate) mod limits;
+pub(crate) use oneiron_base::limits;
 pub mod maintain;
-pub(crate) mod msgpack_shape;
+pub(crate) use oneiron_base::msgpack_shape;
 pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
@@ -42,16 +40,16 @@ mod vault;
 pub mod work_line;
 pub mod write_envelope;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
-pub mod analyzer;
+pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
 pub mod compaction;
 pub mod context_pack;
 pub mod context_projection;
 pub mod conversation;
-pub(crate) mod distance;
+pub(crate) use oneiron_base::distance;
 pub mod embed;
 pub mod entity_doc;
-pub(crate) mod fusion;
+pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
 pub mod live_rows;
@@ -64,19 +62,19 @@ pub mod query_expansion;
 pub mod reaction;
 pub mod rerank;
 pub mod retrieval_depth;
-pub mod retrieval_quality;
+pub use oneiron_base::retrieval_quality;
 pub mod saved_query;
 pub mod serialize;
 pub mod speculative;
 pub mod tagging;
-pub mod tokenizer;
+pub use oneiron_base::tokenizer;
 // ===== Knowledge model ===== typed record families: claims, provenance, corpus, affect, people
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
 pub mod companion;
 pub mod corpus;
-pub mod extraction_eval;
+pub use oneiron_base::extraction_eval;
 pub mod note;
 pub mod persona_snapshot;
 pub mod provenance;
@@ -185,7 +183,7 @@ pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
 pub mod policy_setting_doors;
-pub mod posterior;
+pub use oneiron_base::posterior;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -240,7 +238,7 @@ pub mod context_board;
 pub mod genui;
 pub mod lens;
 pub mod memory;
-pub mod panic_report;
+pub use oneiron_base::panic_report;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
@@ -592,19 +590,7 @@ pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
-pub(crate) fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
-
-pub(crate) fn unix_millis_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+pub(crate) use oneiron_base::{unix_millis_now, unix_seconds_now};
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
     crate::store::decode_vector_row(bytes, dimensions)
