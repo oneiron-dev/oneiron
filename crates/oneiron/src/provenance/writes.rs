@@ -26,7 +26,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ppr;
-use crate::registry::ENTITY_TYPE_MODEL;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_MODEL};
 
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
@@ -348,11 +348,17 @@ impl Vault {
             data,
         )?;
         crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
-        restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
-        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
-        // The edge bytes changed without an edge BatchOp in this txn, so the
-        // graph version is bumped explicitly (apply_ops does it for edge ops).
-        ppr::increment_graph_version(&self.store, wtxn)?;
+        // Blind-review P1: a structural subject keeps its 12-byte value — no
+        // hot flags to restamp — so only the claim's own lifecycle change
+        // lands; the edge bytes, PPR and graph version stay put.
+        if edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural {
+            restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+            // The edge bytes changed without an edge BatchOp in this txn, so
+            // the graph version is bumped explicitly (apply_ops does it for
+            // edge ops).
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
         Ok(())
     }
 
@@ -599,6 +605,27 @@ impl Vault {
                 (Value::from("derived_evidence"), evidence),
             ]));
         }
+        // Blind-review P1 (FIX 7757): the constructor's scope_facet is the
+        // subject's substrate id — a derived id, not a stored FACET — so the
+        // CLAIM birth edge the put now stamps would fail InvalidFacet for an
+        // ordinary NOTE/ASSET/TASK source (only PERSON writes materialize a
+        // substrate facet). Give the engine-generated wrapper a real stored
+        // birth facet before the put: its source's birth facet when that
+        // names a stored FACET, else the vault default (whose owner-substrate
+        // the put's own owner door materializes).
+        let source_facet =
+            crate::federation::record_scope::birth_facet(&self.store, wtxn, subject.source)?;
+        claim_body.scope_facet = match source_facet {
+            Some(facet)
+                if self
+                    .store
+                    .port_entity_record(wtxn, &facet)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+            {
+                facet
+            }
+            _ => crate::claim::default_facet_in(&self.store, wtxn)?,
+        };
         // The write-time validated actor_class is persisted as the record's
         // BODY key (set above, ONE-1138); the wrapper's `evid` stays empty —
         // evidence purity, no legacy `{"actor_class": u8}` map.
