@@ -11,6 +11,7 @@
 //! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
+pub mod task_ask_default;
 mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;

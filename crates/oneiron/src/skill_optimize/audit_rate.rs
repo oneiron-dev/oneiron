@@ -6,9 +6,11 @@
 //! the rate its draw stamped. The draw itself is no check: only a finished
 //! audit observes anything.
 
-use crate::learning::{Anchor, TypeRef};
+use crate::receipt::task_type_ref::TypeRef;
+use crate::claim::learning_evidence::Anchor;
+use crate::store::setting_seed::AUDIT_RATE;
 use crate::learning_setting::{
-    AUDIT_RATE, SettingCheck, global_setting_subject, record_setting_check_in_txn,
+    SettingCheck, global_setting_subject, record_setting_check_in_txn,
 };
 use crate::self_heal::audit::{SealCheckKind, SealedAttemptReceipt};
 use crate::{Result, Vault};

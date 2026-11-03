@@ -42,7 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::authority::{AuthorityFold, ROLE_OWNER};
+use crate::authority::{AuthorityFold};
+use oneiron_authority::authority::{ROLE_OWNER};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ClaimError, Error, Result};
 use crate::store::Store;

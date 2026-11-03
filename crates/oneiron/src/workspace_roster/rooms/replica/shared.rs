@@ -398,7 +398,11 @@ pub(crate) fn merge_replicated_responses_in_txn(
             continue;
         }
         if !candidates.iter().any(|(id, ..)| id == response) {
-            candidates.push((*response, Some(*actor), *at));
+            // FIX 4870: a speaker this vault erased speaks as no one here,
+            // as a held erased-form actor reads, so the winner is chosen
+            // under carrier equivalence.
+            let speaker = (!vault.carrier_actor_erased_in_txn(txn, actor)?).then_some(*actor);
+            candidates.push((*response, speaker, *at));
         }
     }
     if candidates.is_empty() {
@@ -415,9 +419,14 @@ pub(crate) fn merge_replicated_responses_in_txn(
             spoken.map_or(u64::MAX, |turn| turn.at),
         ));
     }
-    let claimant = CLAIMS
+    // FIX 4870: no one holds the claim of an actor this vault erased.
+    let claimant = match CLAIMS
         .get_lenient(store, txn, &parent)?
-        .and_then(|claim| named(&claim.actor));
+        .and_then(|claim| named(&claim.actor))
+    {
+        Some(actor) if vault.carrier_actor_erased_in_txn(txn, &actor)? => None,
+        claimant => claimant,
+    };
     let Some(&(winner, ..)) = candidates.iter().min_by_key(|(response, actor, at)| {
         (claimant.is_some() && *actor != claimant, *at, *response)
     }) else {

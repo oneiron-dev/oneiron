@@ -11,8 +11,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::ports::EntityStoreRead;
-use crate::ppr::read_graph_version;
-use crate::ppr_community::{
+use crate::store::graph_version::read_graph_version;
+use crate::config::community_graph::{
     CommunityCacheMeta, CommunityId, CommunityMembership, CommunityQueryView,
     decode_community_members,
 };
