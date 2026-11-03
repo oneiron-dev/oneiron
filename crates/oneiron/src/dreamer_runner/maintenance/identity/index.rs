@@ -7,8 +7,8 @@
 //! row from its old id set to its new one in the caller's transaction, and
 //! every primary `put`/`delete` site calls it with the before/after rows it
 //! already holds. Membership is exactly the ids whose erase would change
-//! the row: an ask's turn, message, candidates and provisional (never its
-//! surfaced turn, which the erase never scrubs); a hint's named entity and
+//! the row: an ask's turn, message, candidates, provisional and surfaced
+//! turn; a hint's named entity and
 //! each contribution's turn and message; an inverse's ask copy, held
 //! provisionals, settled entity and hint copies (never the source anchor,
 //! the spans' links, the distinct assertions or the confirmed person).
@@ -47,12 +47,12 @@ pub(in crate::dreamer_runner::maintenance) const INVERSE_BY_SOURCE: SideTable<
 > = SideTable::new(&side_table::DREAMER_IDENTITY_INVERSE_BY_SOURCE);
 
 /// Every id whose erase would change `ask` (FIX 10376): its turn, its
-/// message, its candidates and its provisional entity. Its surfaced turn is
-/// not one: the erase never scrubs it.
+/// message, its candidates, its provisional entity and its surfaced turn.
 pub(super) fn ask_ids(ask: &IdentityAsk) -> BTreeSet<EntityId> {
     let mut ids = BTreeSet::from([ask.turn, ask.message]);
     ids.extend(ask.candidates.iter().copied());
     ids.extend(ask.provisional);
+    ids.extend(ask.surfaced_turn);
     ids
 }
 
