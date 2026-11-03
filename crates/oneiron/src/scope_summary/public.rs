@@ -2,7 +2,7 @@
 
 use super::public_types::*;
 use crate::claim::{ClaimReadStatus, PointRead};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
 use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};

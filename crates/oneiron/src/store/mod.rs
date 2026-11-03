@@ -126,6 +126,14 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod conversation_body;
+pub mod conversation_record;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_document;
+pub mod retained_memory;
+#[cfg(feature = "sync")]
+pub(crate) mod window_rows;
+
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;

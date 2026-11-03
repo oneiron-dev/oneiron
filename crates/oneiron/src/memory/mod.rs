@@ -398,3 +398,6 @@ pub use crate::vault::{
 
 pub mod voice_actor;
 pub mod state_index;
+
+#[cfg(feature = "sync")]
+pub(crate) mod resolved_recall_scope;
