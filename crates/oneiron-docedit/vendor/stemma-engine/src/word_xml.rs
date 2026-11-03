@@ -816,7 +816,7 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 // Raw text, EOLs untouched. It holds no references: quick-xml
                 // reports each one as a `GeneralRef` event. Whitespace outside
                 // the root is dropped; any other character data is malformed.
-                if stack.is_empty() && t.as_ref().iter().any(|b| !b.is_ascii_whitespace()) {
+                if stack.is_empty() && t.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
                     return Err(WordXmlError::QuickXml {
                         position: reader.buffer_position(),
                         reason: "character data outside the document element".to_string(),
@@ -837,7 +837,7 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 push_text(&mut stack, &text);
             }
             Event::CData(c) => {
-                if stack.is_empty() && c.as_ref().iter().any(|b| !b.is_ascii_whitespace()) {
+                if stack.is_empty() && c.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
                     return Err(WordXmlError::QuickXml {
                         position: reader.buffer_position(),
                         reason: "CDATA outside the document element".to_string(),
