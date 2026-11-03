@@ -391,8 +391,7 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<String> {
                     "an earlier interrupted restore left its staging directory {} \
                      without a whole vault in it; the staging directory is left \
                      where it is",
-                    staging.display(),
-                    vault_path.display()
+                    staging.display()
                 )
             };
             tracing::warn!(staging = %staging.display(), "{note}");
