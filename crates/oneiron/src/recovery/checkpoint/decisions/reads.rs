@@ -7,7 +7,6 @@ use super::{Decision, field, held_by_both};
 use crate::access_grant::{AccessContext, decode_access_grant_body};
 use crate::authority::{AuthorityFold, SlipClaims};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::RelationshipRead;
 use crate::claim::{
     ClaimBody, RelationshipRead, ScopedRead, ScopedReadActorKey, decode_claim_body,
 };

@@ -537,7 +537,7 @@ fn erase_connector_reply_result_artifact_in_txn(
     if let Some(head) = crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
     {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash)?;
-        if let Some(row) = EntityStoreRead::port_entity_get(store, txn, &asset)? {
+        if let Some(row) = EntityStoreRead::port_entity_record(store, txn, &asset)? {
             if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(&row.body).as_bytes() != &head.content_hash
             {
