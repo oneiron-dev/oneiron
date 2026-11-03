@@ -217,7 +217,7 @@ impl BoundWork {
                     if let Some(stop) = stop {
                         return Err(stop);
                     }
-                    tried.insert(worker);
+                    tried.insert(worker.clone());
                     continue;
                 }
                 PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
