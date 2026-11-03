@@ -254,7 +254,6 @@ struct AdmissionState {
     next_load: u64,
     background_serviced: HashMap<(ResourceClass, String), u64>,
     next_ticket: TicketId,
-    next_grant: GrantId,
     revision: u64,
     pressure: PressureState,
     stopped: bool,
@@ -292,7 +291,6 @@ impl DeviceAdmission {
                 next_load: 1,
                 background_serviced: HashMap::new(),
                 next_ticket: 1,
-                next_grant: 1,
                 revision: 1,
                 pressure: PressureState::None,
                 stopped: false,
@@ -376,7 +374,7 @@ impl DeviceAdmission {
         if next_ticket(&state) != Some(ticket.ticket) {
             return Ok(None);
         }
-        let grant_id = state.next_grant;
+        let grant_id = self.ledger.next_grant_id();
         let holder = work_holder(grant_id);
         let request = state
             .tickets
@@ -396,7 +394,6 @@ impl DeviceAdmission {
             }
             return Ok(None);
         }
-        state.next_grant = state.next_grant.saturating_add(1);
         state.grants.insert(grant_id, ticket.ticket);
         if request.class == WorkClass::Background {
             state

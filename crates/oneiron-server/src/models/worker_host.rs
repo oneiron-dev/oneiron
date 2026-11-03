@@ -191,15 +191,8 @@ impl BoundWork {
                         let cancel_changed = ticket.cancel_change();
                         tokio::pin!(cancel_changed);
                         cancel_changed.as_mut().enable();
-                        if ticket.request.cancel.load(Ordering::Acquire)
-                            || ticket
-                                .deadline()
-                                .is_some_and(|deadline| deadline <= Instant::now())
-                        {
-                            match ticket.resolve_pressure_excluding(&tried) {
-                                PressureDecision::Stop(stop) => break Some(stop),
-                                _ => {}
-                            }
+                        if let Some(stop) = ticket.stop() {
+                            break Some(stop);
                         }
                         let deadline = ticket.deadline();
                         tokio::select! {

@@ -317,7 +317,14 @@ pub(super) fn open_stream(
     }
     match admitted.ladder.stream(run, admitted.request, None) {
         Ok(stream) => Ok(first_or_today(stream, run.clone(), today, live)),
-        Err(error) if crate::models::ends_call(&error) => Err(error),
+        Err(error)
+            if matches!(
+                &error,
+                oneiron::LlmError::Retryable(oneiron::RetryableLlmError::DeviceAdmissionStopped)
+            ) =>
+        {
+            Err(error)
+        }
         Err(_) => {
             live.store(false, Ordering::Release);
             today.ladder.stream(run, today.request, None)
@@ -387,7 +394,14 @@ fn first_or_today(
                 } = *first;
                 match live.next().await {
                     Some(Ok(event)) => Some((Ok::<LlmStreamEvent, _>(event), Leg::Rest(live))),
-                    Some(Err(error)) if crate::models::ends_call(&error) => {
+                    Some(Err(error))
+                        if matches!(
+                            &error,
+                            oneiron::LlmError::Retryable(
+                                oneiron::RetryableLlmError::DeviceAdmissionStopped
+                            )
+                        ) =>
+                    {
                         Some((Err(error), Leg::Done))
                     }
                     _ => {

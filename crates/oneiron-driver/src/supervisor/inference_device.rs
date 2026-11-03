@@ -9,6 +9,7 @@
 //! Unknown capacity admits and records under the R4 ruling; a known capacity
 //! with an incomplete declaration does not invent room.
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
@@ -141,6 +142,11 @@ struct LedgerState {
 #[derive(Debug)]
 pub struct DeviceLedger {
     device: String,
+    /// Grant IDs drawn across every queue generation on this device. A
+    /// recreated queue restarts its own counters, but this ledger survives
+    /// removals, so its counter keeps old guard drops from deleting a new
+    /// call's same-numbered `work:<id>` hold.
+    next_grant: AtomicU64,
     state: Mutex<LedgerState>,
 }
 
@@ -151,6 +157,7 @@ impl DeviceLedger {
     pub fn new(device: impl Into<String>, capacity_mib: Option<u64>) -> Self {
         Self {
             device: device.into(),
+            next_grant: AtomicU64::new(1),
             state: Mutex::new(LedgerState {
                 capacity_mib,
                 rows: BTreeMap::new(),
@@ -164,6 +171,13 @@ impl DeviceLedger {
     #[must_use]
     pub fn device(&self) -> &str {
         &self.device
+    }
+
+    /// Draws the next grant ID for this device, starting at 1. Gaps from
+    /// failed reservations are harmless: IDs only need device-wide
+    /// uniqueness across queue generations.
+    pub fn next_grant_id(&self) -> u64 {
+        self.next_grant.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Sets the device's measured capacity. `None` means unknown and admits

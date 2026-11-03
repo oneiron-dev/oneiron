@@ -112,6 +112,14 @@ impl WorkTicket {
         self.admission.ticket_deadline(self.ticket)
     }
 
+    /// Queue-owned stop truth for this ticket: device stop, removal, a
+    /// refreshed queue-side cancel, or a passed deadline. No grant is
+    /// reserved and no pressure state changes, so unload loops can probe
+    /// it every wake without side effects.
+    pub fn stop(&self) -> Option<AdmissionStop> {
+        self.admission.ticket_stop(self.ticket)
+    }
+
     /// Cancels this ticket and any children still inheriting from it.
     pub fn cancel(&self) {
         self.request.cancel.store(true, Ordering::Release);
