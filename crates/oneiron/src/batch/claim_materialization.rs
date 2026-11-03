@@ -6,13 +6,13 @@ use super::{
     ApplyOpsGateMode, BaseWriteOrigin, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
     reject_overlay_member_base_write,
 };
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use rmpv::Value;
 
 /// Private local binding digest proving which writer authored/finalized a

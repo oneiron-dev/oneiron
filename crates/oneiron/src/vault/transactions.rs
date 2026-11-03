@@ -63,8 +63,8 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
                 .to_owned(),
         ));
     }
-    if key.starts_with(crate::federation::FEDERATION_WORLD_KEY_PREFIX)
-        || key.starts_with(crate::federation::FEDERATION_STALE_KEY_PREFIX)
+    if key.starts_with(crate::store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX)
+        || key.starts_with(crate::store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX)
     {
         return Err(Error::InvalidConfig(
             "federation world registrations and stale stamps are written only by the engine"

@@ -31,7 +31,6 @@ use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::federation::Scope;
 use crate::pipeline::WorldAuthoritySet;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
@@ -39,6 +38,7 @@ use crate::registry::{
 };
 use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 impl ScopedReadActorKey {
     /// The canonical fingerprint of the live read authority behind this key,
@@ -185,7 +185,8 @@ fn fold_principal_reach(
                 continue;
             }
             let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF
+            if body.predicate
+                == crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF
                 && claim_surfaceable(&body)
                 && body
                     .value

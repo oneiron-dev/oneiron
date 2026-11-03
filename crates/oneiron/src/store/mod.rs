@@ -135,6 +135,7 @@ pub(crate) use claim_vad_owed::{
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod derivation;
 mod diagnostics;
 mod gate_decision;
 mod scan_kind;
@@ -147,6 +148,7 @@ pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
+pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
