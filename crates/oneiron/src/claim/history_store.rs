@@ -109,11 +109,15 @@ fn history_pending(replicated: bool) -> Error {
 /// A fresh peer may receive origin bytes after an authenticated handoff pin
 /// but before its birth/event controls. Permit only the EXACT signed birth
 /// named by that pin as provisional raw data; no read authorization follows.
+/// The pinned digest binds the row header too (FIX 11926): a resident birth
+/// it names settles the origin alone, else the row's own header must be the
+/// signed one.
 fn pending_pin_names_signed_birth(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &ClaimBody,
+    (occurred, learned_at): (TimeRange, u64),
 ) -> Result<bool> {
     let packet = super::history_projection::trusted_machine_handoff(store, txn, *id)?;
     if packet.births.len() != 1 || packet.births[0].id != *id {
@@ -147,7 +151,12 @@ fn pending_pin_names_signed_birth(
     ) else {
         return Ok(false);
     };
-    Ok(birth.digest == packet.births[0].digest)
+    if let Ok(Some(resident)) = birth_by_digest(store, txn, &packet.births[0].digest) {
+        return Ok(resident.same_origin(&birth));
+    }
+    Ok(birth
+        .with_row_header(occurred, learned_at)
+        .is_ok_and(|birth| birth.digest == packet.births[0].digest))
 }
 
 /// Structural/origin door for the immutable scoped birth. No current roster
@@ -194,7 +203,8 @@ pub(crate) fn validate_machine_history_put(
             return Err(invalid_history());
         };
         let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
-        match super::history_projection::resolved_machine_history(store, txn, &fold, *id) {
+        // An advance's heal lands here: it reads what the advance carried.
+        match super::history_advance::resolved_machine_history_carried(store, txn, &fold, *id) {
             Ok(projection)
                 if incoming == &super::history_projection::project_machine_claim(&projection) => {}
             // A superseded history leaves the live row to its same-id
@@ -214,7 +224,14 @@ pub(crate) fn validate_machine_history_put(
                         store, txn, &fold, *id, incoming,
                     )? => {}
             Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete))
-                if replicated && pending_pin_names_signed_birth(store, txn, id, incoming)? => {}
+                if replicated
+                    && pending_pin_names_signed_birth(
+                        store,
+                        txn,
+                        id,
+                        incoming,
+                        (occurred, learned_at),
+                    )? => {}
             Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete)) => {
                 return Err(history_pending(replicated));
             }
@@ -410,6 +427,7 @@ fn target_prefix(target: EntityId) -> Vec<u8> {
 
 /// Add one verified immutable control id to a target-local index. The index
 /// is a navigation hint only; every fetched row is revalidated on read/fold.
+/// The put chains into the target's seal (`history_seal`, FIX 4296).
 pub(crate) fn maintain_machine_history_index(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -425,7 +443,7 @@ pub(crate) fn maintain_machine_history_index(
     let mut key = target_prefix(target);
     key.extend_from_slice(id.as_bytes());
     store.vault_meta.put(txn, &key, &[])?;
-    Ok(())
+    super::history_seal::chain_index_seal_in_txn(store, txn, target, id, body)
 }
 
 /// Every control id in `target`'s index. The index grows with the claim's
@@ -513,6 +531,7 @@ pub(crate) fn retire_machine_history_for_delete(
         key.extend_from_slice(control.as_bytes());
         store.vault_meta.delete(txn, &key)?;
     }
+    super::history_seal::drop_index_seal_in_txn(store, txn, target)?;
     Ok(controls)
 }
 
@@ -615,6 +634,8 @@ pub(crate) fn stage_machine_birth_after_candidate(
         txn,
         &issuer.public_key(),
     )?;
+    // The birth signs the live row's header beside its body, so a receiver
+    // holding the history without the row builds it (FIX 11926).
     let birth = super::SignedClaimBirth::new(
         vault_id,
         target,
@@ -622,14 +643,16 @@ pub(crate) fn stage_machine_birth_after_candidate(
         proof.public_key,
         proof.signature,
     )
+    .and_then(|birth| birth.with_row_header(occurred, learned_at))
     .map_err(|_| invalid_history())?;
     if store
         .vault_meta
         .get(txn, &super::history_projection::pin_key(target))?
         .is_some()
     {
+        // A retry replays the same origin; its row header may be later.
         let existing = super::history_projection::machine_history_rows(store, txn, target)?;
-        if existing.birth != birth {
+        if !existing.birth.same_origin(&birth) {
             return Err(invalid_history());
         }
         return Ok(());
