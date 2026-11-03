@@ -39,6 +39,8 @@ const STALWART: &str = "urn:stalwart:jmap";
 /// Bytes of one JMAP JSON response, parsed in memory. Message blobs stream
 /// to disk instead and have no cap here.
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+/// Matches the production Gmail send wire's whole-request bound.
+const STALWART_REQUEST_TIMEOUT_SECS: u64 = 30;
 
 /// Placement of one already-configured, per-owner MTA instance. Pooled and
 /// customer-BYO domains both arrive as an exact domain and its registry id.
@@ -140,6 +142,9 @@ impl StalwartClient {
         authorization.set_sensitive(true);
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(
+                STALWART_REQUEST_TIMEOUT_SECS,
+            ))
             .build()
             .map_err(|_| invalid("could not create Stalwart HTTP client"))?;
         let response = http
