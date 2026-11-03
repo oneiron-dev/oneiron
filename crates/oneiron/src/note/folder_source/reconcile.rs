@@ -320,10 +320,18 @@ impl Vault {
                     )
             });
             if !retracted && let Some(same) = row.as_ref().filter(|row| row.file_hash == hash) {
-                // A partial read never takes the equal-hash shortcut: the
-                // row stays pending, so a later whole read reconciles the
-                // links this scan left alone (REVIEW-4381 P1).
-                if file.links.is_some() {
+                // A pending row never takes the equal-hash shortcut: its
+                // meta is behind (or none) because a partial scan left its
+                // links alone, and taking the revision here would clear the
+                // pending state without reconciling them. The full path
+                // below reconciles on a whole read and stays pending on a
+                // partial one (REVIEW-4381 P1).
+                let row_pending = same.meta.is_none_or(|meta| {
+                    facts.is_some_and(|facts| {
+                        (meta.bytes, meta.modified_at) != (facts.bytes, facts.modified_at)
+                    })
+                });
+                if file.links.is_some() && !row_pending {
                     report.unchanged += 1;
                     let facts_moved = facts.is_some_and(|facts| {
                         same.meta.is_none_or(|meta| {

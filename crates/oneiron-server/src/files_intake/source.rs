@@ -571,23 +571,40 @@ fn included(patterns: &[String], path: &str) -> bool {
 }
 
 /// Whether an unreadable folder could hold a file `include` keeps
-/// (REVIEW-4381 P2). A pattern starting with `**` reaches every folder; any
-/// other pattern reaches only a folder its literal prefix names or sits
-/// under, so a leading `*` never reaches below the top folder.
+/// (REVIEW-4381 P2). A `**` segment reaches every folder below it; any other
+/// segment reaches only the folder segment it matches, so a file-name `*`
+/// never reaches below the top folder while a `doc?` folder segment still
+/// reaches `docs`.
 fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
     patterns.is_empty()
         || patterns.iter().any(|pattern| {
-            if pattern.starts_with("**") {
-                return true;
+            let pattern = pattern.strip_suffix('/').unwrap_or(pattern);
+            let wanted: Vec<&str> = pattern.split('/').collect();
+            let mut here = dir.split('/');
+            for (at, segment) in wanted.iter().enumerate() {
+                if segment.contains("**") {
+                    return true;
+                }
+                let Some(name) = here.next() else {
+                    // The pattern runs past the folder: what follows sits
+                    // under it.
+                    return true;
+                };
+                let last = at + 1 == wanted.len();
+                if segment.contains('*') || segment.contains('?') {
+                    if last {
+                        // A final file-name segment matches only a file
+                        // directly inside, never below the top folder.
+                        return here.next().is_none();
+                    }
+                    continue;
+                }
+                if *segment != name {
+                    return false;
+                }
             }
-            let literal = pattern
-                .find(|cell: char| cell == '*' || cell == '?')
-                .map_or(pattern.as_str(), |at| &pattern[..at]);
-            let literal = literal.strip_suffix('/').unwrap_or(literal);
-            !literal.is_empty()
-                && (dir == literal
-                    || dir.starts_with(&format!("{literal}/"))
-                    || literal.starts_with(&format!("{dir}/")))
+            // The folder sits under the pattern's whole prefix.
+            true
         })
 }
 
