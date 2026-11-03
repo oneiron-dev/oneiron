@@ -4,4 +4,3 @@
 pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
 /// The `format` that names the lossy OKF bundle.
 pub const EXPORT_TARGET_OKF: &str = "okf";
-

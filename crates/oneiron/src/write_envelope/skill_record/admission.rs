@@ -1,7 +1,7 @@
 //! Pure runtime admission invariant over one stored skill record.
 
-use oneiron_contracts::claim::ClaimApprovalStatus;
 use super::{SkillLifecycle, SkillRecord};
+use oneiron_contracts::claim::ClaimApprovalStatus;
 
 /// The one runtime admission invariant used by the load door and hub installs.
 #[must_use]

@@ -46,8 +46,8 @@ impl RetrievalIntent {
 }
 
 pub use crate::store::retrieval_policy::{
-    RetrievalPolicyAction, RetrievalPolicyIdentity, RetrievalPolicyEnvelope,
-    RetrievalPolicyTier, RetrievalPolicyDecision, RetrievalPolicyTrace,
+    RetrievalPolicyAction, RetrievalPolicyDecision, RetrievalPolicyEnvelope,
+    RetrievalPolicyIdentity, RetrievalPolicyTier, RetrievalPolicyTrace,
 };
 
 /// Effort-derived pipeline limits for the stored policy envelope.

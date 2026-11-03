@@ -3,10 +3,10 @@
 //! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
 //! `people` roster, session read-set riders and stream projections.
 
-pub mod consult_result;
-pub mod task_kind;
 mod capabilities;
 mod children;
+pub mod consult_result;
+pub mod task_kind;
 pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };

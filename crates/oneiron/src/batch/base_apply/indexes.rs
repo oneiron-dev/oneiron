@@ -60,7 +60,9 @@ pub(super) fn apply_text_index_update(
         // The analysis done before the transaction opened, when it was read
         // from these very fields; otherwise analyze here as before.
         match analyzed.filter(|analyzed| analyzed.reads(fields)) {
-            Some(analyzed) => crate::store::text_index::index_analyzed_text(store, wtxn, id, fields, analyzed)?,
+            Some(analyzed) => {
+                crate::store::text_index::index_analyzed_text(store, wtxn, id, fields, analyzed)?
+            }
             None => crate::store::text_index::index_text(store, wtxn, analyzer, id, fields)?,
         }
     }

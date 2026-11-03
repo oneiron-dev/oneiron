@@ -32,26 +32,24 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
-use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
+use crate::learning_setting::setting_value_scoped;
+use crate::limit_ask::EngineLimit;
+use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::task_type_ref::TypeRef;
+use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::setting_seed::CREDIT_CHECK_EVERY_HOP;
 use crate::store::setting_seed::CREDIT_DEPTH_CAP;
 use crate::store::setting_seed::CREDIT_ENABLED;
 use crate::store::setting_seed::SettingSpec;
-use crate::learning_setting::{
-    setting_value_scoped,
-};
-use crate::limit_ask::EngineLimit;
-use crate::ports::{EdgeDirection, EdgeStore};
-use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
-use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.

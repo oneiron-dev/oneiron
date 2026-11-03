@@ -5,10 +5,10 @@
 //! does, inside this read's own authority. It grants nothing.
 
 use super::*;
-use crate::claim::world_access::WorldAuthoritySet;
-use crate::pipeline::{ WorldScope};
 use crate::claim::retrieval_scope::FacetMode;
+use crate::claim::world_access::WorldAuthoritySet;
 use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
+use crate::pipeline::WorldScope;
 
 impl ScopedRead<'_> {
     /// [`Self::search_text`] narrowed by `scope` before its cut, returning

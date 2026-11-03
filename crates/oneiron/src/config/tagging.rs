@@ -193,4 +193,3 @@ pub(crate) fn is_checkpoint(value: &str) -> bool {
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
-

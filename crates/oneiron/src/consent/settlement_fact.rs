@@ -1,7 +1,7 @@
 //! Proposal settlement kinds, outcomes and producer-stamped facts.
 
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// How a proposal settled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

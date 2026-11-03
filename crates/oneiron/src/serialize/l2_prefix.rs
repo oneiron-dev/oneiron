@@ -1,7 +1,7 @@
 //! Stable L2 prefix framing shared by every context-pack format.
 
-use crate::store::l2_evidence::L2BaseSummary;
 use crate::serialize::pack_format::PackFormat;
+use crate::store::l2_evidence::L2BaseSummary;
 
 pub(super) fn with_l2_prefix(
     summary: Option<&L2BaseSummary>,

@@ -29,4 +29,3 @@ impl EffectDigest {
         crate::entity_id::bytes_to_hex_lower(&self.0)
     }
 }
-

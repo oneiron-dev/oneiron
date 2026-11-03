@@ -1,8 +1,12 @@
 //! Public Connect delivery/rejoin over the production guest admission path.
 use std::sync::Arc;
 
+use crate::authority::ConnectWindow;
 use crate::authority::{
     AuthoritySignature, FederationPactStatus, HostSlipIssuer, verify_authority_signature,
+};
+pub use crate::connect_delivery::{
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{Ceiling, FederationDirectionScope, Position, ScopeAxis, ScopeId};
@@ -11,8 +15,6 @@ use crate::sync::{
     FederationAdmissionRole, SyncClient, SyncClientConfig, SyncSelector, SyncSelectorWorld,
     WindowManager,
 };
-use crate::authority::ConnectWindow;
-pub use crate::connect_delivery::{ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined};
 use crate::{EntityId, Error, Result};
 
 fn refused() -> Error {

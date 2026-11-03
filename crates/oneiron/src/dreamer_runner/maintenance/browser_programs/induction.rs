@@ -16,7 +16,7 @@ use oneiron_browser::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::browser_library::{SolvedRunEvidence};
+use crate::browser_library::SolvedRunEvidence;
 use crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::TypeRef;
