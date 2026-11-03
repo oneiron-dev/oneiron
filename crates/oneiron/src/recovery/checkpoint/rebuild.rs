@@ -254,6 +254,8 @@ pub(super) fn rebuild(
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
+        // Restored authority rows bypassed the put that sequences them (FIX 12369).
+        crate::authority::store_order::rebuild_in_txn(&vault.store, txn, &rows)?;
         // Runtime budget rows were excluded from the image, not refunded in the billing ledger.
         Ok((rows.len(), texts, embeddings))
     })
