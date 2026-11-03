@@ -212,4 +212,4 @@ pub(crate) use self::routing::llm_description_measurements_accepts_masked;
 pub(crate) use self::routing::llm_description_policy_accepts_masked;
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
 pub(crate) use self::seat::llm_model_description_accepts_masked;
-pub(crate) use self::step::submission_custody::model_step_submission_accepts_masked;
+pub(crate) use self::step::model_step_submission_accepts_masked;

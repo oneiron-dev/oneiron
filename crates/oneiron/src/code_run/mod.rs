@@ -285,9 +285,9 @@ use crate::{
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::storage::continuation::code_run_continuation_accepts_masked;
-pub(crate) use self::storage::reader_jobs::code_run_reader_job_accepts_masked;
-pub(crate) use self::storage::reader_jobs::code_run_reader_wait_accepts_masked;
-pub(crate) use self::storage::replay_capsule::code_run_replay_capsule_accepts_masked;
-pub(crate) use self::storage::type_diagnostics::code_run_type_diagnostics_accepts_masked;
-pub(crate) use self::storage::wait_delivery::code_run_wait_delivery_accepts_masked;
+pub(crate) use self::storage::code_run_continuation_accepts_masked;
+pub(crate) use self::storage::code_run_reader_job_accepts_masked;
+pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
+pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
+pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;

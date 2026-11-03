@@ -83,4 +83,4 @@ pub(crate) use self::regen::hooks_regen_accepts_masked;
 pub(crate) use self::store::hooks_intent_accepts_masked;
 pub(crate) use self::store::hooks_memo_accepts_masked;
 pub(crate) use self::store::hooks_receipt_accepts_masked;
-pub(crate) use self::verb::record::hooks_verb_run_accepts_masked;
+pub(crate) use self::verb::hooks_verb_run_accepts_masked;
