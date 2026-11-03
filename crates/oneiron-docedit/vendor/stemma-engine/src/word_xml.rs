@@ -658,6 +658,12 @@ fn element_from_start(
     // first, then the inherited scope.
     let elem_prefix_str = prefix.as_deref().unwrap_or("");
     let namespace = resolve_in_frame_then_scope(&frame, scope, elem_prefix_str);
+    if prefix.is_some() && namespace.is_none() {
+        return Err(WordXmlError::QuickXml {
+            position: reader.buffer_position(),
+            reason: format!("undeclared namespace prefix: {elem_prefix_str}"),
+        });
+    }
 
     // Resolve attribute namespace URIs. Unprefixed attributes are NOT in any
     // namespace (per XML Namespaces — the default namespace does not apply to
@@ -667,6 +673,12 @@ fn element_from_start(
     for (mut an, val) in plain_attrs {
         if let Some(ref p) = an.prefix {
             an.namespace = resolve_in_frame_then_scope(&frame, scope, p).map(str::to_string);
+            if an.namespace.is_none() {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: format!("undeclared namespace prefix: {p}"),
+                });
+            }
         }
         attributes.insert(an, val);
     }
@@ -802,18 +814,35 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             }
             Event::Text(t) => {
                 // Raw text, EOLs untouched. It holds no references: quick-xml
-                // reports each one as a `GeneralRef` event.
-                // Top-level text (outside the root) is whitespace between the
-                // XML declaration and the root; xml-rs dropped it, so do we.
+                // reports each one as a `GeneralRef` event. Whitespace outside
+                // the root is dropped; any other character data is malformed.
+                if stack.is_empty() && t.as_ref().iter().any(|b| !b.is_ascii_whitespace()) {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "character data outside the document element".to_string(),
+                    });
+                }
                 push_text(&mut stack, &t);
             }
             Event::GeneralRef(r) => {
                 // Decode the reference (&amp; &#x41; ...) — the xmltree writer
                 // will re-escape on output, so the stored value must be decoded.
                 let text = resolve_general_ref(&r, &reader)?;
+                if stack.is_empty() && text.chars().any(|ch| !is_xml_whitespace(ch)) {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "character data outside the document element".to_string(),
+                    });
+                }
                 push_text(&mut stack, &text);
             }
             Event::CData(c) => {
+                if stack.is_empty() && c.as_ref().iter().any(|b| !b.is_ascii_whitespace()) {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "CDATA outside the document element".to_string(),
+                    });
+                }
                 if let Some(parent) = stack.last_mut() {
                     parent
                         .children
