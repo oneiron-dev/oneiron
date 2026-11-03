@@ -37,7 +37,7 @@ use crate::EntityId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::Result;
-use crate::llm::DurableStepContext;
+use crate::model_step_context::DurableStepContext;
 use crate::scope_summary::{
     ArcChildPlan, ArcChildRow, ArcManifest, ArcPendingCause, ArcPins, ArcRange, ArcWorkState,
     ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,

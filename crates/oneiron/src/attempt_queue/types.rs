@@ -414,7 +414,7 @@ pub struct AttemptRecord {
     /// `executor_model` and `executor_seat` under the same lease. `None` for
     /// work no role ran.
     #[serde(default)]
-    pub executor_role: Option<crate::llm::manifest::ModelRole>,
+    pub executor_role: Option<crate::model_binding::ModelRole>,
     /// FIX 7720: a seatless planned child's first pick, route and exactness,
     /// written once with `executor_model` under its lease before its pack
     /// loads. `None` for any other run; a fresh retry decides its own.
@@ -692,8 +692,8 @@ pub struct AttemptPlacement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannedBinding {
-    pub pick: crate::ModelId,
-    pub locality: crate::ModelLocality,
+    pub pick: oneiron_model::llm::ModelId,
+    pub locality: oneiron_model::llm::ModelLocality,
     pub exactness: PlannedExactness,
     /// The try whose run a continuation forks (FIX 3694), when it is one.
     pub source: Option<AttemptId>,

@@ -7,7 +7,7 @@ use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::EntityId;
 use crate::claim::ScopedReadResult;
 use crate::embed::InputKind;
-use crate::llm::{CallPurpose, LlmCapability};
+use oneiron_model::llm::{CallPurpose, LlmCapability};
 
 /// Inline bytes become a real ASSET, not a BLOB_ARTIFACT. A supplied ref is
 /// a fresh 32-hex id; omission mints one. Text is a caption or transcript for

@@ -44,7 +44,8 @@ use crate::code_run::shadow_runner::{
 };
 use crate::code_run::{CapsuleHost, ExecutorStepStart, StepReplayCapsule, step_replay_capsules};
 use crate::failure_signals::{ReplayFidelity, ShadowRun};
-use crate::{ContentPart, EntityId, LlmRequest, LlmResponse, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 /// A pair's part, or why the pair has no verdict.
 type Outcome<T> = std::result::Result<T, EngineNotRun>;
