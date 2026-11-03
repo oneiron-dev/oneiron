@@ -81,6 +81,9 @@ pub struct SyncServer {
     pub(crate) lease_registrar: Mutex<()>,
     /// Window manager used by server-side safe-point maintenance jobs.
     pub(crate) reassert_manager: Arc<WindowManager>,
+    /// Masked window releases shared across this server's sockets, each
+    /// still sealed per socket at its last door (FIX 10477).
+    pub(crate) window_releases: oneiron::sync::window::WindowReleaseCache,
     /// Keep the weakly attached Observer B local-read tee alive for this server.
     _reactive_tee: Arc<dyn LiveQueryTee>,
     /// Process-local session component for lifecycle job debounce keys.

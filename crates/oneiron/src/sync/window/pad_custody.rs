@@ -25,7 +25,6 @@ use std::collections::BTreeSet;
 
 use loro::LoroDoc;
 
-use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::store::custody_protocol::CustodyPosition;
 use crate::store::{PadRecipients, SealedWorldPads, open_world_pad_compartment};
@@ -38,6 +37,7 @@ use crate::world_keys::{
     WindowPadProjection, WrapRecipient, project_window_pad_refs, row_pad_in_txn,
     world_pad_recipients_in_txn,
 };
+use crate::{EntityId, Vault};
 
 pub use self::persist::persisted_window_pads;
 pub(super) use self::persist::window_row_holds;
@@ -86,6 +86,11 @@ impl PreparedWindowPads {
     /// sends, and what a sender sends again after a `NotReady`.
     pub fn carrier(payload: &[u8]) -> Self {
         Self::bare(WindowPadForm::Carrier, payload)
+    }
+
+    /// `payload` as it is, holding no pad: a shared release's pad-free form.
+    pub(super) fn pad_free(payload: &[u8]) -> Self {
+        Self::bare(WindowPadForm::PadFree, payload)
     }
 
     fn bare(form: WindowPadForm, payload: &[u8]) -> Self {
@@ -137,6 +142,22 @@ impl PreparedWindowPads {
     }
 }
 
+/// `payload`, window `window`'s blob, with each pad reference whose pad is
+/// here inflated back into its carrier, the blob otherwise as it is: the
+/// bytes a carrier send goes as, made once for a shared release (FIX
+/// 10477). `context` holds an update's dependencies.
+pub(super) fn inflate_window_carrier(
+    vault: &Vault,
+    window: &WindowKey,
+    payload: &[u8],
+    context: Option<&LoroDoc>,
+) -> Vec<u8> {
+    let inflated = window
+        .world()
+        .and_then(|_| inflate::inflate_window_pad_refs(&vault.store, payload, context));
+    inflated.unwrap_or_else(|| payload.to_vec())
+}
+
 /// `payload`, window `window`'s blob, as today's carrier for a send that may
 /// not seal: each pad reference its blob holds whose pad is here inflated
 /// back into its carrier, the blob otherwise as it is. `context` holds an
@@ -147,10 +168,7 @@ pub fn carrier_window_pads(
     payload: &[u8],
     context: Option<&LoroDoc>,
 ) -> PreparedWindowPads {
-    let inflated = window
-        .world()
-        .and_then(|_| inflate::inflate_window_pad_refs(&vault.store, payload, context));
-    PreparedWindowPads::carrier(inflated.as_deref().unwrap_or(payload))
+    PreparedWindowPads::carrier(&inflate_window_carrier(vault, window, payload, context))
 }
 
 /// A send that keeps today's carrier for a fault, told value-free.
@@ -163,6 +181,161 @@ fn keep(
 ) -> PreparedWindowPads {
     tracing::warn!(%window, why, "window pads not sealed; the carrier goes as today");
     carrier_window_pads(vault, window, payload, context)
+}
+
+/// What projecting one blob makes of it, the same for every machine it may
+/// go to (FIX 10477): the shared half of the send door, before any seal.
+pub(super) enum SharedPadProjection {
+    /// No pad anywhere in the blob: it goes as it is.
+    PadFree,
+    /// Reference-only bytes and the pads they name, by full id, sorted.
+    Projected {
+        bytes: Vec<u8>,
+        items: Vec<[u8; 40]>,
+    },
+    /// No projection here: the carrier goes, told by this static reason.
+    Keep(&'static str),
+}
+
+/// Why a projected blob was not sealed for one machine, told value-free.
+pub(super) enum SealFallback {
+    /// The machine takes the carrier, as before, with no fault to tell.
+    Carrier,
+    /// The carrier goes for this static reason.
+    Keep(&'static str),
+}
+
+/// `payload`, window `window`'s blob, projected under `namespace`, this
+/// vault's current pad namespace when it has one: the half of the send
+/// door no recipient chooses. `context` holds an update's dependencies.
+pub(super) fn project_window_shared(
+    window: &WindowKey,
+    payload: &[u8],
+    context: Option<&LoroDoc>,
+    namespace: Option<[u8; 16]>,
+) -> SharedPadProjection {
+    // A live pad rides its world's windows alone (`types::entity_world`).
+    if window.world().is_none() {
+        return SharedPadProjection::PadFree;
+    }
+    let Some(namespace) = namespace else {
+        return SharedPadProjection::Keep("no current custody here");
+    };
+    match project_window_pad_refs(window, payload, context, &namespace) {
+        Ok(WindowPadProjection::NothingToProject) => SharedPadProjection::PadFree,
+        Ok(WindowPadProjection::Projected {
+            bytes,
+            required_refs,
+        }) => {
+            let items: BTreeSet<[u8; 40]> = required_refs
+                .iter()
+                .map(|reference| reference.key.envelope_key_id())
+                .collect();
+            SharedPadProjection::Projected {
+                bytes,
+                items: items.into_iter().collect(),
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%window, kind = ?error.kind(), "window blob not projected");
+            SharedPadProjection::Keep("projection fault")
+        }
+    }
+}
+
+/// The one machine `recipient` proved, with its pad key alone, when the
+/// pads of `world` go to it: the recipient half of the seal, read fresh
+/// for each send. Any other machine takes the carrier.
+pub(super) fn seal_recipient(
+    vault: &Vault,
+    window: &WindowKey,
+    world: EntityId,
+    recipient: PeerMachine,
+) -> Result<(EntityId, PadRecipients), SealFallback> {
+    // A machine the world's pads do not go to takes the carrier, as before.
+    let PeerMachine::Proven { machine, .. } = recipient else {
+        return Err(SealFallback::Carrier);
+    };
+    match vault
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)
+        .and_then(|txn| world_pad_recipients_in_txn(vault, &txn, world))
+    {
+        Ok(mut all) => {
+            let recipient = WrapRecipient::Machine(machine);
+            let Some(public) = all.remove(&recipient) else {
+                return Err(SealFallback::Carrier);
+            };
+            Ok((machine, PadRecipients::from([(recipient, public)])))
+        }
+        Err(error) => {
+            tracing::warn!(%window, kind = ?error.kind(), "window pad recipients not read");
+            Err(SealFallback::Carrier)
+        }
+    }
+}
+
+/// The projected `bytes`, naming `items`, sealed to `machine` alone under
+/// `to`, its pad key: the gathered pads and sidecar of one send, never
+/// shared with another machine's.
+pub(super) fn seal_projected_to(
+    vault: &Vault,
+    window: &WindowKey,
+    world: EntityId,
+    bytes: Vec<u8>,
+    items: &[[u8; 40]],
+    machine: EntityId,
+    to: &PadRecipients,
+) -> Result<PreparedWindowPads, SealFallback> {
+    let items: BTreeSet<[u8; 40]> = items.iter().copied().collect();
+    let exported = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)
+        .and_then(|txn| {
+            let row_pad = |item: &[u8; 40]| row_pad_in_txn(&vault.store, &txn, item);
+            vault
+                .store
+                .export_current_world_pads(&txn, world, &items, &row_pad, to)
+        });
+    let sealed = match exported {
+        Ok(Some(exported)) => {
+            // Every pad the blob owes goes live; one retired at the source
+            // or held by no source here keeps the carrier.
+            let live: BTreeSet<[u8; 40]> = exported
+                .sealed
+                .required_keys
+                .iter()
+                .map(crate::world_keys::WorldKeyId::envelope_key_id)
+                .filter(|item| !exported.retired.contains(item))
+                .collect();
+            if !items.is_subset(&live) {
+                return Err(SealFallback::Keep("a pad the blob owes is not live here"));
+            }
+            exported.sealed
+        }
+        Ok(None) => {
+            return Err(SealFallback::Keep("nothing to seal the blob's pads under"));
+        }
+        Err(error) => {
+            tracing::warn!(%window, kind = ?error.kind(), "window pads not gathered");
+            return Err(SealFallback::Keep("custody fault"));
+        }
+    };
+    Ok(PreparedWindowPads {
+        form: WindowPadForm::Sealed,
+        payload: bytes,
+        refs: items.into_iter().collect(),
+        sidecar: Some(WindowPadSidecar {
+            recipient: *machine.as_bytes(),
+            source_position: sealed.position.to_bytes(),
+            digest: sealed.digest,
+            capsule: sealed.bytes,
+        }),
+    })
 }
 
 /// `payload`, window `window`'s blob, made ready for `recipient`, the machine
@@ -178,110 +351,26 @@ pub fn prepare_window_pads(
     context: Option<&LoroDoc>,
     recipient: PeerMachine,
 ) -> PreparedWindowPads {
-    // A live pad rides its world's windows alone (`types::entity_world`).
     let Some(world) = window.world() else {
         return PreparedWindowPads::bare(WindowPadForm::PadFree, payload);
     };
-    // A machine the world's pads do not go to takes the carrier, as before.
-    let PeerMachine::Proven { machine, .. } = recipient else {
-        return carrier_window_pads(vault, window, payload, context);
+    let (machine, to) = match seal_recipient(vault, window, world, recipient) {
+        Ok(seal) => seal,
+        Err(SealFallback::Carrier) => return carrier_window_pads(vault, window, payload, context),
+        Err(SealFallback::Keep(why)) => return keep(vault, window, payload, context, why),
     };
-    let to = match vault
-        .store
-        .env
-        .read_txn()
-        .map_err(crate::Error::from)
-        .and_then(|txn| world_pad_recipients_in_txn(vault, &txn, world))
-    {
-        Ok(mut all) => {
-            let recipient = WrapRecipient::Machine(machine);
-            let Some(public) = all.remove(&recipient) else {
-                return carrier_window_pads(vault, window, payload, context);
-            };
-            PadRecipients::from([(recipient, public)])
-        }
-        Err(error) => {
-            tracing::warn!(%window, kind = ?error.kind(), "window pad recipients not read");
-            return carrier_window_pads(vault, window, payload, context);
-        }
-    };
-    let Some(namespace) = vault.store.world_pad_namespace() else {
-        return keep(vault, window, payload, context, "no current custody here");
-    };
-    let (bytes, required) = match project_window_pad_refs(window, payload, context, &namespace) {
-        Ok(WindowPadProjection::NothingToProject) => {
+    let namespace = vault.store.world_pad_namespace();
+    let (bytes, items) = match project_window_shared(window, payload, context, namespace) {
+        SharedPadProjection::PadFree => {
             return PreparedWindowPads::bare(WindowPadForm::PadFree, payload);
         }
-        Ok(WindowPadProjection::Projected {
-            bytes,
-            required_refs,
-        }) => (bytes, required_refs),
-        Err(error) => {
-            tracing::warn!(%window, kind = ?error.kind(), "window blob not projected");
-            return keep(vault, window, payload, context, "projection fault");
-        }
+        SharedPadProjection::Projected { bytes, items } => (bytes, items),
+        SharedPadProjection::Keep(why) => return keep(vault, window, payload, context, why),
     };
-    let items: BTreeSet<[u8; 40]> = required
-        .iter()
-        .map(|reference| reference.key.envelope_key_id())
-        .collect();
-    let exported = vault
-        .store
-        .env
-        .read_txn()
-        .map_err(crate::Error::from)
-        .and_then(|txn| {
-            let row_pad = |item: &[u8; 40]| row_pad_in_txn(&vault.store, &txn, item);
-            vault
-                .store
-                .export_current_world_pads(&txn, world, &items, &row_pad, &to)
-        });
-    let sealed = match exported {
-        Ok(Some(exported)) => {
-            // Every pad the blob owes goes live; one retired at the source
-            // or held by no source here keeps the carrier.
-            let live: BTreeSet<[u8; 40]> = exported
-                .sealed
-                .required_keys
-                .iter()
-                .map(crate::world_keys::WorldKeyId::envelope_key_id)
-                .filter(|item| !exported.retired.contains(item))
-                .collect();
-            if !items.is_subset(&live) {
-                return keep(
-                    vault,
-                    window,
-                    payload,
-                    context,
-                    "a pad the blob owes is not live here",
-                );
-            }
-            exported.sealed
-        }
-        Ok(None) => {
-            return keep(
-                vault,
-                window,
-                payload,
-                context,
-                "nothing to seal the blob's pads under",
-            );
-        }
-        Err(error) => {
-            tracing::warn!(%window, kind = ?error.kind(), "window pads not gathered");
-            return keep(vault, window, payload, context, "custody fault");
-        }
-    };
-    PreparedWindowPads {
-        form: WindowPadForm::Sealed,
-        payload: bytes,
-        refs: items.into_iter().collect(),
-        sidecar: Some(WindowPadSidecar {
-            recipient: *machine.as_bytes(),
-            source_position: sealed.position.to_bytes(),
-            digest: sealed.digest,
-            capsule: sealed.bytes,
-        }),
+    match seal_projected_to(vault, window, world, bytes, &items, machine, &to) {
+        Ok(prepared) => prepared,
+        Err(SealFallback::Carrier) => carrier_window_pads(vault, window, payload, context),
+        Err(SealFallback::Keep(why)) => keep(vault, window, payload, context, why),
     }
 }
 

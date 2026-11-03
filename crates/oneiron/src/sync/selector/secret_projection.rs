@@ -402,6 +402,42 @@ impl SyncSecretProjection {
         *hasher.finalize().as_bytes()
     }
 
+    /// One fingerprint over this whole pass: every copy's stamp, every
+    /// unread blob, and every source/copy/body binding a release reads.
+    /// Equal only for passes that mask a blob the same way, so a release
+    /// cache may share masked bytes under it (FIX 10477); a mark landing
+    /// between sockets changes it and the later socket recomputes.
+    pub(crate) fn pass_fingerprint(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("oneiron.repo-sync-projection.pass.v1");
+        hasher.update(&Self::SCHEMA.to_be_bytes());
+        for (hash, blob) in &self.blobs {
+            hasher.update(hash);
+            hasher.update(blob.id.source.as_bytes());
+            hasher.update(blob.id.copy.as_bytes());
+            hasher.update(&blob.copy_hash);
+            hasher.update(&blob.stamp);
+            hasher.update(&[blob.stored.is_some() as u8]);
+        }
+        for (hash, id) in &self.unread {
+            hasher.update(hash);
+            hasher.update(id.source.as_bytes());
+            hasher.update(id.copy.as_bytes());
+        }
+        for (source, hash) in &self.sources {
+            hasher.update(source.as_bytes());
+            hasher.update(hash);
+        }
+        for (copy, source) in &self.copies {
+            hasher.update(copy.as_bytes());
+            hasher.update(source.as_bytes());
+        }
+        for (copy_hash, hash) in &self.copy_bodies {
+            hasher.update(copy_hash);
+            hasher.update(hash);
+        }
+        *hasher.finalize().as_bytes()
+    }
+
     /// The stamp of the marked blob `hash`'s copy; [`UNREAD_STAMP`] for an
     /// unread one.
     fn stamp_of(&self, hash: &[u8; 32]) -> Option<[u8; 32]> {
