@@ -2,7 +2,7 @@
 use super::actor_erase::{ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginProofErase};
 use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
