@@ -23,6 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+pub mod speculative_limits;
 pub mod wake_observation;
 pub mod affect;
 mod answer_boundary;

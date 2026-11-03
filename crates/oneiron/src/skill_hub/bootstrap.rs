@@ -244,9 +244,9 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
         ));
     }
     // The reviewer's typed T1 seeds ride beside its recipe (FIX 8075).
-    if name == crate::dreamer_runner::maintenance::agent_health::AGENT_HEALTH_REVIEW_SKILL_ID {
+    if name == crate::skill::health_review::AGENT_HEALTH_REVIEW_SKILL_ID {
         files.push(HubFile::new(
-            crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE,
+            crate::skill::health_review::REVIEWER_POLICY_FILE,
             include_bytes!("../../../../skills/agent-health-review/policy.json").as_slice(),
         ));
     }

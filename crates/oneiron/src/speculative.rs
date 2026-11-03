@@ -52,10 +52,8 @@ use crate::work_line::{LinePermit, TASK_WORK_WAIT, WaitTimedOut, WorkLine};
 
 pub(crate) mod scoped;
 
-/// Max speculative fires per utterance (E7: cap ~4 fires/utterance).
-pub const SPECULATIVE_FIRE_CAP_DEFAULT: u8 = 4;
-/// Reduced per-fire result limit (E7 "fast lane, reduced limit").
-pub const SPECULATIVE_FIRE_LIMIT_DEFAULT: usize = 8;
+pub use crate::memory::speculative_limits::SPECULATIVE_FIRE_CAP_DEFAULT;
+pub use crate::memory::speculative_limits::SPECULATIVE_FIRE_LIMIT_DEFAULT;
 
 pub struct SpeculativeSessionConfig {
     /// Max speculative fires per utterance (host-tunable, E7).

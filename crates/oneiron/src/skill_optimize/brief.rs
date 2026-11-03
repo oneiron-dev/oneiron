@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
+use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -530,7 +530,7 @@ fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>
             .into_iter()
             .filter(|receipt| {
                 receipt.starts_with(
-                    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW_RECEIPT_PREFIX,
+                    crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX,
                 ) && dev.contains(receipt)
             })
             .collect())
