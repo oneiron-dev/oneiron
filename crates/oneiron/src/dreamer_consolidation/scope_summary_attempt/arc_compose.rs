@@ -246,6 +246,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.deadline.expired() {
             return Ok(charges.checkpoint());
         }
+        // The text lands in durable names, never its call's labels (FIX 10359).
+        let lines = super::durable_labels::durable_arc(lines, view);
         let composed = ComposedSummary {
             text: &lines.text,
             keep: &lines.keep,

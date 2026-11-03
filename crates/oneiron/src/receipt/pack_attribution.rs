@@ -240,7 +240,10 @@ pub(crate) fn erase_attempt_attribution_scope_in_txn(
         .collect::<Result<Vec<_>>>()?;
     let mut scope = None;
     for (key, value) in rows {
-        if !value.windows(named.len()).any(|window| window == named.as_bytes()) {
+        if !value
+            .windows(named.len())
+            .any(|window| window == named.as_bytes())
+        {
             continue;
         }
         let Ok(key) = <[u8; 16]>::try_from(key.as_slice()) else {
