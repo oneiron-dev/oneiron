@@ -3,7 +3,8 @@
 use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
 use crate::error::{Error, Result};
-use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
     RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,

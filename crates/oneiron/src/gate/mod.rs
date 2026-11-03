@@ -25,6 +25,7 @@ mod decode;
 pub(crate) mod experiment_selection_policy;
 pub(crate) mod failure_signal_policy;
 mod default_manifest;
+pub(crate) mod team_review;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.

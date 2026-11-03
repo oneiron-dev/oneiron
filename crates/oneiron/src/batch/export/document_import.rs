@@ -581,7 +581,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
-    known: crate::code_run::StagedSinks,
+    known: crate::store::result_manifest::StagedSinks,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
     // The values custody knows, read in this writer and kept no longer
@@ -651,7 +651,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             if !came_back {
                 continue;
             }
-            let mut receipt: crate::code_run::ReaderFoldReceipt =
+            let mut receipt: crate::store::reader_fold_receipt::ReaderFoldReceipt =
                 serde_json::from_value(fold.receipt.clone())
                     .map_err(|_| invalid("run fold receipt"))?;
             if receipt.folded.owner != run_id || receipt.folded.path != fold.path {

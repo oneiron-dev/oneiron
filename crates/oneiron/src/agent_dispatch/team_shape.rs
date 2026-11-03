@@ -17,8 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::team::TeamPattern;
 
-/// Hub name of the seeded team-shape workflow skill.
-pub const TEAM_SHAPE_SKILL_NAME: &str = "team-shape";
+pub use crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME;
 
 /// The installed team-shape skill: the bootstrap-derived vault skill. A
 /// project's fork is found from it by lineage.

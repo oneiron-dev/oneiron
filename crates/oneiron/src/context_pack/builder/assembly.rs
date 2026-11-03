@@ -6,7 +6,8 @@ use std::time::Instant;
 use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::{RetrievalWithTelemetry, WorldScope};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::pipeline::WorldScope;
 use crate::serialize::{SerializeConfig, serialize_pack_with_telemetry};
 
 use super::super::edge_walk::{EdgeWalkOptions, EdgeWalkResult, load_entity_edges, walk_edges};

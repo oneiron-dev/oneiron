@@ -18,6 +18,7 @@ pub mod identity_pair;
 pub mod identity_reputation;
 pub mod claim_body;
 pub mod claim_predicate;
+pub mod world_access_predicates;
 pub mod skill_record;
 pub mod skill_source;
 pub mod task_body;

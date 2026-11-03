@@ -99,6 +99,7 @@ pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
 mod write_target;
+pub mod world_access;
 
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;

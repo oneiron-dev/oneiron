@@ -13,7 +13,7 @@ use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::disclosure::{DisclosureContext, DisclosureMode};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::StoreRead;
 

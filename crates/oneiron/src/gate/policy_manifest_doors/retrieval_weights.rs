@@ -32,7 +32,7 @@ impl RetrievalWeights {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
-        crate::pipeline::AffectRetrievalPolicy {
+        crate::config::retrieval_affect::AffectRetrievalPolicy {
             emotion_weight: self.affect,
             arousal_stretch: self.arousal,
             ..Default::default()

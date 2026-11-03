@@ -130,7 +130,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Replaces the vault's affect retrieval policy for this pack (OF-423).
-    pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
+    pub fn affect_policy(mut self, policy: crate::config::retrieval_affect::AffectRetrievalPolicy) -> Self {
         self.pipeline = self.pipeline.affect_policy(policy);
         self
     }

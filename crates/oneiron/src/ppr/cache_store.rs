@@ -7,7 +7,8 @@ use heed::{RoTxn, RwTxn};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{ManifestDbs, Rows, Store};
 
