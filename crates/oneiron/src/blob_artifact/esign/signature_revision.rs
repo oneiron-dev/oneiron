@@ -23,6 +23,9 @@ mod tests;
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 const BYTERANGE_DIGITS: usize = 20;
+/// A classic xref entry carries a ten-digit offset. No signature revision may
+/// address bytes past this format bound, however large the organ's CMS claim is.
+const MAX_CLASSIC_XREF_OFFSET: u64 = 9_999_999_999;
 /// The row bounding what one stream of the prepared PDF decodes to while
 /// the host reads it here: the host's per-stream codec bound (Rule 5, FIX
 /// 6287), past which the revisions are refused with this row named. The
@@ -103,9 +106,14 @@ impl EsignSealInput {
         if needed <= largest {
             return Ok(false);
         }
-        let capacity = largest
-            .saturating_mul(2)
-            .max(needed.checked_next_power_of_two().unwrap_or(u64::MAX));
+        let doubled = largest.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+        let next = needed
+            .checked_next_power_of_two()
+            .ok_or(PdfPreparationError::Limit)?;
+        let capacity = doubled.max(next);
+        if capacity > MAX_CLASSIC_XREF_OFFSET / 2 {
+            return Err(PdfPreparationError::Limit);
+        }
         let capacity = usize::try_from(capacity).map_err(|_| PdfPreparationError::Limit)?;
         let codec = usize::try_from(codec_bytes).unwrap_or(usize::MAX);
         let (base, _) = Base::read(&self.pdf, codec)?;
@@ -285,7 +293,14 @@ impl Base {
             .ok_or(PdfPreparationError::Limit)?;
         let sig_num = next_obj(&mut next)?;
         let field_num = next_obj(&mut next)?;
-        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity);
+        let hole_digits = capacity.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+        let reserve = hole_digits
+            .checked_add(4096)
+            .ok_or(PdfPreparationError::Limit)?;
+        if u64::try_from(reserve).unwrap_or(u64::MAX) > MAX_CLASSIC_XREF_OFFSET {
+            return Err(PdfPreparationError::Limit);
+        }
+        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity)?;
         let mut field = b"<< /FT /Sig /T ".to_vec();
         write_literal_string(&field_name(operation_id), &mut field);
         field.extend_from_slice(
@@ -308,7 +323,9 @@ impl Base {
         ));
         self.register_field(&mut objects, &mut next, field_num)?;
 
-        let mut out = Vec::with_capacity(capacity * 2 + 4096);
+        let mut out = Vec::new();
+        out.try_reserve_exact(reserve)
+            .map_err(|_| PdfPreparationError::Limit)?;
         if !self.pdf_ends_with_eol {
             out.push(b'\n');
         }
@@ -332,9 +349,20 @@ impl Base {
         let xref_offset = (base_len + out.len()) as u64;
         self.xref_table(&mut written, u64::from(max_used) + 1, &mut out);
         out.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF").as_bytes());
-        let gt = lt + 1 + capacity * 2;
+        let gt = lt
+            .checked_add(1)
+            .and_then(|value| value.checked_add(hole_digits))
+            .ok_or(PdfPreparationError::Limit)?;
+        let after_hole = gt.checked_add(1).ok_or(PdfPreparationError::Limit)?;
         let total = (base_len + out.len()) as u64;
-        let byte_range = [0, lt as u64, gt as u64 + 1, total - (gt as u64 + 1)];
+        let byte_range = [
+            0,
+            lt as u64,
+            after_hole as u64,
+            total
+                .checked_sub(after_hole as u64)
+                .ok_or(PdfPreparationError::Limit)?,
+        ];
         for (i, value) in byte_range[1..].iter().enumerate() {
             let at = br_at + i * (BYTERANGE_DIGITS + 1);
             let digits = format!("{value:0BYTERANGE_DIGITS$}");
@@ -420,8 +448,12 @@ fn next_obj(next: &mut u32) -> Result<u32> {
 
 /// The signature dictionary with a zero ByteRange and a `capacity`-byte
 /// hole, and the offsets of the ByteRange digits and the hole's `<`.
-fn sig_dict_body(date: &str, capacity: usize) -> (Vec<u8>, usize, usize) {
-    let mut body = Vec::with_capacity(capacity * 2 + 256);
+fn sig_dict_body(date: &str, capacity: usize) -> Result<(Vec<u8>, usize, usize)> {
+    let digits = capacity.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+    let reserve = digits.checked_add(256).ok_or(PdfPreparationError::Limit)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(reserve)
+        .map_err(|_| PdfPreparationError::Limit)?;
     body.extend_from_slice(b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached");
     body.extend_from_slice(b" /M ");
     write_literal_string(date, &mut body);
@@ -430,9 +462,9 @@ fn sig_dict_body(date: &str, capacity: usize) -> (Vec<u8>, usize, usize) {
     body.extend_from_slice(b"00000000000000000000 00000000000000000000 00000000000000000000");
     body.extend_from_slice(b"] /Contents <");
     let lt_rel = body.len() - 1;
-    body.extend(std::iter::repeat_n(b'0', capacity * 2));
+    body.extend(std::iter::repeat_n(b'0', digits));
     body.extend_from_slice(b"> >>");
-    (body, br_rel, lt_rel)
+    Ok((body, br_rel, lt_rel))
 }
 
 /// The field name the seal derives from its operation.
