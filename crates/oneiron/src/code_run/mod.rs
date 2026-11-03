@@ -282,3 +282,12 @@ use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, EdgeKind, EntityId,
     Error, Result, TimeRange, Vault,
 };
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::storage::code_run_continuation_accepts_masked;
+pub(crate) use self::storage::code_run_reader_job_accepts_masked;
+pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
+pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
+pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
