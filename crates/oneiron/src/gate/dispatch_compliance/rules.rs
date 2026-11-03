@@ -10,7 +10,8 @@ use super::consent::ConsentRequirement;
 pub const CAMPAIGN_COMPLIANCE_PACK_ID: &str = "crm.compliance.v1";
 
 /// The bootstrap seed. It is the active pack only while the vault holds none.
-pub const CAMPAIGN_COMPLIANCE_SEED_JSON: &str = include_str!("../../campaign/compliance/seed_v1.json");
+pub const CAMPAIGN_COMPLIANCE_SEED_JSON: &str =
+    include_str!("../../campaign/compliance/seed_v1.json");
 
 /// Predicate of the CA-owned dispatch-evidence claim, written on the PERSON.
 ///

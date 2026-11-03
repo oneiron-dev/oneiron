@@ -14,10 +14,8 @@
 use super::contribution::{ContributionCheckRecord, contributed};
 use super::contribution_targets::ContributionTarget;
 use super::late_credit::{CREDIT_RECEIPT, receipt_id};
+use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
 use crate::store::setting_seed::CREDIT_DECAY;
-use crate::learning_setting::{
-    SettingCheck, global_setting_subject, record_setting_check_in_txn,
-};
 use crate::{Result, Vault};
 
 /// How a matched ancestor check observes `credit_decay`.

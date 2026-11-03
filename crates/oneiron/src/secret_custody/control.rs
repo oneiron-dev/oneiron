@@ -145,7 +145,6 @@ pub use crate::secret_record::CustodyPlan;
 
 pub use crate::secret_record::CustodyKeptHere;
 
-
 /// Whether the owner's other machines hold a change yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CustodyDelivery {
