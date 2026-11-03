@@ -231,7 +231,7 @@ impl CallAttemptWitness {
 /// it ran (agent-mind §4.3): each input's name and the version it had then.
 /// A run whose inputs were not captured has none, so its action digest is
 /// `None`: unknown inputs never read as equal ones.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionInputs(BTreeMap<String, String>);
 
 /// The domain an action digest is taken in, so it never equals another

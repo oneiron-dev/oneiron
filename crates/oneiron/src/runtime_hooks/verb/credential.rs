@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use crate::authority::InvocationSlipBinding;
 use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
-use crate::receipt::{CallOutcome, CallReceiptInput, CallTransport};
+use crate::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
@@ -510,6 +510,7 @@ pub(super) struct RefusalReceipt {
     actor_class: String,
     credential_ref: Option<String>,
     request_digest: String,
+    inputs: Option<ActionInputs>,
 }
 
 impl RefusalReceipt {
@@ -519,6 +520,7 @@ impl RefusalReceipt {
         actor: EntityId,
         class: EdgeActorClass,
         args: &Value,
+        inputs: Option<ActionInputs>,
     ) -> Self {
         Self {
             transport: match reference.door {
@@ -533,6 +535,7 @@ impl RefusalReceipt {
                 VerbAskCredentialSource::AttestedOwner { .. } => None,
             },
             request_digest: crate::receipt::call_json_digest(args),
+            inputs,
         }
     }
 
@@ -550,9 +553,9 @@ impl RefusalReceipt {
             },
             request_digest: self.request_digest,
             result_digest: Some(crate::receipt::call_refusal_digest(code, message)),
-            // What the parked call read was not kept, and the drain cannot
-            // recover it (OF-568).
-            inputs: None,
+            // The input versions captured when the call parked (OF-568);
+            // `None` when they were not captured.
+            inputs: self.inputs,
             // The saved call kept no live-run witness (OF-568 L4).
             attempt: None,
             served: Vec::new(),
