@@ -89,10 +89,7 @@ impl Vault {
             self.kept_kit_piece(KitPiecePair::Current(kind)),
             Ok(Some(piece)) if piece.kit_id() == kit
         ) || (kind == KitSecretKind::RecoveryRoot
-            && matches!(
-                self.kept_kit_piece(KitPiecePair::Pending(kit)),
-                Ok(Some(_))
-            ))
+            && matches!(self.kept_kit_piece(KitPiecePair::Pending(kit)), Ok(Some(_))))
     }
 
     /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over
