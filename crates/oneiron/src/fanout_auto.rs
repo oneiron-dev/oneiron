@@ -297,9 +297,9 @@ pub struct FanoutDecisions<'a> {
 }
 
 /// One fan-out ask's verdict and, when the ladder decided it, the receipt
-/// the ladder returned with it (FIX 333), carried to the stored run. A
-/// standing-row short-circuit, an abstention or a failed run has no receipt,
-/// and none is made up.
+/// the ladder returned with it (FIX 333), carried to the stored run. An
+/// abstention keeps its receipt: the ladder decided it. A standing-row
+/// short-circuit or a failed run has none, and none is made up.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FanoutAskDecision {
     pub(crate) verdict: FanoutAskVerdict,
