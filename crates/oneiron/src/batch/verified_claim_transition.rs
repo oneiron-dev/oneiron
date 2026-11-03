@@ -330,6 +330,53 @@ impl VerifiedClaimTransition {
         Self::after_validation(store, txn, op)
     }
 
+    /// The owner's not-a-secret ruling on a key found in a claim puts the
+    /// value back where the mask left its handle (FIX 11882). The found-key
+    /// door holds the owner proof and the Gate record; we check only the
+    /// exact restore shape: the next body is the stored one with `value`
+    /// back in its value, evidence and scope (the parts the mask reads),
+    /// and nothing else changed. A claim whose body its MACHINE signed
+    /// history owns cannot be restored here: its proof would fail over the
+    /// restored body, and no door re-signs a stored claim.
+    pub(crate) fn after_owner_restore(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+        handle: &str,
+        value: &[u8],
+    ) -> Result<Self> {
+        let BatchOp::Put { id, data, .. } = op else {
+            return Err(Error::InvalidClaimBody("owner restore requires claim put"));
+        };
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        if crate::authority::machine_claim_needs_history(store, txn, &prior)? {
+            return Err(Error::InvalidClaimBody(
+                "a MACHINE claim's body is owned by its signed history",
+            ));
+        }
+        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let text_form = format!("{}{handle}]", crate::secret_custody::HANDLE_TEXT_OPEN);
+        let mut expected = prior;
+        let mut changed = false;
+        for part in [
+            Some(&mut expected.value),
+            expected.evidence.as_mut(),
+            expected.scope.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            changed |= crate::secret_custody::unmask_value(part, handle, &text_form, value)
+                .map_err(|_| Error::InvalidClaimBody("owner restore body changed"))?;
+        }
+        if !changed || expected != next {
+            return Err(Error::InvalidClaimBody("owner restore body changed"));
+        }
+        Self::after_validation(store, txn, op)
+    }
+
     /// Same-transaction freshness and exact target, bytes and metadata. An
     /// unrelated Put cannot borrow a proof from a previously checked row.
     pub(crate) fn matches_put(
