@@ -13,7 +13,7 @@ use super::*;
 /// leaves it held until the producer ends, and a duplicate gets the reply
 /// within its own wait ([`claim_door_invocation`]).
 pub(crate) fn finish_streamed_claim<T: Send + 'static>(
-    claim: InvocationClaim,
+    claim: DoorInvocationClaim,
     ended: tokio::sync::oneshot::Receiver<T>,
     reply: impl FnOnce(Option<&T>) -> Response + Send + 'static,
 ) -> tokio::sync::oneshot::Receiver<T> {
