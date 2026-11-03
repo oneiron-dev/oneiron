@@ -133,7 +133,7 @@ pub struct QuoteSpan {
 }
 
 /// Receipt for one witnessed turn.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessReceipt {
     /// Turn short ref.
     pub turn_short_id: String,
@@ -218,7 +218,7 @@ pub struct ClaimInput {
 }
 
 /// Receipt for one committed claim.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct CommitReceipt {
     /// Short ref of the written claim.
     pub claim_short_id: String,
@@ -490,7 +490,7 @@ pub struct StructuralPutInput {
 }
 
 /// Receipt for one structural write.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityRefReceipt {
     /// Short ref, falling back to hex.
     pub entity_ref: String,
