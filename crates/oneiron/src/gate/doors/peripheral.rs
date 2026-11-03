@@ -16,7 +16,8 @@ use crate::gate::resolution::{
     PolicyManifestResolution, check_claim_source_trust, hash_bytes, hash_opt_str, hash_str,
 };
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::llm::{AUTO_CHECK_VALUE_PREVIEW_BYTES, BoundedAutoChecker};
+use crate::llm::{ BoundedAutoChecker};
+use crate::claim_check::AUTO_CHECK_VALUE_PREVIEW_BYTES;
 use crate::store::Store;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use rmpv::Value;

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::forks::{ENTITY_DOC_FORK_SNAPSHOT, read_bundle};
 use super::{EntityDoc, ForkRecord, invalid, storage};
 use crate::error::Result;
-use crate::llm::{LlmUsage, ModelId, ReasoningEffort};
+use oneiron_model::llm::{LlmUsage, ModelId, ReasoningEffort};
 use crate::{EntityId, Vault};
 
 /// Skill-authored complexity, not a heuristic derived from fork count or size.

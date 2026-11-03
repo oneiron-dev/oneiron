@@ -31,10 +31,12 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::lens::RecordRef;
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
     TypedDecision,
 };
 use crate::memory::{Memory, resolve_image_ref};
+use crate::model_decision::{
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
+};
 use oneiron_contracts::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;

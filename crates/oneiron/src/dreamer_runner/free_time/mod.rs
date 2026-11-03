@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
-use crate::llm::CallPurpose;
+use oneiron_model::llm::CallPurpose;
 use crate::side_table::{self, Named, SideTable};
 
 pub use self::cycle::{

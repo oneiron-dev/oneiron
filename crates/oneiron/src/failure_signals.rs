@@ -43,7 +43,7 @@ pub use witness::Tier1Observation;
 use crate::config::failure_signals::FailureSignalConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{LlmRole, ModelId};
+use oneiron_model::llm::{LlmRole, ModelId};
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::LiveEntityRow;
 use witness::{WitnessEntry, WitnessKind};

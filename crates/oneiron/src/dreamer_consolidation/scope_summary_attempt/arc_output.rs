@@ -14,7 +14,7 @@
 use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::output::reply_text;
 use crate::EntityId;
-use crate::llm::LlmResponse;
+use oneiron_model::llm::LlmResponse;
 use crate::scope_summary::{SummaryLineSources, SummaryLineSpan};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};

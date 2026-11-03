@@ -38,7 +38,7 @@ use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLease;
+use oneiron_model::llm::BudgetLease;
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory,
     MemoryError, MemoryResult,

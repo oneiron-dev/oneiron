@@ -4,7 +4,7 @@ use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_wake::{WakeCancellation, WakePassDeadline};
-use crate::llm::{Scope, ScopeResource};
+use oneiron_model::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};

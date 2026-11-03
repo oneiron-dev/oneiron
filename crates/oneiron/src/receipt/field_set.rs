@@ -496,7 +496,7 @@ impl ReceiptRecord {
 
     /// The OF-578 functional role the attempt's executor ran as, read from the
     /// recorded field alone. `None` when no role ran the attempt.
-    pub fn executor_role(&self) -> Result<Option<crate::llm::manifest::ModelRole>> {
+    pub fn executor_role(&self) -> Result<Option<crate::model_binding::ModelRole>> {
         self.fields
             .get(FIELD_EXECUTOR_ROLE)
             .map(|token| {

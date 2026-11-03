@@ -15,6 +15,7 @@ pub mod error;
 pub mod extraction_eval;
 pub mod fusion;
 pub mod limits;
+pub mod live_rows;
 pub mod msgpack_shape;
 pub mod panic_report;
 pub mod posterior;

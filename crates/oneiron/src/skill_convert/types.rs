@@ -3,7 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::CallPurpose;
+use oneiron_model::llm::CallPurpose;
 use crate::skill_hub::HubFile;
 
 /// [`CallPurpose::Other`] name for the refinement tier, so conversion is

@@ -27,11 +27,13 @@ use crate::dreamer_wake::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, DurableStepContext, DurableStepError, HostInferenceContext, LlmBackend, ModelId,
-    StepOutcome, call_as_step_checked,
+use crate::model_binding::ModelRole;
+use crate::llm::{ call_as_step_checked,
 };
+use crate::inference_context::HostInferenceContext;
+use oneiron_model::llm::{BudgetGuard, LlmBackend, ModelId};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};

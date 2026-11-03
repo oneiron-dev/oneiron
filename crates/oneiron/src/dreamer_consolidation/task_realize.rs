@@ -29,13 +29,18 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
-use crate::llm::manifest::ModelRole;
+use crate::model_binding::ModelRole;
 use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
     call_as_step_checked,
 };
+use crate::inference_context::HostInferenceContext;
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
+    TierPrecedence,
+};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::self_heal::audit::AttemptConfession;
 use crate::task_verb::QueueTaskBrief;
 use crate::{Vault, WriteActor};
@@ -148,7 +153,7 @@ pub async fn run_task_realize(
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // The TASK's spec and brief leave the vault as an extraction's
             // records do, so they pass the same egress gate.
             purpose: CallPurpose::Extraction,

@@ -7,7 +7,8 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::{LlmResponse, LlmUsage, Vault};
+use crate::{ Vault};
+use oneiron_model::llm::{LlmResponse, LlmUsage};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
 /// unbilled memo (for example, after a trap refunded its reservation) still
@@ -195,7 +196,7 @@ pub(super) fn reply_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            crate::llm::ContentPart::Text { text } => Some(text.as_str()),
+            oneiron_model::llm::ContentPart::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect()

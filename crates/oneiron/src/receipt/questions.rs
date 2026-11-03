@@ -17,10 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
-    OutcomeLabel, QuestionCriteria, QuestionDefinitionInput,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria, QuestionDefinitionInput,
 };
-use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
+use crate::model_decision::questions::{CalibrationPair, OutcomeLabel};
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::{DecisionQuestion, DecisionRung};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The shipped seed of the vault's question call budget
@@ -358,7 +359,7 @@ pub struct QuestionBackfillRequest {
     /// sources its answer is shown, in place of the unit's neighbours
     /// (FIX 2383). Absent or empty: the default neighbourhood recipe.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joins: Vec<crate::llm::decision::questions::GraphQuestionInput>,
+    pub joins: Vec<crate::model_decision::questions::GraphQuestionInput>,
 }
 
 /// `vault.questions.read`'s input: one of the caller's standing questions,

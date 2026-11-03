@@ -31,7 +31,7 @@ use std::fmt;
 
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::LlmRequest;
+use oneiron_model::llm::LlmRequest;
 use crate::llm::decision::DecisionWireLabels;
 
 mod decision_rungs;

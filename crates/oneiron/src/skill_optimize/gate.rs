@@ -120,7 +120,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::CallPurpose;
+use oneiron_model::llm::CallPurpose;
 use crate::receipt::{
     FIELD_SKILL_EDIT_ACCEPTED_VERDICT, FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION,
     FIELD_SKILL_EDIT_GOAL_AXES, FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
