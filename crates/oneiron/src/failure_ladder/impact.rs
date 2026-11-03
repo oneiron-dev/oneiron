@@ -14,22 +14,22 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::attempt_queue::maintenance_predicate::COACH_DIAGNOSTIC_PROPOSAL_PREDICATE;
+use crate::attempt_queue::maintenance_predicate::COACH_HEAL_PROPOSAL_PREDICATE;
+use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_PROPOSAL_PREDICATE;
+use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_RESOLUTION_PREDICATE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
 use crate::code_run::blocked::read_blocked_receipt;
-use crate::dreamer_runner::maintenance::coach_diagnostic::{
-    COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, COACH_ISSUE_RESOLUTION_PREDICATE, ProducerTarget,
-};
-use crate::dreamer_runner::maintenance::coach_heal::{
-    COACH_HEAL_PROPOSAL_PREDICATE, COACH_ISSUE_PROPOSAL_PREDICATE,
-};
+use crate::dreamer_runner::maintenance::coach_diagnostic::ProducerTarget;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::edge::EdgeKind;
 use crate::entity_id::bytes_to_hex_lower;
+use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::self_heal::{blocked_reports, issue_evidence, issue_work};
-use crate::task_verb::{TaskTerminalDisposition, task_impact_facts_in_txn};
+use crate::task_verb::task_impact_facts_in_txn;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::healer_case_in_txn;
