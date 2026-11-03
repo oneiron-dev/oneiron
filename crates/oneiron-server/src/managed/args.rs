@@ -261,6 +261,12 @@ pub struct ManagedArgs {
     pub seal_trust: Option<PathBuf>,
     /// The seal's timestamp authority URL (`--seal-tsa-url`).
     pub seal_tsa: Option<String>,
+    /// Origins whose certificate revocation lists the seal may fetch
+    /// (`--seal-crl-origins`).
+    pub seal_crl_origins: Vec<String>,
+    /// Origins whose OCSP responders the seal may query
+    /// (`--seal-ocsp-origins`).
+    pub seal_ocsp_origins: Vec<String>,
     /// The signing page seal evidence names (`--seal-signing-url`).
     pub seal_signing_url: Option<String>,
     /// The seal organ's program (`--seal-organ`).

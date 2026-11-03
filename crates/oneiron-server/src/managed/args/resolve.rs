@@ -121,6 +121,12 @@ impl ManagedArgs {
             seal_chain: args.seal_chain_file.clone(),
             seal_trust: args.seal_trust_file.clone(),
             seal_tsa: nonempty(args.seal_tsa_url.as_deref()),
+            seal_crl_origins: crate::config::normalize_list(
+                args.seal_crl_origins.clone().unwrap_or_default(),
+            ),
+            seal_ocsp_origins: crate::config::normalize_list(
+                args.seal_ocsp_origins.clone().unwrap_or_default(),
+            ),
             seal_signing_url: nonempty(args.seal_signing_url.as_deref()),
             seal_organ: args.seal_organ.clone(),
             esign_delivery_outbox: args.esign_delivery_outbox_dir.clone(),
@@ -279,6 +285,8 @@ impl ManagedArgs {
             chain: self.seal_chain.clone(),
             trust: self.seal_trust.clone(),
             tsa: self.seal_tsa.clone(),
+            crl_origins: self.seal_crl_origins.clone(),
+            ocsp_origins: self.seal_ocsp_origins.clone(),
             signing_url: self.seal_signing_url.clone(),
             organ: self.seal_organ.clone(),
             argv: true,

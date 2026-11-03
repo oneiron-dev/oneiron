@@ -125,8 +125,10 @@ pub struct VaultVmConfig {
     /// (`[models]`, `[embedder]` and `[gpu]` among them), as
     /// `--settings-file`, and under `seal/` `key.pem`, `chain.pem`,
     /// `trust.pem` and `organ` as the matching `--seal-*-file` and
-    /// `--seal-organ` flags, the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`, the one-line
+    /// `--seal-organ` flags, the one-line `tsa-url`, `crl-origins`,
+    /// `ocsp-origins` and `signing-url` as `--seal-tsa-url`,
+    /// `--seal-crl-origins`, `--seal-ocsp-origins` and `--seal-signing-url`,
+    /// the one-line
     /// `oauth-resource-indicator` and `kit-bundle-public-urls` (the host's
     /// public https origin, and the comma-separated URLs a kit dials) as the
     /// flags of those names, and each line of `trusted-organ-builds`, an organ
