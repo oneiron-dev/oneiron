@@ -5,7 +5,7 @@
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, count_lf, decode, encoded_len,
-    floor_boundary, invalid_input, lfs_before, refusal, scan_limit, seek_line, view, whole_index,
+    floor_boundary, invalid_input, lfs_before, refusal, scan_limit, seek_line, view, window_index,
 };
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -61,10 +61,14 @@ pub(super) fn slice(
     let text = body.kind() == CodeRunOutputKind::Text;
     let len = body.len();
     let mut scan = Scan::new(bounds.scan_bytes());
-    let index = whole_index(body);
-    let index = index.as_deref();
     let bytes_span = input.bytes.as_deref().map(span);
     let lines_span = input.lines.as_deref().map(span);
+    let index = if text || lines_span.is_some() {
+        window_index(body, &mut scan)?
+    } else {
+        None
+    };
+    let index = index.as_ref();
     // The range asked for, in bytes: by lines, its first line found by the
     // line index or a bounded scan, its end only within one reply of it.
     let (start, end, asked_end, by_lines) = match (bytes_span, lines_span) {

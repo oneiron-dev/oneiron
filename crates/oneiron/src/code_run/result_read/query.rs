@@ -124,9 +124,15 @@ fn parse_path(path: &str) -> std::result::Result<Vec<Step>, String> {
 }
 
 /// The fields of one line of a delimited table (RFC 4180): a quoted field
-/// keeps its delimiters, and `""` in it is one quote. A quoted field that
-/// runs past its line is not joined to the next.
+/// keeps its delimiters, and `""` in it is one quote. Whether the line ends
+/// inside an open quoted field is reported too, so the table reader can join
+/// the physical lines of one logical row.
 pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
+    split_fields_open(line, delimiter).0
+}
+
+/// [`split_fields`] with whether the line ends inside an open quoted field.
+pub(super) fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool) {
     let delimiter = char::from(delimiter);
     let mut fields = Vec::new();
     let mut field = String::new();
@@ -155,7 +161,7 @@ pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
         }
     }
     fields.push(field);
-    fields
+    (fields, quoted)
 }
 
 /// A `where` comparison.
@@ -497,7 +503,7 @@ pub(super) fn query(
         None => Vec::new(),
     };
     let head = body.read(0, SHAPE_HEAD_BYTES)?;
-    let shape = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+    let shape = shape::shape_of(body, head)?;
     let table = match shape["format"].as_str() {
         Some("json") => None,
         Some("jsonl") => Some(None),
@@ -929,6 +935,19 @@ impl<'b> LineReader<'b> {
             self.held.extend_from_slice(&piece);
         }
     }
+
+    /// Bytes already buffered for the current row (FIX 1188).
+    fn partial(&self) -> usize {
+        let from = usize::try_from(self.at.saturating_sub(self.held_at)).unwrap_or(usize::MAX);
+        self.held.len().saturating_sub(from)
+    }
+
+    /// Marks the row ending at `end` completed past the scan bound (FIX 1188).
+    fn completed_to(&mut self, end: u64) {
+        self.at = end;
+        self.held_at = end;
+        self.held.clear();
+    }
 }
 
 /// A line less a carriage return before its newline.
@@ -936,8 +955,66 @@ fn line_text(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\r").unwrap_or(bytes)
 }
 
+/// The logical row starting at `start`, read past the scan bound (FIX 1188):
+/// one physical line for JSON lines, or the quoted-field join for CSV/TSV.
+/// Its bytes, less the final newline, and the offset past it (`len` at EOF).
+/// Reads directly, outside the scan; the caller measures the unit once.
+/// Newline and EOF rules match [`LineReader`]: physical bytes keep a CR,
+/// joined with `\n`, so interior CRLFs stay and only the final terminator
+/// goes (stripped by [`line_text`] at the caller's side).
+fn complete_row(
+    body: &dyn ResultBody,
+    start: u64,
+    delimiter: Option<u8>,
+) -> Result<(Vec<u8>, u64)> {
+    let len = body.len();
+    let mut at = start;
+    let mut logical = Vec::new();
+    let mut first = true;
+    loop {
+        let mut physical = Vec::new();
+        let mut offset = at;
+        let phys_end = loop {
+            if offset >= len {
+                break len;
+            }
+            let piece = body.read(offset, READ_PIECE_BYTES)?;
+            if piece.is_empty() {
+                break len;
+            }
+            if let Some(newline) = piece.iter().position(|byte| *byte == b'\n') {
+                physical.extend_from_slice(&piece[..newline]);
+                break offset + newline as u64 + 1;
+            }
+            offset += piece.len() as u64;
+            physical.extend_from_slice(&piece);
+        };
+        if first {
+            logical = physical;
+            first = false;
+        } else {
+            logical.push(b'\n');
+            logical.extend_from_slice(&physical);
+        }
+        at = phys_end;
+        match delimiter {
+            None => break,
+            Some(d) => {
+                if !split_fields_open(&String::from_utf8_lossy(&logical), d).1 {
+                    break;
+                }
+                if at >= len {
+                    break;
+                }
+            }
+        }
+    }
+    Ok((logical, at))
+}
+
 /// Picks rows out of a line table: JSON lines (`delimiter` `None`) or a
-/// CSV/TSV table whose first line names its columns. A row of JSON lines
+/// CSV/TSV table whose first row names its columns. A quoted CSV/TSV field
+/// may span physical lines, joined into one logical row. A row of JSON lines
 /// that does not parse is passed over and counted.
 fn table_rows(
     body: &dyn ResultBody,
@@ -957,41 +1034,127 @@ fn table_rows(
         Step::Index(index) => Some(*index),
         Step::Key(_) => return picked.finish(reference, true, None),
     };
+    let mut limited = false;
     let mut header = Vec::new();
     let mut body_start = 0;
     if let Some(delimiter) = delimiter {
         let mut lines = LineReader::new(body, 0);
-        match lines.next(&mut scan)? {
+        let header_bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => {
-                header = split_fields(&String::from_utf8_lossy(line_text(&bytes)), delimiter);
+                // A quoted header field may span physical lines: join them into one
+                // logical row through the same scan. A limit cut mid-row reads it
+                // past the bound (FIX 1188).
+                let mut header_bytes = bytes;
+                let mut joined_done = false;
+                while !joined_done
+                    && split_fields_open(&String::from_utf8_lossy(&header_bytes), delimiter).1
+                {
+                    match lines.next(&mut scan)? {
+                        Line::Row(more) => {
+                            header_bytes.push(b'\n');
+                            header_bytes.extend_from_slice(&more);
+                        }
+                        Line::End => break,
+                        Line::Limit => {
+                            let (completed, end) = complete_row(body, 0, Some(delimiter))?;
+                            bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
+                            lines.completed_to(end);
+                            limited = true;
+                            header_bytes = completed;
+                            joined_done = true;
+                        }
+                    }
+                }
+                header_bytes
             }
             Line::End => return picked.finish(reference, true, None),
             Line::Limit => {
-                let mut reply =
-                    picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
-                if let Reply::Output(reply) = &mut reply {
-                    reply["limit"] = scan_limit();
+                if lines.partial() == 0 {
+                    let mut reply =
+                        picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                    if let Reply::Output(reply) = &mut reply {
+                        reply["limit"] = scan_limit();
+                    }
+                    return Ok(reply);
                 }
-                return Ok(reply);
+                let (completed, end) = complete_row(body, 0, Some(delimiter))?;
+                bounds.watch.measure(EngineLimit::CodeResultScanBytes, end);
+                lines.completed_to(end);
+                limited = true;
+                completed
             }
-        }
+        };
+        header = split_fields(
+            &String::from_utf8_lossy(line_text(&header_bytes)),
+            delimiter,
+        );
         body_start = lines.at;
+        if limited {
+            scan = Scan::new(bounds.scan_bytes());
+        }
     }
     let mut row = cursor.row.unwrap_or(0);
     let mut lines = LineReader::new(body, cursor.offset.unwrap_or(body_start).max(body_start));
     let mut skipped = 0_u64;
-    let mut limited = false;
     let (done, next) = loop {
         let start = lines.at;
-        let bytes = match lines.next(&mut scan)? {
+        let mut completed: Option<Vec<u8>> = None;
+        let mut bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => bytes,
             Line::End => break (true, None),
             Line::Limit => {
+                if lines.partial() == 0 {
+                    limited = true;
+                    break (false, Some(json!({"offset": start, "row": row})));
+                }
+                let (logical, end) = complete_row(body, start, delimiter)?;
+                bounds
+                    .watch
+                    .measure(EngineLimit::CodeResultScanBytes, end - start);
+                lines.completed_to(end);
                 limited = true;
-                break (false, Some(json!({"offset": start, "row": row})));
+                completed = Some(logical);
+                Vec::new()
             }
         };
-        let text = line_text(&bytes);
+        // A quoted CSV/TSV field may span physical lines: join them into one
+        // logical row through the same scan. Blank physical lines and CRLFs
+        // inside the quotes are content; only a logical row outside quotes is
+        // skipped, and only its final row terminator loses its CR.
+        // A limit cut mid-row reads it past the bound (FIX 1188); a limit at a
+        // row start stops there. JSON lines stay per line.
+        let mut joined: Option<Vec<u8>> = None;
+        if let Some(logical) = completed {
+            if delimiter.is_some() {
+                joined = Some(logical);
+            } else {
+                bytes = logical;
+            }
+        } else if let Some(d) = delimiter {
+            let mut logical = bytes.clone();
+            let mut joined_done = false;
+            while !joined_done && split_fields_open(&String::from_utf8_lossy(&logical), d).1 {
+                match lines.next(&mut scan)? {
+                    Line::Row(more) => {
+                        logical.push(b'\n');
+                        logical.extend_from_slice(&more);
+                    }
+                    Line::End => break,
+                    Line::Limit => {
+                        let (done_logical, end) = complete_row(body, start, Some(d))?;
+                        bounds
+                            .watch
+                            .measure(EngineLimit::CodeResultScanBytes, end - start);
+                        lines.completed_to(end);
+                        limited = true;
+                        logical = done_logical;
+                        joined_done = true;
+                    }
+                }
+            }
+            joined = Some(logical);
+        }
+        let text = line_text(joined.as_deref().unwrap_or(&bytes));
         if text.iter().all(u8::is_ascii_whitespace) {
             continue;
         }

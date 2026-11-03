@@ -314,8 +314,8 @@
      "path": "src/actor_claims/rows.rs",
      "purpose": "`actor.*` row vocabulary: predicates, bounds, row/note types, and normalization",
      "surface": {
-      "const": 11,
-      "crate-vis": 7,
+      "const": 10,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "struct": 1
@@ -14004,7 +14004,7 @@
      "path": "src/claim/predicate_grammar.rs",
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
-      "const": 15,
+      "const": 13,
       "crate-vis": 6,
       "enum": 1,
       "fn": 2
@@ -21614,7 +21614,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 25
      }
     },
@@ -22145,6 +22145,7 @@
      "path": "src/context_board/stream/mod.rs",
      "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -22172,7 +22173,7 @@
      "path": "src/context_board/stream/publish.rs",
      "purpose": "The own-task producer: committed TASK writes become routed board events",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
      }
@@ -30757,16 +30758,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/edit_distance/attribution/archive.rs",
-     "purpose": "Inert restoration of skill amendment-cost history; never a judged local cost",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "AmendmentAuditFixture",
       "AmendmentAuditRecord"
@@ -30820,7 +30811,7 @@
      "path": "src/edit_distance/attribution/mod.rs",
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 1,
       "re-export": 8
      }
@@ -42635,7 +42626,7 @@
      "path": "src/llm/decision/ladder/slots.rs",
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -83511,7 +83502,7 @@
      "purpose": "This machine's own kit pieces on the vault handle (FIX 1957, 2063)",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -85444,8 +85435,8 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 86,
-     "impl_vault": true,
+     "files": 85,
+     "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
@@ -86454,7 +86445,7 @@
    },
    "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5859,
+   "source_files": 5858,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90400,6 +90391,7 @@
      "path": "src/row.rs",
      "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "struct": 2
      }
@@ -110385,9 +110377,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import.rs",
-     "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
+     "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -110683,7 +110675,7 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },

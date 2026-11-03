@@ -5,7 +5,7 @@
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, decode, floor_boundary, invalid_input,
-    refusal, scan_limit, seek_line, whole_index,
+    refusal, scan_limit, seek_line, window_index,
 };
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -327,8 +327,8 @@ fn by_tokens(
     }
 }
 
-/// Chunks of `count` lines from `from`, found by the line index when the
-/// window is the whole body, else by a bounded scan. A first chunk the scan
+/// Chunks of `count` lines from `from`, found by the window's line index
+/// when there is one, else by a bounded scan. A first chunk the scan
 /// bound ends is cut there and marked `cut`. The cursor of the next page,
 /// and whether the scan bound ended this one.
 fn by_lines(
@@ -342,8 +342,8 @@ fn by_lines(
 ) -> Result<(Option<Value>, bool)> {
     let len = body.len();
     let base = body.base();
-    let index = whole_index(body);
-    let index = index.as_deref();
+    let index = window_index(body, scan)?;
+    let index = index.as_ref();
     let mut at = from;
     loop {
         if at.offset >= len {

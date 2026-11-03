@@ -121,6 +121,17 @@ pub(crate) trait ResultBody {
     fn line_index(&self) -> Option<Vec<u64>>;
     /// Where the window starts in the whole body.
     fn base(&self) -> u64;
+    /// Notes the scan-bound search credit issued for this window: the exact
+    /// emitted (`offset`, `line`, `credit`) (FIX 1189 discount, #4311 P1-B).
+    /// A run's body records it on its storage's vault; any other body keeps
+    /// the no-op default and its resumes take no discount.
+    fn note_search_credit(&self, _offset: u64, _line: u64, _credit: u64) {}
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// this window: the full tuple must match, else the resume takes no
+    /// discount. Only a run's body attests; the default denies.
+    fn valid_search_credit(&self, _offset: u64, _line: u64, _credit: u64) -> bool {
+        false
+    }
 }
 
 /// One result body of a run, read by range through the run's storage.
@@ -168,6 +179,16 @@ impl ResultBody for RunBody<'_, '_> {
 
     fn base(&self) -> u64 {
         self.base
+    }
+
+    fn note_search_credit(&self, offset: u64, line: u64, credit: u64) {
+        self.storage
+            .note_search_credit(self.output, self.base, self.len, offset, line, credit);
+    }
+
+    fn valid_search_credit(&self, offset: u64, line: u64, credit: u64) -> bool {
+        self.storage
+            .valid_search_credit(self.output, self.base, self.len, offset, line, credit)
     }
 }
 
@@ -303,7 +324,7 @@ impl ResultRead {
             let cut = floor_boundary(&head, RANGE_PREVIEW_BYTES);
             card["preview"] = json!(String::from_utf8_lossy(&head[..cut]));
         }
-        card["shape"] = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+        card["shape"] = shape::shape_of(body, head)?;
         if let Some(reason) = unmarked_secret(&json!([card["preview"], card["shape"]])) {
             card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
             card["taint"] = json!({
@@ -683,6 +704,16 @@ impl Scan {
         Self { left: bound }
     }
 
+    /// `bound` plus `credit` already-read bytes the resume re-reads: the
+    /// first `credit` bytes are not charged twice. Reads stay sequential
+    /// from the resume point, so `bound + credit` caps NEW bytes at `bound`
+    /// (FIX 1189).
+    fn with_credit(bound: u64, credit: u64) -> Self {
+        Self {
+            left: bound.saturating_add(credit),
+        }
+    }
+
     /// Up to `len` bytes from `offset`, as many as the bound still allows:
     /// none once it is spent.
     fn read(&mut self, body: &dyn ResultBody, offset: u64, len: usize) -> Result<Vec<u8>> {
@@ -714,14 +745,119 @@ enum Seek {
     Limit(LinePos),
 }
 
-/// The whole body's line index, for a lookup in a window that is the whole
-/// body; a window of it counts its own lines.
-fn whole_index(body: &dyn ResultBody) -> Option<Vec<u64>> {
-    if body.base() == 0 {
-        body.line_index()
-    } else {
-        None
+/// A window's line index, in its own offsets: the window-relative start of
+/// each whole-body 64 KiB block inside it, with the newlines before that
+/// start inside the window. Sorted by offset; a short tail has no later
+/// entries. A missing, short, corrupt, single-block or tight-bound shape is
+/// `None`, and the lookup scans (FIX 1186a).
+struct WindowIndex {
+    blocks: Vec<LinePos>,
+}
+
+/// The window's line index from the whole body's, in the window's own
+/// offsets. A whole window maps its entries directly with no read; a range
+/// re-bases the blocks at and past its start, counting the prefix to the
+/// next block boundary through `scan` (at most one block, charged). Any
+/// missing, short, corrupt or tight-bound shape is `None`: the lookup scans.
+fn window_index(body: &dyn ResultBody, scan: &mut Scan) -> Result<Option<WindowIndex>> {
+    let Some(abs) = body.line_index() else {
+        return Ok(None);
+    };
+    if abs.is_empty() {
+        return Ok(None);
     }
+    let len = body.len();
+    if len == 0 {
+        return Ok(None);
+    }
+    let base = body.base();
+    let Some(end) = base.checked_add(len) else {
+        return Ok(None);
+    };
+    if base == 0 {
+        let mut blocks = Vec::with_capacity(abs.len());
+        let mut prev = 0_u64;
+        for (i, &count) in abs.iter().enumerate() {
+            let Some(start) = (i as u64).checked_mul(LINE_INDEX_BLOCK_BYTES) else {
+                return Ok(None);
+            };
+            if start >= end {
+                break;
+            }
+            if i == 0 && count != 0 {
+                return Ok(None);
+            }
+            if count < prev {
+                return Ok(None);
+            }
+            prev = count;
+            blocks.push(LinePos {
+                offset: start,
+                lfs: count,
+            });
+        }
+        if blocks.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(WindowIndex { blocks }));
+    }
+    let block_bytes = LINE_INDEX_BLOCK_BYTES;
+    let k = base.div_ceil(block_bytes);
+    let Some(next) = k.checked_mul(block_bytes) else {
+        return Ok(None);
+    };
+    let Some(prefix_len) = next.checked_sub(base) else {
+        return Ok(None);
+    };
+    if k >= abs.len() as u64 || prefix_len >= len {
+        return Ok(None);
+    }
+    let k_block = k as usize;
+    let base_lfs = if prefix_len == 0 {
+        abs[k_block]
+    } else {
+        if scan.left <= prefix_len {
+            return Ok(None);
+        }
+        let Ok(take) = usize::try_from(prefix_len) else {
+            return Ok(None);
+        };
+        let prefix = scan.read(body, 0, take)?;
+        if prefix.len() != take {
+            return Ok(None);
+        }
+        let counted = count_lf(&prefix);
+        let Some(base_lfs) = abs[k_block].checked_sub(counted) else {
+            return Ok(None);
+        };
+        base_lfs
+    };
+    let mut blocks = Vec::with_capacity(abs.len().saturating_sub(k_block));
+    for (i, &count) in abs.iter().enumerate().skip(k_block) {
+        let Some(start) = (i as u64).checked_mul(block_bytes) else {
+            return Ok(None);
+        };
+        if start >= end {
+            break;
+        }
+        if count < base_lfs {
+            return Ok(None);
+        }
+        if i > k_block && count < abs[i - 1] {
+            return Ok(None);
+        }
+        let Some(offset) = start.checked_sub(base) else {
+            return Ok(None);
+        };
+        let Some(lfs) = count.checked_sub(base_lfs) else {
+            return Ok(None);
+        };
+        blocks.push(LinePos { offset, lfs });
+    }
+    if blocks.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(WindowIndex { blocks }))
 }
 
 /// Where the line after the `lfs`-th newline starts, looking forward from
@@ -729,7 +865,7 @@ fn whole_index(body: &dyn ResultBody) -> Option<Vec<u64>> {
 /// With the line index it reads only the block the line starts in.
 fn seek_line(
     body: &dyn ResultBody,
-    index: Option<&[u64]>,
+    index: Option<&WindowIndex>,
     from: LinePos,
     lfs: u64,
     scan: &mut Scan,
@@ -740,16 +876,11 @@ fn seek_line(
     let mut at = from;
     if let Some(index) = index {
         // The last block whose count is below `lfs`: that newline is in it.
-        let block = index
-            .partition_point(|count| *count < lfs)
-            .saturating_sub(1);
-        if let Some(&count) = index.get(block) {
-            let start = block as u64 * LINE_INDEX_BLOCK_BYTES;
-            if start > at.offset {
-                at = LinePos {
-                    offset: start,
-                    lfs: count,
-                };
+        let found = index.blocks.partition_point(|pos| pos.lfs < lfs);
+        if found > 0 {
+            let candidate = index.blocks[found - 1];
+            if candidate.offset > at.offset && candidate.lfs >= at.lfs {
+                at = candidate;
             }
         }
     }
@@ -772,18 +903,17 @@ fn seek_line(
 /// one, else counted from the start. `None` past the scan bound.
 fn lfs_before(
     body: &dyn ResultBody,
-    index: Option<&[u64]>,
+    index: Option<&WindowIndex>,
     offset: u64,
     scan: &mut Scan,
 ) -> Result<Option<u64>> {
-    let block = offset / LINE_INDEX_BLOCK_BYTES;
-    let mut at = usize::try_from(block)
-        .ok()
-        .and_then(|block| index.and_then(|index| index.get(block)))
-        .map_or(LinePos::START, |&count| LinePos {
-            offset: block * LINE_INDEX_BLOCK_BYTES,
-            lfs: count,
-        });
+    let mut at = LinePos::START;
+    if let Some(index) = index {
+        let found = index.blocks.partition_point(|pos| pos.offset <= offset);
+        if found > 0 {
+            at = index.blocks[found - 1];
+        }
+    }
     while at.offset < offset {
         let want = usize::try_from(offset - at.offset)
             .unwrap_or(READ_PIECE_BYTES)
