@@ -22534,7 +22534,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 66,
+      "fn": 69,
       "struct": 1
      }
     },
@@ -22754,7 +22754,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 5,
       "struct": 9
