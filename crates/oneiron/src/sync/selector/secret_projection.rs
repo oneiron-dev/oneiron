@@ -414,7 +414,7 @@ impl SyncSecretProjection {
             hasher.update(hash);
             hasher.update(blob.id.source.as_bytes());
             hasher.update(blob.id.copy.as_bytes());
-            hasher.update(&blob.copy_hash);
+            hasher.update(blake3::hash(&blob.copy).as_bytes());
             hasher.update(&blob.stamp);
             hasher.update(&[blob.stored.is_some() as u8]);
         }
