@@ -435,10 +435,16 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
     let mut changed = Vec::new();
     for (proposal, mut record) in PROPOSALS.scan(store, txn)? {
         let members = record.members.len();
+        let asks = record.asks.len();
+        let refusals = record.ask_refused.len();
         record.members.retain(|member| member.artifact != *artifact);
         record.asks.retain(|ask| ask.artifact != *artifact);
         record.ask_refused.retain(|held| held.artifact != *artifact);
-        if record.members.len() == members {
+        if record.header.artifact != *artifact
+            && record.members.len() == members
+            && record.asks.len() == asks
+            && record.ask_refused.len() == refusals
+        {
             continue;
         }
         if record.members.is_empty() {
