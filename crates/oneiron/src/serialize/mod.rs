@@ -5,6 +5,7 @@
 //! before it is written; `json_format`, `toon_format`, `markdown_plaintext_format`
 //! and `yaml_format` are the writers.
 
+pub(crate) mod access_grant_fields;
 mod credential_nulling;
 mod value_json;
 pub(crate) use value_json::msgpack_value_projection;
@@ -14,6 +15,7 @@ pub mod context_entity;
 pub mod empty_context;
 pub mod pack_accounting;
 pub mod pack_format;
+pub mod outbound_grant_fields;
 pub(crate) mod grant_fields;
 mod group_labels;
 mod handles;

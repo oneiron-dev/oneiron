@@ -11,7 +11,7 @@ use super::constants::{
 };
 use crate::EntityId;
 use crate::error::{Error, Result};
-use crate::outbound_chokepoint::FanoutApprovalMode;
+use crate::gate::fanout_mode::FanoutApprovalMode;
 use crate::task_verb::{
     ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, TaskCreateRateLimit,
 };

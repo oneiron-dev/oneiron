@@ -530,7 +530,7 @@ pub(super) fn withdraw_dependent_in_txn(
     let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
     crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
         txn,
-        crate::attempt_queue::EnqueueAttempt {
+        crate::store::attempt_inputs::EnqueueAttempt {
             kind: "derived.regenerate".into(),
             payload,
             dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),

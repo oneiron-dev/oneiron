@@ -176,7 +176,7 @@ pub(crate) fn encode_redaction_audit_receipt(
     custody_retirements: Vec<String>,
     capture_failures: Vec<CaptureFailure>,
     receipt_id: &EntityId,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     let envelope_learned_at = input.hard_purge_complete_at;
     let receipt = RedactionAuditReceipt {
@@ -214,7 +214,7 @@ pub(super) fn sign_redaction_audit_receipt(
     mut receipt: RedactionAuditReceipt,
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
@@ -234,7 +234,7 @@ fn receipt_attestation(
     body_unsigned: &[u8],
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> BTreeMap<String, String> {
     use ed25519_dalek::Signer;
 

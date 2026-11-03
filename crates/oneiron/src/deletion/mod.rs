@@ -79,7 +79,7 @@ pub use crate::ports::{
     DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
     DependentWalkPolicy, DependentWalkProgress,
 };
-pub use sweep_queue::arch0038_carrier_classes;
+pub use sweep_queue::{REDIRECT_CARRIER_CLASS, arch0038_carrier_classes};
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
