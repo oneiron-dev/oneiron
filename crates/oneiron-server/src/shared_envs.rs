@@ -212,13 +212,6 @@ impl SharedEnvRegistry {
             );
             return;
         }
-        let Some(first) = admission() else {
-            tracing::warn!(
-                vault_id = spec.vault_id,
-                "shared env skipped: its first run is not admitted"
-            );
-            return;
-        };
         let vault_config = vault_config.clone();
         let opened =
             tokio::task::spawn_blocking(move || open_one(&spec, &vault_config, lease_vault_id))
@@ -227,6 +220,13 @@ impl SharedEnvRegistry {
             Ok(Ok(env)) => {
                 let lane = match env.lane {
                     Some(connection) => {
+                        let Some(first) = admission() else {
+                            tracing::warn!(
+                                vault_id = env.key.0,
+                                "shared env skipped: its first run is not admitted"
+                            );
+                            return;
+                        };
                         let (stop, stop_rx) = tokio::sync::oneshot::channel();
                         let task = tokio::spawn(run_lane(
                             Arc::clone(&connection),
@@ -242,11 +242,8 @@ impl SharedEnvRegistry {
                             vault_id: env.key.0,
                         })
                     }
-                    None => {
-                        // Already left: no run to hold the admission.
-                        drop(first);
-                        None
-                    }
+                    // Already left: no run needs an admission.
+                    None => None,
                 };
                 self.lock().insert(
                     env.key,
