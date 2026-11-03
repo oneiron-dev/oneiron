@@ -74,9 +74,11 @@ async fn submit(
     input.request.envelope.host_keyless = ladder.all_keyless_own_server();
     let run = run.with_work_context({
         let mut context = run.work_context();
-        if ladder.all_keyless_own_server() {
-            context.physical = WorkPhysical::KeylessOwnServer;
-        }
+        context.physical = if ladder.all_keyless_own_server() {
+            WorkPhysical::KeylessOwnServer
+        } else {
+            WorkPhysical::Paid
+        };
         context
     });
     let meter = server
