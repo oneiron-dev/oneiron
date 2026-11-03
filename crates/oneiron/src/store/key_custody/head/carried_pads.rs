@@ -321,6 +321,7 @@ pub(super) fn open_carried(
             || !body.recipients.is_empty()
             || !body.history.is_empty()
             || !body.evidence.is_empty()
+            || !body.holders.is_empty()
         {
             return Err(head_corrupt());
         }

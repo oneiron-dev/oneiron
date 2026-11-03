@@ -10,7 +10,6 @@ use oneiron::VaultPageSeal;
 use oneiron::recovery::checkpoint::{
     CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
 };
-use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
 use super::super::stamp::{file_stamp, now_unix_ms};
@@ -71,8 +70,8 @@ pub(crate) struct Restored {
 /// directory after it is reported in `durability_warning`, never as an error
 /// that would hide where the previous vault went.
 ///
-/// The backup opens with `keystore`, the install's configured one, or the
-/// platform's at its defaults when there is none.
+/// The backup opens with `keystore`, the install's configured one; with
+/// none it refuses, naming the platform backend (FIX 12225).
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
@@ -102,12 +101,9 @@ pub(super) fn restore_over_syncing(
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // This install's keystore unlocks the key from the device wrap the backup
-    // carries, and trusts the signers it holds.
-    let open_key = |vault_path: &Path| match keystore {
-        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-            .map(|key| key.trusting_device(keystore)),
-        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
-    };
+    // carries, and trusts the signers it holds; with none it refuses (FIX 12225).
+    let open_key =
+        |_vault_path: &Path| CheckpointKey::unlock_on_this_device(backup, keystore.as_ref());
     restore_over_with(
         backup,
         vault_path,

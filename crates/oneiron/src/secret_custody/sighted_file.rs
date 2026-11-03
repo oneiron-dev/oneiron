@@ -132,7 +132,9 @@ impl Vault {
             return Ok(Some(copy));
         }
         if sight == SecretSight::Masked {
-            return sighted_bytes_in_txn(&self.store, txn, copy, sight).map(Some);
+            // The checked reader read `copy` to its end against the
+            // manifest's BLAKE3, which is `expected` (speed).
+            return sighted_bytes_in_txn(&self.store, txn, copy, Some(expected), sight).map(Some);
         }
         Ok(Some(copy))
     }
