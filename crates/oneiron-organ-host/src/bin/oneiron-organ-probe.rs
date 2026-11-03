@@ -5,8 +5,7 @@
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
 //! sends a second ask before the first is answered, `--ask-once` asks and
 //! then ignores the call and its cancel, and `--stale-asks` asks for calls
-//! that are not in flight. `--v1-0` is an organ built against
-//! protocol 1.0: it acks 1.0, echoes, and dies on any message 1.0 lacks.
+//! that are not in flight.
 
 #[cfg(unix)]
 mod probe {
@@ -435,39 +434,6 @@ mod rogue {
         }
     }
 
-    /// An organ that acks protocol 1.0, which a 2.0 host refuses at the
-    /// handshake; served anyway, it echoes each call's args, and exits on any
-    /// message 1.0 does not have.
-    pub(super) fn v1_0() {
-        let stream = socket();
-        let Some(organ) = hello_organ(&stream) else {
-            return;
-        };
-        let old = ProtocolVersion { major: 1, minor: 0 };
-        if send_frame(&stream, &ack_at(organ, old), &[], DEFAULT_FRAME_LIMIT).is_err() {
-            return;
-        }
-        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
-            let call = match message {
-                ToOrgan::Call(call) => call,
-                ToOrgan::Cancel { .. } => continue,
-                _ => return,
-            };
-            let reply = FromOrgan::Reply(Reply {
-                id: call.id,
-                outcome: Outcome::Proposal(Proposal {
-                    body: None,
-                    outputs: Vec::new(),
-                    report: call.args,
-                    notes: Notes::default(),
-                }),
-            });
-            if send_frame(&stream, &reply, &[], DEFAULT_FRAME_LIMIT).is_err() {
-                return;
-            }
-        }
-    }
-
     /// Sends a valid `hello_ack` a byte every 100 ms: each read makes
     /// progress, so only a deadline over the whole frame stops it.
     pub(super) fn drip() {
@@ -535,10 +501,6 @@ fn main() -> std::process::ExitCode {
         }
         Some("--ask-then-nap") => {
             rogue::ask_then_nap();
-            std::process::ExitCode::SUCCESS
-        }
-        Some("--v1-0") => {
-            rogue::v1_0();
             std::process::ExitCode::SUCCESS
         }
         _ => oneiron_organ_protocol::serve(probe::Probe),

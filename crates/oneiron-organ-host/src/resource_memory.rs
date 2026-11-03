@@ -23,6 +23,34 @@ use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk, Value
 use crate::budget::NativeRefusal;
 use crate::handlers::{Answered, AskHandler, AskRequest};
 
+/// One machine-floor lease, growable as the value it covers takes shape.
+pub trait FloorLease: Send {
+    /// Grows this lease on its original line, waiting no later than
+    /// `deadline` and no longer than `stopped` allows. A refused growth
+    /// leaves the original lease and the line's byte counts unchanged.
+    ///
+    /// # Errors
+    /// The machine's floor when the cumulative lease cannot fit even with
+    /// nothing else leased; [`FloorRefusal::Deadline`] when it does not fit
+    /// before the deadline, or `stopped` says so first.
+    fn grow(
+        &mut self,
+        more: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal>;
+
+    /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
+    ///
+    /// # Errors
+    /// As [`Self::grow`].
+    fn grow_untimed(
+        &mut self,
+        more: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal>;
+}
+
 /// The machine's memory, as the host leases it to organs' own buffers. The
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
@@ -40,7 +68,7 @@ pub trait MachineFloor: Send + Sync {
         bytes: u64,
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, FloorRefusal>;
+    ) -> Result<Box<dyn FloorLease>, FloorRefusal>;
 
     /// [`Self::lease`] with no deadline, as a frame's bytes wait (FIX 10580):
     /// only `stopped` ends the wait. A floor with no untimed line of its own
@@ -53,7 +81,7 @@ pub trait MachineFloor: Send + Sync {
         &self,
         bytes: u64,
         stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, FloorRefusal> {
+    ) -> Result<Box<dyn FloorLease>, FloorRefusal> {
         let deadline = Instant::now() + Duration::from_secs(60 * 60 * 24 * 365);
         self.lease(bytes, deadline, stopped)
     }
