@@ -88,6 +88,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_ESCROW_RECIPIENT,
     &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
+    &side_table::RECOVERY_KIT_UNLISTED_SWEEP,
     // The removal archives this device received, and which it imported
     // (FIX 11197): a leave is when the person reads them.
     &side_table::SHARED_ACT_REMOVAL_EXPORT,
