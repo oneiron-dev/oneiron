@@ -110,10 +110,10 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
-    } else if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
-        crate::subject_model::validate_actor_subject_claim_structure(&body)?;
+    } else if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
+        crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?;
     } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
-        crate::subject_model::validate_person_substrate_claim_structure(&body)?;
+        crate::write_envelope::subject_record::validate_person_substrate_claim_structure(&body)?;
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::validate_imported_reliability(&body)?;
     } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {

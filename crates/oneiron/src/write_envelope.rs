@@ -737,3 +737,5 @@ pub(crate) fn write_envelope_evidence(
 
     Value::Map(entries)
 }
+
+pub mod subject_record;
