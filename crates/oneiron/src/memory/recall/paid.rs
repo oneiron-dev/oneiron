@@ -631,6 +631,14 @@ impl Memory<'_> {
             None => lane,
         };
         let mut receipt = lane.read_receipt(None, 0)?;
+        // The texts below are read at each candidate's pinned revision,
+        // across several snapshots, while the carried worlds behind the
+        // route choice are read live after them: any commit that lands in
+        // between can delete a row or move its provenance, sending older
+        // restricted text under newer, more permissive routes. The store's
+        // commit watermark brackets the window; a moved watermark retries
+        // the recall with a fresh pin instead of choosing routes.
+        let first_txn = self.vault.store.env.info().last_txn_id;
         let mut texts = Vec::with_capacity(block.len());
         let mut sources = Vec::with_capacity(block.len());
         let mut pinned_worlds = Vec::with_capacity(block.len());
@@ -709,6 +717,13 @@ impl Memory<'_> {
             let worlds =
                 crate::settings::carried_worlds_in(&self.vault.store, &rtxn, &candidate.id)?;
             carried.absorb(&worlds);
+        }
+        if self.vault.store.env.info().last_txn_id != first_txn {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "the recall's candidates changed while the reranker scored them",
+                &["Retry the recall; the vault was being written to as it ran."],
+            ));
         }
         let mut model_routes = self
             .vault
