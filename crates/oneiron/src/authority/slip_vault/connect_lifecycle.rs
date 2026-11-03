@@ -12,8 +12,10 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::federation::{
-    Ceiling, FederationDirectionScope, FederationPactScope, GuestShareEnvelope, Scope, SelectorRange, encode_federation_pact_scope,
+use crate::federation::GuestShareEnvelope;
+use oneiron_authority::federation::{
+    Ceiling, FederationDirectionScope, FederationPactScope, Scope, SelectorRange,
+    encode_federation_pact_scope,
 };
 use crate::store::grant_scope_custody;
 
