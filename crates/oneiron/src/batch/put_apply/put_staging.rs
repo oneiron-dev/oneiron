@@ -207,7 +207,8 @@ pub(super) fn stage_skill_index_rows(
     crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
 }
 
-/// Keeps CLAIM-derived thread and Dreamer indexes on every put/replay door.
+/// Keeps CLAIM-derived thread, Dreamer and counterparty-identity indexes on
+/// every put/replay door.
 pub(super) fn stage_claim_projection_indexes(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -221,7 +222,8 @@ pub(super) fn stage_claim_projection_indexes(
     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
         store, wtxn, id, body, learned_at,
     )?;
-    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
+    crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)?;
+    crate::counterparty_contact::maintain_counterparty_identity_index_for_put(store, wtxn, id, body)
 }
 
 /// The caller's write stamps and origin for the three carrier guards.
