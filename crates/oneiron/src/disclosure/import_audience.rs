@@ -12,7 +12,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSu
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ingest::{ImportAudience, ImportAudienceState};
-use crate::llm::decision::{AskRole, AskTo, DecisionAnswer, DecisionQuestion, HolderKind};
+use crate::llm::decision::{AskRole, AskTo};
+use crate::model_decision::{DecisionAnswer, DecisionQuestion, HolderKind};
 
 use super::tier_classification::{PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, read_stored_claim_body};
 

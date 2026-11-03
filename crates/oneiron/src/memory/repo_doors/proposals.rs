@@ -32,19 +32,23 @@ use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
 use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{
     MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::{
-    RepoProposal, RepoProposalOperation, RepoProposalReview, RepoProposalStatus,
-};
-use crate::repo_mutation::{RepoMutationOperation, RepoMutationRequest};
 use crate::task_verb::SymbolLease;
 use crate::{EntityId, Vault};
+use crate::{
+    repo_mutation::RepoMutationRequest, store::repo_mutation_record::RepoMutationOperation,
+};
+use crate::{
+    repo_mutation::proposal::RepoProposal, repo_mutation::proposal::RepoProposalReview,
+    store::repo_proposal_record::RepoProposalOperation,
+    store::repo_proposal_record::RepoProposalStatus,
+};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// The code a run's proposal answered while the host bound no review policy
 /// for its repo (CALL "FIX 6867 review policy and provenance"). Superseded

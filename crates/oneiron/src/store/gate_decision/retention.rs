@@ -279,7 +279,7 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("gate decision retention manifest encode"))?;
         let now = self.store.clock.now_recorded_at();
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
-        let expected = crate::gate::GateDecisionRetentionPolicy {
+        let expected = crate::store::GateDecisionRetentionPolicy {
             horizon_secs: horizon.unwrap_or(current.horizon_secs),
             max_sweep_rows: budget.unwrap_or(current.max_sweep_rows),
             ..current

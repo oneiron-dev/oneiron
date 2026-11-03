@@ -12,11 +12,12 @@ use super::kernel::{
 // gated so the name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::prompt::PromptRecompileStamp;
+use crate::receipt::prompt_stamp::PromptRecompileStamp;
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
@@ -496,7 +497,7 @@ impl ReceiptRecord {
 
     /// The OF-578 functional role the attempt's executor ran as, read from the
     /// recorded field alone. `None` when no role ran the attempt.
-    pub fn executor_role(&self) -> Result<Option<crate::llm::manifest::ModelRole>> {
+    pub fn executor_role(&self) -> Result<Option<crate::model_binding::ModelRole>> {
         self.fields
             .get(FIELD_EXECUTOR_ROLE)
             .map(|token| {

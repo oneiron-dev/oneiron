@@ -177,8 +177,8 @@ impl PutOptions {
     }
 
     /// The claim-gate write mode these options select.
-    pub(super) fn gate_write_mode(&self) -> crate::gate::GateWriteMode {
-        crate::gate::GateWriteMode {
+    pub(super) fn gate_write_mode(&self) -> crate::store::GateWriteMode {
+        crate::store::GateWriteMode {
             record_decision: self.decision.record,
             persist_pending_consent: self.consent.persist_pending,
             resolve_pending: true,

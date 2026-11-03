@@ -18,7 +18,7 @@ pub use oneiron_authority::authority::RecoveryRootId;
 use super::{os_fill, refused};
 use crate::authority::OwnerRootRecord;
 use crate::error::Result;
-use crate::recovery::{KitSecretKind, RestoredKitSecret};
+use crate::store::recovery_kit::{KitSecretKind, RestoredKitSecret};
 
 const RECOVERY_KEY_LABEL: &[u8] = b"oneiron/world-recovery-root/v1";
 const ANCHOR_CONTEXT: &str = "oneiron/owner-anchor/v1";

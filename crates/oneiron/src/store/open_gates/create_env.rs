@@ -8,10 +8,11 @@ use crate::config::VaultConfig;
 #[cfg(unix)]
 use crate::error::Error;
 use crate::error::Result;
+use crate::key_material::page_seal_open_error;
 use crate::store::VaultWriterLease;
 #[cfg(test)]
 use crate::store::test_hooks;
-use crate::world_keys::{admit_new_vault, page_seal_open_error};
+use crate::world_keys::admit_new_vault;
 
 #[cfg(unix)]
 use super::super::root_directory::{file_identity, named_directory_identity};

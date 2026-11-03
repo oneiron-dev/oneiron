@@ -30,12 +30,13 @@ use super::{
     research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
 };
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptRecord, AttemptState};
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::context_projection::ContextSpec;
-use crate::llm::RsiSpendPurpose;
-use crate::llm::run_admission::LeaseUnit;
+use crate::research_budget::RsiSpendPurpose;
+use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::{AttemptId, AttemptQueue, EntityId, Error, Result, Vault};

@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::Stream;
+use oneiron::llm::DispatchRelease;
+use oneiron::{BudgetLease, LlmError};
 use serde_json::Value as JsonValue;
 
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
@@ -219,6 +221,17 @@ impl Compressor {
 /// One JSON post in flight, owning all it sends.
 type Sending = Pin<Box<dyn Future<Output = Result<reqwest::Response, reqwest::Error>> + Send>>;
 
+/// A released JSON send: provider failures use the existing HTTP class;
+/// release failures keep their original model error.
+#[derive(Debug)]
+pub(super) enum HttpReleaseError {
+    Transport(HttpFailure),
+    Release(LlmError),
+}
+
+type ReleaseSending<'a> =
+    Pin<Box<dyn Future<Output = Result<reqwest::Response, HttpReleaseError>> + Send + 'a>>;
+
 impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
     /// refusal here, so a seat never runs half-authenticated.
@@ -383,6 +396,49 @@ impl ProviderHttp {
         })
     }
 
+    /// [`Self::send_body`] with `release` invoked before every physical send,
+    /// including a fresh-connection retry and a plain resend after 400/415.
+    fn send_body_released<'a>(
+        &'a self,
+        path: &'a str,
+        request: impl Fn() -> reqwest::RequestBuilder + 'a,
+        plain: Vec<u8>,
+        release: DispatchRelease<'a>,
+        lease: &'a BudgetLease,
+    ) -> ReleaseSending<'a> {
+        let encoded = self.compression.as_ref().and_then(|compressor| {
+            Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
+        });
+        let Some((compressor, encoded)) = encoded else {
+            return never_sent::send_released(&self.fresh, request().body(plain), release, lease);
+        };
+        let (request, resend) = (request(), request());
+        let fresh = self.fresh.clone();
+        Box::pin(async move {
+            let request = request
+                .header(reqwest::header::CONTENT_ENCODING, compressor.token())
+                .body(encoded);
+            let response =
+                never_sent::send_released(&fresh, request, release.clone(), lease).await?;
+            if !matches!(response.status().as_u16(), 400 | 415) {
+                return Ok(response);
+            }
+            let refused = response.status();
+            drop(response);
+            let response =
+                never_sent::send_released(&fresh, resend.body(plain), release, lease).await?;
+            if response.status() != refused {
+                compressor.on.store(false, Ordering::Relaxed);
+                tracing::warn!(
+                    status = refused.as_u16(),
+                    codec = compressor.token(),
+                    "a provider refused a compressed request body; sending plain from now on"
+                );
+            }
+            Ok(response)
+        })
+    }
+
     /// One JSON exchange at `path`, its reply read whole, however large
     /// (FIX 9321): no size refuses it, and only a real allocation failure
     /// ends the read.
@@ -429,6 +485,41 @@ impl ProviderHttp {
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let (body, held) = read_booked(response).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        })
+    }
+
+    /// Sends one released JSON exchange: every physical attempt re-checks
+    /// the lease's release, and a refusal keeps its original model error.
+    pub(super) async fn send_json_released(
+        &self,
+        path: &str,
+        json: JsonValue,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<BytesReply, HttpReleaseError> {
+        let plain = serde_json::to_vec(&json).unwrap_or_default();
+        let url = self.url(path);
+        let request = {
+            let url = url.as_str();
+            move || {
+                self.client
+                    .post(url)
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+            }
+        };
+        let response = self
+            .send_body_released(path, request, plain, release, lease)
+            .await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
         Ok(BytesReply {
             status,
             headers,
