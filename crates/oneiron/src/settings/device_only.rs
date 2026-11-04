@@ -217,7 +217,7 @@ fn row_worlds(
                 .extend(claim_world(store, txn, id, Some(raw))?);
             // FIX 8192: a claim a model wrote from rows its prompt carried
             // carries their words, so their worlds too.
-            sources.extend(crate::provenance::birth::prompted::prompt_sources_in_txn(
+            sources.extend(crate::store::birth_record::prompted::prompt_sources_in_txn(
                 store, txn, id,
             )?);
         }

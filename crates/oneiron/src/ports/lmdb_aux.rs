@@ -1,9 +1,11 @@
 //! LMDB audit, dependency, content-addressed blob and queue adapters.
 use super::*;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
-    FailAttempt, FailOutcome,
+    AttemptQueue, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
 };
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::blob_artifact::{blob_artifact_asset_entity_id, blob_artifact_asset_ref_key};
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
@@ -344,7 +346,7 @@ impl JobQueue for Vault {
     fn port_job_claim_id(
         &self,
         txn: &mut RwTxn<'_>,
-        id: crate::attempt_queue::AttemptId,
+        id: crate::store::attempt_id::AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
         AttemptQueue::new(self).port_job_claim_id(txn, id, input)
