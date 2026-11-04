@@ -39975,29 +39975,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HumanFollowupDispatch",
-      "HumanFollowupStage",
-      "HumanResponseSignal",
-      "HumanTaskError",
-      "HumanTaskFollowupRecord",
-      "HumanTaskWaitBinding",
-      "NativeHumanRoute"
-     ],
-     "path": "src/human_task/model.rs",
-     "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
-     "surface": {
-      "const": 4,
-      "crate-vis": 8,
-      "enum": 2,
-      "fn": 1,
-      "struct": 5,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "OpenAskFollowup",
       "OpenHumanAsk",
       "OpenHumanAskKind",
@@ -89077,7 +89054,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 8,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89954,7 +89931,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6227,
+   "source_files": 6226,
    "test_files": 898
   },
   "oneiron-android": {
@@ -91177,6 +91154,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HumanFollowupDispatch",
+      "HumanFollowupStage",
+      "HumanResponseSignal",
+      "HumanTaskError",
+      "HumanTaskFollowupRecord",
+      "HumanTaskWaitBinding",
+      "NativeHumanRoute"
+     ],
+     "path": "src/human_task_followup.rs",
+     "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
+     "surface": {
+      "const": 10,
+      "enum": 2,
+      "fn": 3,
+      "struct": 5,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91217,7 +91216,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 21
+      "mod": 22
      }
     },
     {
@@ -91446,6 +91445,13 @@
      "layout": "file",
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
+    "human_task_followup": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Human TASK follow-up shared types, stage machine and timing bounds"
+    },
     "learning_estimate": {
      "files": 1,
      "impl_vault": false,
@@ -91540,7 +91546,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 27,
+   "source_files": 28,
    "test_files": 2
   },
   "oneiron-bench": {
