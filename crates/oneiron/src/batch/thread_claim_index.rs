@@ -1,11 +1,11 @@
 //! Thread claims reuse the existing ClaimOf index at every storage door.
 use super::*;
-use crate::affect::Vad;
-use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::affect::Vad;
 
 pub(super) fn index_thread_claim_subject(
     store: &Store,

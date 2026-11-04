@@ -6,12 +6,12 @@ use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedRead, ScopedReadResult,
 };
-use crate::cluster::{ClusterClaim, ClusterOptions, cluster_claims};
 use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::{
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyOp,
     ProposalOutcome, ProposalRuling, TopologySeal, fold_identity_topology_log,
 };
+use crate::memory::claim_cluster::{ClusterClaim, ClusterOptions, cluster_claims};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, caps};
 use crate::{EdgeActorClass, EntityId};
 

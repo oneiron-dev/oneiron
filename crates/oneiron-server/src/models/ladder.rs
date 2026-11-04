@@ -29,12 +29,14 @@ mod worker_lease;
 
 use futures_util::StreamExt;
 use oneiron::authority::WorldModelRoutes;
+use oneiron::code_run::{CapsuleRungBinding, ReplayRoutePin};
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied,
     RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_place,
 };
+use oneiron::llm::{Segment, SegmentClock, SegmentKind, SegmentManifest};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
@@ -51,7 +53,7 @@ use super::cooldown::{
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
-use super::media::{HeldJob, MediaAnswer, MediaRung, RetryHint, RungVoices};
+use super::media::{HeldJob, MediaAnswer, MediaDispatchRelease, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::source_admission::{self, SourceAdmission};
@@ -111,6 +113,22 @@ impl LadderRung {
                 },
             );
             oneiron::code_run::shift_cache_boundaries(&mut request);
+            // The instruction is part of the call this rung sends, so the
+            // manifest stamps it as its own first segment; unstamped, the
+            // manifest describes a call one message shorter and this
+            // rung's turns get no session (FIX 10366). The restamp keeps
+            // the admitted turn's digest (REVIEW-4386 P1): pending, commit
+            // and restore-authority lookups still name it.
+            if let Some(manifest) = &request.host_segments {
+                let mut shifted = Vec::with_capacity(manifest.segments().len() + 1);
+                shifted.push(Segment::whole(SegmentKind::System, SegmentClock::Epoch, 0));
+                shifted.extend(manifest.segments().iter().map(|segment| Segment {
+                    message: segment.message + 1,
+                    ..segment.clone()
+                }));
+                request.host_segments =
+                    Some(Arc::new(manifest.restamped(shifted, &request.messages)));
+            }
         }
         request
     }
@@ -455,6 +473,36 @@ impl OfferLadder {
         }
     }
 
+    /// The answering rung, when the caller names the served model, and its
+    /// exact route pin for the model-call record (FIX 12516). The pin is the
+    /// capsule-canonical one (adapter@origin, offer, catalog revision, wire
+    /// model), never rebuilt from today's catalog; it is `Some` only when
+    /// the served model is this ladder's one picked rung. A fallback answer,
+    /// or a call whose served model the site cannot name (streams), leaves
+    /// the route unknown instead of naming the first rung falsely. The rung
+    /// model is the served model; its locality is the answering rung's when
+    /// that rung is on this ladder, else the requested first rung's (full
+    /// threading of the answering rung is FIX 12743).
+    pub(crate) fn model_call_binding(
+        &self,
+        served: Option<&ModelId>,
+    ) -> (CapsuleRungBinding, Option<ReplayRoutePin>) {
+        let prompt = self.exact_prompt().flatten().map(str::to_owned);
+        let answered = served.and_then(|model| self.rungs.iter().find(|rung| rung.model == *model));
+        let rung = answered.or(self.rungs.first());
+        let binding = CapsuleRungBinding {
+            model: served.cloned().unwrap_or_else(|| self.name.clone()),
+            locality: rung.map_or(ModelLocality::OnDevice, |rung| rung.offer.binding.locality),
+            prompt: prompt.clone(),
+        };
+        let route = if self.exact_prompt().is_some() {
+            answered.and_then(shadow_capture::route_pin)
+        } else {
+            None
+        };
+        (binding, route)
+    }
+
     /// The rate this ladder's one picked offer supplies for `unit` when that
     /// offer serves exactly `model` (FIX 3041): `cost` units per `per`
     /// tokens, which a launch's USD quote reads to price a unit other than
@@ -581,6 +629,9 @@ impl OfferLadder {
             Ok(Some(digest)) => run.admit_request(run_call, &digest)?,
             Ok(None) | Err(_) => run.admit(run_call)?,
         };
+        if let Some(manifest) = call.host_segments.as_deref() {
+            super::worker_host::rung_admitted(manifest);
+        }
         Ok((call, permit))
     }
 
@@ -1207,6 +1258,19 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_exact`], asking `may_send` as
+    /// [`Self::generate_while`] does, on the vault's longest wait (FIX 11749).
+    pub async fn generate_exact_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LlmResponse> {
+        self.generate_exact_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_within`] for a caller that must know the model it
     /// named is the one that answered (an exact-model decision, OF-184):
     /// only a ladder that is one picked model takes the call, and no owner's
@@ -1510,7 +1574,19 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by(run, request, selector, voices, self.host_wait())
+        self.media_released(run, request, selector, voices, None)
+            .await
+    }
+
+    pub(super) async fn media_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+        voices: Option<&RungVoices>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaAnswer> {
+        self.media_by_released(run, request, selector, voices, self.host_wait(), release)
             .await
     }
 
@@ -1526,6 +1602,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
+        release: MediaDispatchRelease<'a>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1557,6 +1634,7 @@ impl OfferLadder {
                                 deadline,
                                 false,
                                 voices,
+                                release.clone(),
                             )
                             .await;
                         if fell.is_err() {
@@ -1575,7 +1653,10 @@ impl OfferLadder {
                         return Err(self.ended(call, walk));
                     }
                     sent[index] = true;
-                    if let Some(answer) = self.send_media(call, index, &request, &mut walk).await? {
+                    if let Some(answer) = self
+                        .send_media(call, index, &request, &mut walk, release.clone())
+                        .await?
+                    {
                         return Ok(answer);
                     }
                 }
@@ -1592,6 +1673,7 @@ impl OfferLadder {
         index: usize,
         request: &MediaRequest,
         walk: &mut Walk,
+        release: MediaDispatchRelease<'_>,
     ) -> LlmResult<Option<MediaAnswer>> {
         let rung = &self.rungs[index];
         let Some(media) = &rung.media else {
@@ -1643,6 +1725,12 @@ impl OfferLadder {
         let gate = call
             .run
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+        if let Some(release) = release {
+            if let Err(error) = release() {
+                settle_failed(permit);
+                return Err(error);
+            }
+        }
         let operation = request.operation;
         if operation.is_job() {
             let requested_video_ms = super::media::requested_video_ms(&bound);
@@ -1675,13 +1763,24 @@ impl OfferLadder {
                 }
             };
         }
-        let Some(answered) = call
-            .deadline
-            .bound(gate.run_progress(bound, permit.lease()))
-            .await
-        else {
+        let answered = if let Some(release) = release {
+            call.deadline
+                .bound(gate.run_progress_released(bound, permit.lease(), Some(release)))
+                .await
+        } else {
+            call.deadline
+                .bound(gate.run_progress(bound, permit.lease()))
+                .await
+        };
+        let Some(answered) = answered else {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
+        };
+        let release_refused = |error: &LlmError| {
+            matches!(
+                error,
+                LlmError::Retryable(retry) if retry.is_not_sent_stage("media_release")
+            )
         };
         match answered {
             Ok(mut response) => {
@@ -1699,6 +1798,24 @@ impl OfferLadder {
                 let raw = std::mem::take(&mut response.usage.raw_provider);
                 response.usage.raw_provider = self.served(index, walk).stamp(raw);
                 Ok(Some(MediaAnswer::Done(response)))
+            }
+            Err(stopped) if release_refused(&stopped.error) && stopped.progress.is_empty() => {
+                if permit.lease().physical_attempts() == 0 {
+                    if let Err(denied) = permit.settle_unsent() {
+                        tracing::error!(%denied, "an unsent media call's settlement was refused");
+                    }
+                } else {
+                    settle_failed(permit);
+                }
+                Err(stopped.error)
+            }
+            Err(stopped) if release_refused(&stopped.error) => {
+                if let Err(denied) =
+                    permit.settle_interrupted_media(&stopped.progress, operation, &media.caps)
+                {
+                    tracing::error!(%denied, "an interrupted media call's settlement was refused");
+                }
+                Err(stopped.error)
             }
             // FIX 9517: what answered before the stop is settled once, on
             // its usage and receipts, never lost behind the error.

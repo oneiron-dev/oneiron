@@ -114,7 +114,7 @@ impl Vault {
             WriteProvenance::new(Value::Map(vec![
                 (
                     Value::from(DREAMER_PROVENANCE_RUNNER_KEY),
-                    Value::from(crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND),
+                    Value::from(crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND),
                 ),
                 (
                     Value::from(DREAMER_PROVENANCE_RUN_ID_KEY),

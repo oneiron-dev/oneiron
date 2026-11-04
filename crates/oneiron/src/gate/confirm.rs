@@ -303,14 +303,47 @@ impl Vault {
                 None => crate::vault::embedded_owner_actor_id()?,
             },
         };
-        let settled = |outcome| crate::runtime_hooks::SettledFact {
+        let settled = |outcome| crate::consent::settlement_fact::SettledFact {
             proposal: binding.claim_id,
             outcome,
             settled_by,
-            kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+            kind: crate::consent::settlement_fact::SettlementKind::CriticalWriteConfirm,
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
+                // A lapse that reached this replica before the owner's Clear
+                // left the claim Proposed. Fold the Clear first so the answer
+                // is not lost behind that lapse (FIX 12290). The resolved row
+                // is the put's expected body, never a held restriction view.
+                //
+                // FIX 12709 seam, L06-A 15:09 ruling (b) scoped: the
+                // repair is decided from a fresh resolved read also for an
+                // in-place demotion (the restriction projection carries held
+                // machine history, which the full-equality put would refuse
+                // with InvariantViolation; the resolved row is the truth the
+                // put expects). This supersedes the REVIEW-4462 P2 skip.
+                let mut repaired = false;
+                {
+                    let resolved = self
+                        .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    repaired = resolved.approval == ClaimApprovalStatus::Proposed;
+                    if repaired {
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &resolved,
+                            PreauthorizedClaimStatusGrant::FoldClear,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                        )?;
+                        body.approval = ClaimApprovalStatus::Auto;
+                    }
+                }
                 // The owner's Clear answers the item this confirm bound.
                 let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
                     &self.store,
@@ -320,7 +353,9 @@ impl Vault {
                     super::owner_answer::OwnerAnswer::authority_log(),
                 )?;
                 if deferred {
-                    if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
+                    if !repaired
+                        && self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?
+                    {
                         put_preauthorized_claim_status_in_txn(
                             self,
                             wtxn,
@@ -380,7 +415,7 @@ impl Vault {
                 crate::runtime_hooks::record_settlement_in_txn(
                     self,
                     wtxn,
-                    settled(crate::runtime_hooks::SettledOutcome::Approved),
+                    settled(crate::consent::settlement_fact::SettledOutcome::Approved),
                 )?;
                 Ok(Ok(CriticalWriteConfirmResolution::Cleared))
             }
@@ -426,9 +461,9 @@ impl Vault {
                     self,
                     wtxn,
                     settled(if retract {
-                        crate::runtime_hooks::SettledOutcome::Retracted
+                        crate::consent::settlement_fact::SettledOutcome::Retracted
                     } else {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }),
                 )?;
                 Ok(Ok(if retract {

@@ -3,8 +3,10 @@ use super::kernel::{ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
-use crate::outbound::{FrozenDispatchIdentity, OutboundDispatchOutcome, OutboundDispatchResult};
+use crate::outbound::OutboundDispatchResult;
+use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use serde::{Deserialize, Serialize};
 
 const OBSERVATIONS: SideTable<DispatchObservationKey, DispatchObservation, Raw> =
@@ -84,7 +86,7 @@ impl DispatchObservation {
             approval_digest: self
                 .receipt
                 .fields
-                .get(crate::outbound::APPROVAL_DIGEST_FIELD)
+                .get(crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD)
                 .cloned(),
             approval_actor: None,
             receipt: self.receipt.clone(),

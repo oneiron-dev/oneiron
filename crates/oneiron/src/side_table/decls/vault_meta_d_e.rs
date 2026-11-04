@@ -125,6 +125,8 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// Operator-set conversation ids excluded from Dreamer consolidation. Key: ().
+    DREAMER_EXCLUDED_CONVERSATIONS: VaultMeta b"dreamer:excluded_conversations:v1" Named;
     /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
     /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
     /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
@@ -434,10 +436,12 @@ side_tables! {
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
-    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Standing escalation policy for one (scope, trigger) pair, keyed by what the row governs. Key:
     /// id16 + u8.
-    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Publisher digest-interview session state, keyed by the digest artifact id. Key: id16.
     EDIT_DISTANCE_INTERVIEW_SESSION: VaultMeta b"edit_distance/interview_session/v1\0" Raw;
     /// Stored publisher issue-signature (category, artifact, version, model, counts, content hash).
@@ -544,6 +548,12 @@ side_tables! {
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
+    /// The erase previews a caller was shown and may still confirm (FIX
+    /// 12522): the digest the preview showed, and when it was issued and
+    /// expires on the vault's recording clock. Key: id16 (caller) + id16
+    /// (record).
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
@@ -582,8 +592,10 @@ side_tables! {
     ESIGN_SEALED_DOCUMENT: VaultMeta b"esign.sealed.v1/" LegacyJson;
     /// Signature image ownership marker. Key: id16 + string + string.
     ESIGN_SIGNATURE_IMAGE_BINDING: VaultMeta b"esign.signature_image.v1/" Raw;
-    /// One whole-vault export receipt: when, which format, how many bytes and their digest, by
-    /// whom; never the exported bytes. Key: u64be(sequence).
+    /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
+    /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
+    /// actor, and the copy's length and digest where its door read the copy back; never the
+    /// exported bytes. Key: u64be(sequence).
     EXPORT_RECEIPT: VaultMeta b"export:receipt:v1:" Named;
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.

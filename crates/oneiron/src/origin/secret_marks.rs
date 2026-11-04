@@ -39,16 +39,17 @@ use crate::batch::secret_scan::{
     RetainedRepoBlobMarks, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn,
 };
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
-use crate::credential_door::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::{Error, Result};
+use crate::file_secret_marks::MemberStep;
 use crate::git_wire::GitOid;
-use crate::secret_custody::{CustodyWrite, MASKED_FILE_BAND, MemberStep};
+use crate::receive_scan::ReceiveBlobKind;
+use crate::secret_custody::MASKED_FILE_BAND;
+use crate::secret_record::CustodyWrite;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 mod read;
 pub(crate) use read::{
@@ -400,7 +401,7 @@ pub(crate) fn readdress_forward_secret_marks_in_txn(
 
 /// Writes `mark` once at its id, and says whether it wrote it: the same
 /// fact again writes nothing; any other record under the id refuses.
-fn put_repo_secret_mark_in_txn(
+pub(crate) fn put_repo_secret_mark_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     mark: &RepoSecretMark,

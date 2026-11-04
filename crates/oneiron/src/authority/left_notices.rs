@@ -135,6 +135,7 @@ impl Vault {
         request_nonce: &[u8],
         member_heads: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<(Vec<SignedSharedActOutcome>, Vec<Vec<u8>>)> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
@@ -273,6 +274,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<Vec<RemovalExportCopy>> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
@@ -305,6 +307,7 @@ impl Vault {
         receipt_id: &str,
     ) -> Result<Option<RemovalExportCopy>> {
         let receipt_id = EntityId::from_hex(receipt_id)?;
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
@@ -414,9 +417,9 @@ impl Vault {
 fn transferred_admission(
     bounds: Result<super::slip::TransferredBounds>,
     now: u64,
-    served_pact: Option<crate::federation::FederationDirectionScope>,
-) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
-    move |id: EntityId, position: Option<&crate::federation::Scope>| {
+    served_pact: Option<oneiron_authority::federation::FederationDirectionScope>,
+) -> impl Fn(EntityId, Option<&oneiron_authority::federation::Scope>) -> bool {
+    move |id: EntityId, position: Option<&oneiron_authority::federation::Scope>| {
         bounds
             .as_ref()
             .is_ok_and(|bounds| bounds.admits(id, position, now, served_pact.as_ref()))

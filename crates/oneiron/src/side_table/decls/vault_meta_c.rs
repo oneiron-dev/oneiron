@@ -37,7 +37,8 @@ side_tables! {
     /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
     /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw;
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+        => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;
@@ -291,6 +292,11 @@ side_tables! {
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
+    /// One model call's evidence and replay record (FIX 12516), keyed by
+    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
+    /// evidence only: never an entity, BM25/vector/Dreamer input.
+    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
+        => crate::code_run::erase_model_call_actor_in_txn;
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it

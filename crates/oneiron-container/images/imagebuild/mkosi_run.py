@@ -181,6 +181,7 @@ def write_config(
     tools_tree: Path,
     phase: str,
     sources: dict[str, Path] | None = None,
+    pkgcache: Path | None = None,
 ) -> tuple[Path, Path]:
     """Writes cfg/<phase>-<name>/mkosi.conf; returns (config dir, output dir)."""
     is_tools = plan.name == "tools"
@@ -219,7 +220,7 @@ def write_config(
         f"ToolsTree={tools_tree}",
         f"CacheOnly={'never' if phase == 'fetch' else 'always'}",
         f"CacheDirectory={mirror.mkosi_cache}",
-        f"PackageCacheDirectory={mirror.pkgcache}",
+        f"PackageCacheDirectory={pkgcache or mirror.pkgcache}",
         f"WorkspaceDirectory={work / 'workspace'}",
         f"SandboxTrees={work / 'sandbox'}",
         "Incremental=no",

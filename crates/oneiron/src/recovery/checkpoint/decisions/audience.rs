@@ -3,6 +3,7 @@
 //! in a leader chat, and which projects the read fold lets anyone see.
 use super::{Decision, held, held_by_both};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::conversation::voice_roster::VoiceSessionRosterV1;
 use crate::conversation::{AudienceCache, room_for_record_in};
 use crate::counterparty_contact::counterparty_contacts_in_claims_in_txn;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
@@ -12,7 +13,6 @@ use crate::interlocutor::{InterlocutorPartyInput, InterlocutorResolutionInput};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP};
 use crate::side_table::RawValue;
-use crate::voice_identity::VoiceSessionRosterV1;
 use crate::workspace_roster::{LEADER_CHAT_FIELD, LeaderChat, ProjectReader};
 use crate::{EntityId, Result, Vault};
 use std::cmp::Ordering;

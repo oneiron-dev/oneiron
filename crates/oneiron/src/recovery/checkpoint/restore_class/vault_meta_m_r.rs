@@ -181,6 +181,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A cached stamp token follows the image's token claims (FIX 10930): the restore's
     // actor sweep drops an erased actor's again, and a writer checks its claim on each read.
     (&t::PROVENANCE_ACTOR_STAMP_TOKEN, CONTENT),
+    // A token-use row follows the image's documents (FIX 11965): it names a token a restored
+    // document's history names.
+    (&t::PROVENANCE_ACTOR_STAMP_TOKEN_USE, CONTENT),
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
@@ -220,6 +223,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
+    (&t::REPO_MANIFEST_BY_CODE, CONTENT),
+    // A restore never makes this machine a repo's refs writer again (FIX 6870).
+    (&t::REPO_MANIFEST_MINTED, LIVE),
+    (&t::REPO_MANIFEST, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL_OP, CONTENT),

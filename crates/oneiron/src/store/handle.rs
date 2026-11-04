@@ -155,6 +155,13 @@ impl StoreCore {
         self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
+    /// Whether every write on this handle refuses: its vault opened archived,
+    /// or a restore's swap has sealed it since. An admission that writes
+    /// nothing before its reply reads it (FIX 12023 W0).
+    pub(crate) fn writes_sealed(&self) -> bool {
+        self.env.is_sealed()
+    }
+
     /// The page size this store writes in: the creating host's, which LMDB
     /// keeps with the file. A value too large for a leaf takes whole pages
     /// of it.
@@ -255,7 +262,7 @@ pub struct StoreCore {
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
-    pub(crate) pending_scan_checks: crate::scan_check::PendingScanChecks,
+    pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -278,7 +285,7 @@ pub struct StoreCore {
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
-    pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
+    pub(crate) result_memory: RwLock<Arc<crate::store::result_memory::ResultMemoryPool>>,
     /// The inference snapshot admission generation, closing gate, disk line
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
@@ -372,6 +379,10 @@ pub struct StoreOwner {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     pub(in crate::store) _registered_path: RegisteredPath,
+    /// This open took the vault's writer lease ([`Store::open_with_writer_lease`]),
+    /// read while the handle assembles, before its lease is set on it: a
+    /// lease holder's open alone replays the slip-spend journal (FIX 12023 W0).
+    pub(in crate::store) opened_with_writer_lease: bool,
 }
 
 /// LMDB environment and database handles for a vault.
@@ -524,6 +535,13 @@ impl SessionStoreView<'_> {
         self.overlay.install_txn_segment()
     }
 
+    /// Captures every accessor at the current write-segment position.
+    /// Sequential writers use this when a later index mutation must read the
+    /// preceding mutation's overlay writes rather than the original snapshot.
+    pub(crate) fn write_snapshot(&self) -> Result<SessionStoreView<'_>> {
+        self.base.session_view(self.overlay.clone())
+    }
+
     /// Captures entity rows at the current write-segment position for admission.
     /// Earlier staged dependencies are visible, but future ops are not. The
     /// caller's logical read view keeps its original immutable snapshot.
@@ -612,7 +630,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.base.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
@@ -655,7 +673,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
             /// ([`crate::scan_check::ScanCount::defer`]).
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks;
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
             fn gate_custody_archived(&self) -> bool;
@@ -671,7 +689,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
@@ -687,13 +705,48 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
+        }
+
+        /// The vault's canonical accessors built over its shared core, for a
+        /// write that runs where no [`Store`] view is held: the store's own
+        /// leader thread runs detached writes there (FIX 12023). It reads and
+        /// writes base rows, as [`Store`]'s accessors do.
+        pub(crate) struct CoreDbs<'c> {
+            core: &'c StoreCore,
+            $($name: $ty,)+
+        }
+
+        impl StoreCore {
+            /// This core's canonical accessors as a write target.
+            pub(crate) fn canonical_dbs(&self) -> CoreDbs<'_> {
+                CoreDbs {
+                    core: self,
+                    $($name: <$ty>::canonical(self.raw.$name),)+
+                }
+            }
+        }
+
+        impl ManifestDbs for CoreDbs<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
@@ -743,9 +796,11 @@ impl std::ops::Deref for Store {
 /// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
 /// 23:09): it ends first, after the group it leads commits, so a clean close
 /// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
-/// when `core` and then `owner` drop in their declared order.
+/// when `core` and then `owner` drop in their declared order. The detached
+/// writes still queued run before it ends, on this thread (FIX 12023).
 impl Drop for Store {
     fn drop(&mut self) {
+        self.finish_detached_writes(None);
         self.core.group_commit.stop_deferred_commit_leader();
     }
 }

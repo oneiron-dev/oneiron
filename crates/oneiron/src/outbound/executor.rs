@@ -69,7 +69,7 @@ impl Vault {
     pub fn standalone_outbound_intent_count(&self) -> Result<usize, Error> {
         let mut standalone = 0_usize;
         for attempt in AttemptQueue::new(self).list()? {
-            if attempt.kind != crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND {
+            if attempt.kind != crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND {
                 continue;
             }
             let payload = serde_json::from_slice::<ConnectorSendAttemptPayload>(&attempt.payload);
@@ -95,7 +95,7 @@ impl Vault {
         let rows = {
             let txn = self.store.env.read_txn()?;
             AttemptQueue::new(self)
-                .kind_working_rows_in_txn(&txn, crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND)?
+                .kind_working_rows_in_txn(&txn, crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND)?
         };
         Ok(rows
             .into_iter()
@@ -132,7 +132,7 @@ impl Vault {
             // broadcasts only a real claim, so an empty queue never wakes the
             // worker that just found it empty.
             let attempt = match queue.claim_kind(
-                crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+                crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND,
                 ClaimAttempt {
                     lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
                     now,

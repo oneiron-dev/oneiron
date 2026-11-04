@@ -66,7 +66,7 @@ pub(super) fn apply_put_arm(
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
-            && facet == crate::claim::substrate_facet_id(owner)?
+            && facet == crate::write_envelope::claim_body::substrate_facet_id(owner)?
             && stored_entity_type(store, wtxn, &owner)?.is_none()
         {
             apply_ops_with_origin(
@@ -107,7 +107,7 @@ pub(super) fn apply_put_arm(
             facet,
             1.0,
             learned_at,
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
@@ -234,9 +234,9 @@ pub(super) fn apply_put_arm(
         .extend(applied.evicted_shell_sources);
     #[cfg(feature = "sync")]
     let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
-        crate::embed::EMBED_PRIORITY_SERVER
+        crate::store::embedding::EMBED_PRIORITY_SERVER
     } else {
-        crate::embed::EMBED_PRIORITY_DEVICE
+        crate::store::embedding::EMBED_PRIORITY_DEVICE
     };
     if let Some(token) = applied.pending_embedding_token {
         state.pending_embedding_tokens_written.insert(id, token);

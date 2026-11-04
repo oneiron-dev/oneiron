@@ -2,23 +2,7 @@
 //! field keys, the reassignment-map row keys, the event-kind strings, and the
 //! sequence/size caps every other file in this module encodes against.
 
-/// Predicate of the anti-merge claim (ARCH-0055 §9 G.1 row): symmetric
-/// `entity.distinct_from` pair, conflict-set keyed by [`distinct_pair_key`](super::distinct_pair_key).
-/// Unlike the op events (engine-authored type-76 records), distinct_from
-/// stays a public CLAIM: it is a statement about the world, not an action.
-///
-/// The write path is the literal-dispatch arm in
-/// `crate::claim::validate_claim_body_and_decode`, which routes every
-/// type-0 write of this predicate — the op door's and an agent's alike —
-/// through `validate_distinct_from_claim_structure`. It is deliberately
-/// NOT a `CLAIM_PREDICATE_REGISTRY` entry: that list is the core/companion/
-/// persona LAYER schema list (`registered_predicates_carry_layer_prefix` pins
-/// the prefix), and `entity.*` is a family namespace, not a layer — the
-/// same reason the fifteen other predicate families validate through their
-/// own dispatch arm without a registry row. The registry gates no write
-/// (well-formed unknown predicates are accepted), so the arm alone is what
-/// enforces the pair.
-pub const PREDICATE_ENTITY_DISTINCT_FROM: &str = "entity.distinct_from";
+pub use crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM;
 
 /// First sequence value the local allocator may not enter. The final 1,024
 /// `u64` values remain the terminal band shared by local and replicated
@@ -91,11 +75,7 @@ pub(super) const BODY_KEY_APPLIED_RESIDUE: &str = "res";
 /// derives from the event and its origin, so this list is the undo door's
 /// authoritative dependency set. Omitted from the wire when empty.
 pub(super) const BODY_KEY_FORKED: &str = "frk";
-/// Normalized distinct-pair keys (ONE-1746), shared by the type-76
-/// `assert_distinct` event body AND the `entity.distinct_from` claim value:
-/// one pair shape with one spelling, so the two surfaces cannot drift.
-pub(super) const BODY_KEY_PAIR_A: &str = "a";
-pub(super) const BODY_KEY_PAIR_B: &str = "b";
+pub(super) use crate::write_envelope::identity_pair::{BODY_KEY_PAIR_A, BODY_KEY_PAIR_B};
 /// The CLAIM row an `assert_distinct` event carries its assertion in — the
 /// row's id, so the event's effect is auditable from the ledger alone.
 pub(super) const BODY_KEY_CLAIM: &str = "claim";
