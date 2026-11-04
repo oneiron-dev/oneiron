@@ -9,6 +9,8 @@ use crate::secret_rotation::{
 };
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+pub(super) use crate::store::result_body_rows::RAW_OUTPUTS;
+pub(crate) use crate::store::result_body_rows::StoredBody;
 use crate::store::result_body_rows::{STORED_FILE, STORED_HELD, STORED_INLINE, split_row};
 use crate::store::{
     BodyDir, BodyFile, BodyKeyRow, BodySink, ResponseFamily, ResponseRead, StagedBodyKey, SunkBody,
@@ -41,27 +43,6 @@ pub(super) use self::bodies::{
 /// The replay record of one run, keyed by run id.
 pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
-
-/// One result body, keyed by its deterministic content handle: inline, or the
-/// file beside `data.mdb` that holds it (OF-597).
-pub(super) const RAW_OUTPUTS: SideTable<String, StoredBody, Raw> =
-    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
-
-/// Where one body's bytes are: in its row, within `[limits]
-/// code_result_inline_bytes`, or in the body file named by its digest, of
-/// `len` bytes. The row is written only once the file is whole on disk, so a
-/// row naming a file never names a partial one.
-///
-/// `held`: the row holds its body on its own, as a raw output no descriptor
-/// holds (FIX 5399b). A put that publishes no descriptor sets it and every
-/// later put of the same bytes keeps it, so no other holder's release
-/// queues or collects the body; only an erase lifts it. It owns nothing
-/// and grants nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum StoredBody {
-    Inline { bytes: Vec<u8>, held: bool },
-    File { len: u64, held: bool },
-}
 
 impl StoredBody {
     /// This body as a row that holds it on its own when `held`.
