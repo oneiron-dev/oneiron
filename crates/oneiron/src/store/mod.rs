@@ -144,8 +144,8 @@ pub(crate) mod loro_document;
 pub mod materialization_event;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
-#[cfg(feature = "sync")]
 pub mod pack_hook_actor_class;
+#[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
