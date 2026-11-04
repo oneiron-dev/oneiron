@@ -470,14 +470,18 @@ impl DecisionModel for BigModel {
         // payer its run binds (FIX 3574).
         // Its input is the question over the state its producer built from
         // the access-checked evidence: those rows, complete (FIX 6935).
-        let run = self
-            .models
-            .funded_run(
-                format!("{PURPOSE}:{}", EntityId::now().to_hex()),
-                crate::decision_verdict::rung_meter(&self.meter),
-                crate::decision_verdict::rung_payer(),
-            )
-            .sourced(Some(call.evidence.to_vec()));
+        // A call that carries its caller's run spends on it (FIX 10443).
+        let run = match call.run {
+            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            None => self
+                .models
+                .funded_run(
+                    format!("{PURPOSE}:{}", EntityId::now().to_hex()),
+                    crate::decision_verdict::rung_meter(&self.meter),
+                    crate::decision_verdict::rung_payer(),
+                )
+                .sourced(Some(call.evidence.to_vec())),
+        };
         // FIX 12516/12742 capture: the capture caller bound on this thread,
         // when this decide runs inside a decision's capture scope. The bound
         // optional session is threaded through, `None` only at unbound
