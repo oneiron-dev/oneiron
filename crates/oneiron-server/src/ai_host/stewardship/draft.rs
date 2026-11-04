@@ -8,7 +8,6 @@
 //! that did not move leaves the reach-out pending for the next round.
 use std::collections::BTreeMap;
 
-use oneiron::dreamer_runner::maintenance::representation::PrematerializedDraft;
 use oneiron::dreamer_runner::maintenance::stewardship::{
     StewardshipDraftOutcome, StewardshipDraftRequest,
 };
@@ -18,7 +17,7 @@ use oneiron::{
 };
 
 use super::Drafter;
-use super::sources::{DraftSources, draft_messages};
+use super::sources::{DraftSources, SourcedDraft, draft_messages};
 use crate::models::ModelRuntime;
 
 /// The purpose a draft's call is metered and routed under.
@@ -216,11 +215,11 @@ async fn draft_one(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     // Scheduled with the evidence and voice the offer that answered was sent.
-    let served = sources
+    let (served, snapshot) = sources
         .served()
         .ok_or_else(|| Error::InvalidConfig("stewardship draft was sent no sources".into()))
         .map_err(at(Schedule))?;
     vault
-        .schedule_stewardship_draft(&served, &mut PrematerializedDraft { text }, now)
+        .schedule_stewardship_draft(&served, &mut SourcedDraft::new(text, snapshot.context), now)
         .map_err(at(Schedule))
 }

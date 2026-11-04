@@ -10,11 +10,12 @@
 use std::sync::{Mutex, PoisonError};
 
 use oneiron::dreamer_runner::maintenance::representation::{
-    DestinationContext, RepresentationContext,
+    DestinationContext, PrematerializedDraft, RepresentationContext, RepresentationDraft,
+    RepresentationPlanner,
 };
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipDraftRequest;
 use oneiron::settings::{ReadDestination, ReleaseHold};
-use oneiron::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest, Vault};
+use oneiron::{ContentPart, Error, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 
 use crate::models::{SourceAdmission, SourceOffer};
 
@@ -84,15 +85,15 @@ impl<'a> DraftSources<'a> {
     /// voice narrowed to what that offer was sent, so its voice provenance
     /// names only the samples it received (FIX 9447). `None` when no offer
     /// was sent anything.
-    pub(super) fn served(self) -> Option<StewardshipDraftRequest> {
+    pub(super) fn served(self) -> Option<(StewardshipDraftRequest, DestinationContext)> {
         let sent = self
             .sent
             .into_inner()
             .unwrap_or_else(PoisonError::into_inner)?;
         let mut served = self.draft.clone();
-        served.request.evidence = sent.context.request.evidence;
-        served.request.voice = sent.context.request.voice;
-        Some(served)
+        served.request.evidence = sent.context.request.evidence.clone();
+        served.request.voice = sent.context.request.voice.clone();
+        Some((served, sent))
     }
 
     /// The draft's sources `destination` may receive, read now; a read
@@ -163,5 +164,39 @@ impl SourceAdmission for DraftSources<'_> {
                 .iter()
                 .all(|source| now.context.voice.contains(source));
         (!holds).then(|| now.held.unwrap_or(ReleaseHold::Placement).reason())
+    }
+}
+
+/// Cites only the source revisions the answering offer actually received.
+pub(super) struct SourcedDraft {
+    expected: RepresentationContext,
+    inner: PrematerializedDraft,
+}
+
+impl SourcedDraft {
+    pub(super) fn new(text: String, expected: RepresentationContext) -> Self {
+        Self {
+            expected,
+            inner: PrematerializedDraft { text },
+        }
+    }
+}
+
+impl RepresentationPlanner for SourcedDraft {
+    fn plan(&mut self, context: &RepresentationContext) -> oneiron::Result<RepresentationDraft> {
+        let unchanged = self
+            .expected
+            .evidence
+            .iter()
+            .all(|source| context.evidence.contains(source))
+            && self
+                .expected
+                .voice
+                .iter()
+                .all(|source| context.voice.contains(source));
+        if !unchanged {
+            return Err(Error::InvalidClaimBody("stewardship draft sources changed"));
+        }
+        self.inner.plan(context)
     }
 }
