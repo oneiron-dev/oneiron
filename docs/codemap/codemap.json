@@ -74363,7 +74363,7 @@
      "path": "src/sync/carrier_parts.rs",
      "purpose": "Linked parts for a window carrier too large for one map value (Rule 5)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -75223,7 +75223,7 @@
      "path": "src/sync/custody/export_output.rs",
      "purpose": "Export secret supplements on the window plane (FIX 11843): the sealed copy an export secret request's holder…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75233,7 +75233,7 @@
      "path": "src/sync/custody/export_output/parts.rs",
      "purpose": "An export secret supplement's sealed copy past one row on the window plane (FIX 12063; L03 04:0x)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
