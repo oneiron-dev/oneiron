@@ -202,6 +202,7 @@ pub mod window_protocol;
 pub(crate) mod window_rows;
 
 pub mod consolidation_scope;
+pub(crate) mod context_field_profile;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod setting_seed;
