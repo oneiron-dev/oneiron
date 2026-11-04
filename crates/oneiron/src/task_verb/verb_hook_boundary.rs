@@ -255,11 +255,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     mut args: Value,
     check: VerbArgsCheck<'_>,
     run: impl FnOnce(Value) -> Result<Value, E>,
+    is_storage_error: &dyn Fn(&E) -> bool,
 ) -> Result<Result<Value, VerbHookStop>, E> {
     let secret = CustodySecret::lift(&call.verb, &mut args);
     let run = move |args| run(CustodySecret::restored(secret.as_ref(), args));
     let Some(session) = session else {
-        return vault.verb_hooks(call, args, check, run);
+        return vault.verb_hooks(call, args, check, run, is_storage_error);
     };
     let pre = match session_pre(vault, call, args, check, session, None)? {
         Ok(pre) => pre,
@@ -269,6 +270,9 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     let result = match run(pre.args.clone()) {
         Ok(result) => result,
         Err(error) => {
+            if is_storage_error(&error) {
+                vault.reopen_resumed_ask(&pre);
+            }
             abort(vault, pre);
             return Err(error);
         }
@@ -589,6 +593,9 @@ pub fn row(
     let result = match ran {
         Ok(result) => result,
         Err(error) => {
+            if crate::runtime_hooks::verb::run_failed_transient(&error) {
+                memory.vault().reopen_resumed_ask(&pre);
+            }
             abort(memory.vault(), pre);
             return Err(error);
         }
@@ -737,6 +744,9 @@ where
     let (output, result) = match ran {
         Ok(ran) => ran,
         Err(error) => {
+            if crate::runtime_hooks::verb::run_failed_transient(&error) {
+                memory.vault().reopen_resumed_ask(&pre);
+            }
             abort(memory.vault(), pre);
             return Err(error);
         }

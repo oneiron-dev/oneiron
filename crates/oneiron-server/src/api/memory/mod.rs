@@ -5,7 +5,7 @@ use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
 use super::ViewQuery;
-use super::commit_core_batch;
+use super::commit_core_batch_in_lane;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
@@ -374,7 +374,9 @@ pub(crate) async fn core_memory_verb(
                 super::announcement_authority(&server, &auth),
                 entity.text.as_deref(),
             )?;
-            commit_core_batch(&server, &auth, batch).map_err(|error| {
+            // Held to the credential's write lane, as `vault.batch` is (FIX 1216).
+            let lane = facade::host_doors::core_write_lane(&server.vault, &auth)?;
+            commit_core_batch_in_lane(&server, &auth, batch, &lane).map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;

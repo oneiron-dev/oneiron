@@ -120,6 +120,13 @@ pub trait OutboundResultSender {
     fn provider_wait(&self) -> Option<crate::outbound_intent_ledger::ProviderWait> {
         None
     }
+
+    /// The actual cost the last send's provider reported for it, in a Spend
+    /// row's denomination (FIX 11662), as the sender's own trusted read of
+    /// the provider's answer. By default a sender reports none.
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        None
+    }
 }
 
 /// Stdio child restrictions a real transport must apply before spawn.

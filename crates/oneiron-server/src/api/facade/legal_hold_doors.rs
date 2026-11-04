@@ -1,6 +1,6 @@
 //! The host doors of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log` and
-//! `.lift_and_erase`. `host_doors` re-exports them, so the generated HTTP
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift_and_erase`
+//! and `.withdraw_erase`. `host_doors` re-exports them, so the generated HTTP
 //! facade handler and the MCP dispatcher call them by the name every host
 //! door has, and a tool call, a code-mode call and an SDK call meet one
 //! admission: the vault owner's proof, as `/v1/owner/legal-holds` takes it
@@ -13,8 +13,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
-    self, EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
-    LegalHoldPlaceRequest, LegalHoldWidenRequest,
+    self, EmptyRequest, LegalHoldErasesWithdrawn, LegalHoldLiftAndEraseRequest,
+    LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest,
+    LegalHoldWithdrawEraseRequest,
 };
 
 use super::clock_ingress;
@@ -193,6 +194,31 @@ pub(crate) async fn vault_legal_holds_lift_and_erase(
                 }
             }
             rows
+        },
+    )
+    .await
+}
+
+/// `vault.legal_holds.withdraw_erase`: the owner withdraws the erase that
+/// waits on each named record (FIX 10401). The engine takes the owner's
+/// proof and the records, unchanged, under the proof the confirm takes. It
+/// lists the records its answer names.
+pub(crate) async fn vault_legal_holds_withdraw_erase(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LegalHoldWithdrawEraseRequest,
+) -> Listed<LegalHoldErasesWithdrawn> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.legal_holds.withdraw_erase",
+        move |server, owner| sdk::withdraw_legal_hold_erase_as(server.vault(), owner, input),
+        |withdrawn| {
+            withdrawn
+                .records
+                .iter()
+                .map(|withdrawn| withdrawn.record)
+                .collect()
         },
     )
     .await

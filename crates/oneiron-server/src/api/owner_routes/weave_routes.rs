@@ -22,7 +22,7 @@ use oneiron::lens::LensFrameCard;
 use oneiron::{EdgeActorClass, EntityId};
 use serde::Serialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
@@ -36,6 +36,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/schedules",
                 summary: "Every reader's digest schedule.",
                 row: None,
+                shape: None,
             },
             get(schedules),
         ),
@@ -45,6 +46,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/schedules",
                 summary: "One reader's cadence, first due second and sections.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_weave_schedule_body_schema,
+                    weave_schedule_schema,
+                )),
             },
             put(set_schedule),
         ),
@@ -54,6 +59,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/schedules/clear",
                 summary: "Stop one reader's digests.",
                 row: None,
+                shape: Some(RestShape::json(
+                    clear_weave_schedule_body_schema,
+                    weave_schedule_cleared_schema,
+                )),
             },
             post(clear_schedule),
         ),
@@ -63,6 +72,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/setting-changes",
                 summary: "The Coach's changes to the owner's own digest settings, newest first.",
                 row: Some("vault.weave.setting_changes.list"),
+                shape: None,
             },
             get(setting_changes),
         ),
@@ -72,6 +82,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/setting-changes/answer",
                 summary: "Accept, as the owner's own act, or decline one proposed change.",
                 row: Some("vault.weave.setting_changes.answer"),
+                shape: None,
             },
             post(answer_setting_change),
         ),
@@ -81,6 +92,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/setting-changes/undo",
                 summary: "The one-tap undo of an applied or accepted change.",
                 row: Some("vault.weave.setting_changes.undo"),
+                shape: None,
             },
             post(undo_setting_change),
         ),
@@ -90,6 +102,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/digest-feedback",
                 summary: "What the owner tells the Coach about his own digest.",
                 row: Some("vault.weave.digest_feedback.put"),
+                shape: None,
             },
             post(digest_feedback),
         ),
@@ -99,6 +112,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/report",
                 summary: "The owner lens, live.",
                 row: None,
+                shape: Some(RestShape::json(
+                    weave_report_body_schema,
+                    weave_report_schema,
+                )),
             },
             post(report),
         ),
@@ -108,6 +125,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/lens",
                 summary: "The owner lens, live, rendered through the weave-report skill on this server's Dreamer narrative route, as a card whose frame this server holds for the credential's events on it.",
                 row: None,
+                shape: Some(RestShape::json(weave_report_body_schema, weave_lens_schema)),
             },
             post(lens),
         ),
@@ -117,6 +135,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/digest",
                 summary: "The owner's digest.",
                 row: None,
+                shape: None,
             },
             get(digest),
         ),
@@ -126,6 +145,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/link/wrong",
                 summary: "The owner labels a link it sees in the owner lens as wrong.",
                 row: None,
+                shape: Some(RestShape::json(
+                    weave_wrong_link_body_schema,
+                    weave_link_correction_schema,
+                )),
             },
             post(wrong_link),
         ),
