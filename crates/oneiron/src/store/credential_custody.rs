@@ -31,8 +31,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, Requirement,
-    RetireCause, RetirementIntent, stage_retirement_in_txn,
+    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
+    Requirement, RetireCause, RetirementIntent, stage_retirement_in_txn,
 };
 
 pub(crate) use self::erase::{FenceLookup, credential_erases_staged};
@@ -203,6 +203,25 @@ impl Store {
             .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
         copy_leaf(CustodyKind::CredentialValue, custody.read(&id)?.expose())
+    }
+
+    /// The published/retired/missing state of a credential value's key,
+    /// without reading key bytes or opening its value. The caller holds a
+    /// writer, or took the custody read guard before its snapshot. This
+    /// takes no second guard; a live entry is not proof of readability.
+    ///
+    /// # Errors
+    /// Custody faults, never absence.
+    pub(crate) fn credential_value_entry_state(
+        &self,
+        credential: &EntityId,
+        generation: u32,
+    ) -> Result<EntryState> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(EntryState::Missing);
+        };
+        let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
+        custody.state(&id)
     }
 
     /// The key connector call `call_ref`'s resume state at `generation` is
