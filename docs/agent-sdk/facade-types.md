@@ -1039,8 +1039,14 @@ export type MessageDocumentState = { frontier: number[]; content: string }
 export type MessageReplyAssertions = { message: EntityId; conversation: EntityId; turn: EntityId; writer: EntityId; writer_class: number; assertions: ReplyAssertions }
 /** `oneiron::memory::witness::stream::api_types::MessageDurability` */
 export type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null }
+/** `oneiron_model::llm::protocol::ReasoningPartKind` */
+export type ReasoningPartKind = "full" | "summary" | "encrypted" | "count"
+/** `oneiron_model::llm::protocol::ImageContent` */
+export type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string }
+/** `oneiron_model::llm::protocol::ContentPart` */
+export type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string }
 /** `oneiron::memory::witness::types::WitnessMessage` */
-export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null }
+export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; parts?: ContentPart[] | null; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null }
 /** `oneiron::memory::witness::types::WitnessTurn` */
 export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions }
 /** `oneiron::memory::claim_admission::ScopedClaimInput` */
@@ -6367,12 +6373,6 @@ export type ResponseFormat = { format: "text" } | { format: "json"; schema: unkn
 export type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null }
 /** `oneiron_model::llm::protocol::LlmMessageRole` */
 export type LlmMessageRole = "system" | "user" | "assistant" | "tool"
-/** `oneiron_model::llm::protocol::ReasoningPartKind` */
-export type ReasoningPartKind = "full" | "summary" | "encrypted" | "count"
-/** `oneiron_model::llm::protocol::ImageContent` */
-export type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string }
-/** `oneiron_model::llm::protocol::ContentPart` */
-export type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string }
 /** `oneiron_model::llm::protocol::LlmMessage` */
 export type LlmMessage = { role: LlmMessageRole; content: ContentPart[] }
 /** `oneiron_model::llm::protocol::LlmToolSpec` */
