@@ -148,6 +148,9 @@ side_tables! {
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
         => crate::secret_lease::erase_receipt_actor_in_txn;
+    /// Canonical lift counts by run, family and actual source entity or explicitly unmapped
+    /// source (FIX 10493). No values. Key: run id16, family byte, source tag, source id16 if known.
+    SECRET_LIFT_CONTRIBUTION: VaultMeta b"secret_lift:contribution:v1:" Named Engine;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
@@ -160,8 +163,8 @@ side_tables! {
     /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
     /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
-    /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
-    /// (OF-067). Key: id16 (run id).
+    /// Completion metadata for one lift run (OF-067); its canonical contribution rows supply
+    /// the served receipt's counts. Never a value or a digest. Key: id16 (run id).
     SECRET_LIFT_RECEIPT: VaultMeta b"secret_lift:receipt:v1:" Named;
     /// The lift sweep run in progress: its trigger and its `(family, last key)` cursor (OF-067).
     /// Key: ().
