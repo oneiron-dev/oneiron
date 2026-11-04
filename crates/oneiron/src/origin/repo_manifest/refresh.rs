@@ -2,8 +2,8 @@
 //!
 //! Refs are single-writer: the host holding the repo's origin authority
 //! rewrites `visible_refs`, `lfs_pointers` and `epoch` from what the origin
-//! advertises (the Published `ORIGIN_VISIBLE_REF` rows and the LFS pointers
-//! their publications require). While no authority row is configured, the
+//! advertises (the checked publication projection and the LFS pointers its
+//! publications require). While no authority row is configured, the
 //! machine that minted the id writes instead, at epoch 0. Every other vault
 //! keeps the copy it received. The visible-ref writers live outside this
 //! lane's files, so refresh runs from the two doors that are ours: right
@@ -85,30 +85,41 @@ impl Vault {
         // authority change in between lets one stale-epoch write through,
         // which the next mirror pass corrects.
         let epoch = match self.origin_host_authority(&origin_name)? {
-            OriginHostAuthority::Held(_) => self
-                .served_origin_authority(&origin_name)?
-                .map_or(0, |row| row.epoch),
+            OriginHostAuthority::Held(lease) => lease.epoch(),
             OriginHostAuthority::Unconfigured if minted => 0,
             _ => return Ok(()),
         };
-        let repo_id = {
-            let identity = GitWire::new(self)?.repository_identity(&dir)?;
-            crate::origin::lfs::lfs_repo_id(&identity.as_hex())?
+        let wire = GitWire::new(self)?;
+        let repo_id = crate::origin::lfs::lfs_repo_id(&wire.repository_identity(&dir)?.as_hex())?;
+        let publications = self.origin_visible_ref_rows(&repo_id)?;
+        let advertised: BTreeSet<(String, String)> = if publications.is_empty() {
+            BTreeSet::new()
+        } else {
+            let Some(handle) = self.mirror_handle(&wire, repo_id, &dir)? else {
+                return Ok(());
+            };
+            self.published_origin_refs(&wire, repo_id, &handle)?
+                .into_iter()
+                .map(|(name, oid)| (name.as_str().to_owned(), oid.as_str().to_owned()))
+                .collect()
         };
         let mut refs = Vec::new();
         let mut pointers = BTreeSet::new();
-        for publication in self.origin_visible_ref_rows(&repo_id)? {
+        for publication in publications {
             let Some(record) = self.origin_publication(publication)? else {
                 continue;
             };
-            if record.status != OriginPublicationStatus::Published {
+            if record.repo_id != repo_id || record.status != OriginPublicationStatus::Published {
                 continue;
             }
-            refs.push((
+            let key = (
                 record.ref_name.as_str().to_owned(),
                 record.new_oid.as_str().to_owned(),
-            ));
-            pointers.extend(record.required_lfs_oids.iter().map(|(oid, _)| *oid));
+            );
+            if advertised.contains(&key) {
+                refs.push(key);
+                pointers.extend(record.required_lfs_oids.iter().map(|(oid, _)| *oid));
+            }
         }
         // Only what a peer's decode would take is stored: a publication row
         // naming no full ref or commit id never poisons the manifest, and

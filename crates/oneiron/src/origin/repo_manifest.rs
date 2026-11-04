@@ -132,8 +132,8 @@ pub struct RepoManifest {
     pub minted_at: u64,
     /// The served name, where the minting vault serves the repo.
     pub origin_name: Option<String>,
-    /// Each ref the origin advertises, by ascending name, with its commit:
-    /// its Published `ORIGIN_VISIBLE_REF` rows.
+    /// Each ref the origin's checked advertisement exposes, by ascending
+    /// name, with its commit.
     pub visible_refs: Vec<(String, String)>,
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
@@ -343,8 +343,11 @@ impl Vault {
     /// refreshes what stands.
     pub(crate) fn ensure_repo_manifest(&self, code: EntityId, origin_name: &str) {
         let ensured = self.with_write_txn_grouped(|txn| {
+            if !code_anchor_live(self, txn, &code)? {
+                return Ok(None);
+            }
             if let Some(portable) = BY_CODE.get(&self.store, txn, &code)? {
-                return Ok((RepoPortableId(portable), false));
+                return Ok(Some((RepoPortableId(portable), false)));
             }
             let portable = RepoPortableId::mint();
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
@@ -362,9 +365,12 @@ impl Vault {
             MANIFESTS.put(&self.store, txn, &portable.0, &manifest)?;
             BY_CODE.put(&self.store, txn, &code, &portable.0)?;
             MINTED.put(&self.store, txn, &portable.0, &())?;
-            Ok((portable, true))
+            Ok(Some((portable, true)))
         });
-        let refreshed = ensured.and_then(|(portable, minted)| {
+        let refreshed = ensured.and_then(|ensured| {
+            let Some((portable, minted)) = ensured else {
+                return Ok(());
+            };
             if minted {
                 self.note_repo_manifest_written(code);
             }
