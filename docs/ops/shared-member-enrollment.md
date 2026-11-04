@@ -34,6 +34,12 @@ Role changes, withdrawal, deletion and expiry do not grant continuing authority
 to an older cached proof. See [member-credentials.md](member-credentials.md) for
 the native verification contract.
 
+A shared-vault Admin grant may include `org:*` verbs without naming an
+organization. Those verbs do not invalidate its ordinary read/write/admin
+transport authority. They also do not grant organization API powers: those
+still require an explicitly organization-bound credential. The member token's
+grant Scope and its absent organization reference are not rewritten.
+
 ## Remaining enrollment work
 
 This operation returns a member credential; it does not create a local shared

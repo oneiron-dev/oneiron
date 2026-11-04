@@ -33,8 +33,8 @@ def _address(namespace: tuple[str, ...], key: str) -> dict[str, Any]:
 
 
 def _page(limit: int, offset: int) -> None:
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError("limit must be an integer between 1 and 1000")
+    if type(limit) is not int or limit < 1:
+        raise ValueError("limit must be a positive integer")
     if type(offset) is not int or not 0 <= offset <= 1_000_000:
         raise ValueError("offset must be an integer between 0 and 1000000")
 
