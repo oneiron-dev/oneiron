@@ -446,7 +446,9 @@ pub(super) fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
             MEMORY_CODE_BUDGET_SPENT,
             "A usage window or prepaid credit is spent: answer the quota question in GET /v1/ai/status at POST /v1/ai/quota/{question}.",
         ),
-        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::EmptyResponse)
+        LlmError::Fatal(
+            FatalLlmError::Auth | FatalLlmError::EmptyResponse | FatalLlmError::JobLost,
+        )
         | LlmError::Retryable(_) => (
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "Retry later, or name another row ai.options lists.",
