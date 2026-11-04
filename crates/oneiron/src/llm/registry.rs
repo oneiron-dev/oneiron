@@ -3,6 +3,7 @@ mod backend;
 mod description;
 pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
 mod installed_pack;
+pub use crate::store::model_description_rows::ModelWireFormat;
 pub use crate::store::model_score_diff::ModelScoreDiff;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 mod source_erase;
@@ -43,15 +44,6 @@ const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
 /// key spelled it.
 fn score_diffs_key(model: &ModelId) -> String {
     format!("{}\0", model.as_str())
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ModelWireFormat {
-    OpenaiCompat,
-    AnthropicMessages,
-    Gemini,
-    OwnServer,
-    Local,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
