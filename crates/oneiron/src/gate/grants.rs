@@ -22,17 +22,7 @@ use super::resolution::PolicyManifestResolution;
 /// One Scope's world axis, a NOTE's world witness is judged under.
 type WorldAxis = oneiron_authority::federation::ScopeAxis<oneiron_authority::federation::ScopeId>;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PolicyScopedGrant {
-    pub(crate) actor_class: Option<String>,
-    pub(crate) actor_ref: Option<String>,
-    pub(crate) effector: String,
-    /// Purpose-specific selectors; these can only narrow `authority_scope`.
-    pub(crate) scope: Option<Value>,
-    pub(crate) authority_scope: oneiron_authority::federation::Scope,
-    pub(crate) budget: Option<Value>,
-    pub(crate) receipt_required: bool,
-}
+pub(crate) use oneiron_store::policy_scoped_grant::PolicyScopedGrant;
 
 pub(crate) fn scoped_read_claim_allowed(
     policy: &PolicyManifestResolution,
