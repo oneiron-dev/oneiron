@@ -205,7 +205,10 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
         entries.push((
             Value::from(KEY_BODY),
             Value::Map(vec![
-                (Value::from(KEY_FRONTIER), Value::Binary(body.frontier.clone())),
+                (
+                    Value::from(KEY_FRONTIER),
+                    Value::Binary(body.frontier.clone()),
+                ),
                 (Value::from(KEY_LOCATOR), encode_locator(&body.locator)),
             ]),
         ));
