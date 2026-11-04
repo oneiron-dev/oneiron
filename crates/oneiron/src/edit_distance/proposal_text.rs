@@ -160,7 +160,7 @@ impl ProposalTextArtifact {
             doc,
             artifact_ref.entity_id(),
             initial,
-            *actor,
+            (*actor, stamp),
             at,
             |doc| {
                 let meta = doc.get_map(META_CONTAINER);

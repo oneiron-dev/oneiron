@@ -1926,6 +1926,8 @@ class Oneiron:
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -1982,6 +1984,9 @@ class Oneiron:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
         def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+    class _VaultSkillsCallableVerbs:
+        def amend(self, spec: Facade.CallableAmendRequest) -> Facade.CallableAmendReceipt:
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
@@ -2680,6 +2685,8 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
+        def withdraw_erase(self, spec: Facade.LegalHoldWithdrawEraseRequest) -> Facade.LegalHoldErasesWithdrawn:
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
@@ -4210,6 +4217,12 @@ class Oneiron:
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
+        def get(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemView:
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+        def done(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemMarked:
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+        def later(self, spec: Facade.InboxItemLaterRequest) -> Facade.InboxItemMarked:
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
     class _SelfInboxConcernVerbs:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...

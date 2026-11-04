@@ -122,9 +122,9 @@ pub(super) struct StoredStandingPolicy {
     /// [`StandingPolicyStatus`] is derived from — two spellings of one fact are
     /// two things that can disagree.
     pub(super) accepted_at: Option<u64>,
-    /// The answering holder's hex id (FIX 9804 pattern): `Some` iff accepted.
+    /// The answering holder's hex id (FIX 9804 pattern): `Some` iff accepted, unless the answerer was erased.
     pub(super) accepted_by: Option<String>,
-    /// The holder's decision id hex (FIX 9804 pattern): `Some` iff accepted.
+    /// The holder's decision id hex (FIX 9804 pattern): `Some` iff accepted, unless the answerer was erased.
     pub(super) decision_ref: Option<String>,
     /// Earlier current rows, oldest first, retained so replacing this row does
     /// not erase their proposal and acceptance receipts.

@@ -57,7 +57,20 @@ impl Vault {
         token: &EsignCapability,
         bytes: &[u8],
     ) -> Result<String> {
-        self.upload_esign_signature_image_within(token, bytes, &|_, _| Ok(true))
+        self.upload_esign_signature_image_as(token, bytes, super::SigningCaller::Bearer, None)
+    }
+
+    /// [`Self::upload_esign_signature_image`] with verified receipt evidence.
+    pub fn upload_esign_signature_image_as(
+        &self,
+        token: &EsignCapability,
+        bytes: &[u8],
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+    ) -> Result<String> {
+        self.upload_esign_signature_image_within(token, bytes, caller, verified_actor, &|_, _| {
+            Ok(true)
+        })
     }
 
     /// [`Self::upload_esign_signature_image`] under a narrowed caller's
@@ -70,6 +83,8 @@ impl Vault {
         &self,
         token: &EsignCapability,
         bytes: &[u8],
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
     ) -> Result<String> {
         let now = self.now_recorded_at();
@@ -85,7 +100,16 @@ impl Vault {
         })?;
         let _ = self.with_write_txn_grouped(|txn| {
             super::lane_scope::ceiling_admits_in(ceiling, txn, &document)?;
-            super::rate::observe(self, txn, &document, &recipient, now)
+            super::rate::observe(
+                self,
+                txn,
+                &document,
+                &recipient,
+                now,
+                "signature_upload",
+                caller.authentication_method(),
+                verified_actor,
+            )
         });
         if bytes.is_empty() {
             return Err(invalid("signature image size"));
@@ -247,7 +271,29 @@ impl Vault {
         token: &EsignCapability,
         image_ref: &str,
     ) -> Result<Vec<u8>> {
-        self.esign_signature_image_for_capability_within(token, image_ref, &|_, _| Ok(true))
+        self.esign_signature_image_for_capability_as(
+            token,
+            image_ref,
+            super::SigningCaller::Bearer,
+            None,
+        )
+    }
+
+    /// [`Self::esign_signature_image_for_capability`] with verified receipt evidence.
+    pub fn esign_signature_image_for_capability_as(
+        &self,
+        token: &EsignCapability,
+        image_ref: &str,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+    ) -> Result<Vec<u8>> {
+        self.esign_signature_image_for_capability_within(
+            token,
+            image_ref,
+            caller,
+            verified_actor,
+            &|_, _| Ok(true),
+        )
     }
 
     /// [`Self::esign_signature_image_for_capability`] under a narrowed
@@ -259,6 +305,8 @@ impl Vault {
         &self,
         token: &EsignCapability,
         image_ref: &str,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
     ) -> Result<Vec<u8>> {
         reference(image_ref)?;
@@ -266,7 +314,16 @@ impl Vault {
         let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
-            super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
+            super::rate::observe(
+                self,
+                txn,
+                &cap.document,
+                &cap.recipient,
+                now,
+                "signature_read",
+                caller.authentication_method(),
+                verified_actor,
+            )
         });
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;

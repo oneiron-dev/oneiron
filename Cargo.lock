@@ -8486,6 +8486,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-container",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
@@ -8710,6 +8711,9 @@ dependencies = [
  "getrandom 0.4.3",
  "heed",
  "oneiron-contracts",
+ "oneiron-model",
+ "rmpv",
+ "schemars 0.8.22",
  "serde",
  "zeroize",
 ]

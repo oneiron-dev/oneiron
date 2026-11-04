@@ -1,7 +1,8 @@
 //! A rewritten chart's held and new series planned into its own workbook:
 //! each sequence at its own cells, a bubble series' sizes beside its values,
 //! and a literal or absent slot given the first free cells beside the
-//! chart's (FIX 6400).
+//! chart's (FIX 6400), a multi-level category set a block of them (FIX
+//! 9279).
 //! Entry: `Plan::held`, `Plan::gaps`, `Plan::added`.
 //! Plan and its private state remain in the parent module.
 
@@ -111,12 +112,36 @@ impl Plan<'_> {
         Ok(())
     }
 
+    /// `first`'s levels planned into the first free cells beside `values`,
+    /// running `down` as they do: a flat set or x values in one line, a
+    /// multi-level set in a block of one line per level, the outermost
+    /// first, side by side down a column or stacked along a row (FIX 9279).
+    /// The lines planned, leaf first; `None` for no points.
+    fn block_beside(
+        &mut self,
+        values: &Line,
+        first: &First<'_>,
+        down: bool,
+    ) -> Result<Option<Vec<Line>>, RebuildReason> {
+        let Some(head) = values.head().fit(first.count(), down)? else {
+            return Ok(None);
+        };
+        let block: Vec<Line> = (0..first.levels.len())
+            .rev()
+            .map(|step| head.shifted(u32::try_from(step).unwrap_or(u32::MAX), down))
+            .collect::<Option<_>>()
+            .ok_or(RebuildReason::NoRoom)?;
+        let lines = self.room(&block, down)?;
+        self.place(first, lines.clone(), &lines, down).map(Some)
+    }
+
     /// A held series' literal or absent slots given cells of their own, as
     /// Edit Data gives them (FIX 6400): its values beside the chart's cells
     /// (`anchor`) when it has none, its name before its values, its x
-    /// values, its bubble sizes and a flat category set no series has cells
-    /// for beside its values. Each keeps its points; a slot with cells keeps
-    /// its reference. The category set it planned and its line, if any.
+    /// values, its bubble sizes and a category set no series has cells for
+    /// (flat or multi-level, FIX 9279) beside its values. Each keeps its
+    /// points; a slot with cells keeps its reference. The category set it
+    /// planned and its lines, if any.
     pub(super) fn gaps(
         &mut self,
         held: &HeldRefs,
@@ -149,16 +174,15 @@ impl Plan<'_> {
             self.take(&line, size, true, &values)?;
             refs.size = Some(line.formula());
         }
-        let Some(first) = want.first.as_ref().filter(|first| first.levels.len() == 1) else {
+        let Some(first) = want.first.as_ref() else {
             return Ok(None);
         };
         if refs.first.is_some() {
             return Ok(None);
         }
-        let Some(line) = self.beside(&values, first.count(), down)? else {
+        let Some(lines) = self.block_beside(&values, first, down)? else {
             return Ok(None);
         };
-        let lines = self.place(first, vec![line.clone()], &[line], down)?;
         refs.first = Line::around(&lines).map(|line| line.formula());
         Ok(first.set.map(|set| (set, lines)))
     }
@@ -269,10 +293,9 @@ impl Plan<'_> {
         }
         if refs.first.is_none()
             && planned.is_none()
-            && let Some(first) = want.first.as_ref().filter(|first| first.levels.len() == 1)
-            && let Some(line) = self.beside(&values, first.count(), down)?
+            && let Some(first) = want.first.as_ref()
+            && let Some(lines) = self.block_beside(&values, first, down)?
         {
-            let lines = self.place(first, vec![line.clone()], &[line], down)?;
             refs.first = Line::around(&lines).map(|line| line.formula());
             planned = first.set.map(|set| (set, lines));
         }
