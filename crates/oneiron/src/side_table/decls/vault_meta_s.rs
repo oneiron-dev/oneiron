@@ -278,6 +278,9 @@ side_tables! {
     /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
     /// u64be(sequence).
     POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
+    /// The owner's grant/revoke act on an access grant in the commit that changed it
+    /// (FIX 10980). Writer-trusted local receipt, not a signed op. Key: u64be(sequence).
+    ACCESS_GRANT_OWNER_ACT: VaultMeta b"settings:owner_act_access_grant:v1:" Named;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
@@ -402,7 +405,7 @@ side_tables! {
     /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
+        => crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn;
     /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
     /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
     /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair

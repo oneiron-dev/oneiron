@@ -109,6 +109,14 @@ pub(crate) struct AuthorityCachedFold {
     continuation: Option<Arc<AuthorityContinuation>>,
 }
 
+/// A successful local-checkpoint coverage check, carried only in this cache.
+#[derive(Clone, Copy)]
+struct CheckpointCoverageProof {
+    /// The head at which every covered hash was held. `None` proves that no
+    /// checkpoint head existed then.
+    head: Option<[u8; 32]>,
+}
+
 /// What a later generation's fold resumes from (OF-469): the last committed
 /// fold's base, and the store id of each row it folded, so that fold reads
 /// only the stored rows past it. It lives in this cache alone and reopens
@@ -118,15 +126,35 @@ pub(crate) struct AuthorityContinuation {
     /// Persistent, so the next continuation shares it and adds only the
     /// tail's (FIX 12308).
     ids: im::OrdMap<crate::EntityId, AuthorityEntryHash>,
+    /// The highest store-order sequence this fold read (FIX 12369), where
+    /// the fold read the whole stored log under a complete store-order
+    /// index: its `ids` are then exactly the rows sequenced up to it, and
+    /// the next fold range-scans only the rows past it. None where the
+    /// index cannot vouch for that (an adopted image's fold, an incomplete
+    /// index): the next fold takes the type-index scan.
+    max_seq: Option<u64>,
+    /// The last successful checkpoint coverage check. An unchanged head and
+    /// a whole indexed baseline let the next fold reuse it instead of
+    /// decoding every covered hash again.
+    checkpoint_coverage: Option<CheckpointCoverageProof>,
 }
 
 impl AuthorityContinuation {
-    fn of(base: super::fold_resume::FoldBase) -> Option<Self> {
+    fn of(
+        base: super::fold_resume::FoldBase,
+        max_seq: Option<u64>,
+        checkpoint_coverage: CheckpointCoverageProof,
+    ) -> Option<Self> {
         let ids = base
             .hashes()
             .map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
             .collect::<Option<_>>()?;
-        Some(Self { base, ids })
+        Some(Self {
+            base,
+            ids,
+            max_seq,
+            checkpoint_coverage: Some(checkpoint_coverage),
+        })
     }
 
     /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
@@ -135,12 +163,19 @@ impl AuthorityContinuation {
         baseline: &'a Self,
         base: super::fold_resume::FoldBase,
         tail: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+        max_seq: Option<u64>,
+        checkpoint_coverage: CheckpointCoverageProof,
     ) -> Option<Self> {
         let mut ids = baseline.ids.clone();
         for hash in tail {
             ids.insert(authority_log_entity_id_from_hash(hash).ok()?, *hash);
         }
-        Some(Self { base, ids })
+        Some(Self {
+            base,
+            ids,
+            max_seq,
+            checkpoint_coverage: Some(checkpoint_coverage),
+        })
     }
 }
 
@@ -527,7 +562,19 @@ fn fold_stored_tail_in_txn(
             unstored.push(entry.clone());
         }
     }
-    let checkpoint = super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?;
+    let checkpoint_head = super::checkpoint::checkpoint_head_in_txn(store, txn)?;
+    // A previous fold proved every hash covered by this same head was held.
+    // Reuse that proof only when the indexed baseline is whole; any doubt
+    // reads the coverage set exactly as before.
+    let coverage_proven = baseline
+        .and_then(|baseline| baseline.checkpoint_coverage)
+        .is_some_and(|proof| proof.head == checkpoint_head)
+        && held.holds_baseline();
+    let checkpoint = if coverage_proven {
+        None
+    } else {
+        super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?
+    };
     // Each row a fold names is held: the baseline's by its count, every
     // other one by hash.
     let named_held = held.holds_baseline()
@@ -557,7 +604,7 @@ fn fold_stored_tail_in_txn(
             vault_id: baseline
                 .and_then(|baseline| baseline.base.vault_id())
                 .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
-            checkpoint: checkpoint.map(|(head, _)| head),
+            checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
         }));
     }
@@ -620,6 +667,14 @@ fn fold_stored_tail_in_txn(
                     baseline,
                     base,
                     tail.iter().map(|(hash, _)| hash),
+                    if baseline.max_seq.is_some() {
+                        super::store_order::complete_max_in_txn(store, txn)?
+                    } else {
+                        None
+                    },
+                    CheckpointCoverageProof {
+                        head: checkpoint_head,
+                    },
                 ),
             });
         }
@@ -662,15 +717,22 @@ fn fold_stored_tail_in_txn(
             key.policy.stale_roster_window_secs,
         ),
     );
+    let max_seq = super::store_order::complete_max_in_txn(store, txn)?;
     Ok(AuthorityTailFold::Complete {
         view: AuthorityView {
             fold: Arc::new(fold),
             generation: key.generation,
         },
         next_deadline_secs,
-        continuation: base
-            .map(|base| base.with_pinned(pinned))
-            .and_then(AuthorityContinuation::of),
+        continuation: base.map(|base| base.with_pinned(pinned)).and_then(|base| {
+            AuthorityContinuation::of(
+                base,
+                max_seq,
+                CheckpointCoverageProof {
+                    head: checkpoint_head,
+                },
+            )
+        }),
     })
 }
 
