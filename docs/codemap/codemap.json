@@ -71910,9 +71910,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 81,
+      "crate-vis": 83,
       "mod": 79,
-      "re-export": 33
+      "re-export": 31
      }
     },
     {
@@ -73060,13 +73060,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "StoreScopeStamps"
-     ],
+     "notable": [],
      "path": "src/store/scope_stamps.rs",
      "purpose": "The record-scope stamp hooks the store layer's write and erase paths run, supplied by the engine when a…",
      "surface": {
-      "trait": 1
+      "crate-vis": 1
      }
     },
     {
@@ -73309,13 +73307,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "StoreSyncHooks"
-     ],
+     "notable": [],
      "path": "src/store/sync_hooks.rs",
      "purpose": "The sync hooks the store layer's write, erase and maintenance paths run in a build with sync, supplied by…",
      "surface": {
-      "trait": 1
+      "crate-vis": 1
      }
     },
     {
