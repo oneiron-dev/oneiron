@@ -1,8 +1,8 @@
 //! Identity-bearing facet classification and canonical PERSON body maps.
 
+use crate::error::{Error, Result};
 use rmpv::Value;
 use std::collections::BTreeSet;
-use crate::error::{Error, Result};
 
 /// A FACET body naming `kind` `persona` or `relationship` carries identity,
 /// which belongs on PERSON. Both write-admission refusals share this shape test.

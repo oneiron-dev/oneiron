@@ -18,12 +18,13 @@ use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
-    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_REPORTED_CHARSET_LABEL_CHARS,
-    RenderedPage, RendererError, RendererResult, WebFetchError, WebFetchResult,
+    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_REPORTED_CHARSET_LABEL_CHARS, RenderedPage,
+    RendererError, RendererResult, WebFetchError, WebFetchResult,
 };
 
 pub(super) use crate::memory::web_acquisition::{
-    normalize_url, normalize_link_list, is_web_url, has_userinfo, redact_url_credentials, redact_userinfo_text, validated_web_url, REDACTED_USERINFO,
+    REDACTED_USERINFO, has_userinfo, is_web_url, normalize_link_list, normalize_url,
+    redact_url_credentials, redact_userinfo_text, validated_web_url,
 };
 
 /// Parses a caller-supplied URL into its normalized form.

@@ -1,11 +1,13 @@
 //! Coping outcome records and canonical claim value codec.
 
-use rmpv::Value;
-use super::affect_trigger::{VadDelta, decode_entity_ref, decode_vad_delta, reject_duplicate, vad_delta_value};
-use super::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
 use super::ClaimCandidate;
+use super::affect_trigger::{
+    VadDelta, decode_entity_ref, decode_vad_delta, reject_duplicate, vad_delta_value,
+};
+use super::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use rmpv::Value;
 
 pub const COPING_OUTCOME_PREDICATE: &str = "coping.outcome";
 
