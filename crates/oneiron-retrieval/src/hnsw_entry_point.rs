@@ -1,10 +1,11 @@
-//! Tarjan-SCC entry-point selection.
+//! Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's
+//! `hnsw::rebuild` calls it).
 
 use std::collections::{HashMap, HashSet};
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
-pub(super) fn select_best_entry_point(
+pub fn select_best_entry_point(
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     suggested: Option<EntityId>,
 ) -> Option<EntityId> {
@@ -34,7 +35,7 @@ pub(super) fn select_best_entry_point(
 ///
 /// `ops` increments once per node visit and once per edge scan in every
 /// phase, so tests can pin the complexity class.
-pub(super) fn select_best_entry_point_probed(
+pub fn select_best_entry_point_probed(
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     suggested: Option<EntityId>,
     ops: &mut u64,
