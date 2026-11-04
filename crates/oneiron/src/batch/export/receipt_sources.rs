@@ -1,7 +1,7 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
 use crate::{
     error::{Error, Result},
-    receipt::ReceiptRecord,
+    store::receipt_row::ReceiptRecord,
     serialize::ExportBody,
     write_envelope::claim_body::ClaimBody,
 };

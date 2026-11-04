@@ -4054,7 +4054,7 @@ export type PolicyOutboundRequest = { subject: PolicyClassifySubject; content: s
 /** `oneiron::policy_model::enforce::PolicyEnforcementAction` */
 export type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped"
 /** `oneiron::policy_model::verdict::PolicySkipReason` */
-export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "policy-moving"
+export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "admission-denied" | "policy-moving"
 /** `oneiron::policy_model::verdict::PolicyClassifyDecision` */
 export type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason }
 /** `oneiron::policy_model::verdict::PolicyVerdictCategory` */
