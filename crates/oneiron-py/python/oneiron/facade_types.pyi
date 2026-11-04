@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1223 facade rows, 4436 declarations.
+Census: 1223 facade rows, 4439 declarations.
 Inputs: 1151 of 1223 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1056 of 1223 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -18567,6 +18567,7 @@ class EsignDocument(TypedDict):
     title: str
     sequential: bool
     expires_at: int
+    token_expires_at: NotRequired[int | None]
     items: list[EsignItem]
     recipients: list[EsignRecipient]
     fields: list[EsignField]
@@ -18622,6 +18623,13 @@ class SignatureRow(TypedDict):
     recipient: str
     value: FieldValue
     at: int
+EsignAuthenticationMethod = Literal["bearer", "person", "agent"]
+EsignSigningIntent = Literal["direct", "held_allow"]
+class EsignSigningEvidence(TypedDict):
+    authentication_method: EsignAuthenticationMethod
+    disclosure_version: NotRequired[str | None]
+    consent: bool
+    intent: EsignSigningIntent
 class EsignEventDrafted(TypedDict):
     event: Literal["drafted"]
     document: EsignDocument
@@ -18630,6 +18638,9 @@ class EsignEventSent(TypedDict):
 class EsignEventViewed(TypedDict):
     event: Literal["viewed"]
     recipient: str
+class EsignEventAccessVerified(TypedDict):
+    event: Literal["access_verified"]
+    recipient: str
 class EsignEventFieldSaved(TypedDict):
     event: Literal["field_saved"]
     signature: SignatureRow
@@ -18637,6 +18648,8 @@ class EsignEventSigned(TypedDict):
     event: Literal["signed"]
     recipient: str
     next: NotRequired[str | None]
+    evidence: EsignSigningEvidence
+    items: list[EsignItem]
 class EsignEventDeclined(TypedDict):
     event: Literal["declined"]
     recipient: str
@@ -18659,7 +18672,7 @@ class EsignEventResealRequested(TypedDict):
     event: Literal["reseal_requested"]
     owner: str
     authority: str
-EsignEvent = EsignEventDrafted | EsignEventSent | EsignEventViewed | EsignEventFieldSaved | EsignEventSigned | EsignEventDeclined | EsignEventVoided | EsignEventExpired | EsignEventReminded | EsignEventSealed | EsignEventResealRequested
+EsignEvent = EsignEventDrafted | EsignEventSent | EsignEventViewed | EsignEventAccessVerified | EsignEventFieldSaved | EsignEventSigned | EsignEventDeclined | EsignEventVoided | EsignEventExpired | EsignEventReminded | EsignEventSealed | EsignEventResealRequested
 class EsignAuditActor(TypedDict):
     actor: str
     ip: NotRequired[str | None]
