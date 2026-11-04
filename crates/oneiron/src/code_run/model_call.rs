@@ -297,6 +297,15 @@ impl ErasedForm for ModelCallRecord {
             part.bytes = None;
             part.signature = None;
         }
+        // The OpenAI-compatible adapter passes arbitrary upstream usage
+        // members and finish text through; an erased row keeps neither, only
+        // the typed counters and a known reason shape.
+        self.usage.raw_provider = Default::default();
+        if matches!(self.finish_reason, crate::FinishReason::Other { .. }) {
+            self.finish_reason = crate::FinishReason::Other {
+                name: String::new(),
+            };
+        }
         Ok(self)
     }
 }
@@ -328,6 +337,12 @@ pub(crate) fn erase_model_call_actor_in_txn(
         }
     }
     for (key, erased) in stale {
+        // The Authored row's mask may have minted custody under the side-row
+        // origin (FIX 6710); the erase revokes it before the row goes erased.
+        let place = format!("side:{}", MODEL_CALLS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
     Ok(())
