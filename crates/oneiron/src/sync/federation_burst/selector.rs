@@ -1,9 +1,10 @@
 //! Decode and authorize before deferral; retry only with current authentication.
 
 use super::{
-    DeferredWork, FederationBurstDecision, FederationPeer, WorkKind, admit_work, record_outcome,
+    DeferredWork, FederationBurstDecision, FederationBurstWorkState, FederationPeer, WorkKind,
+    admit_work, record_outcome,
 };
-use crate::error::SyncProtocolValidation;
+use crate::error::{FederationReplayEnd, SyncProtocolValidation};
 use crate::sync::{SyncSelector, WindowKey, decode_selector_vv_request};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 use loro::VersionVector;
@@ -118,8 +119,17 @@ pub fn replay_selector_fetch(
     if let Some(state) = ended {
         drop(txn);
         work.retire(vault, &peer, state)?;
+        let end = match state {
+            FederationBurstWorkState::Expired => FederationReplayEnd::Expired,
+            FederationBurstWorkState::StaleAuthority => FederationReplayEnd::StaleAuthority,
+            _ => {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::FederationReplayMismatch,
+                ));
+            }
+        };
         return Err(Error::sync_protocol(
-            SyncProtocolValidation::FederationReplayMismatch,
+            SyncProtocolValidation::FederationReplayEnded { end },
         ));
     }
     Ok(PreparedSelectorFetch {

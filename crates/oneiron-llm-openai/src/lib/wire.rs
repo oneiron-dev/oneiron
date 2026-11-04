@@ -203,6 +203,8 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         content.push(ContentPart::Reasoning {
             text: reasoning.to_owned(),
             signature: None,
+            reasoning_kind: oneiron::ReasoningPartKind::Full,
+            data: None,
         });
     }
     // A reply that asked for a tool is no finished answer, however its text
@@ -284,10 +286,26 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
     let mut tool_calls = Vec::new();
     for part in &message.content {
         match part {
-            ContentPart::Reasoning { text, .. } if separate_reasoning => {
+            ContentPart::Reasoning {
+                text,
+                reasoning_kind: oneiron::ReasoningPartKind::Full,
+                ..
+            } if separate_reasoning => {
                 reasoning.get_or_insert_with(String::new).push_str(text);
             }
-            ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => {
+            ContentPart::Reasoning {
+                reasoning_kind:
+                    oneiron::ReasoningPartKind::Summary
+                    | oneiron::ReasoningPartKind::Encrypted
+                    | oneiron::ReasoningPartKind::Count,
+                ..
+            } => {}
+            ContentPart::Text { text }
+            | ContentPart::Reasoning {
+                text,
+                reasoning_kind: oneiron::ReasoningPartKind::Full,
+                ..
+            } => {
                 content_parts.push(json!({ "type": "text", "text": text }));
             }
             ContentPart::Image { media_type, image } => {
