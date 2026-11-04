@@ -60,7 +60,9 @@ use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
 use self::fetch::TimedFetch;
-use self::observe::{measure_asks, measure_input, measure_output, measure_report};
+use self::observe::{
+    measure_asks, measure_input, measure_operation_id, measure_output, measure_report,
+};
 use crate::error::{HostError, Unavailable};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
@@ -367,6 +369,10 @@ enum FailureReply {
     InputInvalid {
         code: String,
     },
+    /// The engine's largest revision held too little for the CMS.
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl VerdictReply {
@@ -412,6 +418,7 @@ impl FailureReply {
                 EsignSealerError::Unavailable { retry_after_ms }
             }
             Self::InputInvalid { code } => EsignSealerError::InputInvalid { code },
+            Self::ContentsShort { needed } => EsignSealerError::ContentsShort { needed },
         }
     }
 }
@@ -506,6 +513,7 @@ impl EsignSealer for HostedSealer<'_> {
             signature_revisions: call.revision_args(),
         })
         .map_err(|_| reply_invalid())?;
+        measure_operation_id(self.vault, &request.operation_id);
         measure_input(self.vault, &input.pdf);
         let lent = vec![
             LentInput {

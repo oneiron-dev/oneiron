@@ -432,6 +432,7 @@ impl Lower<engine::WitnessMessage> for WitnessMessage {
             },
             message_type: self.message_type,
             content: self.content,
+            parts: None,
             metadata: self.metadata.lower()?,
             is_visible: self.is_visible.unwrap_or(true),
             order: self.order,

@@ -12,16 +12,15 @@
 //! the thread's newest brief and its TASK are both admitted; otherwise the
 //! thread shows without it. An offer is still only an offer.
 
-use super::super::anchor_text::{anchor_text, find_text};
+use super::super::anchor_text::{UnitFormat, anchor_text, find_text};
 use super::super::model::AnnotationThread;
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
 use super::{ReattachOffer, UNATTACHED, UnattachedThread};
 use crate::Vault;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::claim::ScopedRead;
-use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::secret_custody::SecretSight;
 
 /// Whether the reader's lane admits one row, in the listing's snapshot.
@@ -86,7 +85,11 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(&rtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
+        let format = UnitFormat::from_media_type(&body.media_type).ok_or_else(|| {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "unsupported annotation media type",
+            ))
+        })?;
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
