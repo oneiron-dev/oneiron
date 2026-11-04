@@ -73225,7 +73225,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation and room…",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room and…",
      "surface": {
       "trait": 1
      }
@@ -74496,11 +74496,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/vector_insert_plan.rs",
-     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
-     "surface": {
-      "crate-vis": 1
-     }
+     "path": "src/store/vector_index_dbs.rs",
+     "purpose": "The engine's [`VectorIndexDbs`] for each of its store handles: the table accessors and union flag of…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -127717,7 +127715,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 41
+      "mod": 42
      }
     },
     {
@@ -128446,13 +128444,28 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "VectorIndexDbs"
+     ],
      "path": "src/vector_index/mod.rs",
      "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…",
      "surface": {
       "fn": 5,
       "mod": 1,
+      "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InsertPlan"
+     ],
+     "path": "src/vector_insert_plan.rs",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -129779,6 +129792,13 @@
      "layout": "dir",
      "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…"
     },
+    "vector_insert_plan": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot"
+    },
     "vector_refinement": {
      "files": 1,
      "impl_vault": false,
@@ -129817,7 +129837,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 156,
+   "source_files": 157,
    "test_files": 4
   },
   "oneiron-uniffi": {
