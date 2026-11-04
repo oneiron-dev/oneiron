@@ -190,7 +190,7 @@ impl ExportBody {
             // edited NOTE's JSON archive impossible to decode on import.
             if entity_type == crate::registry::ENTITY_TYPE_NOTE
                 && let Ok(note) =
-                    crate::note::decode_note_body_using(bytes, crate::note::NoteKind::wire)
+                    crate::store::note_body::decode_note_body_using(bytes, crate::store::note_body::NoteKind::wire)
             {
                 export_note_references(&note, &mut exported);
             }
@@ -356,7 +356,7 @@ fn export_scope_references(
 
 // The NOTE codec proves this one top-level binary revision is a reference,
 // not arbitrary payload. The author ref is a hex STRING and stays one.
-fn export_note_references(body: &crate::note::NoteBody, exported: &mut ExportValue) {
+fn export_note_references(body: &crate::store::note_body::NoteBody, exported: &mut ExportValue) {
     if scan_file_content("", &body.source_revision_ref).is_some() {
         return;
     }
