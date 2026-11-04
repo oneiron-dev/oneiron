@@ -67198,19 +67198,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HookOutcomeKind",
-      "HookPhase",
-      "HookRenderClass",
-      "HookSelector",
       "PackHook"
      ],
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 3,
-      "re-export": 4,
-      "struct": 2
+      "crate-vis": 7,
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
@@ -67252,20 +67247,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HookWidening",
-      "PackHookProposal",
-      "PackHookProposalStatus"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/hooks/proposal.rs",
      "purpose": "An agent's hook that asks wider than its own ceiling (ARCH-0080 §10): Skip, Ask or Rewrite on another…",
      "surface": {
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 5,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -71986,7 +71976,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 86,
+      "mod": 87,
       "re-export": 31
      }
     },
@@ -72269,6 +72259,26 @@
      "purpose": "The actor classes a pack hook's selector may name",
      "surface": {
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookOutcomeKind",
+      "HookPhase",
+      "HookRenderClass",
+      "HookSelector",
+      "HookWidening",
+      "PackHookProposal",
+      "PackHookProposalStatus"
+     ],
+     "path": "src/store/pack_hook_proposal.rs",
+     "purpose": "The pack hook selector types and the agent hook proposal rows (ARCH-0080 §3, §10): when a hook fires, how it…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 2
      }
     },
     {
@@ -90082,7 +90092,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 369,
+     "files": 370,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90322,7 +90332,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6265,
+   "source_files": 6266,
    "test_files": 898
   },
   "oneiron-android": {
