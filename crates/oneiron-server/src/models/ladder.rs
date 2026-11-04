@@ -20,6 +20,7 @@ pub(super) mod cache_warmth;
 mod call_deadline;
 mod decision_posture;
 mod live_fork;
+mod model_call;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
@@ -29,7 +30,6 @@ mod worker_lease;
 
 use futures_util::StreamExt;
 use oneiron::authority::WorldModelRoutes;
-use oneiron::code_run::{CapsuleRungBinding, ReplayRoutePin};
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
@@ -47,6 +47,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
 pub use call_deadline::CallDeadline;
+pub(crate) use model_call::ModelCallBinding;
 
 use super::cooldown::{
     Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
@@ -60,9 +61,9 @@ use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
 
-/// A chat call's answer and the model of the rung that gave it.
+/// A chat call's answer and the binding of the rung that gave it (FIX 12743).
 type ServedFuture<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = LlmResult<(LlmResponse, ModelId)>> + Send + 'a>,
+    Box<dyn std::future::Future<Output = LlmResult<(LlmResponse, ModelCallBinding)>> + Send + 'a>,
 >;
 
 /// One rung: a provider's offer for one model, and the instruction prepended
@@ -471,36 +472,6 @@ impl OfferLadder {
             [rung] if self.picked => Some(rung.prompt.as_deref()),
             _ => None,
         }
-    }
-
-    /// The answering rung, when the caller names the served model, and its
-    /// exact route pin for the model-call record (FIX 12516). The pin is the
-    /// capsule-canonical one (adapter@origin, offer, catalog revision, wire
-    /// model), never rebuilt from today's catalog; it is `Some` only when
-    /// the served model is this ladder's one picked rung. A fallback answer,
-    /// or a call whose served model the site cannot name (streams), leaves
-    /// the route unknown instead of naming the first rung falsely. The rung
-    /// model is the served model; its locality is the answering rung's when
-    /// that rung is on this ladder, else the requested first rung's (full
-    /// threading of the answering rung is FIX 12743).
-    pub(crate) fn model_call_binding(
-        &self,
-        served: Option<&ModelId>,
-    ) -> (CapsuleRungBinding, Option<ReplayRoutePin>) {
-        let prompt = self.exact_prompt().flatten().map(str::to_owned);
-        let answered = served.and_then(|model| self.rungs.iter().find(|rung| rung.model == *model));
-        let rung = answered.or(self.rungs.first());
-        let binding = CapsuleRungBinding {
-            model: served.cloned().unwrap_or_else(|| self.name.clone()),
-            locality: rung.map_or(ModelLocality::OnDevice, |rung| rung.offer.binding.locality),
-            prompt: prompt.clone(),
-        };
-        let route = if self.exact_prompt().is_some() {
-            answered.and_then(shadow_capture::route_pin)
-        } else {
-            None
-        };
-        (binding, route)
     }
 
     /// The rate this ladder's one picked offer supplies for `unit` when that
@@ -1384,7 +1355,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
-    ) -> LlmResult<(LlmResponse, ModelId)> {
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
@@ -1443,7 +1414,7 @@ impl OfferLadder {
                 sent[index] = true;
                 match self.send(call, index, may_send, sources, &mut walk).await? {
                     Sent::Answer(response) => {
-                        return Ok((response, self.rungs[index].model.clone()));
+                        return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
                     }
                     Sent::Failed | Sent::Held => {}
                     Sent::Stopped => return Err(self.ended(call, walk)),
