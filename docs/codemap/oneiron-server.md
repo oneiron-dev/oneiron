@@ -186,7 +186,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking_anti_abuse/tests_support.rs` | src | s | 15 crate-vis | — | Shared test fixtures for booking anti-abuse guard tests |
 | `src/api/call_receipt.rs` | src | m | 38 crate-vis | — | OF-538: the lasting receipt every wire reply carries, reads included |
 | `src/api/call_receipt/room_notes.rs` | src | s | 4 crate-vis | — | Which call serves a room NOTE, and so keeps no durable call receipt or hook record (FIX 4280; Engine 10-22) |
-| `src/api/campaign.rs` | src | m | 16 crate-vis | — | CA-07 campaign HTTP routes |
+| `src/api/campaign.rs` | src | m | 17 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
 | `src/api/companion/access_grants.rs` | src | m | 11 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
@@ -1072,8 +1072,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery.rs` | src | m | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/feedback_redaction.rs` | src | s | 7 crate-vis | — | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
-| `src/files_intake/confined.rs` | src | m | 11 crate-vis | — | Reading under one folder without leaving it |
-| `src/files_intake/files.rs` | src | s | 2 crate-vis | — | A Files source's read (FIX 6942) |
+| `src/files_intake/confined.rs` | src | m | 13 crate-vis | — | Reading under one folder without leaving it |
+| `src/files_intake/files.rs` | src | m | 2 crate-vis | — | A Files source's read (FIX 6942) |
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
 | `src/files_intake/present_links.rs` | src | s | 1 crate-vis | — | A rescan's present (already-landed) notes' links, resolved as their files hold them now (FIX 1363) |
@@ -1374,7 +1374,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
 | `src/models/native_exl3/mod.rs` | src | L | 9 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
 | `src/models/native_exl3/session_ops.rs` | src | s | 5 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
-| `src/models/native_exl3/transport.rs` | src | m | 19 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
+| `src/models/native_exl3/transport.rs` | src | L | 19 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
 | `src/models/native_exl3/updates.rs` | src | s | 4 crate-vis | — | In-flight native schedule updates for one device |
 | `src/models/native_exl3/wire.rs` | src | s | 15 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
@@ -1406,7 +1406,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/voice.rs` | src | s | 2 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | m | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 19 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
-| `src/models/worker_host.rs` | src | L | 26 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
+| `src/models/worker_host.rs` | src | L | 27 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
 | `src/models/worker_host/bundle.rs` | src | s | 8 crate-vis | — | The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the… |
 | `src/models/worker_host/install.rs` | src | m | 12 crate-vis | — | A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written… |
 | `src/models/worker_host/launch_manifest.rs` | src | s | 8 crate-vis | — | The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per launch binding the bytes the… |
