@@ -37,7 +37,8 @@ side_tables! {
     /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
     /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw;
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+        => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;
