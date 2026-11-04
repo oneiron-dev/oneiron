@@ -378,7 +378,7 @@ pub(super) fn base64_runs(
 /// What `bytes`, a whole span, reads as in each spelling it could be in:
 /// base64 over folds, percent escapes with `+` literal or as a space (FIX
 /// 6671), JSON escapes. Each copy is guarded.
-pub(in crate::secret_custody) fn decodings(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+pub(crate) fn decodings(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     let mut decoded: Vec<Zeroizing<Vec<u8>>> = base64_runs(bytes, bytes.len(), |_| true)
         .into_iter()
         .filter(|(run, _)| *run == (0..bytes.len()))
@@ -395,7 +395,7 @@ pub(in crate::secret_custody) fn decodings(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8
 
 /// Each place `value` sits in `data`, as raw bytes or in any spelling
 /// [`decodings`] reads, mapped back to the original bytes.
-pub(in crate::secret_custody) fn occurrences(data: &[u8], value: &[u8]) -> Vec<Range<usize>> {
+pub(crate) fn occurrences(data: &[u8], value: &[u8]) -> Vec<Range<usize>> {
     if value.is_empty() {
         return Vec::new();
     }
