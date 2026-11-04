@@ -474,7 +474,9 @@ pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
 pub(super) const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ARCHIVE_MARKER);
 
-pub(crate) use oneiron_store::window_key::{parse_window_label, window_label_from_timestamp};
+pub(crate) use oneiron_store::window_key::{
+    is_leap_year, parse_window_label, window_label_from_timestamp,
+};
 
 impl DeleteReason {
     #[must_use]
