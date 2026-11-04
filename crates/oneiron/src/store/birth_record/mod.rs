@@ -1,16 +1,16 @@
 //! Immutable row birth records and their trigger index.
 
-use heed::{RoTxn, RwTxn};
-use crate::write_envelope::provenance::made_by::{MadeByInputRole, MadeByTrigger};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
-use crate::vault::live_entity_row_in_txn;
 pub use crate::store::row_birth::{
     RoomEvidence, RoomEvidenceRef, RowBirth, WithheldKey, WithheldRef, WithheldRole,
 };
+use crate::vault::live_entity_row_in_txn;
+use crate::write_envelope::provenance::made_by::{MadeByInputRole, MadeByTrigger};
+use heed::{RoTxn, RwTxn};
 
 pub(crate) mod prompted;
 

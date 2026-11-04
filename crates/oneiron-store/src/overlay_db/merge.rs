@@ -10,8 +10,8 @@ use std::sync::Arc;
 use heed::types::Bytes;
 use heed::{DefaultComparator, RoPrefix};
 
-use crate::error::{Error, Result};
 use crate::session_overlay::{OverlaySnapshot, SnapshotMergePlan, SnapshotMergeRow};
+use oneiron_contracts::error::{Error, Result};
 
 use super::accessors::{KvPair, StrKvPair};
 
@@ -21,7 +21,7 @@ pub(super) enum Direction {
     Reverse,
 }
 
-pub(crate) struct MergedRows<'txn, I>
+pub struct MergedRows<'txn, I>
 where
     I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
 {
@@ -191,7 +191,7 @@ where
     }
 }
 
-pub(crate) struct MergedPrefixRows<'txn> {
+pub struct MergedPrefixRows<'txn> {
     rows: MergedRows<'txn, RoPrefix<'txn, Bytes, Bytes, DefaultComparator>>,
     previous_key: Option<Vec<u8>>,
     move_between_keys: bool,
@@ -232,7 +232,7 @@ impl<'txn> Iterator for MergedPrefixRows<'txn> {
     }
 }
 
-pub(crate) struct PrefetchedMergedRows<'txn, I>
+pub struct PrefetchedMergedRows<'txn, I>
 where
     I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
 {
@@ -282,7 +282,7 @@ where
     }
 }
 
-pub(crate) struct StrMergedRows<'txn, I>
+pub struct StrMergedRows<'txn, I>
 where
     I: Iterator<Item = heed::Result<(&'txn str, &'txn [u8])>>,
 {
