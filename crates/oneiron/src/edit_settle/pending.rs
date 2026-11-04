@@ -675,8 +675,7 @@ impl Vault {
             // lands a fork version even against the current head; anything
             // else forks only from an older head (blind review of #4387).
             let fork_parent = row.base_version.filter(|base| {
-                row.explicit_fork
-                    || head.as_ref().is_some_and(|head| head.version != *base)
+                row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
             });
             let version = match &row.made_by {
                 Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
