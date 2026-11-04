@@ -223,30 +223,52 @@ impl OrganService {
         let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
         let deadline =
             Instant::now() + Duration::from_millis(peer.deadline_ms.min(u64::from(u32::MAX)));
-        let mut inputs = Vec::with_capacity(peer.inputs.len());
-        // Each staged input read back into memory leases this machine's
-        // floor first, and holds it until the call ends (FIX 6193).
-        for input in &peer.inputs {
-            let read = match &input.read {
-                Some((artifact, version)) => Some(OrganInput {
-                    artifact: EntityId::from_hex(artifact)
-                        .map_err(|_| "an input names no artifact".to_owned())?,
-                    version: *version,
-                }),
-                None => None,
-            };
-            if let Some(lease) = self.hold_taken_async(&input.bytes, deadline).await? {
-                held.push(lease);
+        let service = self.clone();
+        let input_staging = Arc::clone(staging);
+        let peer_inputs = peer.inputs;
+        let (inputs, input_lease) = tokio::task::spawn_blocking(move || {
+            // Inputs drop before their lease if a later read or growth fails.
+            let mut input_lease: Option<Box<dyn FloorLease>> = None;
+            let mut inputs = Vec::with_capacity(peer_inputs.len());
+            for input in &peer_inputs {
+                let read = match &input.read {
+                    Some((artifact, version)) => Some(OrganInput {
+                        artifact: EntityId::from_hex(artifact)
+                            .map_err(|_| "an input names no artifact".to_owned())?,
+                        version: *version,
+                    }),
+                    None => None,
+                };
+                if let (Carried::Staged { len, .. }, Some(floor)) =
+                    (&input.bytes, service.host.floor())
+                {
+                    let stopped = || service.cancel.is_cancelled();
+                    match input_lease.as_mut() {
+                        Some(lease) => lease.grow(*len, deadline, &stopped),
+                        None => floor.0.lease(*len, deadline, &stopped).map(|lease| {
+                            input_lease = Some(lease);
+                        }),
+                    }
+                    .map_err(|refused| format!("this node's memory floor: {refused:?}"))?;
+                }
+                let bytes = input_staging.take(&input.bytes)?;
+                if let (Carried::Staged { len, .. }, Some(lease)) =
+                    (&input.bytes, input_lease.as_mut())
+                {
+                    lease.materialized(*len, bytes.capacity() as u64);
+                }
+                inputs.push((
+                    read,
+                    LentInput {
+                        media_type: input.media_type.clone(),
+                        bytes,
+                    },
+                ));
             }
-            let bytes = staging.take(&input.bytes)?;
-            inputs.push((
-                read,
-                LentInput {
-                    media_type: input.media_type.clone(),
-                    bytes,
-                },
-            ));
-        }
+            Ok::<_, String>((inputs, input_lease))
+        })
+        .await
+        .map_err(|err| format!("this node's input thread: {err}"))??;
         let call = OrganCall {
             organ: peer.organ,
             verb: peer.verb,
@@ -271,6 +293,7 @@ impl OrganService {
         let cancel = self.cancel.clone();
         let answers = peer.answers;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
+            let _input_lease = input_lease;
             let fetch = GuardedFetch;
             let memory = MemoryGrow;
             let mut handlers = AskHandlers::none();

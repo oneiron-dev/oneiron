@@ -33,13 +33,13 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10460: the queue copy of a public model step's failure text.
     // First: it reads the step's terminal claim out of the live submission
     // row, which the submission scrub below replaces with Erased.
-    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
+    crate::store::attempt_operations::erase_model_step_failure_reasons_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
-    crate::saved_query::erase_memos_for_source_in_txn,
+    crate::store::query_memo_lifetime::erase_memos_for_source_in_txn,
     // FIX 10466: every inference snapshot whose dependency set reaches it.
-    crate::inference_snapshot::erase_in_txn,
+    crate::store::snapshot_catalog::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
     crate::memory::erase_reply_assertions_in_txn,
     // FIX 9970: a TURN's unpersisted-wake label.
@@ -78,7 +78,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     crate::calendar::inbox_card::erase_inbox_cards_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
-    crate::skill_hub::pack_catalog::erase_hook_proposal_in_txn,
+    crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
     crate::provenance::erase_actor_stamp_uses_in_txn,
     #[cfg(feature = "sync")]
@@ -137,7 +137,7 @@ pub(crate) fn tear_derived_rows_in_txn(
         store
             .record_hooks
             .forget_claim_reassignments_in_txn(store, wtxn, id)?;
-        crate::identity_redirect::forget_deleted_in_txn(store, wtxn, id)?;
+        crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }
