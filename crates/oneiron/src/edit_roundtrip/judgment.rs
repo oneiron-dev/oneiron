@@ -297,7 +297,7 @@ impl Vault {
                 && request.only_rows.is_none_or(|only| only.contains(&row))
         };
         let header_row = request.header_row;
-        let cells = match named_sheet_cells_until(
+        let loaded = match named_sheet_cells_until(
             &bytes,
             request.sheet,
             &|cell: &CellRef| {
@@ -313,10 +313,11 @@ impl Vault {
             Err(error) if sheet_ask_timed_out(&error) => return Ok(run),
             Err(error) => return Err(error),
         };
-        let shown = live.as_ref().map_or(&cells, |(_, live)| live);
+        let cells = &loaded.cells;
+        let shown = live.as_ref().map_or(cells, |(_, live)| live);
         // Index only stored cells, not the rectangle's potentially billions
         // of absent columns. The same sparse index serves headers and rows.
-        let mut hold = resources.hold();
+        let mut index_memory = resources.allocation();
         let mut by_row = BTreeMap::new();
         for (cell, value) in shown {
             if let Err(error) = sheet_ask_checkpoint(&resources, work_until) {
@@ -329,7 +330,7 @@ impl Vault {
                 && (rows.start.col..=rows.end.col).contains(&cell.col)
                 && (in_rows(cell.row) || Some(cell.row) == header_row)
             {
-                if let Err(refusal) = hold.take_estimate(
+                if let Err(refusal) = index_memory.grow(
                     oneiron_docedit::resource::bytes_of::<((u32, u32), &CellValue)>(3),
                     0,
                 ) {
@@ -340,6 +341,10 @@ impl Vault {
                     return Err(error);
                 }
                 by_row.insert((cell.row, cell.col), value);
+                index_memory.materialized(oneiron_docedit::resource::bytes_of::<(
+                    (u32, u32),
+                    &CellValue,
+                )>(by_row.len().saturating_mul(3)));
             }
         }
         let headers = match header_row {
@@ -348,12 +353,18 @@ impl Vault {
                 Err(error) if sheet_ask_timed_out(&error) => return Ok(run),
                 Err(error) => return Err(error),
             },
-            None => Map::new(),
+            None => SheetRowState {
+                values: Map::new(),
+                _memory: resources.allocation(),
+            },
         };
         let sources = [EvidenceVersion {
             id: *artifact,
             body_hash: frontier,
         }];
+        let mut answer_memory = resources.allocation();
+        let mut abstention_memory = resources.allocation();
+        let mut refusal_memory = resources.allocation();
         let mut answers = Vec::new();
         while let Some(row) = run.next_sheet_row {
             if Instant::now() >= work_until
@@ -363,13 +374,11 @@ impl Vault {
             }
             let prepared = (|| -> Result<()> {
                 sheet_ask_checkpoint(&resources, work_until)?;
-                hold.take_estimate(
-                    oneiron_docedit::resource::bytes_of::<SheetCellAnswer>(1)
-                        + oneiron_docedit::resource::bytes_of::<UnitAbstention>(1)
-                        + oneiron_docedit::resource::bytes_of::<UnitRefusal>(1),
-                    0,
-                )
-                .map_err(crate::office_body::machine_memory_refused)?;
+                // Prepare each possible outcome slot before asking a model;
+                // never lose a completed decision to a later vector grow.
+                sheet_outcome_slot(&mut answers, answer_memory.as_mut())?;
+                sheet_outcome_slot(&mut run.abstained, abstention_memory.as_mut())?;
+                sheet_outcome_slot(&mut run.refused, refusal_memory.as_mut())?;
                 let target = CellRef {
                     col: answer_col,
                     row,
@@ -385,7 +394,7 @@ impl Vault {
                     return Ok(());
                 }
                 let read = sheet_row_state(&by_row, row, &resources, work_until)?;
-                if read.is_empty() {
+                if read.values.is_empty() {
                     run.abstained.push(UnitAbstention {
                         unit,
                         decision: None,
@@ -393,7 +402,8 @@ impl Vault {
                     });
                     return Ok(());
                 }
-                let state = json!({"unit": unit.clone(), "headers": headers, "cells": read});
+                let state =
+                    json!({"unit": unit.clone(), "headers": headers.values, "cells": read.values});
                 sheet_ask_checkpoint(&resources, work_until)?;
                 let Some(decision) = ask.decide(&state, &sources, &[])? else {
                     run.refused.push(UnitRefusal {
@@ -452,6 +462,12 @@ impl Vault {
             }),
             base_live,
         };
+        drop(by_row);
+        drop(index_memory);
+        drop(headers);
+        drop(loaded);
+        drop(live);
+        drop(bytes);
         // Keep completed decisions even if traversal used its share. Staging
         // retains its existing resource checks, not an already-expired clock.
         run.proposal =
@@ -622,34 +638,74 @@ fn sheet_ask_timed_out(error: &Error) -> bool {
     matches!(error, Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut)
 }
 
+/// The map and its allocation scope travel together to the caller. Field
+/// order frees the map before the scope, including without live readings.
+struct SheetRowState {
+    values: Map<String, Value>,
+    _memory: Box<dyn oneiron_docedit::resource::ResourceAllocation>,
+}
+
 fn sheet_row_state(
     cells: &BTreeMap<(u32, u32), &CellValue>,
     row: u32,
     resources: &oneiron_docedit::resource::Resources,
     deadline: Instant,
-) -> Result<Map<String, Value>> {
+) -> Result<SheetRowState> {
+    let mut memory = resources.allocation();
     let mut values = Map::new();
-    let mut hold = resources.hold();
+    let mut live_bytes: u64 = 0;
     for ((_, col), value) in cells.range((row, 0)..=(row, u32::MAX)) {
         sheet_ask_checkpoint(resources, deadline)?;
-        fn text_bytes(value: &CellValue) -> u64 {
+        fn text_bytes(value: &CellValue) -> (u64, u64) {
             match value {
                 CellValue::Text(text) | CellValue::Error(text) => {
-                    oneiron_docedit::resource::wide(text.len())
+                    let bytes = oneiron_docedit::resource::wide(text.len());
+                    (bytes, bytes)
                 }
-                CellValue::Formula { cached, .. } => cached.as_deref().map_or(0, text_bytes),
-                _ => oneiron_docedit::resource::bytes_of::<CellValue>(1),
+                CellValue::Formula { cached, .. } => cached.as_deref().map_or((0, 0), text_bytes),
+                _ => (oneiron_docedit::resource::bytes_of::<CellValue>(1), 0),
             }
         }
-        hold.take_estimate(
-            text_bytes(value)
-                .saturating_add(oneiron_docedit::resource::bytes_of::<(String, Value)>(3)),
-            text_bytes(value),
-        )
-        .map_err(crate::office_body::machine_memory_refused)?;
+        let (bytes, measured) = text_bytes(value);
+        let node = oneiron_docedit::resource::bytes_of::<(String, Value)>(3);
+        memory
+            .grow(bytes.saturating_add(node), measured)
+            .map_err(crate::office_body::machine_memory_refused)?;
         if let Some(text) = cell_text(value) {
-            values.insert(super::address::column_to_letters(*col), Value::String(text));
+            let key = super::address::column_to_letters(*col);
+            live_bytes = live_bytes
+                .saturating_add(node)
+                .saturating_add(oneiron_docedit::resource::wide(key.capacity()))
+                .saturating_add(oneiron_docedit::resource::wide(text.capacity()));
+            values.insert(key, Value::String(text));
         }
+        memory.materialized(live_bytes);
     }
-    Ok(values)
+    Ok(SheetRowState {
+        values,
+        _memory: memory,
+    })
+}
+
+/// Reserve vector growth before it allocates, then name the resulting
+/// capacity once. Each output vector owns a separate allocation scope.
+fn sheet_outcome_slot<T>(
+    values: &mut Vec<T>,
+    memory: &mut dyn oneiron_docedit::resource::ResourceAllocation,
+) -> Result<()> {
+    if values.len() == values.capacity() {
+        let capacity = values
+            .len()
+            .saturating_add(1)
+            .max(values.capacity().saturating_mul(2));
+        memory
+            .grow(
+                oneiron_docedit::resource::bytes_of::<T>(capacity - values.capacity()),
+                0,
+            )
+            .map_err(crate::office_body::machine_memory_refused)?;
+        values.reserve_exact(capacity - values.len());
+        memory.materialized(oneiron_docedit::resource::bytes_of::<T>(values.capacity()));
+    }
+    Ok(())
 }
