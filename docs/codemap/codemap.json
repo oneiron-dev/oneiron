@@ -43020,7 +43020,7 @@
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -43843,17 +43843,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HostRule",
       "HostRuleProvider"
      ],
      "path": "src/llm/decision/rules.rs",
      "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
-      "fn": 6,
-      "re-export": 1,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 5,
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
@@ -70464,6 +70463,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostRule"
+     ],
+     "path": "src/store/decision_rule_rows.rs",
+     "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): every revision of every rule row the authenticated…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/default_skill_hub.rs",
      "purpose": "The first-party library skill hub every vault opens with: its stable id and the offline seed of its pinned…",
@@ -71973,7 +71986,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 85,
+      "mod": 86,
       "re-export": 31
      }
     },
@@ -90069,7 +90082,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 368,
+     "files": 369,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90309,7 +90322,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6264,
+   "source_files": 6265,
    "test_files": 898
   },
   "oneiron-android": {
