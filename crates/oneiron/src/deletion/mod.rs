@@ -39,6 +39,7 @@ mod withdrawn;
 #[cfg(test)]
 mod tests;
 
+pub use crate::vault::entity_revision::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub use coop_delivery::{
     COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
     COOP_DELETION_REPLY_PEER_PATH, CooperativeClaimValueRedaction, CooperativeDeleteOperation,
