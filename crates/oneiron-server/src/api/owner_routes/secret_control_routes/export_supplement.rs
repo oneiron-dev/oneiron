@@ -27,7 +27,7 @@ pub(super) fn owner_table() -> OwnerTable {
         OwnerRoute {
             method: "post",
             path: "/secrets/export-supplements/import",
-            summary: "With {\"request\", \"sealed\"} as the supplement read returns them: opens the holder's sealed copy on this install, the recipient the owner chose, and restores its secret; returns what the import did.",
+            summary: "With {\"request\", \"sealed\"} as the supplement read returns them: opens the holder's sealed copy on this install, the recipient the owner chose, and restores its secret; returns what the import did. It also marks the export request imported.",
             row: None,
         },
         post(import),

@@ -3254,7 +3254,7 @@ declare namespace Sdk {
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
   type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string };
-  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault };
+  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault } | "DeviceAdmissionStopped";
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
@@ -3984,7 +3984,7 @@ declare namespace Sdk {
   type TurnProgramAdmissionRequest = { turn_ref: string; registration?: string | null; cursor?: string | null; limit?: number | null };
   type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_run: string } | { kind: "refused"; reason: string };
   type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] };
-  type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null };
+  type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null; expired?: boolean | null };
   type TurnProgramOwedWakeItem = { registration: EntityId; actor: EntityId; actor_class: string; revision: string; sealed_scope?: string | null; held?: OwedWakeHoldView | null; withheld: string[] };
   type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; owed: TurnProgramOwedWakeItem[]; next_cursor?: string | null; undecodable_admission_rows_examined: number };
   type ProgramRunRequest = { root: string; cursor?: string | null; limit?: number | null };

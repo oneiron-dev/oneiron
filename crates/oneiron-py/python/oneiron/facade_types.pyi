@@ -16411,7 +16411,7 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 class RetryableLlmErrorTransportFault(TypedDict):
     TransportFault: TransportFault
-RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
+RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut", "DeviceAdmissionStopped"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
 BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
@@ -20228,6 +20228,7 @@ class OwedWakeHoldView(TypedDict):
     reason: str
     held_at: int
     expires_at: NotRequired[int | None]
+    expired: NotRequired[bool | None]
 class TurnProgramOwedWakeItem(TypedDict):
     registration: EntityId
     actor: EntityId

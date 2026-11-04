@@ -351,6 +351,12 @@ impl Vault {
                 return Err(lost_lease());
             }
             let waiting = matches!(&step, FeedbackTriageStep::Wait);
+            // FIX 12546: an empty-split Repartition only swaps the pin; like
+            // Wait it can finish without parking when the level is complete.
+            let repartition_ready = matches!(
+                &step,
+                FeedbackTriageStep::Repartition { splits, .. } if splits.is_empty()
+            );
             let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
             let owner = Owner {
                 source_ref: &handoff.source_ref,
@@ -360,6 +366,18 @@ impl Vault {
             };
             let queued = enqueue_owed_in_txn(self, txn, &owner, &mut work, now)?;
             if waiting && queued == 0 && !work.owed() {
+                return Ok(super::FeedbackTriageParkOutcome::Ready(work));
+            }
+            if repartition_ready && queued == 0 && !work.owed() {
+                // The pin changed, so unlike Wait this persists the handoff
+                // before the host continues on it.
+                handoff.work = Some(work.clone());
+                HANDOFFS.put(
+                    &self.store,
+                    txn,
+                    &handoff_key(&handoff.source_ref),
+                    &handoff,
+                )?;
                 return Ok(super::FeedbackTriageParkOutcome::Ready(work));
             }
             // The park renews the lease it parks under: a lease reclaim that
