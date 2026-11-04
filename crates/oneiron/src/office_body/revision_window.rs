@@ -543,7 +543,7 @@ impl Vault {
                             "the body could not be projected onto its package",
                         ));
                     }
-                }?;
+                };
                 if let Some(events) = events {
                     if insert_loro.len() != events.inserted.len()
                         || moved_loro.len() != events.moved.len()
