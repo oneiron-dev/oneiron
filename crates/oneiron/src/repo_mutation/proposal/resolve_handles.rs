@@ -246,7 +246,11 @@ pub(super) fn resolved_successor(
             masked_at: marked_at,
             members: Vec::new(),
         });
-        for ((_, _, custody, _), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
+        for ((_, _, text), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
+            let (_, _, custody, _) = values
+                .iter()
+                .find(|known| &known.0 == text)
+                .expect("every span resolved above");
             masked.unite(
                 &[],
                 crate::file_secret_marks::KeySpan {
