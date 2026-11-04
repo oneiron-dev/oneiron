@@ -41,6 +41,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::federation::repo_access::RepoMembership;
+use crate::origin::RepoPortableId;
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
@@ -192,6 +193,29 @@ impl Vault {
             generation: record.attempt_count,
             task,
         }))
+    }
+
+    /// Resolves the portable selector before normal admission in the same
+    /// snapshot. Returns the selected CODE and whether the selector hit;
+    /// an absent or unknown id retains the caller's fallback target.
+    pub(crate) fn admit_repo_run_with_portable_in_txn<S: AsRef<str>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        fallback: EntityId,
+        portable: Option<&RepoPortableId>,
+        git_ref: &str,
+        paths: impl IntoIterator<Item = S>,
+        intent: RepoAccessIntent,
+    ) -> Result<(EntityId, bool, RepoRunAdmission)> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let selected = resolved.unwrap_or(fallback);
+        let target = repo_target(selected, git_ref, paths);
+        let admitted = self.admit_repo_run_in_txn(txn, binding, &target, intent)?;
+        Ok((selected, resolved.is_some(), admitted))
     }
 }
 
