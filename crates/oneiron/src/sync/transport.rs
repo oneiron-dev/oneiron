@@ -47,9 +47,10 @@ pub use window_pads::{
 };
 mod documents;
 pub use documents::{
-    DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
-    decode_document_batch, decode_node_batch, document_sub_tags, encode_document,
-    encode_document_batch, encode_node_batch,
+    DocumentFrame, DocumentWaitedOut, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT,
+    decode_document, decode_document_batch, decode_document_waited_out, decode_node_batch,
+    document_sub_tags, encode_document, encode_document_batch, encode_document_waited_out,
+    encode_node_batch,
 };
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
