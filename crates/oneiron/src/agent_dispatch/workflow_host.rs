@@ -8,6 +8,7 @@ use crate::attempt_queue::{
 };
 use crate::context_projection::ResolvedContextProjection;
 use crate::error::Result;
+use crate::self_heal::audit::{AttemptConfession, ObjectiveConfession};
 
 impl AgentDispatcher<'_> {
     /// Run a workflow agent whose host produces raw bytes. Persist the exact
@@ -23,15 +24,48 @@ impl AgentDispatcher<'_> {
     where
         F: FnOnce(&AgentDispatchStatus, ResolvedContextProjection) -> Result<Vec<u8>>,
     {
-        self.run_workflow_step(root, lease_owner, now, |status, context| {
-            let raw = execute(status, context)?;
+        self.run_workflow_step_output_with_confession(root, lease_owner, now, |status, context| {
+            execute(status, context).map(|bytes| (bytes, Vec::new()))
+        })
+    }
+
+    /// Capture a leaf's raw output and seal its objective confessions in the
+    /// transaction that completes that same leased try. A refused seal rolls
+    /// back on its own; the successful output and completion stand.
+    pub fn run_workflow_step_output_with_confession<F>(
+        &self,
+        root: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        execute: F,
+    ) -> Result<WorkflowProgress>
+    where
+        F: FnOnce(
+            &AgentDispatchStatus,
+            ResolvedContextProjection,
+        ) -> Result<(Vec<u8>, Vec<ObjectiveConfession>)>,
+    {
+        self.run_workflow_step_confessed(root, lease_owner, now, |status, context| {
+            let (raw, objectives) = execute(status, context)?;
             let entry = crate::compaction::output::OutputContextEntry::capture(
                 self.vault,
                 &raw,
                 now,
                 String::new(),
             )?;
-            AttemptResultRef::new(entry.source.handle())
+            let confession = status
+                .input
+                .target
+                .agent_definition_ref()
+                .ok()
+                .filter(|_| !objectives.is_empty())
+                .map(|subject| AttemptConfession {
+                    attempt: status.attempt.id,
+                    subject,
+                    type_ref: crate::learning::TypeRef::from(&status.input.type_ref),
+                    objectives,
+                });
+            Ok((AttemptResultRef::new(entry.source.handle())?, confession))
         })
     }
 
@@ -52,6 +86,24 @@ impl AgentDispatcher<'_> {
     ) -> Result<WorkflowProgress>
     where
         F: FnOnce(&AgentDispatchStatus, ResolvedContextProjection) -> Result<AttemptResultRef>,
+    {
+        self.run_workflow_step_confessed(root, lease_owner, now, |status, context| {
+            execute(status, context).map(|result| (result, None))
+        })
+    }
+
+    fn run_workflow_step_confessed<F>(
+        &self,
+        root: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        execute: F,
+    ) -> Result<WorkflowProgress>
+    where
+        F: FnOnce(
+            &AgentDispatchStatus,
+            ResolvedContextProjection,
+        ) -> Result<(AttemptResultRef, Option<AttemptConfession>)>,
     {
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
@@ -119,7 +171,7 @@ impl AgentDispatcher<'_> {
             self.vault.store.authorization_now()?;
         }
         let context = self.resolve_attempt_context(status.attempt.id)?;
-        let result = execute(&status, context)?;
+        let (result, confession) = execute(&status, context)?;
         let mut txn = self.vault.store.env.write_txn()?;
         queue.set_result_in_txn(
             &mut txn,
@@ -141,6 +193,18 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
+        if let Some(confession) = confession {
+            let sealed = (|| -> Result<()> {
+                let mut seal = self.vault.store.env.nested_write_txn(&mut txn)?;
+                self.vault
+                    .record_attempt_confession_in_txn(&mut seal, &confession, now)?;
+                seal.commit()?;
+                Ok(())
+            })();
+            if let Err(error) = sealed {
+                tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
+            }
+        }
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         self.advance_workflow(root, now)
