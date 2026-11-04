@@ -383,10 +383,7 @@ pub fn encode_edge_value_for_crdt(
     )
 }
 
-/// Formats an edge key for CRDT map: `{src_hex}:{kind:02}:{tgt_hex}`.
-pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String {
-    format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
-}
+pub use crate::store::replica_edge_key::format_edge_key;
 
 #[cfg(test)]
 #[path = "companion_identity_tests.rs"]
