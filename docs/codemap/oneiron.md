@@ -3704,9 +3704,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/claims/commit/preferences.rs` | src | s | 3 crate-vis | — | Stated-preference matching: the prior-claim lookup, preference conflicts and answer agreement |
 | `src/memory/claims/commit/write.rs` | src | s | 1 crate-vis | — | The guarded claim commit: dedupe, supersede, Gate and publication in one write transaction |
 | `src/memory/claims/commit/write/attempt.rs` | src | s | 1 crate-vis | — | One write attempt of a claim commit: its candidate and envelope, then one content write that admits, stages… |
-| `src/memory/claims/commit/write/landing.rs` | src | s | 5 crate-vis | — | A claim commit inside its write: admission, support staging, the candidate's gated apply, and the birth… |
+| `src/memory/claims/commit/write/landing.rs` | src | m | 5 crate-vis | — | A claim commit inside its write: admission, support staging, the candidate's gated apply, and the birth… |
 | `src/memory/claims/commit/write/receipt.rs` | src | s | 1 crate-vis | — | A landed claim commit's receipt: final approval, Gate decision, and the head it superseded |
-| `src/memory/claims/commit/write/resolve.rs` | src | s | 3 crate-vis | — | A claim commit's request, resolved before its write: the typed families it refuses, its references, its… |
+| `src/memory/claims/commit/write/resolve.rs` | src | s | 5 crate-vis | — | A claim commit's request, resolved before its write: the typed families it refuses, its references, its… |
 | `src/memory/claims/lifecycle.rs` | src | m | 6 fn · 6 crate-vis | — | Claim lifecycle doors: commit, upsert, propose, retract and the deletion gates |
 | `src/memory/claims/mod.rs` | src | s | 6 struct · 2 enum · 1 fn · 1 const · 3 re-export · 3 crate-vis | ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, DeleteRequestState, MemoryReceipt, PendingWrite, RecordRefusal | Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate… |
 | `src/memory/claims/prompted.rs` | src | s | 1 fn · 1 crate-vis | — | FIX 8192: a proposal whose words a model wrote from recalled rows |
