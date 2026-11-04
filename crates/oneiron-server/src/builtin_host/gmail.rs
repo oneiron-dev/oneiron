@@ -47,8 +47,9 @@ const GMAIL_PAGE_SIZE: u32 = 50;
 /// threading headers.
 const GMAIL_METADATA_HEADERS: [&str; 5] =
     ["From", "Subject", "Message-ID", "References", "In-Reply-To"];
-/// The largest reply one Gmail call reads.
-const MAX_GMAIL_REPLY_BYTES: u64 = 1_048_576;
+/// The largest Gmail JSON reply, including a full MIME message and its
+/// base64url body (which can exceed the old metadata-only reply size).
+const MAX_GMAIL_REPLY_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Whether the Gmail mailboxes are served, and when they were last paged,
 /// kept across passes in memory. Each poll builds its own HTTPS client on
