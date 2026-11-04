@@ -162,12 +162,15 @@ pub(crate) mod loro_tombstones;
 pub mod materialization_event;
 pub mod model_description_rows;
 pub mod model_score_diff;
+pub(crate) mod model_step_response_carriage;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub mod person_billing_account;
+pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
@@ -222,11 +225,14 @@ mod credential_custody;
 mod deadline_jobs;
 pub mod decision_ask_role;
 pub(crate) mod decision_question_watches;
+pub mod default_skill_hub;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
+pub(crate) mod executor_speech_identity;
+pub mod executor_wait_delivery;
 mod gate_decision;
 pub(crate) mod file_key_masks;
 pub(crate) mod found_key_notice_queue;
@@ -242,6 +248,8 @@ pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;
 pub(crate) mod secret_name_index;
+pub(crate) mod side_table_erase_scan;
+pub mod site_skill_exposure;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
@@ -272,6 +280,7 @@ mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
 pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -297,10 +306,13 @@ mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
+pub(crate) mod skill_attribution_judgments;
 pub(crate) mod skill_content_index;
 pub mod skill_hub_predicates;
 pub mod skill_package;
 pub(crate) mod skill_refinement_custody;
+pub(crate) mod skill_refinement_origin;
 pub(crate) mod skill_source_carrier;
 pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
@@ -343,8 +355,8 @@ pub(crate) use body_envelope::{
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
     erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
