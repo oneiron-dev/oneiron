@@ -469,6 +469,15 @@ pub(crate) fn redact_claim_value_fields_in_txn(
     )?;
     if crate::claim::claim_surfaceable(&body) {
         vault.store.mark_pending_embedding(txn, &id, body_bytes)?;
+        #[cfg(feature = "sync")]
+        if vault.config.embedding_model.is_some() {
+            vault.store.sync_hooks.push_embed_job_in_txn(
+                &vault.store,
+                txn,
+                &id,
+                crate::store::embedding::EMBED_PRIORITY_DEVICE,
+            )?;
+        }
     }
     receipt.changed_history_rows = prepared.changed_rows;
     receipt.bindings = prepared.bindings;
