@@ -143,7 +143,10 @@ pub(super) async fn bind(
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
         Arc::new(
-            move |guard: BudgetGuard, payer: Option<PayerPerson>, lease: Option<LiveLeaseState>| {
+            move |guard: BudgetGuard,
+                  payer: Option<PayerPerson>,
+                  lease: Option<LiveLeaseState>,
+                  caller: Option<(EntityId, Option<String>)>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
@@ -152,7 +155,8 @@ pub(super) async fn bind(
                     planned: None,
                     lease,
                     browser: Arc::clone(&browser),
-                    caller: None,
+                    caller: caller
+                        .map(|(principal, session)| CodeModeCaller { principal, session }),
                 }) as Arc<dyn LlmBackend>
             },
         )
