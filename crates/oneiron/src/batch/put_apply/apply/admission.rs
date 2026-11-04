@@ -137,7 +137,9 @@ pub(super) fn admit_put<'a>(
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
-        crate::workspace_roster::capture_project_put(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .capture_project_put(store, wtxn, id, entity_type, data)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::super::put_staging::validate_source_carriers(
         store,

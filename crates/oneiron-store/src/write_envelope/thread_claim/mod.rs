@@ -4,10 +4,10 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use oneiron_contracts::entity_id::{EntityId, bytes_to_hex_lower};
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::entity_id::{EntityId, bytes_to_hex_lower};
+use oneiron_contracts::error::{Error, Result};
 
 mod codec;
 pub use codec::*;
