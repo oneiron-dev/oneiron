@@ -470,7 +470,7 @@ side_tables! {
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill;
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
-        => crate::skill_attribution::erase_positive_proposals_in_txn;
+        => crate::store::positive_skill_proposals::erase_positive_proposals_in_txn;
     /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
     /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
     /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).

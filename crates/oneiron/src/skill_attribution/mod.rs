@@ -83,7 +83,6 @@ pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
 mod positive;
-pub(crate) use self::positive::erase_positive_proposals_in_txn;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
