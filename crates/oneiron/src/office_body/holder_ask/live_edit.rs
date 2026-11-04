@@ -59,7 +59,7 @@ const LIVE_EDIT_OPTIONS: [(&str, LiveEditAnswer, &str); 2] = [
 /// commit; the guard, the cut and the resolve admit nothing without it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct LiveEditRoute {
+pub(crate) struct LiveEditRoute {
     pub(crate) artifact: EntityId,
     pub(crate) editor: EntityId,
     /// The owners asked, sorted; only their words answer.
