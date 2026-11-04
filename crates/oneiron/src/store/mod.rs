@@ -160,7 +160,7 @@ pub mod repo_fork;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
-pub mod retained_memory;
+pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
 #[cfg(feature = "sync")]
