@@ -2,9 +2,9 @@
 
 use rmpv::Value;
 
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use oneiron_contracts::error::{Error, Result};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 /// Predicate of the anti-merge claim (ARCH-0055 §9 G.1 row): symmetric
 /// `entity.distinct_from` pair, conflict-set keyed by [`distinct_pair_key`](crate::write_envelope::identity_pair::distinct_pair_key).
