@@ -19,7 +19,8 @@ use oneiron_docedit::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 
 use crate::edit_roundtrip::pptx::inspect_pptx_with_limits;
-use crate::edit_roundtrip::{DeckEditRejection, DeckRejectionInspection};
+use crate::edit_roundtrip::DeckEditRejection;
+use crate::blob_artifact::deck_inspection::DeckRejectionInspection;
 use crate::blob_artifact::office_address::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};

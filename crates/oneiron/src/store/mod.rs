@@ -142,6 +142,7 @@ pub(crate) mod loro_document;
 pub mod materialization_event;
 pub mod note_body;
 pub mod note_kind;
+pub mod outbound_actor;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 #[cfg(feature = "sync")]

@@ -24,9 +24,11 @@ use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::memory::Memory;
 use crate::outbound::{
-    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchRequest, OutboundIntent,
+      OutboundDispatchRequest, OutboundIntent,
     OutboundIntentDraft,
 };
+use crate::store::outbound_actor::OutboundDispatchActor;
+use crate::store::outbound_actor::OutboundDispatchGate;
 use crate::store::outbound_trigger::OutboundIntentTrigger;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
