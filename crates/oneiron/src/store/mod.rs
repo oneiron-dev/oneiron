@@ -181,6 +181,7 @@ pub mod model_step_submission;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub(crate) mod output_decay;
 pub mod pack_hook_actor_class;
 pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
