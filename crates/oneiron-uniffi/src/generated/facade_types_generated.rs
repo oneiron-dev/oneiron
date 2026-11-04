@@ -7487,7 +7487,7 @@ pub struct BillingAccountFiling {
     pub account: String,
 }
 
-/// `oneiron::llm::run_admission::person_billing::FiledBillingAccount`.
+/// `oneiron::store::person_billing_account::FiledBillingAccount`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FiledBillingAccount {
@@ -17847,7 +17847,7 @@ pub struct HubHookBindRequest {
     pub pack: String,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookActorClass`.
+/// `oneiron::store::pack_hook_actor_class::HookActorClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookActorClass {
     #[serde(rename = "human")]
@@ -52028,6 +52028,8 @@ pub enum LlmCapability {
     ReasoningContentHistory,
     #[serde(rename = "token_logprobs")]
     TokenLogprobs,
+    #[serde(rename = "reasoning_summary")]
+    ReasoningSummary,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
@@ -53669,7 +53671,7 @@ pub struct ModelCatalogRefresh {
     pub scores: Option<Vec<ScoreSnapshot>>,
 }
 
-/// `oneiron::llm::registry::ModelScoreDiff`.
+/// `oneiron::store::model_score_diff::ModelScoreDiff`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ModelScoreDiff {
     #[serde(rename = "model")]
@@ -55837,7 +55839,7 @@ pub struct AskPrior {
     pub person: Option<PairedReading>,
 }
 
-/// `oneiron::llm::decision::ladder::roles::AskRole`.
+/// `oneiron::store::decision_ask_role::AskRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "role")]
 pub enum AskRole {
