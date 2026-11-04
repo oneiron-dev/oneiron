@@ -783,6 +783,15 @@ impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
     ) -> Option<EntityId> {
         crate::attempt_queue::dispatch_payload_actor(record)
     }
+
+    fn scrub_hard_erased_payload_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) {
+        crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
+    }
 }
 
 impl StoreGateHooks for EngineGateHooks {
