@@ -17,7 +17,7 @@ use crate::store::attempt_outcomes::{ClaimOutcome, FailOutcome, RetryOutcome};
 /// [`crate::store::StoreHooks`]). Each method is the engine operation of the
 /// same name; each store-layer caller calls it at the point, with the
 /// arguments and in the order it called the engine operation before.
-pub trait StoreAttemptOperations: Send + Sync {
+pub(crate) trait StoreAttemptOperations: Send + Sync {
     /// The engine's `attempt_queue::erase_attempt_payload_actor_in_txn`: the
     /// dispatch text one hard-erased actor owns leaves the attempt payloads.
     fn erase_attempt_payload_actor_in_txn(
