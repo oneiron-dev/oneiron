@@ -483,6 +483,13 @@ impl NativeArms {
         }
         match &self.seat {
             EvalSeat::Embedder => {
+                // A pinned skill has no embedder execution path: running
+                // the arm without it would record an unexecuted skill
+                // comparison, so skill-bearing arms stay unavailable until
+                // their skill can actually be applied.
+                if arm.skill.is_some() {
+                    return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
+                }
                 let Some(slot) = server.embedder.as_ref() else {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
                 };
@@ -556,24 +563,30 @@ impl NativeArms {
             }
             EvalSeat::Router | EvalSeat::Decision => {
                 let mut seen = BTreeSet::new();
-                let options = task
+                let values = task
                     .labels
                     .iter()
                     .map(|label| label.value.clone())
                     .filter(|value| seen.insert(value.clone()))
                     .collect::<Vec<_>>();
-                if options.is_empty() {
+                if values.is_empty() {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoLabel);
                 }
                 // Choice options are unique and at most 256 bytes; EvalLabel values may be
                 // 512 bytes. Never truncate or normalize the exact-byte labels: a longer
                 // Router/Decision label needs an owner ruling, not a silent string change.
-                if options
+                if values
                     .iter()
                     .any(|value| value.is_empty() || value.len() > 256)
                 {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::GenerationFailed);
                 }
+                // The Choice parser folds case on first match, so colliding
+                // labels ("A" vs "a") would mis-score: address anchors by
+                // lossless index IDs and map back to exact bytes below.
+                let options = (0..values.len())
+                    .map(|index| index.to_string())
+                    .collect::<Vec<_>>();
                 let question = match SKILL_OPTIMIZE_JUDGMENT.question(
                     &[b"eval_measurement_leg", arm.model.as_str().as_bytes()],
                     prompt.clone(),
@@ -623,14 +636,25 @@ impl NativeArms {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
                 }
                 match decision.answer {
-                    DecisionAnswer::Choice(text) => SeatGenerated::Text {
-                        text,
-                        served: decision
-                            .receipt
-                            .providers
-                            .last()
-                            .map(|pin| format!("{}@{}", pin.model, pin.version)),
-                    },
+                    DecisionAnswer::Choice(text) => {
+                        // The Choice options were lossless index IDs: map
+                        // the answer back to the exact anchor bytes before
+                        // scoring, so colliding labels keep their own weight.
+                        let text = text
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| values.get(index))
+                            .cloned()
+                            .unwrap_or(text);
+                        SeatGenerated::Text {
+                            text,
+                            served: decision
+                                .receipt
+                                .providers
+                                .last()
+                                .map(|pin| format!("{}@{}", pin.model, pin.version)),
+                        }
+                    }
                     _ => SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer),
                 }
             }
