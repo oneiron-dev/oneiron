@@ -39767,6 +39767,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/host_memory.rs",
+     "purpose": "The process-wide physical-memory admission line",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ClaimVadPaymentWorker"
      ],
@@ -42318,7 +42328,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 202,
+      "mod": 203,
       "re-export": 102
      }
     },
@@ -89751,6 +89761,13 @@
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
     },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The process-wide physical-memory admission line"
+    },
     "housekeeping": {
      "files": 8,
      "impl_vault": true,
@@ -90622,7 +90639,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6296,
+   "source_files": 6297,
    "test_files": 895
   },
   "oneiron-android": {
@@ -97076,6 +97093,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineMemory",
+      "MemoryLease",
+      "MemoryRefusal"
+     ],
+     "path": "src/host_memory.rs",
+     "purpose": "The process's physical-memory admission line for host and native work",
+     "surface": {
+      "enum": 1,
+      "fn": 14,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -97096,7 +97129,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 24,
       "re-export": 2
      }
     },
@@ -97545,6 +97578,13 @@
      "layout": "file",
      "purpose": "The caller-supplied retrieval filter"
     },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The process's physical-memory admission line for host and native work"
+    },
     "identity_topology": {
      "files": 1,
      "impl_vault": false,
@@ -97653,7 +97693,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 63,
+   "source_files": 64,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -120205,7 +120245,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 16
      }
     },
     {
