@@ -3,6 +3,7 @@
 //! this interface. Trusted provisioning and replay use separate Vault doors.
 use crate::Vault;
 use crate::batch::{BatchBuilder, EntityMetadataHeader};
+use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -82,6 +83,7 @@ pub(crate) fn actor_for_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Opti
 pub(crate) struct ActorContentTxn<'v, 't, 'env> {
     vault: &'v Vault,
     writer: WriteActor,
+    lane: CoreWriteLaneRef<'v>,
     txn: &'t mut heed::RwTxn<'env>,
     pending_claim_support: BTreeSet<EntityId>,
 }
@@ -90,6 +92,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         vault: &'v Vault,
         txn: &'t mut heed::RwTxn<'env>,
         writer: WriteActor,
+        lane: CoreWriteLaneRef<'v>,
     ) -> Result<Self> {
         if actor_for_txn(vault, txn)?.is_some() {
             return Err(Error::InvariantViolation(
@@ -101,6 +104,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
             vault,
             txn,
             writer,
+            lane,
             pending_claim_support: BTreeSet::new(),
         })
     }
@@ -119,7 +123,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     /// The batch derives its semantic effect set and checks both positions
     /// before this actor's transaction can commit.
     pub(crate) fn apply_batch(&mut self, batch: BatchBuilder<'_>) -> Result<()> {
-        batch.apply_actor(self.txn, &self.writer)
+        batch.apply_actor(self.txn, &self.writer, self.lane)
     }
 
     /// Candidate admission uses the same effect collector as typed batches.
@@ -135,6 +139,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
             self.vault,
             self.txn,
             &self.writer,
+            self.lane,
             ops,
             text_index_trusted,
             gate_mode,
@@ -209,7 +214,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         &mut self,
         id: EntityId,
         owner: ContentOwner,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -217,7 +222,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         if self.vault.shared_vault_creation_in_txn(self.txn)?.is_some() {
             self.check_record(id, owner)?;
         }
-        let result = write(self.txn)?;
+        let result = write(self.txn, self.lane)?;
         if self.vault.shared_vault_creation_in_txn(self.txn)?.is_some() {
             self.check_record(id, owner)?;
         }
@@ -240,7 +245,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_note<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -252,7 +257,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_claim<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -265,7 +270,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_artifact<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -281,6 +286,7 @@ impl Vault {
     pub(crate) fn try_with_actor_content_write_txn<T, E>(
         &self,
         writer: WriteActor,
+        lane: CoreWriteLaneRef<'_>,
         write: impl FnOnce(&mut ActorContentTxn<'_, '_, '_>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -296,7 +302,7 @@ impl Vault {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("actor content writer header"))?;
             crate::provenance::validate_actor_class(header.entity_type, writer.actor_class())?;
-            let mut content = ActorContentTxn::new(self, txn, writer)?;
+            let mut content = ActorContentTxn::new(self, txn, writer, lane)?;
             let result = write(&mut content)?;
             content.finish()?;
             Ok(result)

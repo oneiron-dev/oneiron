@@ -348,7 +348,12 @@ pub(crate) fn append_agent_diary_in_txn(
     })?;
     let note_id = vault.store.clock.entity_id()?;
     let occurred = TimeRange { start: at, end: at };
-    let mut content = crate::federation::ActorContentTxn::new(vault, txn, agent)?;
+    let mut content = crate::federation::ActorContentTxn::new(
+        vault,
+        txn,
+        agent,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     content.apply_batch(
         vault
             .batch_in()

@@ -220,16 +220,20 @@ fn admit_imported_evidence_claim_typed_guarded(
     }
 
     if guard.is_some() {
-        return vault.try_with_actor_content_write_txn(admission.actor, |content| {
-            admit_imported_evidence_in_content(
-                vault,
-                content,
-                predicate,
-                value,
-                source_record_id,
-                admission,
-            )
-        });
+        return vault.try_with_actor_content_write_txn(
+            admission.actor,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            |content| {
+                admit_imported_evidence_in_content(
+                    vault,
+                    content,
+                    predicate,
+                    value,
+                    source_record_id,
+                    admission,
+                )
+            },
+        );
     }
 
     let (candidate, mut envelope) =

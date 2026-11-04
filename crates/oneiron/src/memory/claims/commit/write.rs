@@ -24,6 +24,7 @@ impl Memory<'_> {
         refuse_typed_claim_family(input)?;
         let write = self.resolve_claim_write(input, auto_supersede, in_writer, birth)?;
         before_txn();
+        let lane = self.core_write_lane()?;
 
         let mut approval = forced_approval
             .unwrap_or_else(|| requested_approval(write.source, input.scope.as_ref()));
@@ -31,16 +32,17 @@ impl Memory<'_> {
         // Proposed: that write would park for review, so it lands parked. A
         // Gate deny (an unresolved record reference among them, FIX 1220) is
         // never resubmitted; no approval lane makes it land.
-        let refused = match self.attempt_claim_write(&write, approval) {
+        let refused = match self.attempt_claim_write(&write, approval, lane.as_ref()) {
             Ok(refused) => refused,
             Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
                 approval = ClaimApprovalStatus::Proposed;
-                self.attempt_claim_write(&write, approval).map_err(|err| {
-                    write
-                        .publication_refusal
-                        .take()
-                        .unwrap_or_else(|| err.into())
-                })?
+                self.attempt_claim_write(&write, approval, lane.as_ref())
+                    .map_err(|err| {
+                        write
+                            .publication_refusal
+                            .take()
+                            .unwrap_or_else(|| err.into())
+                    })?
             }
             Err(err) => {
                 return Err(write
