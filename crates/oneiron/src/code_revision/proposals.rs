@@ -15,7 +15,9 @@ use rmpv::Value;
 pub(super) mod checkpoint;
 
 /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: revision id.
-const PROPOSALS: SideTable<EntityId, CodeRevisionProposal, Raw> =
+/// Visible inside `code_revision` for the production-witness erase scrub only; every other
+/// access stays through this module's loaders.
+pub(super) const PROPOSALS: SideTable<EntityId, CodeRevisionProposal, Raw> =
     SideTable::new(&side_table::CODE_REVISION_PROPOSAL);
 
 /// The row is its own pinned hand-rolled MessagePack layout: the side table stores exactly the
@@ -55,7 +57,14 @@ impl Vault {
         revision_id: &EntityId,
     ) -> Result<Option<CodeRevisionProposal>> {
         let txn = self.store.env.read_txn()?;
-        load(&self.store, &txn, revision_id)
+        let mut proposal = load(&self.store, &txn, revision_id)?;
+        if let Some(proposal) = &mut proposal {
+            proposal
+                .revision
+                .production
+                .project_erased_in_txn(self, &txn)?;
+        }
+        Ok(proposal)
     }
 
     pub fn code_revision_proposals(
@@ -64,11 +73,15 @@ impl Vault {
     ) -> Result<Vec<CodeRevisionProposal>> {
         let txn = self.store.env.read_txn()?;
         let mut proposals = Vec::new();
-        for (key, proposal) in PROPOSALS.scan(&self.store, &txn)? {
+        for (key, mut proposal) in PROPOSALS.scan(&self.store, &txn)? {
             if key != proposal.revision.revision_id {
                 return Err(invalid());
             }
             verify(&self.store, &txn, &proposal)?;
+            proposal
+                .revision
+                .production
+                .project_erased_in_txn(self, &txn)?;
             if proposal.revision.session_id == *session_id {
                 proposals.push(proposal);
             }
