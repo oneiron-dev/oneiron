@@ -291,6 +291,11 @@ side_tables! {
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
+    /// One model call's evidence and replay record (FIX 12516), keyed by
+    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
+    /// evidence only: never an entity, BM25/vector/Dreamer input.
+    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
+        => crate::code_run::erase_model_call_actor_in_txn;
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it
@@ -329,11 +334,6 @@ side_tables! {
     /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
     /// id16(set).
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
-    /// One model call's evidence and replay record (FIX 12516), keyed by
-    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
-    /// evidence only: never an entity, BM25/vector/Dreamer input.
-    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
-        => crate::code_run::erase_model_call_actor_in_txn;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
