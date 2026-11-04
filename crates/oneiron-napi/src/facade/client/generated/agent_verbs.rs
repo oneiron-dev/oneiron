@@ -1884,6 +1884,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_done(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.done", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_later(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.later", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_bootstrap(
         &self,
         input: serde_json::Value,
@@ -3456,6 +3474,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_files_sources_exclude(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.exclude", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_residence_mode(
         &self,
         input: serde_json::Value,
@@ -4353,6 +4380,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.legal_holds.lift_and_erase", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.withdraw_erase", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

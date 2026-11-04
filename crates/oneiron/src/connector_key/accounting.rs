@@ -6,16 +6,17 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::Store;
 
 use super::meter::{
-    EFFECTOR_BUDGET_ROW_KEY_LEN, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
+    BudgetBlock, EFFECTOR_BUDGET_ROW_KEY_LEN, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
     EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId, EffectorBudgetRowRead,
-    EffectorBudgetRowSource, budget_exhausted_reason, budget_pool_read_in_txn,
+    EffectorBudgetRowSource, budget_block_pooled, budget_exhausted_reason, budget_pool_read_in_txn,
     budget_read_from_states, budget_row_read, charge_effector_budgets, load_budget_row_states,
 };
 use super::record::{
-    ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust, invalid_body,
-    normalize_connector_key,
+    ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust,
+    invalid_body, normalize_connector_key,
 };
 use super::txn::{
     append_connector_key_op_record, governing_connector_key, read_connector_key_in_txn,
@@ -66,8 +67,9 @@ pub enum ConnectorKeySendAdmission {
     /// `ladder_events` are empty, `pool` is `None`, and the carried `read` is
     /// a live read-only echo of the key's meter (its catalog pool's too).
     Replayed(EffectorBudgetCharge),
-    /// The send was refused. NO identity row is written, so the refusal does
-    /// not poison a later admission of the same logical send.
+    /// The send was refused by a row that does not pace. NO identity row is
+    /// written, so the refusal does not poison a later admission of the same
+    /// logical send.
     Refused {
         /// `"connector_key_not_active"`, or the exhausted row's
         /// `budget_exhausted:*` reason.
@@ -81,6 +83,32 @@ pub enum ConnectorKeySendAdmission {
         /// The evaluated (undebited) meter, when the charger ran.
         charge: Option<EffectorBudgetCharge>,
     },
+    /// Every full row the send meets is a count-bound window that refuses
+    /// (FIX 8686): nothing was charged and no identity row written, so the
+    /// same logical send is admitted once its windows open again at
+    /// `next_eligible_at`, Unix seconds on the engine's clock.
+    Paced { next_eligible_at: u64 },
+}
+
+/// When every exhausted row one more send through `id` meets only paces
+/// (FIX 8686), on its own rows and its catalog pool's: the instant its
+/// windows all open again, as the scoped call path reads it. Read where
+/// nothing was debited for the send yet. `None` when every row has room, or
+/// a full row denies.
+pub(super) fn send_paced_until(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    now: u64,
+) -> Result<Option<u64>> {
+    Ok(
+        match budget_block_pooled(store, txn, id, record, effect_channel, true, now, true)? {
+            BudgetBlock::Paced { next_eligible_at } => Some(next_eligible_at),
+            BudgetBlock::Open | BudgetBlock::Hard => None,
+        },
+    )
 }
 
 fn send_admit_value(admitted_at: u64, sends_debit: u64, effect_channel: &str) -> Vec<u8> {
@@ -162,6 +190,11 @@ impl Vault {
     /// through `charge_effector_budgets` at the execution chokepoint, while
     /// `Sends` is charged once per logical send here. Until that follow-on,
     /// the chokepoint and consent paths keep charging as they do today.
+    ///
+    /// A send whose only full rows are count-bound windows that refuse comes
+    /// back [`ConnectorKeySendAdmission::Paced`] (FIX 8686): the caller sends
+    /// it again at that instant under the same `logical_send_ref`. A Spend
+    /// row, and a row set to suspend, refuse as before.
     pub fn admit_connector_key_send(
         &self,
         id: &EntityId,
@@ -254,6 +287,19 @@ impl Vault {
                 suspended: false,
                 charge: None,
             });
+        }
+
+        // FIX 8686: a send whose only full rows pace waits for them, as a
+        // scoped connector call does: no debit, no identity row.
+        if let Some(next_eligible_at) = send_paced_until(
+            &self.store,
+            &wtxn,
+            id,
+            &record,
+            &effect_channel,
+            accounting_now,
+        )? {
+            return Ok(ConnectorKeySendAdmission::Paced { next_eligible_at });
         }
 
         match charge_effector_budgets(

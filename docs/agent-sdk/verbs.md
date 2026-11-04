@@ -222,6 +222,9 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
+- `self.inbox.get`
+- `self.inbox.done`
+- `self.inbox.later`
 - `vault.skills.bootstrap`
 - `vault.skill_hubs.default.get`
 - `vault.skills.restoreDefaults`
@@ -403,6 +406,7 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.detach`
 - `vault.files.sources.list`
 - `vault.files.sources.files`
+- `vault.files.sources.exclude`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
@@ -504,6 +508,7 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.legal_holds.withdraw_erase`
 - `vault.courtesy_delete.send`
 - `vault.courtesy_delete.sent`
 - `vault.courtesy_delete.incoming`

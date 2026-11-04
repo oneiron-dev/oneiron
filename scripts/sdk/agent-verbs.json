@@ -3552,6 +3552,42 @@
       "openapi": true
     },
     {
+      "name": "self.inbox.get",
+      "description": "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done.",
+      "input": "crate::agent_inbox_lens::InboxItemRequest",
+      "output": "crate::agent_inbox_lens::InboxItemView",
+      "call": "memory.inbox_item_get(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.inbox.done",
+      "description": "Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it.",
+      "input": "crate::agent_inbox_lens::InboxItemRequest",
+      "output": "crate::agent_inbox_lens::InboxItemMarked",
+      "call": "memory.inbox_item_done(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.inbox.later",
+      "description": "Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it.",
+      "input": "crate::agent_inbox_lens::InboxItemLaterRequest",
+      "output": "crate::agent_inbox_lens::InboxItemMarked",
+      "call": "memory.inbox_item_later(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.skills.bootstrap",
       "description": "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills.",
       "input": "EmptyRequest",
@@ -6240,6 +6276,21 @@
       "openapi": true
     },
     {
+      "name": "vault.files.sources.exclude",
+      "description": "The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it.",
+      "input": "crate::task_verb::sdk::FilesSourceExcludeRequest",
+      "output": "crate::task_verb::sdk::FilesSourceExcludeAnswer",
+      "call": "crate::task_verb::sdk::exclude_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.residence.mode",
       "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",
@@ -7700,6 +7751,21 @@
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.legal_holds.withdraw_erase",
+      "description": "The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting.",
+      "input": "crate::task_verb::sdk::LegalHoldWithdrawEraseRequest",
+      "output": "crate::task_verb::sdk::LegalHoldErasesWithdrawn",
+      "call": "crate::task_verb::sdk::withdraw_legal_hold_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.withdraw_erase\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -12176,6 +12242,7 @@
       "scope": "Write",
       "admission": {},
       "section": false,
+      "openapi": true,
       "binding": {
         "wire": "json",
         "args": [

@@ -610,6 +610,20 @@ impl Vault {
             .head)
     }
 
+    /// The local HEAD as it stands, the pointer read alone: no migration,
+    /// no write transaction and no canonical-chain walk, where
+    /// [`Self::head`] migrates a legacy conversation first and reads its
+    /// main line. `None` for a conversation that has adopted no HEAD
+    /// (FIX 10367).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn local_head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        read_id(&self.store, &txn, HEAD, conversation)
+    }
+
     /// Reads a coherent root-first page; never returns a truncated safety walk.
     pub fn main_line(&self, conversation: &EntityId, page: DagPageRequest) -> Result<DagPage> {
         self.with_write_txn_grouped(|txn| {

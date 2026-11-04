@@ -238,6 +238,61 @@ impl Vault {
             .is_some_and(|entered_by| entered_by == *principal.as_bytes())
     }
 
+    /// Whether a model-call evidence row would outlive the named session's
+    /// retention exception. The check mirrors
+    /// [`Self::off_record_session_is_anonymous_for`], but covers every mode
+    /// except `OnRecord`: model-call rows write directly into base, never the
+    /// session overlay. A caller that cannot be verified in the named session
+    /// binds nothing and records as usual (Engine 2137/2271).
+    #[must_use]
+    pub fn model_call_keeps_no_record_for(
+        &self,
+        session_ref: Option<&str>,
+        principal: Option<crate::EntityId>,
+    ) -> bool {
+        let (Some(session_ref), Some(principal)) = (session_ref, principal) else {
+            return false;
+        };
+        let session_ref = session_ref.trim();
+        let created = self
+            .store
+            .off_record_sessions
+            .created_key(session_ref, principal);
+        let session_ref = created.as_deref().unwrap_or(session_ref);
+        let Ok(Some(record)) = self.off_record_session(session_ref) else {
+            return false;
+        };
+        if record.mode == OffRecordMode::OnRecord {
+            return false;
+        }
+        if record.room.is_some() {
+            return self
+                .off_record_session_vault()
+                .bind_for(session_ref, principal)
+                .is_ok();
+        }
+        record
+            .entered_by
+            .is_some_and(|entered_by| entered_by == *principal.as_bytes())
+    }
+
+    /// Whether `room` has any live stretch whose rows must not land in base.
+    /// Voice and workflow callers prove room membership separately, so the
+    /// conservative check covers every such stretch in the room. A read error
+    /// suppresses the optional evidence write rather than risking retention.
+    #[must_use]
+    pub fn room_has_unrecorded_stretch(&self, room: crate::EntityId) -> bool {
+        self.live_off_record_session_keys()
+            .into_iter()
+            .any(|session_ref| match self.off_record_session(&session_ref) {
+                Ok(Some(record)) => {
+                    record.room == Some(*room.as_bytes()) && record.mode != OffRecordMode::OnRecord
+                }
+                Ok(None) => false,
+                Err(_) => true,
+            })
+    }
+
     /// Whether any off-record stretch is open. A host that would write this
     /// process's RAM to disk, a vault VM's snapshot, asks first: no snapshot
     /// while a stretch is open (OFFREC-SNAPSHOT = A).

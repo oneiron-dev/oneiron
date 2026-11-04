@@ -83,6 +83,9 @@ impl ResultRead {
             range,
             state,
             secret,
+            // The arm's own results: an arm reads for its own run, never
+            // for another caller, so its refs name the occurrence.
+            foreign: false,
         })
     }
 

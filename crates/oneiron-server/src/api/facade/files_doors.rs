@@ -174,9 +174,6 @@ pub(crate) async fn vault_files_sources_list(
 
 /// `vault.files.sources.exclude`: a Files source's filters change without
 /// detach and attach; its next rescan reads with them.
-// TODO(FIX 10248): drop this once the PR-time regen lands the dispatch, MCP
-// and projection rows that call this door.
-#[allow(dead_code)]
 pub(crate) async fn vault_files_sources_exclude(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

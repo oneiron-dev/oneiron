@@ -1,11 +1,16 @@
 //! The protocol's messages.
 //!
-//! Every message is MessagePack with named fields. A receiver ignores a field
-//! it does not know and refuses a message type it does not know. A new
-//! message type or field is a minor bump; a changed meaning is a major bump.
+//! Every message is MessagePack with named fields, in the protocol's own
+//! codec ([`crate::codec`]). A receiver ignores a field it does not know and
+//! refuses a message type it does not know. A new message type or field is
+//! a minor bump; a changed meaning is a major bump.
 //!
-//! 1.1 adds asks: inside a call the organ may `ask` the engine, and the
-//! engine sends an `answer`. Neither is ever sent on a 1.0 session.
+//! 2.0 is a major bump: a message is one or more frames
+//! ([`crate::send_frame`]), so no reply, report, answer or descriptor set
+//! is held to one frame's length or descriptor count; a value nests to any
+//! depth; and a descriptor slot indexes the whole message's descriptors.
+//! Inside a call the organ may `ask` the engine, and the engine sends an
+//! `answer`. A 1.x peer fails the handshake.
 
 use std::fmt;
 
@@ -13,31 +18,33 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_bytes::ByteBuf;
 
-/// The protocol version this crate speaks.
-pub const PROTOCOL: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
+pub use crate::value::{Integer, Value};
 
-/// The first minor whose sessions carry asks.
-pub const ASKS_MINOR: u16 = 1;
+/// The protocol version this crate speaks.
+pub const PROTOCOL: ProtocolVersion = ProtocolVersion { major: 2, minor: 0 };
 
 /// The bytes one ask's value takes, encoded, past which the engine's
 /// `[limits]` row asks (`organ_ask_value_bytes`). A larger value is sent and
-/// read whole, under the frame's own `u32` length.
+/// read whole, across as many frames as it takes.
 pub const ASK_VALUE_MAX: usize = 64 * 1024;
 
 /// An input or output at or under this size rides inside the frame. A larger
 /// one crosses as a read-only region handle.
 pub const INLINE_MAX_BYTES: usize = 64 * 1024;
 
-/// The most file descriptors one frame may carry.
+/// The most file descriptors one frame carries: pacing, not a limit. A
+/// message with more sends the rest on its next frames, at most this many
+/// on each.
 pub const MAX_FDS_PER_FRAME: usize = 16;
 
-/// The frame limit both sides use until the handshake sets one.
+/// The longest frame both sides send until the handshake sets one. A
+/// longer message takes more frames.
 pub const DEFAULT_FRAME_LIMIT: u32 = 64 * 1024 * 1024;
 
-/// The largest `hello` or `hello_ack` frame body either side sends or reads
+/// The largest `hello` or `hello_ack` either side reads, its frames together
 /// (FIX 7648). It binds only that first exchange, before a session exists:
 /// an allowed pre-session bound, never one on an established call, reply,
-/// ask or answer, which cross under the wire's own `u32` length. The
+/// ask or answer, which take as many frames as they need. The
 /// shipped organs' `hello_ack`s are under 1 KiB; this leaves wide room for
 /// an organ that offers many verbs.
 pub const INITIAL_HANDSHAKE_FRAME_BYTES: u32 = 1024 * 1024;
@@ -58,12 +65,6 @@ impl ProtocolVersion {
             major: self.major,
             minor: self.minor.min(other.minor),
         })
-    }
-
-    /// Whether a session at this version carries asks.
-    #[must_use]
-    pub fn asks(self) -> bool {
-        self.minor >= ASKS_MINOR
     }
 }
 
@@ -154,7 +155,7 @@ pub enum ToOrgan {
         reason: CancelReason,
     },
     Shutdown,
-    /// 1.1: the answer to one of the organ's asks.
+    /// The answer to one of the organ's asks.
     Answer(AskAnswer),
 }
 
@@ -164,7 +165,7 @@ pub enum ToOrgan {
 pub enum FromOrgan {
     HelloAck(HelloAck),
     Reply(Reply),
-    /// 1.1: inside a call, the organ asks the engine for something.
+    /// Inside a call, the organ asks the engine for something.
     Ask(Ask),
 }
 
@@ -189,7 +190,7 @@ pub struct HelloAck {
 pub struct TypedBody {
     pub kind: String,
     pub schema: u32,
-    pub value: rmpv::Value,
+    pub value: Value,
 }
 
 /// One edit op or query.
@@ -198,7 +199,7 @@ pub struct Call {
     pub id: u64,
     pub verb: String,
     pub schema: u32,
-    pub args: rmpv::Value,
+    pub args: Value,
     pub body: Option<TypedBody>,
     pub inputs: Vec<Input>,
     pub deadline_ms: u32,
@@ -213,13 +214,14 @@ pub struct Input {
     pub data: Payload,
 }
 
-/// Where the bytes are: inside the frame, or behind the frame's descriptor
-/// at this slot (a read-only region, valid for the call only).
+/// Where the bytes are: inside the message, or behind the message's
+/// descriptor at this slot (a read-only region, valid for the call only). A
+/// slot counts every descriptor the message's frames carried, in order.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Payload {
     Inline(ByteBuf),
-    Slot(u16),
+    Slot(u64),
 }
 
 impl fmt::Debug for Payload {
@@ -260,7 +262,7 @@ pub struct Proposal {
     pub body: Option<TypedBody>,
     pub outputs: Vec<Output>,
     /// A verb-specific result, such as what `inspect` found.
-    pub report: rmpv::Value,
+    pub report: Value,
     pub notes: Notes,
 }
 
@@ -319,7 +321,7 @@ pub enum Locator {
     },
     Opaque {
         kind: String,
-        value: rmpv::Value,
+        value: Value,
     },
 }
 
@@ -359,7 +361,7 @@ pub enum ErrorCode {
     Internal,
 }
 
-/// 1.1: one ask, inside the call it names. At most one per call is in
+/// One ask, inside the call it names. At most one per call is in
 /// flight: the organ waits for its answer, or the call's cancel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ask {
@@ -369,10 +371,10 @@ pub struct Ask {
     pub id: u32,
     pub verb: String,
     /// Past [`ASK_VALUE_MAX`] bytes, encoded, the engine's row asks.
-    pub value: rmpv::Value,
+    pub value: Value,
 }
 
-/// 1.1: the engine's answer to one ask. It names both the call and the
+/// The engine's answer to one ask. It names both the call and the
 /// ask, so a late answer never reads as the answer to a later ask.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AskAnswer {
@@ -385,7 +387,7 @@ pub struct AskAnswer {
 #[serde(rename_all = "snake_case")]
 pub enum AskOutcome {
     Answered {
-        value: rmpv::Value,
+        value: Value,
         /// Bytes beside the value: inline, or a region the engine sealed,
         /// valid for the call only.
         data: Option<AskData>,
@@ -402,7 +404,7 @@ pub struct AskData {
 }
 
 /// Why an ask got no answer. These codes are the ask's own: they never
-/// appear as an organ error code, so a 1.0 engine never meets one.
+/// appear as an organ error code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[error("{code:?}: {detail}")]
 pub struct AskRefusal {
@@ -444,7 +446,8 @@ pub enum AskCode {
     BadRequest,
     /// The handler could not answer.
     Failed,
-    /// Local to the organ: the session speaks 1.0, so nothing was sent.
+    /// Local to the organ: outside a served call there is no engine to
+    /// ask, so nothing was sent.
     Unsupported,
     /// Local to the organ: the call was cancelled while the ask waited.
     Cancelled,
