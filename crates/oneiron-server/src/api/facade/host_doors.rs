@@ -154,6 +154,7 @@ pub(crate) use super::seal_doors::*;
 pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
+pub(crate) use super::code_run_secret_lift_doors::*;
 pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.

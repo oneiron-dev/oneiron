@@ -2532,6 +2532,15 @@ and tells you to rewrap the secret as its holder instead. No SDK verb takes the 
 server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
 ([owner-custody.md](owner-custody.md)).
 
+## Pack lens slot decisions
+
+Selecting or clearing a pack lens slot records one decision in the shared Gate ledger in the
+same transaction as the slot change. The returned `LensActivationReceipt.decision_ref` is that
+ledger decision's id; it also names the selected slot's decision while the slot is active.
+The ledger records the authenticated owner and a digest of the returned receipt. Clearing a
+slot deletes its active selection but keeps this audit record. These records grant no standing
+consent and change no revision, installation or expected-active checks.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of
