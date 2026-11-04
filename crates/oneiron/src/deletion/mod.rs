@@ -1,6 +1,7 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+pub(crate) mod archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
 mod checkpoint_payload;
