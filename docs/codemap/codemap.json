@@ -101845,7 +101845,7 @@
      "path": "src/body.rs",
      "purpose": "The `image` kind's typed body, schema 1",
      "surface": {
-      "const": 8,
+      "const": 4,
       "crate-vis": 12,
       "enum": 5,
       "fn": 5,
@@ -101903,13 +101903,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/render.rs",
      "purpose": "Export: the only place pixels are made",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -101979,7 +101979,7 @@
     "render": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Export: the only place pixels are made"
     }
@@ -122621,7 +122621,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/restore.rs",
@@ -125512,7 +125512,7 @@
     "owner": {
      "files": 45,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
     },
@@ -125643,7 +125643,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 38,
+   "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1500,
    "test_files": 182
