@@ -7938,20 +7938,26 @@ dependencies = [
  "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-code-source",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -8141,6 +8147,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-code-source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-base",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
@@ -8200,6 +8223,15 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]
@@ -8314,6 +8346,18 @@ dependencies = [
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8532,6 +8576,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-py"
 version = "1.0.0"
 dependencies = [
@@ -8582,6 +8640,16 @@ dependencies = [
  "unicode-script",
  "unicode-segmentation",
  "whichlang",
+]
+
+[[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8779,6 +8847,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
