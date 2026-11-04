@@ -385,7 +385,13 @@ impl<'v> ScopedRead<'v> {
                             if let Ok(summary_body) =
                                 crate::scope_summary::decode_scope_summary_body(&logical)
                             {
+                                // The header's words came from these MESSAGEs
+                                // too (review P1 on #4466): an edited pinned
+                                // MESSAGE must not hide a limit on another.
                                 recorded.extend(summary_body.covers);
+                                recorded.extend(
+                                    summary_body.messages.iter().map(|m| m.id),
+                                );
                             }
                         }
                     }
