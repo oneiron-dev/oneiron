@@ -36,6 +36,14 @@ impl OffRecordSession<'_> {
                 .ok_or(Error::InvariantViolation(
                     "room read has no overlay snapshot",
                 ))?;
+            // Promotion publishes this membership before retiring TURN rows.
+            let saved: BTreeSet<[u8; 16]> =
+                super::super::registry::session_entry_state(&self.entry)?
+                    .record
+                    .promoted_turns
+                    .iter()
+                    .copied()
+                    .collect();
             let mut turns = BTreeSet::new();
             let mut messages = BTreeMap::new();
             for entry in snapshot.journal_entries() {
@@ -59,13 +67,34 @@ impl OffRecordSession<'_> {
             }
             let mut proposals = BTreeMap::new();
             for (message, (turn, at)) in messages {
-                if !turns.contains(&turn) || !visible(Some(&windows), at) {
+                let unsaved = turns.contains(&turn);
+                if (!unsaved && !saved.contains(turn.as_bytes())) || !visible(Some(&windows), at) {
                     continue;
                 }
-                let Some((turn_body, _)) =
-                    live_overlay_body(snapshot, view, txn, turn, ENTITY_TYPE_TURN)?
-                else {
-                    continue;
+                let saved_turn_body = if unsaved {
+                    None
+                } else {
+                    match crate::vault::live_entity_row_in_txn(&view.read(), txn, &turn)? {
+                        crate::vault::LiveEntityRow::Live { entity_type, body }
+                            if entity_type == ENTITY_TYPE_TURN =>
+                        {
+                            Some(body)
+                        }
+                        _ => None,
+                    }
+                };
+                let turn_body = if unsaved {
+                    let Some((body, _)) =
+                        live_overlay_body(snapshot, view, txn, turn, ENTITY_TYPE_TURN)?
+                    else {
+                        continue;
+                    };
+                    body
+                } else {
+                    let Some(body) = saved_turn_body.as_deref() else {
+                        continue;
+                    };
+                    body
                 };
                 // thread_binding's None also means malformed/non-map.
                 // Only a complete actual TURN map proves the trunk case.
