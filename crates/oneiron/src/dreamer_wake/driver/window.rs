@@ -238,6 +238,38 @@ impl DreamerWakeDriver<'_> {
         Ok(())
     }
 
+    /// Releases every held window admission ahead of a collection-time
+    /// error's return (FIX 12487 round 2): the look-ahead admission
+    /// chain failing says nothing about the slots already leased, and
+    /// returning past them would hold their reservations until the
+    /// maintenance sweep. Each release is self-fenced; a failure is
+    /// warn-logged and the drain goes on - the caller returns the
+    /// original collection error either way.
+    pub(super) fn release_window_for_collection_error(
+        &mut self,
+        window: &mut Vec<WindowSlot>,
+        input: &RunWakePass,
+        cancel: &WakeCancellation,
+        report: &mut WakePassReport,
+    ) {
+        let cancel_requested = cancel.is_cancelled();
+        for slot in std::mem::take(window) {
+            if let Err(release_error) = self.release_unflushed_admission(
+                input,
+                &slot.admitted,
+                &slot.line,
+                cancel,
+                cancel_requested,
+                report,
+            ) {
+                tracing::warn!(
+                    kind = ?release_error.kind(),
+                    "release of a held window admission failed; its lease falls to the maintenance reclaim"
+                );
+            }
+        }
+    }
+
     /// Runs the held window's partitions through the executor and
     /// settles every slot in admission order, including a slot whose
     /// Running publish failed and — after a panicking executor — slots
@@ -330,7 +362,19 @@ impl DreamerWakeDriver<'_> {
                                 "a partition window answered fewer slots than it held",
                             ))
                         });
-                        outcomes[index] = Some((executed, None));
+                        // A slot the executor's own per-slot containment
+                        // caught panicking carries the shared panic
+                        // error: it takes the executor-panic stage (and
+                        // ends the pass, FIX 7322) exactly as if the
+                        // window-wide catch above had taken it (FIX
+                        // 12487 round 2).
+                        let stage = match &executed {
+                            Err(error) if crate::dreamer_wake::is_executor_panic_error(error) => {
+                                Some("executor_panic")
+                            }
+                            _ => None,
+                        };
+                        outcomes[index] = Some((executed, stage));
                     }
                 }
                 Err(_payload) => {
@@ -342,9 +386,7 @@ impl DreamerWakeDriver<'_> {
                             "dreamer attempt executor panicked; parking the admitted attempt"
                         );
                         outcomes[index] = Some((
-                            Err(crate::Error::InvariantViolation(
-                                "dreamer attempt executor panicked",
-                            )),
+                            Err(crate::dreamer_wake::executor_panic_error()),
                             Some("executor_panic"),
                         ));
                     }

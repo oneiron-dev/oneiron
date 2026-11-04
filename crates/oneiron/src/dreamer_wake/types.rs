@@ -190,6 +190,24 @@ pub enum DreamerAttemptExecution {
     },
 }
 
+/// The error an executor panic leaves, from whichever containment
+/// caught it (the driver's dispatch/flush catch, or a partition
+/// window's per-slot catch): one constructor and one predicate, so
+/// the driver can mark the executor-panic stage - and end the pass
+/// without reusing the executor (FIX 7322) - no matter who caught it
+/// (FIX 12487 round 2).
+pub(crate) fn executor_panic_error() -> crate::Error {
+    crate::Error::InvariantViolation("dreamer attempt executor panicked")
+}
+
+/// Whether `error` is the shared executor-panic error above.
+pub(crate) fn is_executor_panic_error(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::InvariantViolation("dreamer attempt executor panicked")
+    )
+}
+
 /// Per-attempt execution context handed to the executor.
 pub struct WakeAttemptContext<'a> {
     pub vault: &'a Vault,

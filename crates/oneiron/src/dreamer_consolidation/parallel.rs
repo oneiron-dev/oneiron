@@ -126,18 +126,27 @@ fn tally_slice_outcome(
 /// Accounts an extracted prefix whose finish never tallies it (a
 /// window slot whose branch would not re-open, or whose extraction a
 /// changed prior set discards for a fresh run): the finish loop's own
-/// classification, fates discarded, so the paid steps settle beside
-/// their receipts instead of refunding at zero.
+/// classification, so the paid steps settle beside their receipts
+/// instead of refunding at zero. Reports whether any slice trapped:
+/// that step already parked the attempt under its durable trap, so
+/// the caller must settle the trapped exit, never extract past it
+/// (FIX 12487 round 2).
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
     attempt_id: AttemptId,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut trapped = false;
     for SliceStep { step_hash, outcome } in extracted.steps {
-        let _ = tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?;
+        if matches!(
+            tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?,
+            SliceFate::Trapped
+        ) {
+            trapped = true;
+        }
     }
-    Ok(())
+    Ok(trapped)
 }
 
 impl ConsolidationExecutor<'_> {

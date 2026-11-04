@@ -17,7 +17,9 @@ mod window;
 pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
 use self::dispatch::Dispatch;
 use self::observe::WakePassClock;
-pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::park_cause::{
+    executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+};
 pub(crate) use self::rewrite::check_host_wake_rewrite;
 use self::stop::boundary_stop;
 use self::window::{SettleFlow, WindowSlot, window_eligible};
@@ -376,70 +378,120 @@ impl<'a> DreamerWakeDriver<'a> {
                 break;
             }
 
-            let priority = self.admit_priority(
+            // A collection-time error leaves the pass only after the
+            // admissions the window already holds are released (FIX
+            // 12487 round 2); the original error returns either way.
+            let priority = match self.admit_priority(
                 &input,
                 exec,
                 &admission_policy,
                 &mut task_admission_refused,
                 &mut program_admission_refused,
-            )?;
+            ) {
+                Ok(priority) => priority,
+                Err(error) => {
+                    self.release_window_for_collection_error(
+                        &mut window,
+                        &input,
+                        cancel,
+                        &mut report,
+                    );
+                    return Err(error);
+                }
+            };
             // A stopped admission still settles what the window holds
             // before the pass ends; the arm that stops names the stop.
             let mut stop_after = None;
-            let admitted =
-                match priority {
-                    DreamerAdmissionOutcome::Admitted(attempt) => Some(*attempt),
-                    DreamerAdmissionOutcome::BudgetExhausted(_) => {
-                        stop_after = Some(WakePassStop::BudgetExhausted);
-                        None
-                    }
-                    DreamerAdmissionOutcome::Empty => match self.store.admit_next_consolidation(
-                        AdmitDreamerConsolidationAttempt {
+            let admitted = match priority {
+                DreamerAdmissionOutcome::Admitted(attempt) => Some(*attempt),
+                DreamerAdmissionOutcome::BudgetExhausted(_) => {
+                    stop_after = Some(WakePassStop::BudgetExhausted);
+                    None
+                }
+                DreamerAdmissionOutcome::Empty => {
+                    let claim_authoring = match self.selected_claim_authoring(&mut report) {
+                        Ok(claim_authoring) => claim_authoring,
+                        Err(error) => {
+                            self.release_window_for_collection_error(
+                                &mut window,
+                                &input,
+                                cancel,
+                                &mut report,
+                            );
+                            return Err(error);
+                        }
+                    };
+                    let started_milestone =
+                        match self.milestone_claim(DreamerMilestoneKind::Started, input.now) {
+                            Ok(claim) => claim,
+                            Err(error) => {
+                                self.release_window_for_collection_error(
+                                    &mut window,
+                                    &input,
+                                    cancel,
+                                    &mut report,
+                                );
+                                return Err(error);
+                            }
+                        };
+                    match self
+                        .store
+                        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
                             scope: input.scope,
                             local_node_id: input.local_node_id,
                             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                            claim_authoring: self.selected_claim_authoring(&mut report)?,
+                            claim_authoring,
                             admission: AdmitDreamerAttempt {
                                 lease_owner: input.lease_owner.clone(),
                                 now: input.now,
                                 budget_id: self.budget_id.clone(),
                                 budget_total_units: input.budget_total_units,
                                 reserve_units: input.reserve_units,
-                                started_milestone: self
-                                    .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                                started_milestone,
                             },
+                        }) {
+                        Ok(outcome) => match outcome {
+                            DreamerConsolidationAdmissionOutcome::NoHomeNode => {
+                                stop_after = Some(WakePassStop::NoHomeNode);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
+                                stop_after = Some(WakePassStop::NotHomeNode);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
+                                // The store already paused the attempt (admission-level trap).
+                                stop_after = Some(WakePassStop::Trapped);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::Empty,
+                            ) => {
+                                stop_after = Some(WakePassStop::QueueEmpty);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::BudgetExhausted(_),
+                            ) => {
+                                stop_after = Some(WakePassStop::BudgetExhausted);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::Admitted(attempt),
+                            ) => Some(*attempt),
                         },
-                    )? {
-                        DreamerConsolidationAdmissionOutcome::NoHomeNode => {
-                            stop_after = Some(WakePassStop::NoHomeNode);
-                            None
+                        Err(error) => {
+                            self.release_window_for_collection_error(
+                                &mut window,
+                                &input,
+                                cancel,
+                                &mut report,
+                            );
+                            return Err(error);
                         }
-                        DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
-                            stop_after = Some(WakePassStop::NotHomeNode);
-                            None
-                        }
-                        DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
-                            // The store already paused the attempt (admission-level trap).
-                            stop_after = Some(WakePassStop::Trapped);
-                            None
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::Empty,
-                        ) => {
-                            stop_after = Some(WakePassStop::QueueEmpty);
-                            None
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::BudgetExhausted(_),
-                        ) => {
-                            stop_after = Some(WakePassStop::BudgetExhausted);
-                            None
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::Admitted(attempt),
-                        ) => Some(*attempt),
-                    },
-                };
+                    }
+                }
+            };
             let mut admitted = match admitted {
                 Some(admitted) => admitted,
                 None => {

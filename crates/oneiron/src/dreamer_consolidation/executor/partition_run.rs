@@ -3,9 +3,14 @@
 //! (accepted candidates, a checkpoint, a park or a deferral).
 
 use std::collections::BTreeSet;
+use std::future::poll_fn;
+use std::panic::AssertUnwindSafe;
+use std::pin::pin;
+use std::task::Poll;
 use std::time::Instant;
 
 use crate::EntityId;
+use crate::entity_id::bytes_to_hex_lower;
 
 use super::super::parallel::PartitionPrefix;
 use super::super::stage_log::{PartitionStages, ms_since};
@@ -40,6 +45,27 @@ struct PartitionStarted<'a> {
 enum PartitionStart<'a> {
     Early(DreamerAttemptExecution),
     Running(Box<PartitionStarted<'a>>),
+}
+
+/// Why a window's finishes stopped before a slot: a pass-ending
+/// error from an earlier slot, or a panic in one. Either way nothing
+/// more runs this pass (the serial pass ends at the error; a
+/// panicking executor is never reused, FIX 7322), so the slot settles
+/// without committing (FIX 12487 round 2).
+#[derive(Clone, Copy)]
+enum WindowStopped {
+    PassEndingError,
+    Panic,
+}
+
+impl WindowStopped {
+    /// The durable reason a stopped slot's park carries.
+    fn park_reason(self) -> &'static str {
+        match self {
+            WindowStopped::PassEndingError => "partition window stopped after a pass-ending error",
+            WindowStopped::Panic => "partition window stopped after an executor panic",
+        }
+    }
 }
 
 /// One slot of a partition window, from its admission to its finish.
@@ -385,10 +411,52 @@ impl ConsolidationExecutor<'_> {
                 *prefix = Some(outcome);
             }
         }
-        // The finishes, one by one in admission order.
+        // The finishes, one by one in admission order. Each finish is
+        // panic-contained on its own (FIX 12487 round 2): a panic in
+        // one slot keeps the decided outcomes of the slots finished
+        // before it (claims they already committed settle as
+        // completed), marks the panicking slot with the shared panic
+        // error so the driver ends the pass on it (FIX 7322), and
+        // stops the window. A pass-ending error (the driver's own
+        // owner-act rule) stops it the same way: later slots settle
+        // without committing, as the serial pass never reaches them.
         let mut results = Vec::with_capacity(window.len());
+        let mut stopped: Option<WindowStopped> = None;
         for (slot, (attempt, ctx)) in slots.into_iter().zip(window.iter_mut()) {
-            results.push(self.finish_window_slot(slot, *attempt, ctx).await);
+            let mut finish = pin!(self.finish_window_slot(slot, *attempt, ctx, stopped));
+            let caught = poll_fn(|task_cx| {
+                match std::panic::catch_unwind(AssertUnwindSafe(|| finish.as_mut().poll(task_cx))) {
+                    Ok(poll) => poll.map(Ok),
+                    Err(panic) => Poll::Ready(Err(panic)),
+                }
+            })
+            .await;
+            let result = match caught {
+                Ok(result) => result,
+                // The payload is dropped unread, as at the driver's
+                // containment: a panic message can quote the row the
+                // executor was working on, and logs never carry world
+                // text. The attempt id says where to look.
+                Err(_payload) => {
+                    tracing::error!(
+                        attempt_id = %bytes_to_hex_lower(attempt.status.attempt.id.as_bytes()),
+                        kind = "executor_panic",
+                        "dreamer attempt executor panicked; parking the admitted attempt"
+                    );
+                    if stopped.is_none() {
+                        stopped = Some(WindowStopped::Panic);
+                    }
+                    Err(crate::dreamer_wake::executor_panic_error())
+                }
+            };
+            if stopped.is_none()
+                && result
+                    .as_ref()
+                    .is_err_and(|error| crate::dreamer_wake::executor_error_ends_pass(error.kind()))
+            {
+                stopped = Some(WindowStopped::PassEndingError);
+            }
+            results.push(result);
         }
         results
     }
@@ -446,12 +514,17 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// One window slot's serial position: its finish and settle, with
-    /// its stage line, in admission order.
+    /// its stage line, in admission order. Once the window has
+    /// `stopped`, the slot still settles in its place but runs and
+    /// commits nothing: a stored outcome stands, a never-run shape
+    /// parks, an extracted prefix is accounted and parked (FIX 12487
+    /// round 2).
     async fn finish_window_slot<'w>(
         &mut self,
         slot: WindowSlotRun<'w>,
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'w>,
+        stopped: Option<WindowStopped>,
     ) -> Result<DreamerAttemptExecution> {
         let turns = ctx.prepared_attempt.map_or(0, |plan| plan.turn_ids().len());
         match slot {
@@ -461,7 +534,15 @@ impl ConsolidationExecutor<'_> {
                 }
                 executed
             }
-            WindowSlotRun::Serial => self.execute(attempt, ctx).await,
+            WindowSlotRun::Serial => match stopped {
+                None => self.execute(attempt, ctx).await,
+                // Never ran: no prefix, no spend. After a panic it
+                // takes the panic outcome; after a pass-ending error
+                // it parks resumable at zero.
+                Some(WindowStopped::Panic) => Err(crate::dreamer_wake::executor_panic_error()),
+                Some(stop) => Ok(StepChargeTally::default()
+                    .park_for(stop.park_reason(), DreamerParkCause::Retry)),
+            },
             WindowSlotRun::Running {
                 started,
                 mut stages,
@@ -496,102 +577,179 @@ impl ConsolidationExecutor<'_> {
                     }
                     Ok(PartitionPrefix::Done(run)) => {
                         stages.close_model_run(run_started);
-                        self.settle_partition_run(
-                            &resources,
-                            Ok(run),
-                            &widened,
-                            widened_round,
-                            &originals,
-                            &returned,
-                            ctx,
-                            &mut charges,
-                            &mut stages,
-                        )
-                        .await
+                        if let Some(stop) = stopped
+                            && !matches!(run, PartitionRun::Checkpoint)
+                        {
+                            // A running slot's Done is its cancel
+                            // checkpoint; never settle any other run
+                            // past the stop - Completed and Held
+                            // commit.
+                            Ok(charges.park_for(stop.park_reason(), DreamerParkCause::Retry))
+                        } else {
+                            self.settle_partition_run(
+                                &resources,
+                                Ok(run),
+                                &widened,
+                                widened_round,
+                                &originals,
+                                &returned,
+                                ctx,
+                                &mut charges,
+                                &mut stages,
+                            )
+                            .await
+                        }
                     }
                     Ok(PartitionPrefix::Extracted(extracted)) => {
-                        // The finish reads live state (admitted priors,
-                        // candidate signals): re-open the branch now, so
-                        // it sees what the serial order before it landed.
-                        let plan = ctx.prepared_attempt.expect("a running slot is prepared");
-                        let wake = ctx.prepared_wake.expect("a running slot is prepared");
-                        match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
-                            Ok(fresh) => {
-                                // The prefix rendered its slices over the
-                                // priors admitted at its own open; when a
-                                // finish before this slot changed that set,
-                                // its labels no longer meet the fresh pins
-                                // and a candidate citing a closed head
-                                // would drop whole at parse. Discard the
-                                // prefix, account its spend, and run the
-                                // partition serially over the fresh branch
-                                // instead (FIX 12487 round 1). The stamp
-                                // still takes the admission-time frozen
-                                // widened/originals/returned values.
-                                let run = if fresh.admitted_prior_ids()
-                                    == resources.admitted_prior_ids()
-                                {
-                                    self.finish_partition_run(
-                                        *extracted,
-                                        &fresh,
+                        if let Some(stop) = stopped {
+                            // The window stopped ahead of this slot:
+                            // account the prefix and park without
+                            // finishing - the serial pass never reaches
+                            // its commit.
+                            stages.close_model_run(run_started);
+                            match super::super::parallel::tally_extracted_outcomes(
+                                ctx.vault,
+                                attempt.status.attempt.id,
+                                *extracted,
+                                &mut charges,
+                            ) {
+                                Ok(true) => {
+                                    self.settle_partition_run(
+                                        &resources,
+                                        Ok(PartitionRun::Trapped),
+                                        &widened,
+                                        widened_round,
+                                        &originals,
+                                        &returned,
                                         ctx,
-                                        attempt.status.attempt.id,
                                         &mut charges,
                                         &mut stages,
                                     )
                                     .await
-                                } else {
-                                    match super::super::parallel::tally_extracted_outcomes(
+                                }
+                                Ok(false) => {
+                                    Ok(charges
+                                        .park_for(stop.park_reason(), DreamerParkCause::Retry))
+                                }
+                                Err(error) => {
+                                    super::super::residency::spent_or_deferred(error, ctx, &charges)
+                                }
+                            }
+                        } else {
+                            // The finish reads live state (admitted priors,
+                            // candidate signals): re-open the branch now, so
+                            // it sees what the serial order before it landed.
+                            let plan = ctx.prepared_attempt.expect("a running slot is prepared");
+                            let wake = ctx.prepared_wake.expect("a running slot is prepared");
+                            match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake)
+                            {
+                                Ok(fresh) => {
+                                    // The prefix rendered its slices over the
+                                    // priors admitted at its own open; when a
+                                    // finish before this slot changed that set,
+                                    // its labels no longer meet the fresh pins
+                                    // and a candidate citing a closed head
+                                    // would drop whole at parse. Discard the
+                                    // prefix, account its spend, and run the
+                                    // partition serially over the fresh branch
+                                    // instead (FIX 12487 round 1). The stamp
+                                    // still takes the admission-time frozen
+                                    // widened/originals/returned values.
+                                    let run = if fresh.admitted_prior_ids()
+                                        == resources.admitted_prior_ids()
+                                    {
+                                        self.finish_partition_run(
+                                            *extracted,
+                                            &fresh,
+                                            ctx,
+                                            attempt.status.attempt.id,
+                                            &mut charges,
+                                            &mut stages,
+                                        )
+                                        .await
+                                    } else {
+                                        match super::super::parallel::tally_extracted_outcomes(
+                                            ctx.vault,
+                                            attempt.status.attempt.id,
+                                            *extracted,
+                                            &mut charges,
+                                        ) {
+                                            // A trapped slice already parked
+                                            // the attempt under its durable
+                                            // trap: settle the trapped exit;
+                                            // the rerun must not extract past
+                                            // it (FIX 12487 round 2).
+                                            Ok(true) => Ok(PartitionRun::Trapped),
+                                            Ok(false) => {
+                                                self.run_partition_attempt(
+                                                    &payload,
+                                                    &fresh,
+                                                    ctx,
+                                                    attempt.status.attempt.id,
+                                                    run_id,
+                                                    &mut charges,
+                                                    &mut stages,
+                                                )
+                                                .await
+                                            }
+                                            Err(error) => Err(error.into()),
+                                        }
+                                    };
+                                    stages.close_model_run(run_started);
+                                    self.settle_partition_run(
+                                        &fresh,
+                                        run,
+                                        &widened,
+                                        widened_round,
+                                        &originals,
+                                        &returned,
+                                        ctx,
+                                        &mut charges,
+                                        &mut stages,
+                                    )
+                                    .await
+                                }
+                                Err(error) => {
+                                    stages.close_model_run(run_started);
+                                    // The finish that tallies the paid
+                                    // extraction never runs on this arm:
+                                    // account its steps first, so the
+                                    // deferral settles the spend beside its
+                                    // receipts instead of refunding at zero
+                                    // (FIX 12487 round 1). A tally failure is
+                                    // a genuine store failure and propagates.
+                                    let trapped = super::super::parallel::tally_extracted_outcomes(
                                         ctx.vault,
                                         attempt.status.attempt.id,
                                         *extracted,
                                         &mut charges,
-                                    ) {
-                                        Ok(()) => {
-                                            self.run_partition_attempt(
-                                                &payload,
-                                                &fresh,
-                                                ctx,
-                                                attempt.status.attempt.id,
-                                                run_id,
-                                                &mut charges,
-                                                &mut stages,
-                                            )
-                                            .await
-                                        }
-                                        Err(error) => Err(error.into()),
+                                    )?;
+                                    if trapped {
+                                        // The trap decided first, at prefix
+                                        // time; the reopen failure is moot
+                                        // (the signal-resumed attempt
+                                        // re-opens fresh then). Deferring
+                                        // instead would requeue behind the
+                                        // standing trap park (FIX 12487
+                                        // round 2).
+                                        self.settle_partition_run(
+                                            &resources,
+                                            Ok(PartitionRun::Trapped),
+                                            &widened,
+                                            widened_round,
+                                            &originals,
+                                            &returned,
+                                            ctx,
+                                            &mut charges,
+                                            &mut stages,
+                                        )
+                                        .await
+                                    } else {
+                                        super::super::residency::spent_or_deferred(
+                                            error, ctx, &charges,
+                                        )
                                     }
-                                };
-                                stages.close_model_run(run_started);
-                                self.settle_partition_run(
-                                    &fresh,
-                                    run,
-                                    &widened,
-                                    widened_round,
-                                    &originals,
-                                    &returned,
-                                    ctx,
-                                    &mut charges,
-                                    &mut stages,
-                                )
-                                .await
-                            }
-                            Err(error) => {
-                                stages.close_model_run(run_started);
-                                // The finish that tallies the paid
-                                // extraction never runs on this arm:
-                                // account its steps first, so the
-                                // deferral settles the spend beside its
-                                // receipts instead of refunding at zero
-                                // (FIX 12487 round 1). A tally failure is
-                                // a genuine store failure and propagates.
-                                super::super::parallel::tally_extracted_outcomes(
-                                    ctx.vault,
-                                    attempt.status.attempt.id,
-                                    *extracted,
-                                    &mut charges,
-                                )?;
-                                super::super::residency::spent_or_deferred(error, ctx, &charges)
+                                }
                             }
                         }
                     }
