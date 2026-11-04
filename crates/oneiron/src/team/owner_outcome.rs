@@ -63,6 +63,31 @@ pub enum ProducerMembership {
     Unknown,
 }
 
+impl ProducerMembership {
+    /// Classifies an exact output's host-producer attempt in the submit snapshot.
+    pub(crate) fn of_attempt_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        producer: Option<AttemptId>,
+        leader: AttemptId,
+        team_ref: &str,
+    ) -> Result<Self> {
+        let Some(producer) = producer else {
+            return Ok(Self::Unknown);
+        };
+        if producer == leader {
+            return Ok(Self::Leader);
+        }
+        Ok(
+            match team_run_binding_in_txn(vault, txn, leader, team_ref)? {
+                Some(team) if team.members.contains(&producer) => Self::Member,
+                Some(_) => Self::Other,
+                None => Self::Unknown,
+            },
+        )
+    }
+}
+
 /// One review of a team's deliverable. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
