@@ -19,6 +19,7 @@ use super::claims::{
 };
 use super::consent::OPT_OUT_REASON_STOP;
 use super::descriptor::claim_class_descriptor_in_txn;
+use super::head_admission::{HeadAdmission, ProjectedHeadAdmission};
 use super::projector::{RecordedEventProjection, put_source_event_in_txn};
 use super::records::CommEventKind;
 use crate::Vault;
@@ -66,6 +67,7 @@ impl CommSourceEvent {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
         projection: &mut RecordedEventProjection,
+        admission: &mut HeadAdmission<'_>,
     ) -> Result<()> {
         let event_id = put_source_event_in_txn(
             vault,
@@ -78,7 +80,7 @@ impl CommSourceEvent {
         )
         .map_err(source_event_error)?;
         projection
-            .project_in_txn(vault, wtxn, event_id, self.kind)
+            .project_in_txn(vault, wtxn, event_id, self.kind, admission)
             .map_err(source_event_error)
     }
 }
@@ -121,7 +123,7 @@ pub fn route_projector_only_comm_put_in_txn(
         CommPutRoute::Projector(event) => {
             if let Some(event) = event {
                 let mut projection = RecordedEventProjection::default();
-                event.record_in_txn(vault, wtxn, &mut projection)?;
+                event.record_in_txn(vault, wtxn, &mut projection, &mut HeadAdmission::default())?;
                 // The source event and the rows its projection wrote go to
                 // the live-window mirror when the caller's write commits.
                 #[cfg(feature = "sync")]
@@ -154,9 +156,23 @@ impl RoutedBatchPuts {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
+        self.record_with_admission_in_txn(vault, wtxn, None)
+    }
+
+    /// A bound batch keeps its existing actor/read checks on actual heads.
+    pub(crate) fn record_with_admission_in_txn(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        admission: Option<&mut dyn ProjectedHeadAdmission>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let mut admission = match admission {
+            Some(bound) => HeadAdmission::bound(bound),
+            None => HeadAdmission::default(),
+        };
         let mut projection = RecordedEventProjection::default();
         for event in &self.events {
-            event.record_in_txn(vault, wtxn, &mut projection)?;
+            event.record_in_txn(vault, wtxn, &mut projection, &mut admission)?;
         }
         Ok(projection.into_written())
     }

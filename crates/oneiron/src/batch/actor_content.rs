@@ -43,13 +43,13 @@ struct EffectEntry {
 
 /// No facade supplies a list of changed parents: the batch's own ChildOf
 /// overlay and candidate computation determine them before any operation runs.
-struct ContentWriteSet {
+pub(super) struct ContentWriteSet {
     vault_id: u64,
     entries: BTreeMap<EntityId, EffectEntry>,
 }
 
 impl ContentWriteSet {
-    fn before(
+    pub(super) fn before(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         actor: &WriteActor,
@@ -111,13 +111,55 @@ impl ContentWriteSet {
                 ids.insert(parent);
             }
         }
+        Self::capture(
+            vault,
+            txn,
+            actor,
+            creation.vault_id,
+            ids,
+            local_puts,
+            derived_parents,
+        )
+    }
+
+    /// Exact head effects, captured before the projector changes any of them.
+    pub(super) fn before_heads(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        ids: &[EntityId],
+        local_puts: &[EntityId],
+    ) -> Result<Option<Self>> {
+        let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
+            return Ok(None);
+        };
+        Self::capture(
+            vault,
+            txn,
+            actor,
+            creation.vault_id,
+            ids.iter().copied().collect(),
+            local_puts.iter().copied().collect(),
+            BTreeSet::new(),
+        )
+    }
+
+    fn capture(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        vault_id: u64,
+        ids: BTreeSet<EntityId>,
+        local_puts: BTreeSet<EntityId>,
+        derived_parents: BTreeSet<EntityId>,
+    ) -> Result<Option<Self>> {
         let mut entries = BTreeMap::new();
         for id in ids {
             let old = if vault.get_raw_in(txn, &id)?.is_some() {
                 let old = vault.content_scope_in_txn(txn, id)?;
                 vault.authorize_shared_vault_write_in_txn(
                     txn,
-                    creation.vault_id,
+                    vault_id,
                     actor,
                     &SharedVaultWrite::Content(old.clone()),
                 )?;
@@ -135,12 +177,17 @@ impl ContentWriteSet {
             );
         }
         Ok(Some(Self {
-            vault_id: creation.vault_id,
+            vault_id: vault_id,
             entries,
         }))
     }
 
-    fn after(self, vault: &Vault, txn: &mut heed::RwTxn<'_>, actor: &WriteActor) -> Result<()> {
+    pub(super) fn after(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &WriteActor,
+    ) -> Result<()> {
         for (id, effect) in self.entries {
             if effect.local_put
                 && let Some(raw) = vault.get_raw_in(txn, &id)?

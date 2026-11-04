@@ -22,7 +22,8 @@ impl BatchBuilder<'_> {
     /// Note: operations are staged eagerly into `wtxn`. If this returns an
     /// error, earlier writes may already be present in the transaction, so
     /// callers must abort the transaction (drop without committing) to discard
-    /// it.
+    /// it. Actor-bound batches stage in a savepoint, so a refused routed
+    /// projection leaves neither its source event nor any head change behind.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
     }
@@ -98,15 +99,53 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
-        // A generic put of a projector-only `comm.*` class leaves the batch
-        // here, before the gate, VAD and lexical staging, as the projector's
-        // source event in `wtxn`. An actor-bound batch's puts stay with the
-        // door, gated for its actor.
-        let routed = if actor.is_none() {
-            crate::comm::route_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
+        if let Some(actor) = actor {
+            let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
+            let mut staged = vault.store.env.nested_write_txn(wtxn)?;
+            let scope =
+                has_owner.then(|| super::vad_postcommit::VadPostcommitScope::new(vault, &staged));
+            self.apply_staged(
+                &mut staged,
+                gate_mode,
+                Some(&actor),
+                authority_beside,
+                own_device,
+            )?;
+            staged.commit()?;
+            if let Some(scope) = scope {
+                super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+            }
+            Ok(())
         } else {
-            std::collections::BTreeSet::new()
-        };
+            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+        }
+    }
+
+    fn apply_staged(
+        mut self,
+        wtxn: &mut RwTxn<'_>,
+        gate_mode: ApplyOpsGateMode,
+        actor: Option<&crate::WriteActor>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
+        own_device: Option<&VerifiedOwnDeviceLane>,
+    ) -> Result<()> {
+        let vault = self.vault;
+        // Preserve original-position admission before routing removes a Put.
+        // Actual head changes and the remaining ops get their own final checks.
+        if let Some(actor) = actor {
+            super::super::actor_content::ContentWriteSet::before(vault, wtxn, actor, &self.ops)?;
+        }
+        let routed =
+            match crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)? {
+                Some(routed) => match actor {
+                    Some(actor) => {
+                        let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
+                        routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+                    }
+                    None => routed.record_in_txn(vault, wtxn)?,
+                },
+                None => std::collections::BTreeSet::new(),
+            };
         let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
             true
@@ -144,7 +183,7 @@ impl BatchBuilder<'_> {
             apply_actor_ops(
                 vault,
                 wtxn,
-                &actor,
+                actor,
                 ops,
                 text_index_trusted,
                 gate_mode,

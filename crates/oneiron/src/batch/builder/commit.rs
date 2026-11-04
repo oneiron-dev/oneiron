@@ -277,20 +277,6 @@ impl BatchBuilder<'_> {
             {
                 return Rows::Discard(Err(err.into()));
             }
-            // A generic put of a projector-only `comm.*` class leaves the
-            // batch here, before the gate stages anything for it, for the
-            // projector. Its source event is written only once the preflight
-            // passes, so a batch the preflight refuses keeps its receipts and
-            // lands no routed event or head. A bound writer's puts stay with
-            // the door, judged by its read below.
-            let routed = if reader.is_none() {
-                match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
-                    Ok(routed) => routed,
-                    Err(err) => return Rows::Discard(Err(err.into())),
-                }
-            } else {
-                None
-            };
             // A bound writer takes only rows its read reads, judged against
             // their originals before anything stages (FIX 6068); its CLAIMs'
             // record refs are judged over the staged batch below (FIX 1223).
@@ -304,6 +290,16 @@ impl BatchBuilder<'_> {
                 Ok(Some(None)) => return Rows::Discard(Err(Error::EntityNotFound.into())),
                 Err(err) => return Rows::Discard(Err(err.into())),
             };
+            // Capture original bodies and targets above, before routing removes them.
+            let routed =
+                match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
+                    Ok(routed) => routed,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                };
+            #[cfg(feature = "sync")]
+            {
+                rows = super::super::vad_postcommit::ops_written_rows(&ops);
+            }
             let mut staged_gate_decisions = Vec::new();
             let mut preflight_gate_decision_ids = HashMap::new();
             if let Err(err) = preflight_gate_decisions_in_txn(
@@ -328,27 +324,8 @@ impl BatchBuilder<'_> {
                     Err(err) => Rows::Discard(Err(err.into())),
                 };
             }
-            // The routed puts' events project here, before the gate, VAD and
-            // lexical staging of the ops that remain. From here an unbound
-            // writer's batch commits or is discarded whole.
-            let mut routed_changes_claims = false;
-            if let Some(routed) = routed {
-                let written = match routed.record_in_txn(vault, wtxn) {
-                    Ok(written) => written,
-                    Err(err) => return Rows::Discard(Err(err.into())),
-                };
-                routed_changes_claims = !written.is_empty();
-                // The rows the live mirror takes: the ops that remain, the
-                // routed source events and the heads they wrote.
-                #[cfg(feature = "sync")]
-                {
-                    rows = super::super::vad_postcommit::ops_written_rows(&ops);
-                    rows.extend(written);
-                }
-                #[cfg(not(feature = "sync"))]
-                drop(written);
-            }
             let batch = AdmittedBatch {
+                routed,
                 ops,
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
@@ -362,9 +339,9 @@ impl BatchBuilder<'_> {
                     .with_prepared(prepared),
                 origin,
             };
-            let applied = match reader.filter(|_| !gated.is_empty()) {
-                None => apply_admitted(vault, wtxn, batch, after_apply).map(Judged::Applied),
-                Some(reader) => apply_judged(vault, wtxn, batch, after_apply, reader, &gated),
+            let applied = match reader.filter(|_| !gated.is_empty() || batch.routed.is_some()) {
+                None => apply_admitted(vault, wtxn, batch, after_apply, None).map(Judged::Applied),
+                Some(reader) => apply_judged(vault, wtxn, batch, after_apply, reader, gated),
             };
             let applied = match applied {
                 Ok(Judged::Applied(applied)) => Ok(applied),
@@ -389,7 +366,11 @@ impl BatchBuilder<'_> {
                 Err(err) => Err(err),
             };
             match applied {
-                Ok((changes_claims, tasks, approved_vad_ids, pad_windows)) => {
+                Ok((changes_claims, tasks, approved_vad_ids, pad_windows, routed_rows)) => {
+                    #[cfg(feature = "sync")]
+                    rows.extend(routed_rows);
+                    #[cfg(not(feature = "sync"))]
+                    drop(routed_rows);
                     // FIX 7957, 9599: the rows this batch changed and the
                     // edges it removed leave their windows durable markers.
                     #[cfg(feature = "sync")]
@@ -402,7 +383,7 @@ impl BatchBuilder<'_> {
                         return Rows::Discard(Err(Refused::from(err)));
                     }
                     Rows::Commit(Committed {
-                        changes_claims: changes_claims || routed_changes_claims,
+                        changes_claims,
                         tasks,
                         staged_gate_decisions,
                         approved_vad_ids,
@@ -460,6 +441,7 @@ impl BatchBuilder<'_> {
 
 /// A batch past its gate preflight, ready to apply in the writer.
 struct AdmittedBatch<'a> {
+    routed: Option<crate::comm::RoutedBatchPuts>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
@@ -475,7 +457,12 @@ fn apply_admitted(
     wtxn: &mut RwTxn<'_>,
     batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
+    let routed_rows = match batch.routed {
+        Some(routed) => routed.record_with_admission_in_txn(vault, wtxn, admission)?,
+        None => BTreeSet::new(),
+    };
     let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);
     let pending_vad_ids =
         super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &batch.ops)?;
@@ -485,7 +472,8 @@ fn apply_admitted(
     // content bytes rather than to any departing holder.
     // A write to a watched unit queues the proactivity wake too, as the
     // caller-transaction terminal does (FIX 11705).
-    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
+    let changes_claims = !routed_rows.is_empty()
+        || super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
         || super::super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &batch.ops)?;
     let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
     // A WORLD delete stages its pads' tombstones under this scope (FIX 3334).
@@ -520,7 +508,13 @@ fn apply_admitted(
         crate::store::owe_claim_vad_in_txn(&vault.store, wtxn, &approved_vad_ids, now)?;
     }
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    Ok((changes_claims, tasks, approved_vad_ids, pad_windows))
+    Ok((
+        changes_claims,
+        tasks,
+        approved_vad_ids,
+        pad_windows,
+        routed_rows,
+    ))
 }
 
 /// The changes a batch's apply leaves: whether claims changed, the TASKs
@@ -531,6 +525,7 @@ type Applied = (
     Vec<crate::entity_id::EntityId>,
     Vec<crate::entity_id::EntityId>,
     BTreeSet<String>,
+    BTreeSet<crate::entity_id::EntityId>,
 );
 
 /// A bound writer's apply, judged.
@@ -551,11 +546,13 @@ fn apply_judged(
     batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     reader: &ScopedRead<'_>,
-    gated: &[reference_read::GatedClaim],
+    mut gated: Vec<reference_read::GatedClaim>,
 ) -> Result<Judged> {
     let mut staged = vault.store.env.nested_write_txn(wtxn)?;
-    let applied = apply_admitted(vault, &mut staged, batch, after_apply)?;
-    let denial = reference_read::staged_reference_denial(vault, &mut staged, reader, gated)?;
+    let mut admission = super::comm_projection::CommHeadWrites::reader(reader);
+    let applied = apply_admitted(vault, &mut staged, batch, after_apply, Some(&mut admission))?;
+    gated.extend(admission.gated_claims(vault, &staged)?);
+    let denial = reference_read::staged_reference_denial(vault, &mut staged, reader, &gated)?;
     if let Some(denial) = denial {
         return Ok(Judged::Denied(Box::new(denial)));
     }

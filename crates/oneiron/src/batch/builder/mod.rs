@@ -2,6 +2,7 @@
 
 mod apply;
 mod claims;
+mod comm_projection;
 mod commit;
 mod edges;
 mod ops;
