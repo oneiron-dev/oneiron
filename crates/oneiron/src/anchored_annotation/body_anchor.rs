@@ -595,8 +595,9 @@ fn move_body_locator(
 
 /// Where a body unit stands in the export that projected it. A cell range
 /// stands at the same place: the body's addresses are the file's. A Word
-/// span stands in the file's block of the same id when it reads the same,
-/// else in the one block that reads the same; `None` when no block does.
+/// span stands in the file's block of the same id when it reads the same
+/// and no other block does, else in the one block that reads the same;
+/// `None` when no single block does.
 fn file_locator(
     filed: Option<&Units>,
     target: &OfficeBodyUnits,
@@ -615,7 +616,18 @@ fn file_locator(
     };
     let (filed, text) = (filed?, text_of(body, para_path)?);
     if text_of(filed, para_path) == Some(text) {
-        return Some(locator.clone());
+        // The file's block at this id reads the same — but the file's ids
+        // are parse ordinals, not the body's stable ones, so a
+        // duplicate-text insertion above shifts the original down while
+        // keeping the text (review-4320 P1). Same id plus same text names
+        // the paragraph only when the text stands alone in the file, the
+        // deck's duplicate policy; otherwise decline instead of landing on
+        // the wrong paragraph. (Threading paraId would need it stored on
+        // the live body blocks, which carry none.)
+        if filed.iter().filter(|(_, block)| block.as_str() == text).count() == 1 {
+            return Some(locator.clone());
+        }
+        return None;
     }
     let mut same = filed.iter().filter(|(_, block)| block.as_str() == text);
     let (id, _) = same.next()?;
