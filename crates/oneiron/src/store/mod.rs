@@ -241,6 +241,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
