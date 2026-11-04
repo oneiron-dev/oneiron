@@ -18725,8 +18725,8 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 8,
-      "re-export": 5
+      "mod": 7,
+      "re-export": 6
      }
     },
     {
@@ -18808,25 +18808,6 @@
      "path": "src/code_sandbox/quickjs/tests.rs",
      "purpose": "Acceptance tests require the real artifacts produced by the pinned build",
      "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "PreparationNote",
-      "PreparedSource",
-      "SourceLanguage",
-      "TranspiledSource"
-     ],
-     "path": "src/code_sandbox/source.rs",
-     "purpose": "Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A)",
-     "surface": {
-      "const": 2,
-      "crate-vis": 3,
-      "enum": 2,
-      "fn": 15,
-      "struct": 2
-     }
     },
     {
      "bucket": "s",
@@ -89938,7 +89919,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 47,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91270,7 +91251,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6304,
+   "source_files": 6303,
    "test_files": 899
   },
   "oneiron-android": {
@@ -96422,6 +96403,53 @@
    "purpose": "A type check of code-mode programs, run beside them as feedback",
    "source_files": 9,
    "test_files": 1
+  },
+  "oneiron-code-source": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process…",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GuestPosition",
+      "PreparationNote",
+      "PreparedSource",
+      "SourceLanguage",
+      "TranspiledSource"
+     ],
+     "path": "src/source.rs",
+     "purpose": "Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A)",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 17,
+      "struct": 3
+     }
+    }
+   ],
+   "modules": {
+    "source": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A)"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process…",
+   "source_files": 2,
+   "test_files": 0
   },
   "oneiron-container": {
    "files": [
