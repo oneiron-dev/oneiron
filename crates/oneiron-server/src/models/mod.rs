@@ -117,7 +117,7 @@ pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
     DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
-    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerStatus,
+    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus, TaggerRuntimeStatus, TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
