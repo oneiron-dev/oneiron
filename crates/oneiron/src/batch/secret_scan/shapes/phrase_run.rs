@@ -13,6 +13,10 @@ pub(super) fn holds_list_word_run(text: &str) -> bool {
     let Some(shortest) = PHRASE_WORDS.iter().copied().min() else {
         return false;
     };
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_word_lookup runs the old binary search.
+    if crate::stage_timing::try_on("no_word_lookup") {
+        return holds_list_word_run_search(text, shortest);
+    }
     let lookup = word_lookup::lookup();
     let mut run = 0_usize;
     let mut letters = 0_usize;
@@ -35,6 +39,36 @@ pub(super) fn holds_list_word_run(text: &str) -> bool {
         let listed = letters <= MAX_LIST_WORD_LEN && lookup.index(key).is_some();
         letters = 0;
         key = 0;
+        run = if listed { run + 1 } else { 0 };
+        if run >= shortest {
+            return true;
+        }
+    }
+    false
+}
+
+/// bench-only (never merge): the binary-search prefilter this row replaced.
+fn holds_list_word_run_search(text: &str, shortest: usize) -> bool {
+    let mut run = 0_usize;
+    let mut letters = 0_usize;
+    let mut lower = [0_u8; MAX_LIST_WORD_LEN];
+    for byte in text.bytes().chain([b' ']) {
+        if byte.is_ascii_alphabetic() {
+            if let Some(slot) = lower.get_mut(letters) {
+                *slot = byte.to_ascii_lowercase();
+            }
+            letters += 1;
+            continue;
+        }
+        if letters == 0 {
+            continue;
+        }
+        let listed = lower.get(..letters).is_some_and(|word| {
+            super::WORDS
+                .binary_search_by(|entry| entry.as_bytes().cmp(word))
+                .is_ok()
+        });
+        letters = 0;
         run = if listed { run + 1 } else { 0 };
         if run >= shortest {
             return true;
