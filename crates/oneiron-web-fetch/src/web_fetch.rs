@@ -18,8 +18,8 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use crate::memory::web_acquisition::content_hash;
-pub use crate::memory::web_acquisition::{
+use crate::web_acquisition::content_hash;
+pub use crate::web_acquisition::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
     DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, MinExtractedContentBytes,
     RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, RendererResult,
@@ -374,7 +374,7 @@ impl WebFetcher {
     }
 }
 
-impl crate::memory::web_acquisition::WebAcquisition for WebFetcher {
+impl crate::web_acquisition::WebAcquisition for WebFetcher {
     fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {
         WebFetcher::fetch(self, url, fetched_at)
     }

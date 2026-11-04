@@ -22,7 +22,7 @@ use super::{
     RendererError, RendererResult, WebFetchError, WebFetchResult,
 };
 
-pub(super) use crate::memory::web_acquisition::{
+pub(super) use crate::web_acquisition::{
     REDACTED_USERINFO, has_userinfo, is_web_url, normalize_link_list, normalize_url,
     redact_url_credentials, redact_userinfo_text, validated_web_url,
 };
