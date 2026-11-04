@@ -210,11 +210,7 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// its row other than an archive), or hard-deleted and erased. A capsule's
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
-pub(in crate::code_run::storage) fn actor_gone_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: &EntityId,
-) -> bool {
+pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
     let gone = (|| -> Result<bool> {
         Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
             || vault

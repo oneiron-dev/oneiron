@@ -253,11 +253,6 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // forward-remat quarantine-and-continue path as the other typed remote
         // write-door rejections.
         | ErrorKind::OffRecordTaintedBaseWrite
-        // ONE-1326: a known-key maintenance-band flood that passes origin
-        // validation but exceeds this device's local ingest budget is a
-        // remote-op rejection. Quarantine keeps evidence and lets a later
-        // rematerialization pass re-run the door when quota is under budget.
-        | ErrorKind::MaintenanceIngestQuotaExceeded
         // ONE-1645: a replayed `FacetOf` edge whose endpoints fall outside
         // the write-time type table (`CLAIM | TURN | EVENT | NOTE | ASSET ->
         // FACET`) is a rejection of that remote op. The local batch door aborts on it,

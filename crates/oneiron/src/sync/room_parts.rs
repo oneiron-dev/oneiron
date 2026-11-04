@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::event::MapDelta;
-use loro::{LoroMap, LoroValue, ValueOrContainer};
+use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use super::carrier_parts::{
     Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts, write_parts,
@@ -85,6 +85,26 @@ pub(super) fn waits(map: &LoroMap, key: &str) -> bool {
         .is_some_and(|parts| parts.keys().any(|part| !map_contains_binary(map, &part)))
 }
 
+/// Each manifest `map` holds whose parts have not all landed, with its key
+/// and parts. Whole rows and joined manifests are left out: the scrub drops
+/// a waiting manifest with its present parts when its room is gone (FIX
+/// 12127).
+pub(super) fn waiting_manifests(map: &LoroMap) -> Vec<(String, Parts)> {
+    let mut manifests = Vec::new();
+    map.for_each(|key, value| {
+        if !is_part_key(key)
+            && let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+            && let Some(parts) = manifest(&bytes)
+        {
+            manifests.push((key.to_owned(), parts));
+        }
+    });
+    manifests
+        .into_iter()
+        .filter(|(_, parts)| parts.keys().any(|part| !map_contains_binary(map, &part)))
+        .collect()
+}
+
 /// Each row `map` holds under a key `keep` takes, joined, with its key. A
 /// part, and a row that waits for one, are left out.
 pub(super) fn rows(map: &LoroMap, keep: impl Fn(&str) -> bool) -> Vec<(String, Vec<u8>)> {
@@ -101,6 +121,57 @@ pub(super) fn rows(map: &LoroMap, keep: impl Fn(&str) -> bool) -> Vec<(String, V
         .into_iter()
         .filter_map(|(key, value)| Some((key, joined(map, value)?)))
         .collect()
+}
+
+/// Each row of a room map for a canonical capture, from its raw binary
+/// rows: a manifest with every part present as its one joined row, anything
+/// else as the window holds it, parts included, so nothing is lost
+/// (FIX 12126). Each manifest's assembled length is charged through
+/// `charge` before any byte is copied: one part repeated names an assembly
+/// far past the raw rows the budget already held. The join itself runs
+/// through [`join_parts`], so its memory admission holds here as in the
+/// window (FIX 8880).
+pub(crate) fn capture_rows(
+    raw: &BTreeMap<String, Vec<u8>>,
+    charge: &mut impl FnMut(usize) -> Result<()>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let scratch = LoroDoc::new();
+    let map = scratch.get_map("parts");
+    for (key, value) in raw {
+        if is_part_key(key) {
+            map_insert_bytes(&map, key, value)?;
+        }
+    }
+    let mut out = BTreeMap::new();
+    let mut consumed = BTreeSet::new();
+    for (key, value) in raw {
+        if is_part_key(key) {
+            continue;
+        }
+        match manifest(value) {
+            Some(parts) => {
+                charge(usize::try_from(parts.len).map_err(|_| refused("too long"))?)?;
+                match join_parts(&map, &parts) {
+                    Some(row) => {
+                        consumed.extend(parts.keys());
+                        out.insert(key.clone(), row);
+                    }
+                    None => {
+                        out.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            None => {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    for (key, value) in raw {
+        if is_part_key(key) && !consumed.contains(key) {
+            out.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(out)
 }
 
 /// The rows of `map` an import changed, joined, and each row key it cleared
