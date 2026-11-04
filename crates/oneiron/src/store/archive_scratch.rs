@@ -45,7 +45,7 @@ impl Store {
     /// the vault's own are (FIX 3910); an unsealed vault's stays plain.
     pub(crate) fn archive_scratch_env(
         &self,
-        seal: Option<&crate::world_keys::VaultPageSeal>,
+        seal: Option<&oneiron_store::vault_page_seal::VaultPageSeal>,
     ) -> Result<ScratchEnv> {
         let map_size = self
             .env

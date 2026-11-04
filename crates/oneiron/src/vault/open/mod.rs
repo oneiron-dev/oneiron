@@ -571,7 +571,7 @@ impl Vault {
             config
                 .page_seal
                 .as_ref()
-                .map(crate::world_keys::VaultPageSeal::vault_id),
+                .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
             options.adopted_storage_id(),
         )?;
         crate::batch::sweep_scope_stamps(&store)?;

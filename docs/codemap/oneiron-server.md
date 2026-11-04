@@ -1010,9 +1010,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 1 const · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_host/notes.rs` | src | s | 2 crate-vis | — | The host's notes beside decided answers (FIX 3040, 654): a critic review's evidence refs and suggested… |
 | `src/decision_host/refresh.rs` | src | s | 2 crate-vis | — | Decision host person- and think-threshold refresh |
-| `src/decision_verdict.rs` | src | L | 17 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
+| `src/decision_verdict.rs` | src | L | 18 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/decision_verdict/hook.rs` | src | s | 2 crate-vis | — | `ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any… |
-| `src/decision_verdict/model_calls.rs` | src | s | 2 crate-vis | — | The verdict caller a model-call capture attributes (FIX 12742) |
+| `src/decision_verdict/model_calls.rs` | src | s | 3 crate-vis | — | The capture caller a model-call capture attributes (FIX 12516/12742) |
 | `src/device_local.rs` | src | s | 10 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `src/device_sync.rs` | src | m | 8 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `src/device_sync/batch_admission.rs` | src | s | 1 crate-vis | — | The reap freeze's admission for each batch the device sync connection applies or sends (FIX 12036) |
@@ -1433,11 +1433,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/dispatcher/eligibility.rs` | src | s | 8 crate-vis | — | Which worker may run which call (FIX 6755 slice 2b) |
 | `src/oneironer/dispatcher/fair.rs` | src | s | 7 crate-vis | — | Fair room and a bulk share (FIX 9519) |
 | `src/oneironer/dispatcher/lifecycle.rs` | src | m | 13 crate-vis | — | The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process… |
-| `src/oneironer/dispatcher/mod.rs` | src | m | 22 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
+| `src/oneironer/dispatcher/mod.rs` | src | m | 23 crate-vis | — | The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready… |
 | `src/oneironer/dispatcher/policy.rs` | src | s | 8 crate-vis | — | The dispatcher's policy (Engine 10-21, FIX 6755 rulings 3 and 4): the one definition of each hold, batch cap… |
 | `src/oneironer/dispatcher/worker.rs` | src | m | 23 crate-vis | — | One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread |
 | `src/oneironer/endpoint.rs` | src | m | 12 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
-| `src/oneironer/engines/admission.rs` | src | m | 4 crate-vis | — | The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a… |
+| `src/oneironer/engines/admission.rs` | src | m | 7 crate-vis | — | The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a… |
 | `src/oneironer/engines/baseline.rs` | src | s | 3 crate-vis | — | The after-bind calibration of a slot's Candle baseline (FIX 7108): the survey a first start used to run… |
 | `src/oneironer/engines/calibration.rs` | src | m | 13 crate-vis | — | The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against… |
 | `src/oneironer/engines/candidate.rs` | src | s | 10 crate-vis | — | A platform runtime's candidate on this machine (FIX 6755 slices 3 and 2c): the bundle's `mlx-worker` or… |
@@ -1454,7 +1454,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/mlx/mod.rs` | src | m | 4 crate-vis | — | The server-owned managed MLX worker (FIX 6755 slice 3, contract rev 3 A1-A4): a bundle's `mlx-worker`… |
 | `src/oneironer/mlx/process.rs` | src | m | 6 crate-vis | — | The MLX worker's process (FIX 6755 slice 3, contract rev 3 A1, A3b): one child and the threads that own its… |
 | `src/oneironer/mlx/protocol.rs` | src | m | 13 crate-vis | — | The MLX worker's wire, protocol `oneironer-worker-v2` (FIX 6755 slice 3, contract rev 3 A2-A3, Engine call… |
-| `src/oneironer/mod.rs` | src | m | 31 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
+| `src/oneironer/mod.rs` | src | m | 34 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `src/oneironer/release.rs` | src | m | 25 crate-vis | — | The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828) |
 | `src/oneironer/release/catalogue.rs` | src | s | 2 crate-vis | — | The shipped release catalogue (FIX 6755) |
 | `src/oneironer/release/platforms.rs` | src | s | 6 crate-vis | — | The platform half of a fetch (FIX 6755): which archives a fetch places, their extraction in staging, and the… |

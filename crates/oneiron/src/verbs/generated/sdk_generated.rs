@@ -32137,6 +32137,7 @@ pub fn vault_connectors_read_grants_grant(
     crate::task_verb::sdk::grant_connector_witness_read_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.connectors.read_grants.grant")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }
@@ -32147,6 +32148,7 @@ pub fn vault_connectors_read_grants_revoke(
     crate::task_verb::sdk::revoke_connector_witness_read_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.connectors.read_grants.revoke")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }
