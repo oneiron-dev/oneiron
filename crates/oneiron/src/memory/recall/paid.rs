@@ -633,11 +633,14 @@ impl Memory<'_> {
         let mut receipt = lane.read_receipt(None, 0)?;
         // The texts below are read at each candidate's pinned revision,
         // across several snapshots, while the carried worlds behind the
-        // route choice are read live after them: any commit that lands in
-        // between can delete a row or move its provenance, sending older
-        // restricted text under newer, more permissive routes. The store's
-        // commit watermark brackets the window; a moved watermark retries
-        // the recall with a fresh pin instead of choosing routes.
+        // route choice are read live after them. The store's commit
+        // watermark brackets the rerank window, but it cannot see a commit
+        // that landed before this read began; so each text is read back
+        // live as well, and a row whose words changed under its pin
+        // retries the recall with a fresh pin instead of sending older
+        // restricted text under newer routes. An edge-only move leaves the
+        // bytes (and the live admission above) identical, so the live
+        // carried read stays the row's current truth.
         let first_txn = self.vault.store.env.info().last_txn_id;
         let mut texts = Vec::with_capacity(block.len());
         let mut sources = Vec::with_capacity(block.len());
@@ -671,6 +674,32 @@ impl Memory<'_> {
                 Some(predicate) => format!("{predicate}: {}", item.value_text),
                 None => item.value_text,
             });
+            // The carried worlds below read live: a row rewritten between
+            // its pin and this read would pair older restricted text with
+            // newer routes, and no watermark brackets that window. Read the
+            // text back live; a changed row retries with a fresh pin.
+            if !text.is_empty() {
+                let mut live_receipt = lane.read_receipt(None, 0)?;
+                let live = self.memory_item_for(
+                    &lane,
+                    &candidate.id,
+                    None,
+                    crate::vault::ReadMode::Live,
+                    &[],
+                    &mut live_receipt,
+                )?;
+                let live_text = live.map_or_else(String::new, |item| match item.predicate {
+                    Some(predicate) => format!("{predicate}: {}", item.value_text),
+                    None => item.value_text,
+                });
+                if live_text != text {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_INVALID_STATE,
+                        "the recall's candidates changed while the reranker scored them",
+                        &["Retry the recall; the vault was being written to as it ran."],
+                    ));
+                }
+            }
             texts.push(if write_door_refuses_body(text.as_bytes()) {
                 String::new()
             } else {
@@ -714,9 +743,10 @@ impl Memory<'_> {
             if text.is_empty() {
                 continue;
             }
-            // The text was read at its pinned revision: fold its pinned world
-            // in, so a world move between block capture and the watermark
-            // sample cannot send old restricted text under new-world routes.
+            // The text was read at its pinned revision and verified live
+            // above: a row rewritten since its pin retried instead of
+            // reaching this loop. Fold its pinned world in as well, so the
+            // live closure below meets the words it routes.
             if let Some(world) = pinned {
                 carried.worlds.insert(*world);
             }
