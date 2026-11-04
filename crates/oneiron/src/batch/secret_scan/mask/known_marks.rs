@@ -24,9 +24,10 @@ use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
 use crate::secret_custody::KeptValues;
-use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
-use crate::secret_custody::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::Store;
+use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
+use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
+use crate::store::known_value_index::KnownValues;
 
 /// One known value a file's mark does not cover yet: the member that holds
 /// it (none for the file's own bytes), its span there, and its record.
