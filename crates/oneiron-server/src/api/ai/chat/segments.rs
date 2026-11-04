@@ -315,20 +315,24 @@ impl PathDependencies {
 
     /// Adds to `set` the worlds and authors of the notes and summaries and
     /// of what each summary folds, and the summaries and what they fold as
-    /// derived; `None` at the first of them that does not read.
+    /// derived; `None` at the first of them that does not read. The whole
+    /// walk reads on one snapshot: two transactions per row and one per
+    /// summary do not scale to long folded logs (FIX 11338).
     fn read_quoted(&self, vault: &Vault, set: &mut SnapshotDependencies) -> Option<()> {
+        let txn = vault.dependency_read_txn().ok()?;
         let mut folded = Vec::new();
         for summary in &self.summaries {
             folded.push(*summary);
-            for span in vault.summary_folded_spans(summary).ok()?? {
+            for span in vault.summary_folded_spans_in_txn(&txn, summary).ok()?? {
                 folded.push(span.turn);
                 folded.extend(span.messages);
             }
         }
         for id in self.notes.iter().chain(&folded) {
-            let world = vault.record_world(id).ok()??;
+            let world = vault.record_world_in_txn(&txn, id).ok()??;
             set.worlds.push(world.unwrap_or_else(base_world_id));
-            set.authors.push(vault.record_author(id).ok()??);
+            set.authors
+                .push(vault.record_author_in_txn(&txn, id).ok()??);
         }
         set.derived.extend(folded);
         Some(())

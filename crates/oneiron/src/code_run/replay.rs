@@ -688,7 +688,11 @@ impl CodeRunResultBinding {
     pub const MAX_NAME_LEN: usize = 64;
 
     #[must_use]
-    pub fn new(name: impl Into<String>, handle: impl Into<String>, path: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        handle: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             handle: handle.into(),
