@@ -301,14 +301,32 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
     }
     let before = call.clone();
     // Only the ask that ran is erased's (FIX 1442): the original never
-    // reached the erased target, so it stays as working evidence.
+    // reached the erased target, so it stays as working evidence -- unless
+    // it duplicates the dispatched ask, which reached the target in the
+    // rewrite's place and is scrubbed with it.
+    let target_is_rewritten = matches!(&call.rewritten_request, Some(Value::Map(_)));
     let target = match &mut call.rewritten_request {
         Some(rewritten @ Value::Map(_)) => rewritten,
         _ => &mut call.request,
     };
+    let mut dispatched: Option<String> = None;
     if let Value::Map(fields) = target {
         for (key, value) in fields {
             if key.as_str() == Some(ASK_KEY) && value.is_str() {
+                if target_is_rewritten {
+                    dispatched = str_value(value).ok().map(str::to_owned);
+                }
+                *value = erased_ask();
+            }
+        }
+    }
+    if target_is_rewritten
+        && let Some(dispatched) = dispatched.as_deref()
+        && let Value::Map(fields) = &mut call.request
+    {
+        for (key, value) in fields {
+            if key.as_str() == Some(ASK_KEY) && str_value(value).is_ok_and(|ask| ask == dispatched)
+            {
                 *value = erased_ask();
             }
         }
@@ -479,7 +497,12 @@ impl CodeRunBridgeCall {
         let erased = run.is_some_and(is_erased_ask);
         let barrier = run.is_some_and(is_barrier_ask);
         let live = run.is_some_and(Value::is_str);
-        if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
+        // A nil effective ask is the checkpoint's placeholder for an ask
+        // carried apart in a target-owned part: the row still encodes, so
+        // the target's erase retires that copy. The original ask keeps its
+        // check otherwise.
+        let carried = run.is_some_and(Value::is_nil);
+        if !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil()) {
             return Err(invalid_code_run_replay(
                 "spawn ask is not text, nil, or a typed marker",
             ));

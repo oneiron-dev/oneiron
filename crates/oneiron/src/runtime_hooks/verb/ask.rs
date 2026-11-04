@@ -401,7 +401,10 @@ pub(super) fn consume_in_txn(
 /// write the caller holds: flips `Consumed` back to `Open` only when the row
 /// still names this ask and holds no outcome, else no-ops false. A retried
 /// call then resumes through the ordinary Resume path instead of meeting
-/// Skipped "already used".
+/// Skipped "already used". Re-opening restores the drain's `ready` mark for
+/// a row with a resume target, so a transient failure still leaves it ready
+/// for the next pass; a row with none keeps none, as the drain never runs
+/// it.
 pub(super) fn reopen_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -415,6 +418,7 @@ pub(super) fn reopen_in_txn(
     }
     row.state = VerbAskState::Open;
     row.consumed_at = None;
+    row.ready = row.resume.is_some();
     ASKS.put(&vault.store, txn, &token.key, &row)?;
     Ok(true)
 }
