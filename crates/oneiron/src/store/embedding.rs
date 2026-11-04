@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
+use crate::settings::ReadDestination;
 use oneiron_base::config::VectorEvidenceFloors;
 
 /// Longest declared space id.
@@ -365,6 +367,18 @@ pub trait Embedder: Send + Sync {
     fn model_id(&self) -> &str;
     fn dimensions(&self) -> usize;
     fn locality(&self) -> EmbedderLocality;
+    /// Where this embedder reads toward (FIX 5588): this device for an
+    /// [`EmbedderLocality::OnDevice`] embedder, else a destination nobody
+    /// proved. A host whose model sits behind a host-attested Mesh proof
+    /// overrides this with that peer; locality alone never names one.
+    fn endpoint(&self) -> ReadDestination {
+        match self.locality() {
+            EmbedderLocality::OnDevice => ReadDestination::on_device(),
+            EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty => {
+                ReadDestination::toward(PeerMachine::Unknown)
+            }
+        }
+    }
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
     /// The device and runtime that compute what [`Self::embed`] returns,
     /// stored beside each vector it fills. Unknown unless overridden.
@@ -484,6 +498,14 @@ impl RemoteRung {
     pub fn offer_id(&self) -> String {
         self.offer_id.clone().unwrap_or_default()
     }
+
+    /// Where this rung reads toward (FIX 5588): its embedder's endpoint. The
+    /// rung carries no proof of its own, so this never narrows past what the
+    /// embedder reports.
+    #[must_use]
+    pub fn endpoint(&self) -> ReadDestination {
+        self.embedder.endpoint()
+    }
 }
 
 /// One stored media item handed to a media embedder.
@@ -497,6 +519,15 @@ pub struct MediaEmbeddingInput<'a> {
     /// text document's record and the messages a TURN's text joins. `None`
     /// when they are not known whole.
     pub source_rows: Option<&'a [EntityId]>,
+}
+
+impl MediaEmbeddingInput<'_> {
+    /// Every row the input's bytes came from, or its own id when unknown.
+    #[must_use]
+    pub fn source_rows(&self) -> &[EntityId] {
+        self.source_rows
+            .unwrap_or(std::slice::from_ref(&self.entity_id))
+    }
 }
 
 /// One document's answer from a media model: its vector with the device and runtime that
@@ -514,6 +545,18 @@ pub trait MediaEmbedder: Send + Sync {
     /// Where the model runs. Media bytes leave for a third party from this door only as the
     /// host's egress gate admits each document ([`Vault::reconcile_media_embeddings_admitted`]).
     fn locality(&self) -> EmbedderLocality;
+    /// Where this model reads toward (FIX 5588): this device for an
+    /// [`EmbedderLocality::OnDevice`] model, else a destination nobody proved.
+    /// A host whose model sits behind a host-attested Mesh proof overrides this with that
+    /// peer; locality alone never names one.
+    fn endpoint(&self) -> ReadDestination {
+        match self.locality() {
+            EmbedderLocality::OnDevice => ReadDestination::on_device(),
+            EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty => {
+                ReadDestination::toward(PeerMachine::Unknown)
+            }
+        }
+    }
     /// One vector per input, in input order.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<Vec<f32>>>;
     /// One outcome per input, in input order: its vector with the device and runtime its
@@ -536,9 +579,13 @@ pub trait MediaEmbedder: Send + Sync {
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
+        release: &(dyn Fn(&[EntityId]) -> Result<()> + Sync),
     ) -> Result<Vec<MediaOutcome>> {
-        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        let rows: Vec<EntityId> = inputs
+            .iter()
+            .flat_map(MediaEmbeddingInput::source_rows)
+            .copied()
+            .collect();
         release(&rows)?;
         self.embed_each(inputs)
     }

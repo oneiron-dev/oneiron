@@ -408,7 +408,10 @@ impl Vault {
     /// it, so no later write waits on a lock or permit its result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
-    /// [`Self::consolidate_claim_vad_now`] to finish that work.
+    /// [`Self::consolidate_claim_vad_now`] to finish that work. While a host's
+    /// payment worker is attached ([`Self::attach_claim_vad_payment_worker`]),
+    /// that worker runs it after this returns, and its failure stays owed
+    /// for the housekeeping pass (FIX 11702).
     pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
@@ -573,7 +576,7 @@ impl Vault {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::store::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::SyncPrefixRows,
             prefix.as_bytes(),
             MAX_SYNC_STATE_KEYS as u64,
         );
@@ -626,7 +629,7 @@ impl Vault {
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::store::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::SyncPrefixRows,
             prefix,
             MAX_SYNC_STATE_KEYS as u64,
         );

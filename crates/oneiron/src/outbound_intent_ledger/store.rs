@@ -303,6 +303,26 @@ pub(crate) fn read_intent_for_attempt_in_txn(
     Ok(Some(record))
 }
 
+/// Whether the ledger call (`attempt_id`, `call_seq`) stands erased, for a
+/// keeper that must not resurrect rows beside it (FIX 6835 P1). `false` when
+/// no call row exists yet. A lookup failure errors, and the keeper logs it
+/// and leaves the call on its live rows.
+pub(crate) fn call_row_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::error::Result<bool> {
+    let erased = match read_intent_for_attempt_in_txn(vault, txn, attempt_id, call_seq)
+        .map_err(|_| Error::CorruptedIndex("outbound intent attempt lookup"))?
+    {
+        Some(record) => super::payload::payload_erased(record.payload())
+            .map_err(|_| Error::CorruptedIndex("outbound intent payload"))?,
+        None => false,
+    };
+    Ok(erased)
+}
+
 #[cfg(test)]
 pub(super) fn insert_pending_or_read(
     vault: &Vault,
@@ -726,6 +746,7 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
+    super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

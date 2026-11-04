@@ -28,7 +28,14 @@ impl OfferLadder {
             return Ok(None);
         };
         match worker.acquire().await {
-            Ok(lease) => Ok(Some(lease)),
+            Ok(lease) => {
+                if worker.admission_stopped() {
+                    drop(lease);
+                    Err(RetryableLlmError::DeviceAdmissionStopped.into())
+                } else {
+                    Ok(Some(lease))
+                }
+            }
             Err(unavailable) => {
                 tracing::warn!(
                     rung = self.rungs[index].position,
