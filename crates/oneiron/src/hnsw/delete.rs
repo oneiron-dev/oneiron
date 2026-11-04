@@ -90,14 +90,19 @@ pub(super) fn hnsw_deindex_probed(
         // session view's pinned snapshot cannot see: first() may still yield
         // the removed id. Skip it so the repaired entry point is a live node
         // (base targets read their own write, so the skip is a no-op there).
-        let mut remaining = store.hnsw_neighbors().iter(&*wtxn)?;
-        let replacement_key = loop {
-            let (key, _) = remaining
-                .next()
-                .transpose()?
-                .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
-            if key.as_ref() != id.as_bytes() {
-                break key;
+        // The iterator holds the read borrow until it drops: resolve the
+        // replacement to owned bytes inside its scope so the entry-point put
+        // below can borrow the write transaction mutably.
+        let replacement_key: Vec<u8> = {
+            let mut remaining = store.hnsw_neighbors().iter(&*wtxn)?;
+            loop {
+                let (key, _) = remaining
+                    .next()
+                    .transpose()?
+                    .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
+                if key.as_ref() != id.as_bytes() {
+                    break key.into_owned();
+                }
             }
         };
         let replacement =
