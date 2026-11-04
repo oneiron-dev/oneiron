@@ -196,7 +196,7 @@ impl TaggingReconciler {
         encoder: Arc<dyn ExtractionEncoder>,
         predicate: Option<Arc<dyn crate::llm::TaggerEgressPredicate>>,
     ) -> Result<Self> {
-        let config = vault.config.tagging.clone().ok_or_else(|| {
+        let config = vault.tagging_marker_config().ok_or_else(|| {
             Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
         })?;
         if encoder.locality() != EmbedderLocality::OnDevice && predicate.is_none() {
