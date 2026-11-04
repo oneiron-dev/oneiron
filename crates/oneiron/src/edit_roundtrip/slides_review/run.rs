@@ -241,9 +241,7 @@ pub fn review_slides(
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            // State size is no ladder refusal (Rule 5): the exact bytes still pin the
-            // evidence hash, while the vault's editable policy governs the unit's text.
-            if text.len() > limits.max_text_bytes {
+            if text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }

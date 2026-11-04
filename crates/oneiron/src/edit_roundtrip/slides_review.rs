@@ -32,8 +32,8 @@ use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
     DecisionMedia, DecisionMediaRef, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
-    MediaCall, MediaServed, PairedReading, Reasoning, ReasoningCause, ResolvedMedia, Reversibility,
-    SlideReviewLimits, StopCause, TypedDecision,
+    MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading, Reasoning, ReasoningCause,
+    ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
 };
 use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -355,7 +355,7 @@ pub enum SlideUnitRefusalReason {
     TargetChanged,
     /// The writer cannot verify the shape's slide-space position.
     UnresolvedGeometry,
-    /// The unit's text exceeds the evidence budget; nothing is trimmed to fit.
+    /// The unit's text or state exceeds the evidence budget; nothing is trimmed to fit.
     EvidenceBudget,
     /// The rendered image is not PNG or JPEG whose header gives its size.
     UnreadableImage,

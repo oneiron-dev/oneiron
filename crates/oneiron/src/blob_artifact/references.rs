@@ -298,34 +298,8 @@ pub(crate) fn readmit_held_asset_in_txn(
         return Ok(());
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
-    readmit_fenced_hash_in_txn(store, txn, asset, &hash)
-}
-
-/// [`readmit_held_asset_in_txn`] with facts already measured as the body was written, so a
-/// by-ref readmission does not materialize and hash the staged body again. The upstream body
-/// check has verified these facts; length plays no part in lifting the fence.
-#[cfg(feature = "sync")]
-pub(crate) fn readmit_held_asset_with_facts_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    asset: &EntityId,
-    facts: crate::store::AssetBodyFacts,
-) -> Result<()> {
-    if !store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
-        return Ok(());
-    }
-    readmit_fenced_hash_in_txn(store, txn, asset, &facts.blake3)
-}
-
-#[cfg(feature = "sync")]
-fn readmit_fenced_hash_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    asset: &EntityId,
-    hash: &ContentHash,
-) -> Result<()> {
-    if super::versions::blob_artifact_asset_entity_id(hash)? != *asset
-        || !held_by_live_artifact(store, txn, hash, None)?
+    if super::versions::blob_artifact_asset_entity_id(&hash)? != *asset
+        || !held_by_live_artifact(store, txn, &hash, None)?
     {
         return Ok(());
     }
