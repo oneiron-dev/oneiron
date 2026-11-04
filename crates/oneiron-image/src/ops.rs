@@ -52,11 +52,15 @@ pub(crate) fn bilinear_bytes(from: Size, to: Size) -> u64 {
 /// The most bytes rendering and exporting `body` holds at once: the decoded
 /// source throughout; at each step the canvas it reads (once it is no longer
 /// the source) and what it makes; then the final canvas with an overlay
-/// mask, or with the encoder's RGB copy and its output.
+/// mask, or with the encoder's RGB copy and its output. `check` runs
+/// between steps, and returns an error once the call is cancelled.
 ///
 /// # Errors
-/// `bad_request` if a step does not fit.
-pub(crate) fn render_peak(body: &ImageBody) -> Result<u64, OrganError> {
+/// `bad_request` if a step does not fit; whatever `check` returns.
+pub(crate) fn render_peak(
+    body: &ImageBody,
+    check: &dyn Fn() -> Result<(), OrganError>,
+) -> Result<u64, OrganError> {
     let source = Size {
         w: body.source.width,
         h: body.source.height,
@@ -65,6 +69,7 @@ pub(crate) fn render_peak(body: &ImageBody) -> Result<u64, OrganError> {
     let mut owned = 0u64;
     let mut peak = 0u64;
     for step in &body.steps {
+        check()?;
         let next = step.apply_to(canvas)?;
         let made = match step {
             Step::Crop { .. }
@@ -98,53 +103,59 @@ pub(crate) fn render_peak(body: &ImageBody) -> Result<u64, OrganError> {
 }
 
 /// Keeps `x, y, w, h` of the canvas. Overlays move with the pixels; one
-/// that now crosses the edge is marked clipped.
+/// that now crosses the edge is marked clipped. `check` runs between
+/// overlays, and returns an error once the call is cancelled.
 ///
 /// # Errors
-/// `bad_request` if the rect does not fit the canvas.
+/// `bad_request` if the rect does not fit the canvas; whatever `check`
+/// returns.
 pub(crate) fn crop(
     mut body: ImageBody,
     x: u32,
     y: u32,
     w: u32,
     h: u32,
+    check: &dyn Fn() -> Result<(), OrganError>,
 ) -> Result<Edited, OrganError> {
     let step = Step::Crop { x, y, w, h };
     body.canvas = step.apply_to(body.canvas)?;
     body.steps.push(step);
     let mut touched = vec![pixels(x, y, w, h)];
     for overlay in &mut body.overlays {
-        overlay.shape.translate(-(x as f32), -(y as f32));
-        let clipped = overlay.clipped_by(body.canvas);
+        check()?;
+        overlay.shape.translate(-(x as f32), -(y as f32), check)?;
+        let clipped = overlay.clipped_by(body.canvas, check)?;
         if clipped && !overlay.clipped {
             touched.push(overlay_locator(overlay.id));
         }
         overlay.clipped = clipped;
     }
-    body.check()?;
-    crate::render::check_paint(&body)?;
+    body.check(check)?;
     Ok(Edited { body, touched })
 }
 
 /// Scales the canvas to `w x h`. Overlay points scale per axis and stroke
-/// widths by the geometric mean, never under one pixel.
+/// widths by the geometric mean, never under one pixel. `check` runs
+/// between overlays, and returns an error once the call is cancelled.
 ///
 /// # Errors
 /// `bad_request` for a zero size or an overlay pushed out of range,
-/// `too_large` if exporting the result would need more than `max_bytes`.
+/// `too_large` if exporting the result would need more than `max_bytes`;
+/// whatever `check` returns.
 pub(crate) fn resize(
     mut body: ImageBody,
     w: u32,
     h: u32,
     filter: Filter,
     max_bytes: u64,
+    check: &dyn Fn() -> Result<(), OrganError>,
 ) -> Result<Edited, OrganError> {
     let from = body.canvas;
     let step = Step::Resize { w, h, filter };
     let to = step.apply_to(from)?;
     body.canvas = to;
     body.steps.push(step);
-    let peak = render_peak(&body)?;
+    let peak = render_peak(&body, check)?;
     if peak > max_bytes {
         return Err(OrganError::new(
             ErrorCode::TooLarge,
@@ -158,37 +169,33 @@ pub(crate) fn resize(
     let sy = h as f32 / from.h as f32;
     let widen = (sx * sy).sqrt();
     for overlay in &mut body.overlays {
-        overlay.shape.scale(sx, sy);
+        check()?;
+        overlay.shape.scale(sx, sy, check)?;
         overlay.stroke.width =
             (overlay.stroke.width * widen).clamp(1.0, crate::body::MAX_STROKE_WIDTH);
-        overlay.clipped = overlay.clipped_by(to);
+        overlay.clipped = overlay.clipped_by(to, check)?;
     }
-    body.check()?;
-    crate::render::check_paint(&body)?;
+    body.check(check)?;
     Ok(Edited {
         body,
         touched: vec![pixels(0, 0, w, h)],
     })
 }
 
-/// Adds one overlay with the next id.
+/// Adds one overlay with the next id. `check` runs while the new shape
+/// is validated and measured, and returns an error once the call is
+/// cancelled.
 ///
 /// # Errors
-/// `bad_request` for a bad shape or stroke, or a full body.
+/// `bad_request` for a bad shape or stroke, or spent overlay ids; whatever
+/// `check` returns.
 pub(crate) fn annotate(
     mut body: ImageBody,
     shape: Shape,
     stroke: Stroke,
+    check: &dyn Fn() -> Result<(), OrganError>,
 ) -> Result<Edited, OrganError> {
-    check_overlay(&shape, &stroke)?;
-    if body.overlays.len() >= crate::body::MAX_OVERLAYS {
-        return Err(bad("the body holds the most overlays it may"));
-    }
-    if let Shape::Freehand { points } = &shape
-        && body.total_points() + points.len() > crate::body::MAX_TOTAL_POINTS
-    {
-        return Err(bad("the body holds the most points it may"));
-    }
+    check_overlay(&shape, &stroke, check)?;
     let id = body.next_overlay;
     body.next_overlay = id
         .checked_add(1)
@@ -199,9 +206,9 @@ pub(crate) fn annotate(
         stroke,
         clipped: false,
     };
-    overlay.clipped = overlay.clipped_by(body.canvas);
+    overlay.clipped = overlay.clipped_by(body.canvas, check)?;
     let mut touched = vec![overlay_locator(id)];
-    let b = overlay.bounds();
+    let b = overlay.bounds(check)?;
     let x0 = b.x0.floor().max(0.0);
     let y0 = b.y0.floor().max(0.0);
     let x1 = b.x1.ceil().min(body.canvas.w as f32);
@@ -215,6 +222,5 @@ pub(crate) fn annotate(
         ));
     }
     body.overlays.push(overlay);
-    crate::render::check_paint(&body)?;
     Ok(Edited { body, touched })
 }
