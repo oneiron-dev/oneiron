@@ -232,7 +232,7 @@ fn keep(
         value[at..at + part.len()].copy_from_slice(part);
         at += part.len();
     }
-    let kept = vault.try_with_write_txn(|wtxn| {
+    let kept = vault.try_with_write_txn(|wtxn| -> crate::error::Result<bool> {
         // FIX 6835 P1: this writer opens after the leg prepared its rows, so
         // an erase of the call or of any id the retained request names may
         // have committed in between and already dropped it. Fence the put:
