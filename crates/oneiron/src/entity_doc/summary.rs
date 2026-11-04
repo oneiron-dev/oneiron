@@ -120,7 +120,7 @@ pub(crate) fn birth_summary_in_txn(
         born.as_ref().map(|birth| &birth.made_by),
     )?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
-    crate::federation::record_scope::restamp_document_pointer(
+    vault.store.scope_stamps.restamp_document_pointer(
         &vault.store,
         txn,
         entity,

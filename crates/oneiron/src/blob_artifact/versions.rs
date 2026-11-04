@@ -16,7 +16,8 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProv
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
 use super::made_by::{
-    births_row, default_version_made_by, made_by_text, validate_version_made_by_in_txn,
+    bind_version_made_by, births_row, default_version_made_by, made_by_text,
+    validate_version_made_by_in_txn,
 };
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
@@ -472,6 +473,51 @@ impl Vault {
         )
     }
 
+    /// Binds a caller-supplied envelope to the authenticated producer once,
+    /// at proposal retention, so the trusted Keep path can preserve it
+    /// instead of rebinding it to the keeper (blind review of #4554). The
+    /// provenance matches what Keep settles under.
+    pub(crate) fn bind_retained_producer_envelope(
+        actor: &WriteActor,
+        provenance: &BlobVersionProvenance,
+        made_by: &MadeBy,
+        at: u64,
+    ) -> MadeBy {
+        bind_version_made_by(actor, provenance, made_by, at)
+    }
+
+    /// The trusted Keep path: the retained envelope was bound to its
+    /// producer when the proposal was authenticated, so it lands validated
+    /// but unchanged. The keeper's write authority stays out of the producer
+    /// receipt: no rebind to the approver (blind review of #4554).
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_kept_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        made_by: &MadeBy,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            fork_parent,
+            None,
+            Some(made_by),
+            true,
+        )
+    }
+
     /// Transaction-composable body of [`Vault::append_blob_artifact_version`].
     ///
     /// ARTL-4 settle-select needs the version append, its re-anchor sweep, and
@@ -546,6 +592,7 @@ impl Vault {
             None,
             None,
             None,
+            false,
         )?;
         Ok((version, staged))
     }
@@ -631,11 +678,14 @@ impl Vault {
             fork_parent,
             calc_engine,
             made_by,
+            false,
         )
     }
 
     /// The one version append every door takes, over a slice or a staged
-    /// body (FIX 12091).
+    /// body (FIX 12091). `preserve_made_by` is the trusted Keep path only:
+    /// the retained envelope lands validated but unbound, so the keeper is
+    /// never rebound as producer (blind review of #4554).
     #[expect(clippy::too_many_arguments)]
     fn append_blob_artifact_version_body_in_txn(
         &self,
@@ -649,6 +699,7 @@ impl Vault {
         fork_parent: Option<u64>,
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
+        preserve_made_by: bool,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -719,9 +770,11 @@ impl Vault {
         let made_by = match made_by {
             Some(named) => {
                 validate_version_made_by_in_txn(self, wtxn, named)?;
-                let mut named = named.clone();
-                named.at = learned_at;
-                named
+                if preserve_made_by {
+                    named.clone()
+                } else {
+                    bind_version_made_by(&actor, provenance, named, learned_at)
+                }
             }
             None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
         };

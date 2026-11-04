@@ -102,6 +102,10 @@ impl ResidentLend<'_> {
             .with_work_context(WorkContext {
                 class: WorkClass::Background,
                 deadline,
+                // Free-time runs admit under the pass's device-work
+                // cancellation (FIX 11963): tripping it beside the wake flag
+                // aborts their in-flight device work with the pass.
+                cancel: ctx.device_cancel.clone().unwrap_or_default(),
                 ..Default::default()
             });
         let backend = SourcedRunBackend::new(ladder, run);
