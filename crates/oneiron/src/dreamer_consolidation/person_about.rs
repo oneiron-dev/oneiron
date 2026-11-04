@@ -440,6 +440,13 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for PersonAboutExecutor<'_, E> {
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
