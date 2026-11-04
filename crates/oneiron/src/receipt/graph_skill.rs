@@ -17,17 +17,17 @@ pub struct GraphSkillRunRequest {
     /// The exact workflow JSON path in the admitted skill source tree.
     /// This names no host file and has no default.
     pub reference: String,
-    /// The highest decision rung, as for `vault.graph.ask`.
+    /// An optional caller ceiling over each saved question's authored dial.
     #[serde(default)]
     pub ceiling: Option<DecisionRung>,
-    /// Each input's own clock; the vault's question call budget when absent.
+    /// An explicit per-input clock; otherwise the saved question's own deadline.
     #[serde(default)]
     pub unit_deadline_ms: Option<u64>,
-    /// The same optional, narrowing posture as `vault.graph.ask`.
+    /// Additional narrowing; never loosens the saved or vault posture.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub posture: Option<crate::config::HostingPrivacyPosture>,
-    /// The same optional criteria as `vault.graph.ask`.
+    /// Explicit caller criteria; otherwise the saved version's criteria.
     #[serde(default)]
     #[schemars(with = "Option<serde_json::Value>")]
     pub criteria: Option<QuestionCriteria<String>>,

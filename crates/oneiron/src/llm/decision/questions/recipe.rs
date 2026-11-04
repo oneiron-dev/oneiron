@@ -100,6 +100,7 @@ pub(crate) fn run_graph_question_with_current(
                 Err(Error::EntityNotFound) => return Ok(None),
                 Err(error) => return Err(error),
             };
+            answerer.prepare_saved_question(&record)?;
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
                 let key = super::saved_reader::saved_reader_with_current(

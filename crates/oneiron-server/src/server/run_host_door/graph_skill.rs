@@ -2,15 +2,16 @@
 
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{HostWriteOrigin, MemoryError, MemoryResult};
-use oneiron::model_decision::DecisionRung;
 use oneiron::receipt::{GraphSkillRunOutcome, GraphSkillRunRequest};
 use oneiron::{EntityId, WriteActor};
 use serde_json::Value;
 
 use super::{decode, encode};
-use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::on_caller_payer;
 use crate::server::SyncServer;
+
+mod answerer;
+use answerer::SavedGraphAnswerer;
 
 pub(super) fn run(
     server: &SyncServer,
@@ -34,16 +35,14 @@ pub(super) fn run(
     let (leased, executor) = lease.ok_or_else(|| {
         MemoryError::bad_request("self.skills.graph requires this caller's live attached run")
     })?;
-    let dial = server
-        .decision_host()
-        .dial(request.ceiling.unwrap_or(DecisionRung::Big));
-    let budget = oneiron::llm::decision::questions::question_call_budget(
-        server.vault(),
+    let mut answerer = SavedGraphAnswerer::new(
+        server,
+        actor,
+        request.ceiling,
         request.unit_deadline_ms,
-    )?;
-    let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget, None)?
-        .with_posture(request.posture)
-        .with_criteria(request.criteria.unwrap_or_default());
+        request.posture,
+        request.criteria,
+    );
     let ran = on_caller_payer(line.and_then(RunAdmission::payer), || {
         oneiron::skill::execute_graph_workflow_skill_with_read_key(
             server.vault(),
