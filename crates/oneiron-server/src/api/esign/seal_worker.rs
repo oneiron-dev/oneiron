@@ -11,7 +11,7 @@
 //! the key file, and the custody door lends it to each signature, recorded
 //! as a use (FIX 1297). `ONEIRON_SEAL_TRUST` names the trust anchors (PEM;
 //! the chain's last certificate when unset),
-//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal; B-B without one),
+//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal, B-LT with revocation origins; B-B without one),
 //! `ONEIRON_SEAL_CRL_ORIGINS` and `ONEIRON_SEAL_OCSP_ORIGINS` comma-separated
 //! origins whose revocation material the seal may fetch, and
 //! `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
@@ -236,13 +236,18 @@ fn tick(
         }
     };
     let mut settings = SealSettings::new(anchors, "esign.seal");
+    let revocation = !seal.crl_origins.is_empty() || !seal.ocsp_origins.is_empty();
     let profile = match tsa {
         Some(url) => {
             settings.timestamp_authorities.push(SealTsa {
                 url,
                 policy_oid: None,
             });
-            SealProfile::BaselineT
+            if revocation {
+                SealProfile::BaselineLt
+            } else {
+                SealProfile::BaselineT
+            }
         }
         None => SealProfile::BaselineB,
     };
