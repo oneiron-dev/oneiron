@@ -3,12 +3,12 @@ use super::marks::{self, CleanupMark};
 use super::run_snapshot::CleanupSnapshotEntry;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptRecord, decode_record};
-use crate::store::attempt_id::AttemptId;
-use crate::store::attempt_state::AttemptState;
 use crate::error::{Error, MaintenanceError, Result};
 use crate::ports::JobQueueRead;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Vault};
 
 const TASK_ARCHIVE: SideTable<TaskAttemptKey, (), Raw> =
