@@ -99,7 +99,8 @@ pub(crate) fn settle_run_note_in_txn(
 }
 
 /// Currency and the inverse's content gate are checked in the same writer.
-/// A later edit is not overwritten: it returns no compensation.
+/// A later edit that changed the text is not overwritten: it returns no
+/// compensation.
 pub(crate) fn revert_run_note_in_txn(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -109,7 +110,17 @@ pub(crate) fn revert_run_note_in_txn(
     let note = EntityId::from_hex(&undo.note)?;
     let current = live_doc(vault, txn, note)?;
     if current.version() != undo.after {
-        return Ok(None);
+        // Composition across the run's own compensations (FIX 9964): undoing
+        // a later same-note change first lands a compensating edit, so the
+        // note then stands at a new version holding exactly the `after`
+        // text. That state still compensates; any other later text does
+        // not, so no unrelated edit is overwritten.
+        let Ok(after) = current.at_version(&undo.after) else {
+            return Ok(None);
+        };
+        if after.text() != current.text() {
+            return Ok(None);
+        }
     }
     super::lifecycle::refuse_sealed_note_in_txn(&vault.store, txn, note)?;
     let before = load_head(vault, txn, note, EntityId::from_hex(&undo.before_head)?)?

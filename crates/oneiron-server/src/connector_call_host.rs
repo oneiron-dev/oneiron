@@ -240,16 +240,15 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        // The door reads the call's issuer binding again (FIX 9303).
-        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
-        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
-        let Some(exchange) = Exchange::new(&self.client, &view, elicitation, &self.vault, row)
-        else {
+        let Some(exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
+        // The door reads the call's issuer binding again (FIX 9303).
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
         presenting.send(&self.vault, &exchange, row, presented)
     }
@@ -455,12 +454,10 @@ struct Exchange<'a> {
     tool_headers: HeaderMap,
     /// The elicitation this send declares, if any.
     elicitation: Option<Declared<'a>>,
-    /// The vault that re-reads the call's issuer binding before a refusal
-    /// on a send that declared nothing goes out (FIX 12242).
-    vault: &'a Vault,
-    /// The call's governing key and tool, when its key ref parses: what
-    /// that re-read checks.
-    row: Option<(&'a EntityId, &'a str)>,
+    /// The call's issuer binding, kept independently of elicitation: a
+    /// send without elicitation still rechecks the hold before it answers
+    /// a server request with the kept header.
+    issuer: Option<(&'a Arc<Vault>, EntityId, &'a str)>,
 }
 
 impl<'a> Exchange<'a> {
@@ -468,9 +465,8 @@ impl<'a> Exchange<'a> {
     fn new(
         client: &'a reqwest::blocking::Client,
         view: &'a FrozenToolCallView,
+        vault: &'a Arc<Vault>,
         elicitation: Option<Declared<'a>>,
-        vault: &'a Vault,
-        row: Option<(&'a EntityId, &'a str)>,
     ) -> Option<Self> {
         let revision = view.protocol_revision()?;
         let protocol = HeaderValue::from_str(revision).ok()?;
@@ -499,8 +495,10 @@ impl<'a> Exchange<'a> {
             ),
             tool_headers,
             elicitation,
-            vault,
-            row,
+            issuer: view
+                .key_ref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .map(|key_ref| (vault, key_ref, view.tool())),
         })
     }
 
@@ -510,6 +508,24 @@ impl<'a> Exchange<'a> {
         match &self.elicitation {
             Some(declared) => json!({ "elicitation": declared.capability }),
             None => json!({}),
+        }
+    }
+
+    /// Rechecks the issuer before a session sends with its kept credential.
+    fn check_issuer(&self) -> Result<(), Sent> {
+        let Some((vault, key_ref, tool)) = &self.issuer else {
+            return Ok(());
+        };
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => Ok(()),
+            Ok(Some(reason)) => Err(Sent::held(reason)),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                Err(Sent::not_sent(
+                    OutboundFailureKind::TransportNotStarted,
+                    None,
+                ))
+            }
         }
     }
 
@@ -567,6 +583,9 @@ impl<'a> Exchange<'a> {
             session,
             auth,
         };
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
@@ -592,6 +611,9 @@ impl<'a> Exchange<'a> {
             .elicitation
             .as_ref()
             .is_some_and(|declared| declared.intake == Intake::Stream);
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let posted = live
             .post(&call, (!asks_on_stream).then_some(CALL_TIMEOUT))
             .headers(self.tool_headers.clone())
@@ -607,7 +629,10 @@ impl<'a> Exchange<'a> {
         };
         // The session ends with the call; a live question's worker took it
         // and ends it with the questions.
-        if let Some(live) = live {
+        if let Some(mut live) = live {
+            if self.check_issuer().is_err() {
+                live.forget_credential();
+            }
             live.end();
         }
         sent
@@ -662,11 +687,13 @@ impl<'a> Exchange<'a> {
                                     &declared.binding.key_ref,
                                     &declared.binding.tool,
                                 ),
-                                // No declared elicitation still re-reads the
-                                // call's issuer binding (FIX 12242).
-                                None => match self.row {
-                                    Some((key_ref, tool)) => {
-                                        live.refuse_unless_held(request, self.vault, key_ref, tool)
+                                // A keyed call without elicitation still rechecks
+                                // the issuer hold before its refusal goes out
+                                // with the kept header; a keyless call keeps
+                                // the plain refusal.
+                                None => match &self.issuer {
+                                    Some((vault, key_ref, tool)) => {
+                                        live.refuse_unless_held(request, vault, key_ref, tool)
                                     }
                                     None => live.refuse(request),
                                 },

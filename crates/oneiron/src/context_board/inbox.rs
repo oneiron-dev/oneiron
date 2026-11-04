@@ -6,8 +6,11 @@ use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
 use super::people::PeopleView;
 use super::scratchpad::clip;
 use super::{one_line_token, quoted_leaf};
-use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem, AgentInboxReadState};
 use crate::entity_id::EntityId;
+use crate::{
+    agent_inbox_lens::{AgentInboxLensItem, AgentInboxReadState},
+    inbox::view_values::AgentInboxItemKind,
+};
 
 /// Longest stated reason a review row quotes, in bytes: READERS' bound.
 const REVIEW_REASON_SHOWN_BYTES: usize = 160;

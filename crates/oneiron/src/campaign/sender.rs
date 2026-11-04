@@ -122,6 +122,7 @@ impl CampaignChannelSender {
             outcome: OutboundSendOutcome::Failed(OutboundSendFailure {
                 kind: OutboundFailureKind::InvalidRequest,
                 code: None,
+                secret: None,
             }),
             raw_result: RawOutboundResult::new(None, None, None, None),
         }
@@ -329,6 +330,7 @@ impl CampaignChannelSender {
                 OutboundSendOutcome::Failed(OutboundSendFailure {
                     kind: OutboundFailureKind::TransportNotStarted,
                     code: None,
+                    secret: None,
                 })
             }
         };

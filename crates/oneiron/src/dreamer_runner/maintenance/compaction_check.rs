@@ -44,13 +44,16 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::inbox::{
     NOTIFICATION_PRODUCER_FINDING, NotificationEvent, NotificationKind, NotificationSource,
 };
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepResult;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 mod conversation;
 mod support;
@@ -337,7 +340,7 @@ pub async fn run_compaction_check(
 }
 
 /// Where the host's binding lets the judge's call be served.
-fn judge_locality(model: &CompactionCheckModel<'_>) -> Result<crate::llm::ModelLocality> {
+fn judge_locality(model: &CompactionCheckModel<'_>) -> Result<oneiron_model::llm::ModelLocality> {
     model
         .inference
         .selected_locality()
@@ -539,7 +542,7 @@ fn judge_request(
     model: &CompactionCheckModel<'_>,
     declaration: &CompactionCheckDeclaration,
     read: &Ready,
-    locality: crate::llm::ModelLocality,
+    locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
 ) -> Result<LlmRequest> {
     let input = judge_input(declaration, read);
@@ -584,7 +587,7 @@ fn judge_call(
     model: &CompactionCheckModel<'_>,
     schema: serde_json::Value,
     input: &serde_json::Value,
-    locality: crate::llm::ModelLocality,
+    locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
 ) -> Result<LlmRequest> {
     let input = serde_json::to_string(input)
@@ -602,14 +605,14 @@ fn judge_call(
 fn judge_shell(
     model: &CompactionCheckModel<'_>,
     schema: serde_json::Value,
-    locality: crate::llm::ModelLocality,
+    locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
 ) -> LlmRequest {
     LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // The run's retained words leave the vault as an extraction's
             // do, so they pass the same egress gate.
             purpose: CallPurpose::Extraction,

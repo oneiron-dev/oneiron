@@ -41,6 +41,15 @@ enum CustodyConcurrentActive {
 const CUSTODY_CONCURRENT_ACTIVE: CustodyConcurrentActive =
     CustodyConcurrentActive::ConflictRevokeTerminal;
 
+/// One custody value the fold proves an install holds: the enacted request
+/// that proves it, its secret, the generation it approves and its executor.
+struct EnactedCustodyValue<'a> {
+    request: &'a AuthorityEntryHash,
+    secret: EntityId,
+    generation: u32,
+    holder: EntityId,
+}
+
 impl AuthorityFold {
     /// The revision a custody request on `secret` states as its `seen`
     /// (CALLS CUSTODY_REVISION): [`act_revision`] over the secret's live
@@ -97,42 +106,71 @@ impl AuthorityFold {
     pub(crate) fn custody_value_holders(&self, secret: EntityId, generation: u32) -> Vec<EntityId> {
         let heads = self.owner_work.heads.get(&(OwnerWorkKind::Custody, secret));
         let (mut live, mut earlier) = (BTreeSet::new(), BTreeSet::new());
-        for (hash, folded) in &self.owner_work.requests {
-            let OwnerWorkBody::Custody {
-                change,
-                generation: at,
-                ..
-            } = &folded.request.work
-            else {
-                continue;
-            };
-            let enacted = matches!(
-                self.owner_work
-                    .results
-                    .get(hash)
-                    .map(|answer| &answer.outcome),
-                Some(OwnerWorkOutcome::Enacted { .. })
-            );
-            let Some(holder) = folded.request.executor_machine() else {
-                continue;
-            };
-            if !folded.counts
-                || folded.request.act.target != secret
-                || *change == CustodyChange::Revoke
-                || *at != generation
-                || !enacted
-            {
+        for held in self.enacted_custody_values() {
+            if held.secret != secret || held.generation != generation {
                 continue;
             }
-            if heads.is_some_and(|heads| heads.contains(hash)) {
-                live.insert(holder);
+            if heads.is_some_and(|heads| heads.contains(held.request)) {
+                live.insert(held.holder);
             } else {
-                earlier.insert(holder);
+                earlier.insert(held.holder);
             }
         }
         let mut holders: Vec<EntityId> = live.iter().copied().collect();
         holders.extend(earlier.difference(&live).copied());
         holders
+    }
+
+    /// Each secret whose value the fold proves an install holds, at the
+    /// highest generation it proves one does (FIX 11844): what an owner
+    /// export names for its holders when no custody row here holds the
+    /// secret. A secret an admitted revoke ended is left out, as its record
+    /// would be.
+    pub(crate) fn custody_held_generations(&self) -> BTreeMap<EntityId, u32> {
+        let mut held = BTreeMap::new();
+        for value in self.enacted_custody_values() {
+            if self.custody_revoked(&value.secret) {
+                continue;
+            }
+            held.entry(value.secret)
+                .and_modify(|at: &mut u32| *at = (*at).max(value.generation))
+                .or_insert(value.generation);
+        }
+        held
+    }
+
+    /// Each counted custody register, rotate or rewrap whose result is
+    /// enacted and whose executor is a machine: the one place
+    /// [`Self::custody_value_holders`] and [`Self::custody_held_generations`]
+    /// read a holder from.
+    fn enacted_custody_values(&self) -> impl Iterator<Item = EnactedCustodyValue<'_>> + '_ {
+        self.owner_work
+            .requests
+            .iter()
+            .filter_map(move |(hash, folded)| {
+                let OwnerWorkBody::Custody {
+                    change, generation, ..
+                } = &folded.request.work
+                else {
+                    return None;
+                };
+                let enacted = matches!(
+                    self.owner_work
+                        .results
+                        .get(hash)
+                        .map(|answer| &answer.outcome),
+                    Some(OwnerWorkOutcome::Enacted { .. })
+                );
+                let holder = folded.request.executor_machine()?;
+                (folded.counts && *change != CustodyChange::Revoke && enacted).then_some(
+                    EnactedCustodyValue {
+                        request: hash,
+                        secret: folded.request.act.target,
+                        generation: *generation,
+                        holder,
+                    },
+                )
+            })
     }
 
     /// Every secret id an admitted custody revoke names, ascending.

@@ -21,7 +21,8 @@ use super::storage::{read_secret_lease_in_txn, read_value_for_ref_in_txn};
 use super::types::{SecretLeaseStatus, VaultInstant};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor, run_secret_effector};
+use crate::secret_custody::run_secret_effector;
+use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use crate::vault::Vault;
 
 /// Why a leased or local grant does not redeem at a door: its value went to

@@ -168,7 +168,7 @@ impl Memory<'_> {
     /// run resolves, so a host door refuses it.
     pub fn tasks_update_request(
         &self,
-        input: &super::sdk::TaskUpdateRequest,
+        input: &crate::task_verb::TaskUpdateRequest,
     ) -> MemoryResult<TaskUpdateReceipt> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_update_request(input);

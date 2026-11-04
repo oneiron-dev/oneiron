@@ -4,8 +4,8 @@ use crate::authority::{CapabilitySlip, HostSlipIssuer, SlipClaims};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::connector_key::ConnectorKeyRecord;
 use crate::error::{Error, RecordError, Result};
-use crate::federation::{Scope, ScopeAxis};
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use rmpv::Value;
 use std::collections::BTreeSet;
 

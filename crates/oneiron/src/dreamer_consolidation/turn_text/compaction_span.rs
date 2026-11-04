@@ -14,21 +14,7 @@ use crate::claim::ScopedRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::{EntityId, Error, Result, Vault};
 
-/// What the Dreamer's read of a declared span found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ConversationSpanRead {
-    /// Each declared turn's exact projected text, in the declared order.
-    Ready(Vec<String>),
-    /// A turn reads other words, rows, authors or stream generations than
-    /// its pin.
-    Drifted,
-    /// A turn or a child it depends on is gone, has no text, or is not the
-    /// Dreamer's to read.
-    Unreadable,
-    /// A turn's tagged MESSAGE is away from this replica for now: the read
-    /// waits for it.
-    Deferred,
-}
+pub(crate) use crate::store::conversation_span::ConversationSpanRead;
 
 /// Reads `turns`, each with the fingerprint its landing pinned, as the
 /// Dreamer in one snapshot.

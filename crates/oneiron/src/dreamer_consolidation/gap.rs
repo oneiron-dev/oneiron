@@ -366,9 +366,9 @@ pub(super) fn run_gap_scan(
 /// hash), so a branch can neither refresh nor decay a different branch.
 pub(super) fn branch_gap_projection<T>(
     branch: &super::ConsolidationBranchPlan<T>,
-    scope: &crate::llm::Scope,
-) -> crate::llm::ScopeResource {
-    crate::llm::ScopeResource::Projection {
+    scope: &oneiron_model::llm::Scope,
+) -> oneiron_model::llm::ScopeResource {
+    oneiron_model::llm::ScopeResource::Projection {
         key: format!(
             "dreamer:gap-branch:v1:{}:{}:{}:",
             crate::entity_id::bytes_to_hex_lower(&branch.identity()),
@@ -394,7 +394,7 @@ pub(super) fn branch_gap_projection<T>(
 /// writer's clock and under the branch's own reader.
 pub(super) fn upsert_branch_gap_queue(
     vault: &Vault,
-    scope: &crate::llm::Scope,
+    scope: &oneiron_model::llm::Scope,
     branch: &super::branch::QueuedBranch,
     fence: &super::resources::ConsolidationFence,
     gaps: Vec<ReflectionGap>,
@@ -407,7 +407,7 @@ pub(super) fn upsert_branch_gap_queue(
     {
         return Err(invalid_consolidation("branch gap projection write refused"));
     }
-    let crate::llm::ScopeResource::Projection { key } = resource else {
+    let oneiron_model::llm::ScopeResource::Projection { key } = resource else {
         unreachable!("branch gap identity is a projection");
     };
     let scope_text = std::str::from_utf8(

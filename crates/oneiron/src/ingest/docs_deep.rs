@@ -448,7 +448,20 @@ impl Vault {
                         self.require_live_deep_receipt(&txn, &previous)?;
                         return Ok(previous);
                     }
-                    Some(resume) if resume == batch.start => previous,
+                    Some(resume) if resume == batch.start => {
+                        let mut continued = previous;
+                        // A declined partial resumes with separate review
+                        // state and claim references: the decline's
+                        // retraction stands, and the continuation reviews
+                        // only what it newly derives. Without the reset the
+                        // next call would fail require_live_deep_receipt on
+                        // the declined, still named claim_refs.
+                        if continued.review.decision == ClaimApprovalStatus::Rejected {
+                            continued.claim_refs = Vec::new();
+                            continued.review = DocsDeepReview::proposed();
+                        }
+                        continued
+                    }
                     Some(_) => return Err(invalid("docs deep ingest moved meanwhile; retry")),
                 }
             }

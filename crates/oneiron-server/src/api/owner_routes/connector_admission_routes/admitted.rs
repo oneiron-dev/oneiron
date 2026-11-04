@@ -92,6 +92,12 @@ fn refresh_connector(
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
     if discovery.revision == pinned && same_manifest(&listed, &slate) {
+        // An unchanged refresh drops a staged expansion: the key keeps
+        // routing on this slate, and qualify/attest must not target an
+        // obsolete one.
+        vault
+            .drop_staged_connector_slate(&catalog.key, unix_seconds_now())
+            .map_err(engine)?;
         return Ok(Refreshed {
             connector: name,
             changed: false,

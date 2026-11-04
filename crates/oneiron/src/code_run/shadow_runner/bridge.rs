@@ -334,12 +334,12 @@ impl<'a> ShadowBridgeHost<'a> {
         &self,
         target: &JsResultTarget,
     ) -> Result<std::result::Result<(ResultRead, Taint), Value>> {
+        self.admit_read()?;
         let live = self.live_bindings();
         let outputs = self.results.iter().map(|result| &result.output);
         let Some((output, name)) = resolve_result(outputs, &live, &target.reference) else {
             return Ok(Err(unknown_handle(&live)));
         };
-        self.admit_read()?;
         let taint = self.taint_of(&output);
         Ok(
             ResultRead::in_arm(self.run_id, output, name, target.range, taint.clone())

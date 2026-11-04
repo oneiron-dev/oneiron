@@ -1,8 +1,9 @@
 //! Persisted queue records and sealed landing/check boundaries.
+use crate::store::repo_fork::RepoForkHash;
 use crate::{
     contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     error::Result,
-    repo_mutation::{RepoForkHash, RepoMutationOutcome},
+    store::repo_mutation_record::RepoMutationOutcome,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -17,7 +18,7 @@ pub struct MergeFile {
     pub content: Option<Vec<u8>>,
     /// A received bundle's reviewed exact Git state change of this path
     /// (G4 PR2); `None` on every ordinary file, which stages as before.
-    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
+    pub metadata_edit: Option<crate::store::code_document_values::CodeFileMetadataEdit>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProposal {

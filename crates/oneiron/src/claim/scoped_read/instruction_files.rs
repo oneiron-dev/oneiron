@@ -1,6 +1,6 @@
 //! A context pack's instruction-file handles, resolved under this read.
 use super::*;
-use crate::codebase::CodeInstructionHandle;
+use crate::claim::code_instruction::CodeInstructionHandle;
 use crate::disclosure::DisclosureContext;
 
 impl ScopedRead<'_> {

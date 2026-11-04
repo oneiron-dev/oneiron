@@ -279,7 +279,7 @@ impl Vault {
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
     /// the run `run_root`, whose approve-all scope then covers it. A DOCX or
-    /// XLSX fork joins `proposal`, an unsettled proposal on this artifact, or
+    /// XLSX fork joins `proposal`, an unsettled proposal by id, or
     /// opens its own under the fork's id. A deck fork joins no proposal; it
     /// lands through the deck merge door.
     pub fn open_office_body_fork(
@@ -455,18 +455,18 @@ impl Vault {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
+                artifact: *artifact,
                 fork: *fork,
+                head: expected_head.to_vec(),
                 fork_head: expected_fork.to_vec(),
             }];
             let request = ProposalSettleRequest {
                 verdict: SettleVerdict::Accept,
                 scope: None,
-                head: expected_head,
                 reviewed: &reviewed,
                 reason: None,
             };
-            let (_, landed) =
-                consent::settle_in_txn(self, wtxn, artifact, &proposal, &request, actor)?;
+            let (_, landed) = consent::settle_in_txn(self, wtxn, &proposal, None, &request, actor)?;
             Ok(landed
                 .into_iter()
                 .next()

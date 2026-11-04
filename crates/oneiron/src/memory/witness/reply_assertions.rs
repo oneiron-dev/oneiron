@@ -25,10 +25,10 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{ReplyAssertionRecord, ReplyAssertions};
 use crate::memory::WitnessAssertions;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::{ResponseCarriage, ResponseOwners, ResponseScan, Store};
+use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
 /// The reply assertions one MESSAGE was born with whole. Key: id16(message).
 const BIRTHS: SideTable<EntityId, MessageReplyAssertions, Named> =

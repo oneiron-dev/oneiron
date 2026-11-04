@@ -155,7 +155,7 @@ impl Vault {
         let read_bound = read_bound(desired.actor_ref, identity, read_ref)?;
         let read_grant_ref = address("read_grant", &Value::from(read_bound.digest().to_hex()))?;
         let read_grant = AccessGrant {
-            authority_scope: crate::federation::scope_codec::read_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::read_preset(),
             principal_ref: desired.actor_ref,
             scope: AccessGrantScope::ChannelIdentity {
                 identity_ref: identity,

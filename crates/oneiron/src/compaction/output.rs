@@ -358,9 +358,11 @@ pub fn store_output_sourced(
 /// is redacted, the stored body never rewritten.
 pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     vault
         .get_raw_body(source)?
@@ -374,7 +376,7 @@ fn output_clean(vault: &Vault, source: OutputRef) -> Result<bool> {
     crate::engine_executor::clean_for_context(
         &crate::code_run::ExecutorStorage::Canonical(vault),
         None,
-        &crate::code_run::CodeRunRawOutput::of_ref(source),
+        &crate::store::result_manifest::CodeRunRawOutput::of_ref(source),
     )
 }
 
@@ -389,7 +391,7 @@ pub fn summarize_output(
     summarize: impl FnOnce(&[u8]) -> Result<String>,
 ) -> Result<String> {
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
+        return Ok(crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
     let bytes = restore_output(vault, source)?;
     let key = (source.hash, *blake3::hash(recipe).as_bytes());

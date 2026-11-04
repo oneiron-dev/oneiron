@@ -1,7 +1,7 @@
 //! Cancellation-safe ownership of a stateless classifier's private reservation.
 
 use crate::error::{Error, Result};
-use crate::llm::{BudgetGuard, BudgetLease, LlmResponse, LlmResult};
+use oneiron_model::llm::{BudgetGuard, BudgetLease, LlmResponse, LlmResult};
 
 /// A started classifier call must spend its estimate if it never returns
 /// terminal usage. The caller may settle actual usage first; settlement of an

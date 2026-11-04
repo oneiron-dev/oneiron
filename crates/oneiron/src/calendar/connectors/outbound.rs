@@ -10,6 +10,7 @@ use super::remote::{
 };
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
+use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
@@ -364,12 +365,19 @@ fn ensure_outbox_matches(
     event_ref: EntityId,
     uid: &str,
 ) -> Result<(), CalendarConnectorError> {
+    // The side-row wall may have masked a secret-shaped span in a string
+    // field when the row was stored (FIX 10951): compare each string as the
+    // replay compare reads it, so the same secret offered again matches
+    // instead of refusing the resumed write.
+    let same = |held: &str, offered: &str| -> Result<bool, CalendarConnectorError> {
+        Ok(held == offered || admitted_from(&named_tree(&held)?, &named_tree(&offered)?)?)
+    };
     if row.action != CalendarWriteAction::Upsert
         || row.event_ref != event_ref
-        || row.provider != transport.provider_key()
-        || row.system != seat.config.system
-        || row.calendar_ref != seat.config.calendar_ref
-        || row.uid != uid
+        || !same(&row.provider, transport.provider_key())?
+        || !same(&row.system, &seat.config.system)?
+        || !same(&row.calendar_ref, &seat.config.calendar_ref)?
+        || !same(&row.uid, uid)?
     {
         return Err(CalendarConnectorError::Outbox {
             outbox_id: row.outbox_id,

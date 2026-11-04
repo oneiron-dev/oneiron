@@ -34,10 +34,12 @@ use super::constants::{
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
 use super::witness_message::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::gate::task_assignee::TaskAssignee;
 use crate::skill_optimize::TrainingOffer;
-use crate::task_verb::{ConsultPayloadRef, TaskAskSpec, TaskAskTarget, TaskAssignee};
+use crate::task_verb::{TaskAskSpec, TaskAskTarget};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -62,8 +64,8 @@ fn reach_row(actor_ref: &str) -> Result<Value> {
         ),
         (
             Value::from(GRANT_SCOPE_KEY),
-            crate::federation::scope_codec::encode_scope_value(
-                &crate::federation::scope_codec::effect_preset(),
+            oneiron_authority::federation::scope_codec::encode_scope_value(
+                &oneiron_authority::federation::scope_codec::effect_preset(),
             )?,
         ),
         (
@@ -110,7 +112,7 @@ pub(super) fn with_shipped_coach_offer_reach(manifest: Vec<u8>) -> Result<Vec<u8
 fn row_ceiling(grant: &PolicyScopedGrant) -> Option<PolicyApprovalCeiling> {
     if grant.budget.is_some()
         || grant.receipt_required
-        || grant.authority_scope != crate::federation::scope_codec::effect_preset()
+        || grant.authority_scope != oneiron_authority::federation::scope_codec::effect_preset()
     {
         return None;
     }
@@ -299,12 +301,12 @@ pub(crate) fn coach_offer_question_permit_in_txn(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
-    if envelope.message_type == crate::task_verb::SWAP_QUESTION_TYPE {
+    if envelope.message_type == crate::gate::training_ask_kind::SWAP_QUESTION_TYPE {
         let ids = (conversation, turn, message);
         return coach_swap_question_permit_in(vault, txn, actor, ids, envelope, policy);
     }
     if envelope.author != WITNESS_AUTHOR_SYSTEM
-        || envelope.message_type != crate::task_verb::OFFER_QUESTION_TYPE
+        || envelope.message_type != crate::gate::training_ask_kind::OFFER_QUESTION_TYPE
         || !envelope.is_visible
         || envelope.order != 0
         || !is_coach(actor.entity_ref(), actor.actor_class())?

@@ -97,6 +97,24 @@ fn agent_widening(selector: &HookSelector) -> Vec<HookWidening> {
     widening
 }
 
+/// An agent's ceiling for the selector its hook declares (ARCH-0080 §10):
+/// never blocking, and without the wider Skip, Ask and Rewrite outcomes.
+/// The agent's put binds this; the wider ask rides the owner's proposal,
+/// and an approval binds the asked selector whole.
+pub(in crate::skill_hub::pack_catalog) fn agent_ceiling_selector(
+    asked: &HookSelector,
+) -> HookSelector {
+    let mut ceiling = asked.clone();
+    ceiling.blocking = false;
+    ceiling.outcomes.retain(|outcome| {
+        !matches!(
+            outcome,
+            HookOutcomeKind::Skip | HookOutcomeKind::Ask | HookOutcomeKind::Rewrite
+        )
+    });
+    ceiling
+}
+
 impl Vault {
     /// The agent's put bound `row` at its ceiling for a hook that declares
     /// `asked`: a wider ask becomes the owner's proposal. A standing ask the
@@ -224,10 +242,7 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or_else(|| invalid("the hook this proposal asks for is no longer bound"))?;
-            let ceiling = HookSelector {
-                blocking: false,
-                ..proposal.asked.clone()
-            };
+            let ceiling = agent_ceiling_selector(&proposal.asked);
             if previous.author
                 != (HookAuthor::Agent {
                     agent: proposal.agent,
