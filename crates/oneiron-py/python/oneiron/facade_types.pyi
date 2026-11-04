@@ -4101,6 +4101,7 @@ class CompliancePack(TypedDict):
     unknown_jurisdiction_default: UnknownJurisdictionDefault
     strict_pole_jurisdiction: str
     jurisdiction_confidence_floor_millis: int
+    campaign_complaint_pause_threshold_ppm: int
     prohibited_list_provenance_classes: list[str]
     conditional_exemption_evidence: list[ConditionalExemptionEvidence]
     warning: str

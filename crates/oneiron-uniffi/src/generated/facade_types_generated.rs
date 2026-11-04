@@ -12767,6 +12767,8 @@ pub struct CompliancePack {
     pub strict_pole_jurisdiction: String,
     #[serde(rename = "jurisdiction_confidence_floor_millis")]
     pub jurisdiction_confidence_floor_millis: u16,
+    #[serde(rename = "campaign_complaint_pause_threshold_ppm")]
+    pub campaign_complaint_pause_threshold_ppm: u32,
     #[serde(rename = "prohibited_list_provenance_classes")]
     pub prohibited_list_provenance_classes: Vec<String>,
     #[serde(rename = "conditional_exemption_evidence")]

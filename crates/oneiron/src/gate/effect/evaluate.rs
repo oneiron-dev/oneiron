@@ -343,6 +343,7 @@ pub(crate) fn evaluate_external_effect_policy(
             )?
         && approve_once.is_none()
         && !press_retry_authorized
+        && !mail_retry_authorized
     {
         decision = GateDecision::pending(vec![GateReasonCode::PendingCampaignCompliance])
             .with_receipt_reasons([reason.receipt_reason()])
