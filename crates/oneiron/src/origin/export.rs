@@ -277,7 +277,7 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+        let target_scope = crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
         for frontier in revision.file_frontiers.values() {
             if frontier.repo != target_scope {
                 return Err(Error::InvariantViolation(

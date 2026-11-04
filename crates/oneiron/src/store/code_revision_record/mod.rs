@@ -6,6 +6,7 @@ pub(crate) mod file_frontiers;
 pub(crate) mod tree_codec;
 pub(crate) mod tree_inventory;
 mod types;
+pub(crate) mod tables;
 
 use crate::entity_id::EntityId;
 pub use crate::store::code_commit_metadata::CodeCommitMetadata;

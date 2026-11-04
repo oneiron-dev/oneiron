@@ -166,7 +166,7 @@ impl Vault {
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
             // The repository's own scope, as every local writer spells it:
             // one document per path whatever ref a push moves (FIX 12199).
-            let scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+            let scope = crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
             let mut renames = received_renames(

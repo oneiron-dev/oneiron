@@ -27,7 +27,7 @@ use crate::store::attempt_state::AttemptState;
 use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::FailAttempt;
 use crate::consent::QueuedCheckApproval;
-use crate::contract_oracle::invalid;
+use crate::store::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::ports::JobQueue;
 use crate::side_table::{self, Named, SideTable};
