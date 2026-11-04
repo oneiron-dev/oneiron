@@ -157,6 +157,18 @@ impl EsignState {
                 row.delivery = DeliveryStatus::Viewed;
                 row.access = AccessStatus::Verified;
             }
+            EsignEvent::AccessVerified { recipient } => {
+                if !self.recipients.contains_key(recipient) {
+                    return Err(invalid("unknown recipient"));
+                }
+                // Capability-verified agent access: no delivery change, no
+                // human Viewed evidence. The executor appends this only after
+                // Gate 2 checked the capability row itself.
+                self.recipients
+                    .get_mut(recipient)
+                    .expect("validated turn")
+                    .access = AccessStatus::Verified;
+            }
             EsignEvent::FieldSaved { signature } => {
                 self.require_turn(&signature.recipient, now)?;
                 if self.recipients[&signature.recipient].access != AccessStatus::Verified {

@@ -295,7 +295,10 @@ impl Vault {
             };
             // Gate 3: first-open is an event, idempotent on refresh. Viewed
             // is human-action-only evidence (FIX 7855): a known agent call
-            // never marks viewed, while Bearer/Person acts still do.
+            // never marks viewed, while Bearer/Person acts still do. An
+            // agent with a Gate-2-valid capability records AccessVerified
+            // instead, so its field saves and sign acts land on verified
+            // access without inventing Viewed.
             if !matches!(action, SigningAction::Load)
                 && progress.delivery != DeliveryStatus::Viewed
                 && !held
@@ -306,6 +309,22 @@ impl Vault {
                     txn,
                     document,
                     EsignEvent::Viewed {
+                        recipient: recipient.id.clone(),
+                    },
+                    actor.clone(),
+                    now,
+                )?;
+            }
+            if caller == SigningCaller::Agent
+                && !matches!(action, SigningAction::Load)
+                && progress.access != AccessStatus::Verified
+                && !held
+            {
+                state = append(
+                    self,
+                    txn,
+                    document,
+                    EsignEvent::AccessVerified {
                         recipient: recipient.id.clone(),
                     },
                     actor.clone(),

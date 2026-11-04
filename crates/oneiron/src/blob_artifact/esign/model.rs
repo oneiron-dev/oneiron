@@ -193,6 +193,12 @@ pub enum EsignEvent {
     Viewed {
         recipient: String,
     },
+    /// A valid capability verified an agent's access (FIX 7855 round 2):
+    /// human-Viewed evidence stays human-only, while agent field saves and
+    /// sign acts land on this instead of inventing Viewed. Sets access only.
+    AccessVerified {
+        recipient: String,
+    },
     FieldSaved {
         signature: SignatureRow,
     },
