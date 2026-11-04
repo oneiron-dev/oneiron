@@ -106,11 +106,11 @@ pub(super) fn stage_put_projections(
     }
     // A row stored before this put takes no first position from it (FIX 11925).
     let row_put = if fixed.replicated {
-        crate::federation::record_scope::RowPut::Replicated
+        crate::batch::row_put::RowPut::Replicated
     } else if stored_before {
-        crate::federation::record_scope::RowPut::LocalReput
+        crate::batch::row_put::RowPut::LocalReput
     } else {
-        crate::federation::record_scope::RowPut::Birth
+        crate::batch::row_put::RowPut::Birth
     };
     crate::federation::record_scope::stamp_put(
         store,
