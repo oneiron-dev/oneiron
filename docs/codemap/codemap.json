@@ -16910,14 +16910,13 @@
       "ModelCallDigests",
       "ModelCallInputPart",
       "ModelCallReasoningPart",
-      "ModelCallRecord",
-      "ReasoningPartKind"
+      "ModelCallRecord"
      ],
      "path": "src/code_run/model_call.rs",
      "purpose": "Per-model-call evidence and replay records (FIX 12516)",
      "surface": {
       "crate-vis": 1,
-      "enum": 2,
+      "enum": 1,
       "fn": 8,
       "struct": 3
      }
@@ -103984,7 +103983,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "StreamAssembly"
@@ -103992,7 +103991,7 @@
      "path": "src/llm/assembly.rs",
      "purpose": "Shared typed stream assembly",
      "surface": {
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -104624,13 +104623,14 @@
       "LlmResponse",
       "LlmStreamEvent",
       "LlmToolSpec",
-      "LlmUsage"
+      "LlmUsage",
+      "ReasoningPartKind"
      ],
      "path": "src/llm/protocol.rs",
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
       "const": 1,
-      "enum": 6,
+      "enum": 7,
       "fn": 7,
       "struct": 7
      }
@@ -121976,7 +121976,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7
      }
@@ -121997,6 +121997,16 @@
      "notable": [],
      "path": "src/models/ladder/live_fork.rs",
      "purpose": "The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/model_call.rs",
+     "purpose": "The rung that answered one generate call (FIX 12743)",
      "surface": {
       "crate-vis": 3
      }
@@ -122242,7 +122252,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1,
       "re-export": 15,
       "struct": 2
@@ -126259,7 +126269,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 107,
+     "files": 108,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126415,7 +126425,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1520,
+   "source_files": 1521,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -129758,6 +129768,7 @@
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
+      "ReasoningPartKind",
       "Rebound",
       "RecallEffort",
       "RecallRequest",
@@ -131197,7 +131208,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1099,
+      "enum": 1100,
       "struct": 3338
      }
     },
