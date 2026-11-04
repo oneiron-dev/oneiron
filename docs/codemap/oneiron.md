@@ -4355,7 +4355,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/receipt_fields.rs` | src | m | 10 crate-vis | — | Outbound receipt field projection |
 | `src/outbound/recovery_suggestions.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | OutboundRecoverySuggestion | Typed recovery suggestions on a failed or uncertain outbound receipt (FIX 7965): what the caller may do… |
 | `src/outbound/reply_content.rs` | src | s | 1 struct · 3 fn · 1 const | ConnectorReplyBody | The body of an agent's reply to a connector event (OF-519) |
-| `src/outbound/reply_job.rs` | src | m | 2 struct · 1 enum · 6 fn · 2 const · 2 crate-vis | ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage | The durable connector reply job (FIX 2405) |
+| `src/outbound/reply_job.rs` | src | m | 2 struct · 1 enum · 8 fn · 2 const · 3 crate-vis | ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage | The durable connector reply job (FIX 2405) |
 | `src/outbound/report_signature.rs` | src | s | 1 const | — | The outbound verb for feedback report signatures |
 | `src/outbound/retry_audit.rs` | src | m | 8 crate-vis | — | Atomic send-receipt retry and terminal settlement |
 | `src/outbound/schedule_contract.rs` | src | s | 1 const | — | Attempt kind used by schedule admission and connector execution |
@@ -4813,7 +4813,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/decisions/consent.rs` | src | m | 11 crate-vis | — | What the engine grants on consent and standing it folds from rows a restore brings back: the ramp offer a… |
 | `src/recovery/checkpoint/decisions/counterparty.rs` | src | m | 4 crate-vis | — | What a send reads about its counterparty: the contacts the send gate folds for a party, the do-not-contact… |
 | `src/recovery/checkpoint/decisions/notifications.rs` | src | s | 1 crate-vis | — | Who a pending notification is delivered to, as its recipient markers decide from the body a restore brings… |
-| `src/recovery/checkpoint/decisions/reads.rs` | src | m | 11 crate-vis | — | Who a read admits: the relationship reads a principal's memberships and grants decide, the policy grants a… |
+| `src/recovery/checkpoint/decisions/reads.rs` | src | L | 11 crate-vis | — | Who a read admits: the relationship reads a principal's memberships and grants decide, the policy grants a… |
 | `src/recovery/checkpoint/decisions/skills.rs` | src | s | 3 crate-vis | — | What the activation gate decides about a skill: the posture its bytes' scan verdicts give an entry into… |
 | `src/recovery/checkpoint/decisions/tasks.rs` | src | m | 12 crate-vis | — | What a task, an ask and an agent may do: the authority a task's facts prove through the `ScopedTo` edges… |
 | `src/recovery/checkpoint/decisions/tests.rs` | test | s | 2 crate-vis | — | The census check, a substrate invariant: no restore loosens a decision the engine makes from restored rows… |
@@ -6449,7 +6449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/training_offer_ask.rs` | src | m | 16 crate-vis | — | A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856) |
 | `src/task_verb/training_swap_ask.rs` | src | m | 1 struct · 1 enum · 1 fn · 11 crate-vis | SwapAskState, TrainingSwapAskView | A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857) |
 | `src/task_verb/training_swap_ask/question.rs` | src | s | 2 crate-vis | — | What a training swap question says and which results get one: the result in brief, and the expectation and… |
-| `src/task_verb/verb_hook_boundary.rs` | src | L | 1 struct · 24 fn · 1 const · 1 crate-vis | HookSession | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
+| `src/task_verb/verb_hook_boundary.rs` | src | L | 1 struct · 25 fn · 1 const · 1 crate-vis | HookSession | The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1) |
 | `src/task_verb/verb_hook_boundary/session.rs` | src | s | 3 crate-vis | — | The row boundary of a read a run serves in an off-record room (WILL L11-01 S01-2c): the sibling of… |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 fn · 2 re-export | TaskTtl | — |
 | `src/task_verb/wave_port.rs` | src | L | 2 struct · 1 enum · 9 fn · 3 crate-vis | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
