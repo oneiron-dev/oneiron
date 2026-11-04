@@ -40,7 +40,7 @@ pub use self::calibration::{
 };
 mod causes;
 pub use self::causes::AttributionCauseRecord;
-pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
+pub(crate) use self::causes::attempt_attribution_causes;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
