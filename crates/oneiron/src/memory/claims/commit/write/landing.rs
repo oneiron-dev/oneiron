@@ -39,40 +39,14 @@ impl Memory<'_> {
                 "booking publication owner authority refused",
             ));
         }
-        if let Some(raw) = self.vault.get_raw_in(content.read(), &id)?
-            && crate::batch::EntityMetadataHeader::parse(&raw)
-                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-            && self
-                .vault
-                .get_claim_in_txn(content.read(), &id)?
-                .is_some_and(|existing| existing.predicate == super::super::key_value::PREDICATE)
-        {
-            return Err(Error::InvalidClaimBody(
-                "keyed claim revisions cannot be overwritten through generic claims",
-            ));
-        }
-        if self
-            .vault
-            .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
+        if let Some(origin) = write.signed_replay_origin
+            && self.admit_claim_identity_in_txn(content.read(), write, envelope, origin, true)?
         {
             return Ok(true);
         }
-        // A fresh explicit-id create matches `in_place_replay` with no row yet;
-        // replay-only validation runs only for an existing row.
-        if in_place_replay(write)
-            && let Some(existing) = self.vault.get_claim_in_txn(content.read(), &id)?
-            && !claim_replay_content_matches(&existing, write)
-        {
-            return Err(Error::InvalidClaimBody(
-                "claim replay content changed before its write",
-            ));
+        if self.admit_claim_identity_in_txn(content.read(), write, envelope, id, false)? {
+            return Ok(true);
         }
-        super::super::authorship::guard_existing_claim_in_txn(
-            self.vault,
-            content.read(),
-            envelope.actor(),
-            id,
-        )?;
         if let Some(old_id) = prior {
             let old = self
                 .vault
@@ -88,6 +62,54 @@ impl Memory<'_> {
                 "memory.claim.supersede",
             )?;
         }
+        Ok(false)
+    }
+
+    /// Checks the original replay row before a fresh proposal, and the
+    /// proposal's own identity, under the same writer transaction.
+    fn admit_claim_identity_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        write: &ClaimWrite<'_>,
+        envelope: &crate::WriteEnvelope,
+        id: EntityId,
+        require_replay: bool,
+    ) -> Result<bool, Error> {
+        if let Some(raw) = self.vault.get_raw_in(txn, &id)?
+            && crate::batch::EntityMetadataHeader::parse(&raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            && self
+                .vault
+                .get_claim_in_txn(txn, &id)?
+                .is_some_and(|existing| existing.predicate == super::super::key_value::PREDICATE)
+        {
+            return Err(Error::InvalidClaimBody(
+                "keyed claim revisions cannot be overwritten through generic claims",
+            ));
+        }
+        if self
+            .vault
+            .local_hard_delete_marker_exists_in_txn(txn, &id)?
+        {
+            return Ok(true);
+        }
+        if require_replay || in_place_replay(write) {
+            let existing = self.vault.get_claim_in_txn(txn, &id)?;
+            if existing
+                .as_ref()
+                .is_some_and(|existing| !claim_replay_content_matches(existing, write))
+            {
+                return Err(Error::InvalidClaimBody(
+                    "claim replay content changed before its write",
+                ));
+            }
+        }
+        super::super::authorship::guard_existing_claim_in_txn(
+            self.vault,
+            txn,
+            envelope.actor(),
+            id,
+        )?;
         Ok(false)
     }
 
