@@ -57,16 +57,15 @@ impl Memory<'_> {
         {
             return Ok(true);
         }
-        if in_place_replay(write) {
-            let existing = self
-                .vault
-                .get_claim_in_txn(content.read(), &id)?
-                .ok_or(Error::EntityNotFound)?;
-            if !claim_replay_content_matches(&existing, write) {
-                return Err(Error::InvalidClaimBody(
-                    "claim replay content changed before its write",
-                ));
-            }
+        // A fresh explicit-id create matches `in_place_replay` with no row yet;
+        // replay-only validation runs only for an existing row.
+        if in_place_replay(write)
+            && let Some(existing) = self.vault.get_claim_in_txn(content.read(), &id)?
+            && !claim_replay_content_matches(&existing, write)
+        {
+            return Err(Error::InvalidClaimBody(
+                "claim replay content changed before its write",
+            ));
         }
         super::super::authorship::guard_existing_claim_in_txn(
             self.vault,
@@ -166,11 +165,9 @@ impl Memory<'_> {
             .as_ref()
             .map_or(learned_at, |header| header.learned_at);
         let mut replay_claim_of_weight = None;
-        let candidate = if in_place_replay(write) {
-            let existing = self
-                .vault
-                .get_claim_in_txn(content.read(), &id)?
-                .ok_or(Error::EntityNotFound)?;
+        let candidate = if in_place_replay(write)
+            && let Some(existing) = self.vault.get_claim_in_txn(content.read(), &id)?
+        {
             let birth_weight = crate::claim::claim_initial_claim_of_weight(&existing)?;
             let live_weight = crate::ports::EdgeStoreRead::port_edges(
                 self.vault,
@@ -334,10 +331,10 @@ impl Memory<'_> {
         if !in_place_replay(write) {
             return Ok(None);
         }
-        let raw = self
-            .vault
-            .get_raw_in(txn, &write.id)?
-            .ok_or(Error::EntityNotFound)?;
+        // A fresh explicit-id create has no row yet; the write carries its own clocks.
+        let Some(raw) = self.vault.get_raw_in(txn, &write.id)? else {
+            return Ok(None);
+        };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("claim replay entity header"))?;
         Ok(Some(header))
