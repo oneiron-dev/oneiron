@@ -186,7 +186,11 @@ impl Vault {
         ledger_clear: bool,
     ) -> Result<bool> {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
-            || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::store::skill_source_custody::source_custody_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
             || crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
                 &self.store,
