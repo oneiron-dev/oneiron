@@ -188,7 +188,7 @@ fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     let store_err = match Store::open(
         path,
         &test_config(),
-        &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
     ) {
         Ok(_) => panic!("Store::open must run the ABI gate"),
         Err(err) => err,
