@@ -121,14 +121,12 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
-<<<<<<< HEAD
     /// T1 `self.use` operations the host registered, by operation name: the
     /// second table beside `SECRET_USE_OPERATIONS` (FIX 2616). Empty until
     /// the server registers its callbacks; unknown names refuse as unknown.
     pub(crate) secret_use_t1_operations: std::sync::Mutex<
         std::collections::HashMap<String, crate::secret_custody::SecretUseT1Operation>,
     >,
-=======
     /// The page-seal mirror read the last settle fused with its file
     /// identity, consumed by the next ready check instead of a second
     /// under-lease mirror read (FIX 12272). Set only by the settle's write
@@ -136,7 +134,6 @@ pub struct Vault {
     /// this process holds the writer lease and the file's identity still
     /// matches the capture — otherwise the check re-reads as before.
     pub(crate) page_seal_mirror_carry: std::sync::Mutex<Option<crate::world_keys::CapturedMirror>>,
->>>>>>> origin/main
     /// Posture/custody pairing this handle was opened under, retained from the
     /// validated config so the honest read-only description below cannot drift
     /// from what the opener actually accepted. Private: callers read it through
@@ -156,6 +153,9 @@ pub struct Vault {
     /// debts and settled none, `0` when none stalled (FIX 11923): while the
     /// count stands, writes skip that drain.
     pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
+    /// The claim VAD payment worker's wake and the claims the write door
+    /// handed it (FIX 11702). In memory only: the debt rows are the debt.
+    pub(crate) claim_vad_payment: crate::housekeeping::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
@@ -253,6 +253,16 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+}
+
+/// A vault's detached writes run before it closes (FIX 12023): those queued
+/// through its own doors (a call receipt's) need the vault itself, and run
+/// here, on the closing thread, in arrival order with the rest, before any
+/// part of the vault drops. The store's own drop then ends its leader.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.store.finish_detached_writes(Some(&*self));
+    }
 }
 
 #[cfg(test)]
