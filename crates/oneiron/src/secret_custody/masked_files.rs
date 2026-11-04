@@ -2,6 +2,8 @@
 //! ARCH-0069 #mask-on-write). The marks, and the copy a masked reader is
 //! served, are kept in [`crate::store::file_key_masks`].
 
+use heed::RoTxn;
+
 use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

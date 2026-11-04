@@ -5,9 +5,7 @@ pub use crate::store::known_value_index::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use crate::store::known_value_index::{
     KnownSource, KnownSweep, KnownValues, known_index_scope,
 };
-pub(super) use crate::store::known_value_index::{
-    decodings, handle_text, occurrences, remember_in_txn,
-};
+pub(super) use crate::store::known_value_index::{decodings, occurrences, remember_in_txn};
 
 /// Whether the index never keys the value of the record named `name`: a
 /// run-bound record's, its run's alone (FIX 8028), a cloud registration
