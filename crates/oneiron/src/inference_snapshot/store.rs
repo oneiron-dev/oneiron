@@ -157,7 +157,10 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
 /// # Errors
 /// Custody and storage faults.
 pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    if let Some(record) = CATALOG.get(store, wtxn, id)? {
+    // Lenient: a damaged row still retires. Its conversation index entry
+    // goes only when the row decodes; a damaged row must not abort the
+    // erase or reconcile that found it.
+    if let Some(record) = CATALOG.get_lenient(store, wtxn, id)? {
         catalog::delete_conversation_entry(store, wtxn, &record.manifest.conversation, id)?;
     }
     let gone = CATALOG.delete(store, wtxn, id)?;

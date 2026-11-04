@@ -539,11 +539,15 @@ pub(super) fn commit_on_answer(
     // The vault the reply lands in, for the FIX 10367 HEAD read below.
     // `reader` itself does not enter the spawned task.
     let vault = reader.vault.clone();
+    // The turn authority the task retains: the task only reads `manifest`,
+    // so edition-2024 disjoint capture would otherwise drop `_turn` when
+    // this returns and the restore would run cold (FIX 11287).
+    let retain_turn = segments._turn.clone();
     let message = handle.message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        // `segments` (and its `_turn` authority) lives until the outcome
-        // ends, whatever the turn wrote.
+        // Held until the outcome ends, whatever the turn wrote.
+        let _retain = retain_turn;
         let Ok(ended) = outcome.await else {
             return;
         };
