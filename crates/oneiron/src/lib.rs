@@ -12,8 +12,9 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
+pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
@@ -47,6 +48,7 @@ pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
+pub(crate) mod room_codec;
 pub mod registry {
     //! Entity-type registry: defined in `oneiron-contracts` and named through
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
@@ -74,6 +76,7 @@ pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
 pub mod write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
@@ -106,7 +109,7 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
-pub mod run_budget;
+pub use oneiron_run_budget::run_budget;
 pub mod teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
@@ -147,7 +150,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -196,7 +199,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -252,7 +255,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;

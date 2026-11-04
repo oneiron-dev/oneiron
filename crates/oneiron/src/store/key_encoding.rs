@@ -58,26 +58,16 @@ pub(crate) fn decode_vector_row(raw: &[u8], dimensions: usize) -> Result<Vec<f32
 impl Store {
     /// Encodes an edge key as `[src(16) | kind(1) | tgt(16)]`.
     pub fn encode_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> [u8; 33] {
-        let mut key = [0_u8; 33];
-        key[..16].copy_from_slice(src.as_bytes());
-        key[16] = kind as u8;
-        key[17..].copy_from_slice(tgt.as_bytes());
-        key
+        oneiron_store::index_keys::encode_edge_key(src, kind, tgt)
     }
 
     /// Encodes a temporal key as `[timestamp_be(8) | id(16)]`.
     pub fn encode_temporal_key(ts: u64, id: &EntityId) -> [u8; 24] {
-        let mut key = [0_u8; 24];
-        key[..8].copy_from_slice(&ts.to_be_bytes());
-        key[8..].copy_from_slice(id.as_bytes());
-        key
+        oneiron_store::index_keys::encode_temporal_key(ts, id)
     }
 
     /// Encodes a type key as `[entity_type(1) | id(16)]`.
     pub fn encode_type_key(entity_type: u8, id: &EntityId) -> [u8; 17] {
-        let mut key = [0_u8; 17];
-        key[0] = entity_type;
-        key[1..].copy_from_slice(id.as_bytes());
-        key
+        oneiron_store::index_keys::encode_type_key(entity_type, id)
     }
 }
