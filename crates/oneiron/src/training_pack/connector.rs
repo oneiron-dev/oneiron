@@ -57,6 +57,10 @@ pub struct TrainOutput {
 
 pub type TrainingFuture<'a> = Pin<Box<dyn Future<Output = Result<TrainOutput>> + Send + 'a>>;
 
+/// A status read: the completed output when the job's terminal receipt is
+/// present, or `None` while it is unknown or still running.
+pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<Option<TrainOutput>>> + Send + 'a>>;
+
 /// A host adapter may wait hours. It uses (run, spec_blake3) as the provider's
 /// idempotency key and uses this admission for any teacher calls. Only training
 /// rows are passed; sealed rows are not part of the connector request. The host
@@ -67,6 +71,15 @@ pub trait TrainingConnector: Send + Sync {
         request: TrainRequest,
         admission: &'a RunAdmission,
     ) -> TrainingFuture<'a>;
+
+    /// A read-only status check by the provider's idempotency key: the
+    /// completed output when the job already reached its terminal receipt,
+    /// or `None` when the job is unknown or still running. Poll never
+    /// starts work and never synthesizes an error for a missing receipt.
+    fn poll<'a>(&'a self, run: &EntityId, spec_blake3: &[u8; 32]) -> PollFuture<'a> {
+        let _ = (run, spec_blake3);
+        Box::pin(async { Ok(None) })
+    }
 }
 
 impl TrainingPlan {
@@ -238,6 +251,7 @@ impl Vault {
                 budget: declaration.budget().clone(),
                 permit: json_value(permit.facts())?,
                 dispatched: false,
+                settlement_claimed: false,
             });
             RUNS.put(&self.store, txn, id, &current)
         })?;
@@ -272,9 +286,18 @@ impl Vault {
         };
         let service_units = output.service_units;
         match self.complete_training_pack(admission, output) {
-            Ok(result) => {
+            Ok((result, true)) => {
                 // Keep completed work even when the meter reports a settlement error.
                 let settlement = permit.settle(CallOutcome::Used(service_units));
+                settlement.map_err(|e| invalid(&e.to_string()))?;
+                Ok(result)
+            }
+            Ok((result, false)) => {
+                // A racing recovery completed and settled first: this
+                // permit settles Kept, charging nothing, so the one GPU
+                // job is never charged twice (a Failed drop would charge
+                // this permit's started reservation beside Used).
+                let settlement = permit.settle(CallOutcome::Kept);
                 settlement.map_err(|e| invalid(&e.to_string()))?;
                 Ok(result)
             }
@@ -303,11 +326,15 @@ impl Vault {
 
     /// Trusted host completion door, also for a delayed callback after the
     /// original waiter was lost. No second dispatch or role write happens here.
+    /// Returns whether this call recorded the first result: only the winner
+    /// settles the run's Used reservation, in the same commit that claims it,
+    /// and the loser settles Kept (zero charge), so a live waiter racing a
+    /// recovery never charges the same GPU job twice.
     pub fn complete_training_pack(
         &self,
         admission: &RunAdmission,
         output: TrainOutput,
-    ) -> Result<TrainingRun> {
+    ) -> Result<(TrainingRun, bool)> {
         let teachers = json_value(&admission.teacher_report())?;
         self.with_write_txn_grouped(|txn| {
             let mut run = run_in_txn(self, txn, &output.run)?;
@@ -344,7 +371,7 @@ impl Vault {
                 {
                     return Err(invalid("a completed training run cannot be replaced"));
                 }
-                return Ok(run);
+                return Ok((run, false));
             }
             // The files are kept as the owner's; a run whose owner was erased
             // keeps no late result under anyone else (FIX 3520).
@@ -384,8 +411,11 @@ impl Vault {
                 service_units: output.service_units,
             });
             run.state = TrainingState::Returned;
+            if let Some(dispatch) = run.dispatch.as_mut() {
+                dispatch.settlement_claimed = true;
+            }
             RUNS.put(&self.store, txn, &run.id, &run)?;
-            Ok(run)
+            Ok((run, true))
         })
     }
 }
