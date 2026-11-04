@@ -186,6 +186,7 @@ mod skill_default_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
+pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod standing_doors;
 mod stream_recovery_doors;
 mod streamed_claims;
