@@ -65,7 +65,7 @@ pub(crate) struct SessionHintStamp {
 /// adjacent Activity hints aggregate into a period whose endpoints and count
 /// survive queueing and awaited delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionHintCarrier {
+pub(crate) struct SessionHintCarrier {
     pub(crate) key: SessionKey,
     pub(crate) hint: SessionHint,
     pub(crate) first: SessionHintStamp,
