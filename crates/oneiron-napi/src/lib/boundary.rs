@@ -132,6 +132,10 @@ pub(super) fn read_codebase_snapshot(
     let files_array: Array<'_> = required_field(&snapshot, "files")?;
     let len = files_array.len();
     let _ = vault.measure_limit(EngineLimit::CodebaseManifestFiles, len as u64);
+    // Reserve pin-span slots before marshalling any file.
+    memory
+        .prepare_pins(len as usize)
+        .map_err(napi::Error::from_reason)?;
     let mut files = memory
         .vector::<super::types::NapiCodebaseFileEntry>(len as usize)
         .map_err(napi::Error::from_reason)?;

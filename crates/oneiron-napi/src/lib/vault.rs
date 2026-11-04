@@ -17,7 +17,8 @@ use super::boundary::{
     validate_entity_payload_len,
 };
 use super::codebase::{
-    CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot,
+    CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot,
+    measure_codebase_backings, napi_codebase_snapshot,
 };
 use super::email::{core_email_adapter, core_email_inbound};
 use super::types::{
@@ -476,12 +477,22 @@ impl NapiVault {
     // ─── Codebase Metadata ─────────────────────────────────────
 
     /// Attach or replace codebase snapshot metadata for a CODE_ARTIFACT entity.
+    /// SharedArrayBuffer-backed inputs are refused on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing; normal Buffers keep the Node >= 20 promise.
     #[napi]
-    pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
+    pub fn put_codebase_snapshot(
+        &self,
+        env: Env,
+        id: Buffer,
+        snapshot: Object<'_>,
+    ) -> napi::Result<()> {
         self.refuse_bound_host_write()?;
         let eid = parse_entity_id(&id)?;
         let mut memory = CodebaseMemory::new();
-        let snapshot = read_codebase_snapshot(&self.vault, snapshot, &mut memory)?;
+        let mut id = id;
+        let mut snapshot = read_codebase_snapshot(&self.vault, snapshot, &mut memory)?;
+        // All getters have run once. The native handles root their full
+        // backings in this callback's scope; measure before copying bodies.
+        measure_codebase_backings(&env, &mut id, &mut snapshot, &mut memory)?;
         let file_count = snapshot.files.len();
         let contents = CodebaseContents::from_files(&snapshot.files, &mut memory)
             .map_err(napi::Error::from_reason)?;
@@ -494,9 +505,8 @@ impl NapiVault {
                 "codebase snapshot file contents required; refusing all-quarantine empty-manifest persist",
             ));
         }
-        memory
-            .reserve(contents.max_scratch_len())
-            .map_err(napi::Error::from_reason)?;
+        // Scratch stays pending through the serial callbacks; core does
+        // not wait for another reservation while its writer is open.
         self.vault
             .put_codebase_snapshot(&eid, &snapshot, &|path: &str| contents.get(path))
             .map_err(to_napi_err)
