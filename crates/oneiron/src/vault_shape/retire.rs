@@ -17,7 +17,7 @@ use crate::channel_identity_lifecycle::{
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -88,9 +88,11 @@ impl Vault {
     /// whose `in_world` edge survives the soft delete while no shape row
     /// reads them. Each orphan goes through the same owner-gated user
     /// delete as its world; a facet anyone wears (one `has_facet` edge or
-    /// more) stays, so retiring a world never unwears a mask. Returns
-    /// the world's delete receipt; every orphan keeps its own receipt
-    /// on its tombstone.
+    /// more) stays, so retiring a world never unwears a mask. The pick
+    /// runs on a read snapshot, so each orphan's delete re-proves unworn
+    /// inside its own destructive write transaction and skips a facet a
+    /// concurrent wear claimed first. Returns the world's delete receipt;
+    /// every orphan keeps its own receipt on its tombstone.
     pub(super) fn retire_shape_world(
         &self,
         owner: &AuthenticatedOwner,
@@ -120,9 +122,59 @@ impl Vault {
             orphans
         };
         for orphan in orphans {
-            self.delete_shape_entity(owner, orphan)?;
+            match self.delete_shape_orphan(owner, orphan) {
+                Ok(_) => {}
+                Err(Error::ConcurrentWrite(_)) => {
+                    // A `HasFacet` landed after the pick (or another writer
+                    // invalidated the preview): the facet stays as it is and
+                    // the world still retires. Skipping is the safe side;
+                    // tombstoning a now-worn mask would unwear it.
+                    tracing::info!(
+                        facet = %orphan.to_hex(),
+                        "world retire skipped a facet worn before commit"
+                    );
+                }
+                Err(error) => return Err(error),
+            }
         }
         self.delete_shape_entity(owner, world)
+    }
+
+    /// Deletes the orphan facet `id` as `owner` (FIX 11508): the same
+    /// owner-gated user delete as [`Self::delete_shape_entity`], plus a
+    /// pre-scrub check that re-proves the facet still unworn inside the
+    /// delete's destructive write transaction, atomically with the tear
+    /// under LMDB's single writer. A facet worn after the orphan pick is
+    /// refused as [`Error::ConcurrentWrite`], which the caller maps to skip.
+    fn delete_shape_orphan(&self, owner: &AuthenticatedOwner, id: EntityId) -> Result<String> {
+        let actor = owner.revalidate(self)?;
+        let context = {
+            let txn = self.store.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+            DeletionGateContext::new(
+                actor,
+                EdgeActorClass::Human,
+                crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+                policy.read_frontier_hash()?,
+            )
+        };
+        let reverify = |txn: &heed::RoTxn<'_>| owner.revalidate_in_txn(self, txn).map(|_| ());
+        let still_unworn = |txn: &heed::RoTxn<'_>| {
+            if self
+                .filtered_edge_peers(txn, EdgeDirection::In, &id, EdgeKind::HasFacet, None)?
+                .is_empty()
+            {
+                Ok(())
+            } else {
+                Err(Error::ConcurrentWrite("facet worn before commit"))
+            }
+        };
+        let outcome = self.delete_entity_with_reason_gated(
+            &id,
+            DeleteReason::UserDelete,
+            GatedDeletion::with_pre_scrub_check(context, &reverify, &still_unworn),
+        )?;
+        Ok(outcome.receipt_id.unwrap_or(id).to_hex())
     }
 
     /// Retires the channel identity `item` names, as `owner`, after checking

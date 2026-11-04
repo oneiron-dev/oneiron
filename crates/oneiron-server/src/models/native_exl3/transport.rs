@@ -547,6 +547,14 @@ fn report_released(worker_id: Option<&str>, epoch: &str, body: &JsonValue) {
     };
     if let Some(stats) = body.get("stats") {
         worker_host::report_device_stats(worker_id, stats);
+        // Released stats feed the same supervisor path as finals (FIX 9297):
+        // without it the queue, open calls and residency go stale until a
+        // later poll.
+        if let Some(worker) = worker_host::hosted_worker(worker_id)
+            && let Some(activity) = super::activity_of(stats)
+        {
+            worker_host::report_device_activity(&worker, activity);
+        }
     }
     let receipt = body
         .get("usage")

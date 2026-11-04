@@ -429,6 +429,7 @@ async fn execute(
     };
     report(&route, &last);
     stamp_physical(&mut last, sent.physical);
+    stamp_scheduling(&mut last);
     // The final's receipt, done or error, is this call's final one; the
     // Failed settlement records what its lease observed (FIX 9297).
     if let Some(mut receipt) = record_receipt(&route, &sent, &last) {
@@ -570,6 +571,29 @@ fn record_receipt(
         Some(receipt)
     } else {
         None
+    }
+}
+
+/// Stamps the final's top-level scheduling into every receipt the reply
+/// carries, beside [`stamp_physical`]: the published receipt carries the
+/// scheduling [`record_receipt`] parsed, and settlement's `stands_for`
+/// compares every other field, so an unstamped carried receipt is retained
+/// twice (FIX 9297).
+fn stamp_scheduling(last: &mut JsonValue) {
+    let Some(scheduling) = last.get("scheduling").cloned() else {
+        return;
+    };
+    let Some(calls) = last
+        .get_mut("usage")
+        .and_then(|usage| usage.get_mut(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array_mut)
+    else {
+        return;
+    };
+    for call in calls {
+        if let Some(call) = call.as_object_mut() {
+            call.insert("scheduling".to_owned(), scheduling.clone());
+        }
     }
 }
 
@@ -840,6 +864,7 @@ impl Live {
                     self.finished = true;
                     report(&self.route, &last);
                     stamp_physical(&mut last, self.sent.physical);
+                    stamp_scheduling(&mut last);
                     // The final's receipt, done or error, is this call's
                     // final one; a cut stream keeps its progress (FIX 9297).
                     if let Some(mut receipt) = record_receipt(&self.route, &self.sent, &last) {
