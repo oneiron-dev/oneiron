@@ -60,7 +60,7 @@ pub struct AgentDefinition {
     /// An absent role follows the owner-editable wake-policy absent-role row.
     pub wake_cadence: Option<AgentWakeCadence>,
     /// Her refusal dial (OF-533). Absent, or a domain left unset, takes the
-    /// vault-kind default; resolve through [`super::resolve_refusal`]. A
+    /// vault-kind default; resolve through [`crate::agent_def::resolve_refusal`]. A
     /// dial, not identity: deliberately NOT in the freeze-set.
     pub refusal: Option<RefusalDial>,
     /// The models the agent may run on, in its owner's order, each with the
@@ -70,6 +70,6 @@ pub struct AgentDefinition {
     /// The model that compacts the agent's window; absent takes the default
     /// its host supplies (for a `self` writer, the self-compaction row's
     /// cheap model, FIX 6029). It need not be listed; resolve through
-    /// [`super::resolve_compaction_model`].
+    /// [`crate::agent_def::resolve_compaction_model`].
     pub compaction_model: Option<ModelId>,
 }

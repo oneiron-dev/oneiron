@@ -1,12 +1,15 @@
 //! Persisted persona snapshot export vocabulary and exact MessagePack codec.
 
-use std::collections::BTreeSet;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use std::collections::BTreeSet;
 
 mod codec;
 pub use codec::{decode_persona_snapshot_export_body, encode_persona_snapshot_export_body};
-pub(crate) use codec::{invalid_snapshot, validate_fingerprint_hex, validate_row_id_list, hash_hex, validate_persona_snapshot_export_body_bytes};
+pub(crate) use codec::{
+    hash_hex, invalid_snapshot, validate_fingerprint_hex,
+    validate_persona_snapshot_export_body_bytes, validate_row_id_list,
+};
 
 /// Schema version string carried by every persona snapshot compile stamp.
 ///

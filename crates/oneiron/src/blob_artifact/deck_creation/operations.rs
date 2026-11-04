@@ -2,16 +2,16 @@
 use super::*;
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::ScopedRead;
-use crate::consent::AuthenticatedOwner;
 use crate::blob_artifact::deck_creation::record::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
+use crate::claim::ScopedRead;
+use crate::consent::AuthenticatedOwner;
 use crate::file_secret_marks::SecretSight;
 use crate::memory::Memory;
 use crate::ports::ClaimReadStatus;
-use crate::vault::entity_refs::resolve_entity_ref;
 use crate::typed_body::LiftedSources;
+use crate::vault::entity_refs::resolve_entity_ref;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;

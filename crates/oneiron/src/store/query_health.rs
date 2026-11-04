@@ -24,7 +24,6 @@ pub struct WakeEvaluationReport {
     pub resume_after: Option<EntityId>,
 }
 
-
 pub(crate) const HEALTH: SideTable<EntityId, SavedQueryHealth, Named> =
     SideTable::new(&side_table::SAVED_QUERY_HEALTH);
 

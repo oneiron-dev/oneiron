@@ -3,8 +3,8 @@
 use super::EditOp;
 use crate::error::{ArtifactError, Error, Result};
 
-pub use crate::blob_artifact::office_address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub(super) use crate::blob_artifact::office_address::column_to_letters;
+pub use crate::blob_artifact::office_address::{Axis, CellRef, OfficeFormat, RangeRef};
 
 /// Enforces the 1-based cell/range/axis invariant across a plan's ops before
 /// any of them reaches a session or the renderer. [`CellRef::new`] and
