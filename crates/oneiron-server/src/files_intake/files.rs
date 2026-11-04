@@ -65,12 +65,30 @@ fn excludes(exclude: &[String], path: &str) -> bool {
     })
 }
 
+/// Whether `dir` still names the retained vault: following links, as the
+/// vault root is canonical. A renamed-away spelling, or a replacement
+/// directory reusing it, no longer matches (REVIEW-4381 P1).
+#[cfg(unix)]
+fn still_names_vault(dir: &Path, vault: (u64, u64)) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(dir)
+        .map(|meta| (meta.dev(), meta.ino()) == vault)
+        .unwrap_or(false)
+}
+
+/// No identity off unix: every string still applies.
+#[cfg(not(unix))]
+fn still_names_vault(_dir: &Path, _vault: (u64, u64)) -> bool {
+    true
+}
+
 /// Every file under `folder` that `exclude` leaves, in path order: its
 /// notes, a file past the note bound as its parts, and the files it holds
 /// by name only. A file whose size and mtime both match `prior`'s record is
-/// not read (FIX 1365). `vault_dir` is this vault's own folder: a source
-/// that holds it passes over everything in it, so the vault never ingests
-/// itself (FIX 10249).
+/// not read (FIX 1365). `vault_dir` is this vault's own folder and
+/// `vault_id` its retained identity: a source that holds the vault passes
+/// over everything in it, so the vault never ingests itself (FIX 10249).
+/// Strings that no longer name the retained vault exclude nothing.
 pub(super) fn read_files(
     folder: &Path,
     exclude: &[String],
@@ -94,6 +112,15 @@ pub(super) fn read_files(
             dirs
         })
         .unwrap_or_default();
+    // A vault renamed after open leaves its old spelling behind: strings
+    // that no longer name the retained vault exclude nothing, and a
+    // replacement directory at the old path reads as ordinary documents.
+    // The descriptor-bound walk still passes over the real vault wherever
+    // it lives. Without an identity every string still applies.
+    let vault_dirs: Vec<std::path::PathBuf> = vault_dirs
+        .into_iter()
+        .filter(|dir| vault_id.is_none_or(|id| still_names_vault(dir, id)))
+        .collect();
     // The walk opens the folder as the host holds it now, following a root
     // symlink: a source folder swapped for a link into the vault would
     // otherwise read the vault under the link's spelling, which neither the

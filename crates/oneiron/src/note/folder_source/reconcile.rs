@@ -416,8 +416,17 @@ impl Vault {
         if current == file.markdown || content_unchanged {
             // An open proposal is the owner's unaccepted fork: its links are
             // not the vault's to reconcile, and neither its state nor its
-            // landed hash moves until the owner decides (REVIEW-4381 P1).
-            let proposal_open = matches!(row.state, FolderFileState::Proposed { .. });
+            // landed hash moves until the owner decides. A fork the owner
+            // already decided settles here instead of preserving a stale
+            // landed hash (REVIEW-4381 P1).
+            let proposal_open = match &row.state {
+                FolderFileState::Proposed { fork: Some(id) } => {
+                    let txn = self.store.env.read_txn()?;
+                    !crate::recovery::note_fork_decided(self, &txn, id)?
+                }
+                FolderFileState::Proposed { fork: None } => true,
+                _ => false,
+            };
             // The note already holds the file's text; only its links may be
             // behind (their landing failed, or their target landed since).
             // A file the host could not resolve whole leaves them alone.
@@ -454,12 +463,24 @@ impl Vault {
                 report.unchanged += 1;
             }
             return self.with_write_txn(|txn| {
-                if file.links.is_some() {
+                // No links, no meta: the row stays pending so the shortcut
+                // re-reads it and a later whole read reconciles the links
+                // this scan left alone (REVIEW-4381 P1).
+                if file.links.is_none() {
+                    row.meta = None;
+                } else {
                     let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                     if row.first_seen_at == 0 {
                         row.first_seen_at = at;
                     }
-                    row.meta = next_meta(row.meta, facts, at, Some(at));
+                    // An open proposal keeps its indexing history: its text
+                    // has not landed.
+                    let indexed_at = if proposal_open {
+                        row.meta.and_then(|meta| meta.indexed_at)
+                    } else {
+                        Some(at)
+                    };
+                    row.meta = next_meta(row.meta, facts, at, indexed_at);
                 }
                 FILES.put(&self.store, txn, &key, &row)
             });
@@ -543,7 +564,12 @@ impl Vault {
         // whole read reconciles the links left alone (REVIEW-4381 P1).
         row.file_hash = hash;
         self.with_write_txn(|txn| {
-            if file.links.is_some() {
+            // No links, no meta: the row stays pending so the shortcut
+            // re-reads it and a later whole read reconciles the links this
+            // scan left alone (REVIEW-4381 P1).
+            if file.links.is_none() {
+                row.meta = None;
+            } else {
                 let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                 let indexed_at = if indexed || retracted {
                     Some(at)

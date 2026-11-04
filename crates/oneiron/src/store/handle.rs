@@ -813,6 +813,26 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// The vault directory's identity from the descriptor the open bound,
+    /// never a fresh pathname lookup: a rename after open cannot redirect
+    /// it (REVIEW-4381 P1). None where the open retained no descriptor.
+    pub(crate) fn bound_root_identity(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .map(|meta| (meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
         #[cfg(unix)]

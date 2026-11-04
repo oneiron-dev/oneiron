@@ -35,9 +35,10 @@ pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     EntityId::derive(EMBEDDED_OWNER_ACTOR, &[])
 }
 
-/// The directory's identity while its path is fresh: following links,
-/// as the vault root is canonical by the time it is retained. None where
-/// the host cannot name it (REVIEW-4381 P1).
+/// The directory's identity from its path while it is fresh: following
+/// links, as the vault root is canonical by the time it is retained. Only
+/// the fallback where the open kept no bound descriptor; None where the
+/// host cannot name it (REVIEW-4381 P1).
 #[cfg(unix)]
 fn directory_identity(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
@@ -564,10 +565,13 @@ impl Vault {
         // Cloned before `config` moves into the handle: the retained copy is
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
-        // The vault directory's identity while its path is fresh at open;
-        // folder reads exclude it by identity, never by strings alone
-        // (REVIEW-4381 P1).
-        let dir_identity = directory_identity(store.env.path());
+        // The vault directory's identity from the descriptor the open
+        // bound, never a fresh pathname lookup: a rename after open (even
+        // during the open itself) cannot redirect it. Falls back to the
+        // path only where the open retained no descriptor (REVIEW-4381 P1).
+        let dir_identity = store
+            .bound_root_identity()
+            .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(
