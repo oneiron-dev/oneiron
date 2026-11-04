@@ -199,10 +199,7 @@ pub use report::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
-    /// The output bytes with the reservation that holds them (FIX 8452):
-    /// clones share the buffer and its lease through the `Arc`, so no clone
-    /// is memory nothing reserved. The lease drops with the last owner.
-    pub bytes: crate::memory::SharedBytes,
+    pub bytes: Vec<u8>,
     pub evidence_sha256: Sha256Digest,
     pub requested_profile: PadesProfile,
     pub achieved_profile: PadesProfile,
@@ -505,17 +502,15 @@ pub mod config {
         pub content_type: Option<String>,
     }
 
-    /// A fetched response. Its body and content type are admitted memory
-    /// (FIX 7655, FIX 8455): their bytes were reserved before they were
-    /// allocated, and every owner shares them and their reservation, so a
-    /// clone copies no bytes. A custom fetcher builds them with
-    /// `AdmittedBytes::copy_from` (or `AdmittedBytes::shared_empty`) and
-    /// `AdmittedStr::copy_from` (or `AdmittedStr::shared_empty`) over the engine's
-    /// `SealResourceLimits::memory`.
+    /// A fetched response. Its body is admitted memory (FIX 7655): its bytes
+    /// were reserved before they were allocated, and every owner shares them
+    /// and their reservation, so a clone copies no bytes. A custom fetcher
+    /// builds it with `AdmittedBytes::copy_from` (or `AdmittedBytes::empty`)
+    /// over the engine's `SealResourceLimits::memory`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchResponse {
         pub body: crate::memory::SharedBytes,
-        pub content_type: Option<crate::memory::SharedStr>,
+        pub content_type: Option<String>,
     }
 
     #[derive(Debug, thiserror::Error)]
