@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::CheckPhase;
 use crate::EntityId;
 use crate::error::Result;
-use crate::memory::code_view_doors::CodeBuildSpec;
+use crate::build_cache::command_spec::CodeBuildSpec;
 use crate::store::attempt_id::AttemptId;
 use crate::store::contract_oracle::invalid;
 
