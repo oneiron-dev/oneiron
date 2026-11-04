@@ -264,9 +264,9 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
-) -> Result<BTreeSet<AttemptId>> {
+) -> Result<BTreeMap<AttemptId, BTreeSet<EntityId>>> {
     if actors.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(BTreeMap::new());
     }
     let mut owners = BTreeSet::new();
     for actor in actors {
@@ -275,7 +275,10 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
         }
     }
     // A BYOA row's task is the TASK its `task_ref` names, as canonical hex.
-    let tasks: BTreeSet<String> = actors.iter().map(EntityId::to_hex).collect();
+    let tasks: BTreeMap<String, EntityId> = actors
+        .iter()
+        .map(|actor| (actor.to_hex(), *actor))
+        .collect();
     // The planned intents an asker's erase took; the intents' own erase ran
     // first in this transaction (FIX 9181).
     let asker_intents =
@@ -415,8 +418,8 @@ fn erase_program_admission_payloads_in_txn(
 #[derive(Default)]
 struct ByoaRows {
     rows: BTreeMap<AttemptId, ByoaRow>,
-    /// The rows whose `task_ref` names an erased TASK.
-    tasks: BTreeSet<AttemptId>,
+    /// Original task/typed matches, before any CliAttempt source expansion.
+    sources: BTreeMap<AttemptId, BTreeSet<EntityId>>,
 }
 
 /// One kept BYOA row: its stored bytes, the row, and its payload when that
@@ -428,23 +431,17 @@ struct ByoaRow {
 }
 
 impl ByoaRows {
-    fn gather(&mut self, raw: &[u8], record: AttemptRecord, tasks: &BTreeSet<String>) {
+    fn gather(&mut self, raw: &[u8], record: AttemptRecord, tasks: &BTreeMap<String, EntityId>) {
         let payload = decode_byoa_attempt_payload(&record.payload).ok();
-        let task = record
-            .task_ref
-            .as_ref()
-            .is_some_and(|task| tasks.contains(task));
-        let typed = payload
-            .as_ref()
-            .is_some_and(|payload| dev_refs_match(payload, tasks));
+        let sources = matched_byoa_sources(&record, payload.as_ref(), tasks);
         let refers = payload
             .as_ref()
             .is_some_and(|payload| payload.work.is_some() || pins(payload).next().is_some());
-        if !task && !typed && !refers {
+        if sources.is_empty() && !refers {
             return;
         }
-        if task || typed {
-            self.tasks.insert(record.id);
+        if !sources.is_empty() {
+            self.sources.insert(record.id, sources);
         }
         let id = record.id;
         self.rows.insert(
@@ -466,9 +463,9 @@ impl ByoaRows {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         rewrites: &mut Vec<(Vec<u8>, AttemptRecord)>,
-    ) -> Result<(BTreeSet<[u8; 32]>, BTreeSet<AttemptId>)> {
-        let mut owned = self.tasks.clone();
-        for id in &self.tasks {
+    ) -> Result<(BTreeSet<[u8; 32]>, BTreeMap<AttemptId, BTreeSet<EntityId>>)> {
+        let mut owned = self.sources.clone();
+        for (id, sources) in &self.sources {
             let source = self
                 .rows
                 .get(id)
@@ -487,10 +484,14 @@ impl ByoaRows {
                 };
                 self.rows.insert(source, row);
             }
-            owned.insert(source);
+            // Only the original child's matches flow to its one-hop source.
+            owned
+                .entry(source)
+                .or_default()
+                .extend(sources.iter().copied());
         }
         let mut jobs = BTreeSet::new();
-        for id in &owned {
+        for id in owned.keys() {
             if let Some(payload) = self.rows.get(id).and_then(|row| row.payload.as_ref()) {
                 jobs.extend(pins(payload).map(|pin| pin.blake3));
             }
@@ -501,7 +502,7 @@ impl ByoaRows {
                 mut record,
                 payload,
             } = row;
-            let own = owned.contains(&id);
+            let own = owned.contains_key(&id);
             match payload {
                 Some(mut payload) => {
                     let changed = erase_byoa_payload(&mut payload, own, &jobs);
@@ -553,16 +554,27 @@ fn read_byoa_row(store: &Store, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<
     }))
 }
 
-/// Whether a dev-runner payload names an erased actor, diagnostic or evidence
-/// row by a typed reference (FIX 7621). No staged job text enters this match.
-fn dev_refs_match(payload: &ByoaAttemptPayload, erased: &BTreeSet<String>) -> bool {
-    let Some(refs) = payload.dev_refs.as_ref() else {
-        return false;
-    };
-    std::iter::once(&refs.actor)
-        .chain(refs.diagnostics.iter())
-        .chain(refs.evidence.iter())
-        .any(|id| erased.contains(&bytes_to_hex_lower(id)))
+/// The exact accepted erase sources that own this row, before payload scrubbing.
+fn matched_byoa_sources(
+    record: &AttemptRecord,
+    payload: Option<&ByoaAttemptPayload>,
+    tasks: &BTreeMap<String, EntityId>,
+) -> BTreeSet<EntityId> {
+    let mut sources = BTreeSet::new();
+    if let Some(actor) = record.task_ref.as_ref().and_then(|task| tasks.get(task)) {
+        sources.insert(*actor);
+    }
+    if let Some(refs) = payload.and_then(|payload| payload.dev_refs.as_ref()) {
+        for raw in std::iter::once(&refs.actor)
+            .chain(refs.diagnostics.iter())
+            .chain(refs.evidence.iter())
+        {
+            if let Some(actor) = tasks.get(&bytes_to_hex_lower(raw)) {
+                sources.insert(*actor);
+            }
+        }
+    }
+    sources
 }
 
 /// The staged jobs `payload` pins: its CLI connector's and its bound work's.

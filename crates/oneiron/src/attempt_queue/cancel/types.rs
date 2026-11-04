@@ -188,7 +188,7 @@ impl ForceCancelAuthority {
         let queue = crate::attempt_queue::AttemptQueue::new(vault);
         let now = vault.store.clock.now_recorded_at();
         let mut cancelled = Vec::new();
-        for id in owned {
+        for id in owned.into_keys() {
             let authority = Self {
                 grounds: ForceCancelGrounds::ErasedPayload,
                 actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
