@@ -698,7 +698,7 @@ fn erase_byoa_payload(
 /// actor keeps the text. Read in the writer's transaction. A marker that cannot be read,
 /// or a payload that cannot be rewritten, leaves `record` as it was and is
 /// logged without its content: the fence never fails the write it stands in.
-pub(super) fn scrub_hard_erased_payload_in_txn(
+pub(crate) fn scrub_hard_erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
