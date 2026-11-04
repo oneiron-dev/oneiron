@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -76,6 +76,16 @@ pub(crate) trait StoreAttemptOperations: Send + Sync {
     /// The engine's `attempt_queue::dispatch_payload_actor`: who owns
     /// `record`'s dispatch text, its target AGENT_DEF.
     fn dispatch_payload_actor(&self, record: &AttemptRecord) -> Option<EntityId>;
+
+    /// The engine's `attempt_queue::scrub_hard_erased_payload_in_txn`: the
+    /// erase fence a queue write runs on `record` before it encodes it (FIX
+    /// 7076). It never fails the write it stands in.
+    fn scrub_hard_erased_payload_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        record: &mut AttemptRecord,
+    );
 }
 
 /// The derived-row eraser the per-entity sweep names for FIX 10460: the
