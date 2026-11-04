@@ -665,19 +665,17 @@ impl Vault {
             .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
         let read = self.scoped_read(actor);
         let destination = listing_destination();
-        Ok(
-            newest_claims(
-                self,
-                &txn,
-                &read,
-                subject,
-                &Scope::default(),
-                None,
-                &destination,
-            )?
-            .into_iter()
-            .map(|(known, _)| known.id)
-            .collect(),
-        )
+        Ok(newest_claims(
+            self,
+            &txn,
+            &read,
+            subject,
+            &Scope::default(),
+            None,
+            &destination,
+        )?
+        .into_iter()
+        .map(|(known, _)| known.id)
+        .collect())
     }
 }

@@ -641,8 +641,13 @@ fn readable_notes(
             thing: None,
             destination,
         };
-        let (listed, _) =
-            discover_in(vault, &txn, &listing, ListingPin::note(attempt, *id), &passage)?;
+        let (listed, _) = discover_in(
+            vault,
+            &txn,
+            &listing,
+            ListingPin::note(attempt, *id),
+            &passage,
+        )?;
         notes.push(Note {
             id: *id,
             version,

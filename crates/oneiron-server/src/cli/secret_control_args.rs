@@ -1,5 +1,6 @@
-//! Flags for `oneiron secrets bind`, `unbind`, `pending` and
-//! `import-supplement` (FIX 2620, 11158, 12068): the owner's bindings of a
+//! Flags for `oneiron secrets bind`, `unbind`, `pending`,
+//! `show-supplement` and `import-supplement` (FIX 2620, 11158, 12068, 12296):
+//! the owner's bindings of a
 //! secret to an effector, a restore's credentials pending on their source's
 //! evidence, and the import of an export secret supplement. None reads a
 //! value.
@@ -69,6 +70,18 @@ pub struct SecretPendingArgs {
     /// gone, keep these". It is your election, not a check of the source.
     #[arg(long, value_name = "WORD", requires = "keep")]
     pub confirm: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// `oneiron secrets show-supplement` reads one supplement by its
+/// request's entry on the command line: it reads nothing from stdin.
+#[derive(Args, Clone, Debug)]
+pub struct SecretShowSupplementArgs {
+    /// The export secret request's signed authority-log entry, as 64 hex:
+    /// the supplement read's `request`.
+    pub request: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,
