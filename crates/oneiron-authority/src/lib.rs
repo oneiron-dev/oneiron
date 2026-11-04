@@ -5,6 +5,7 @@
 //! `oneiron::<module>` path; applications depend on `oneiron`, not on this crate.
 
 pub mod authority;
+pub mod channel_address;
 pub mod credential_door;
 pub mod federation;
 pub mod share_travel;
