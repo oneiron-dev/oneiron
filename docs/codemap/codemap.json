@@ -43430,7 +43430,7 @@
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -50821,7 +50821,7 @@
      "path": "src/model_decision/state.rs",
      "purpose": "Caller-prepared decision state fitting",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
