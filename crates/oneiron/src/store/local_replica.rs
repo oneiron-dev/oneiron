@@ -53,12 +53,12 @@ use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
+use crate::store::loro_tombstones::TombstoneIndex;
+use crate::store::replica_edge_key::format_edge_key;
 use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
-use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::residence::residence_window_for_blob;
 use crate::temporal::TimeRange;
 use crate::window_key::WindowKey;
@@ -364,7 +364,11 @@ impl<'a> Census<'a> {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
             KeepReason::Pending
-        } else if crate::workspace_roster::reject_audience_edit_delete(self.store, txn, id).is_err()
+        } else if self
+            .store
+            .delete_guards
+            .reject_audience_edit_delete(self.store, txn, id)
+            .is_err()
         {
             // A kept audience edit stays whatever the caller keeps (FIX 5639).
             KeepReason::Guarded
@@ -509,12 +513,24 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
     crate::task_authority::reject_fact_delete(store, txn, id).is_err()
-        || crate::workspace_roster::refuse_revision_delete(store, txn, id).is_err()
-        || crate::workspace_roster::guard_goal_delete(store, txn, *id).is_err()
-        || crate::federation::reject_ruling_delete(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .refuse_revision_delete(store, txn, id)
+            .is_err()
+        || store
+            .delete_guards
+            .guard_goal_delete(store, txn, *id)
+            .is_err()
+        || store
+            .delete_guards
+            .reject_ruling_delete(store, txn, id)
+            .is_err()
         || crate::claim::history_store::reject_machine_history_delete(store, txn, id).is_err()
         || store.guard_pack_map_carrier_delete_in_txn(txn, id).is_err()
-        || crate::identity_topology::guard_batch_identity_delete_in_txn(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .guard_batch_identity_delete_in_txn(store, txn, id)
+            .is_err()
 }
 
 /// Tears one member's local rows. Every step is a local index or projection

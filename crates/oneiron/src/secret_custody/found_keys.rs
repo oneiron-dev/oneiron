@@ -47,7 +47,10 @@ use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::found_key_notice_queue::DUE;
 use crate::vault::Vault;
+
+pub(crate) use crate::store::found_key_notice_queue::found_key_notices_due_in_txn;
 
 pub use self::actions::{FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET};
 pub(crate) use self::actions::{
@@ -68,9 +71,6 @@ const REASON_PREFIX: &str = "gate.secret_scan.";
 
 /// Each record's found keys. Key: the record's id.
 const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY);
-
-/// The records whose notice is still due, with when their keys were found.
-const DUE: SideTable<EntityId, u64, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY_DUE);
 
 pub use crate::secret_record::FoundKeyAction;
 
@@ -221,12 +221,6 @@ pub(crate) fn note_found_keys_in_txn(
     Ok(())
 }
 
-/// Whether a record is due its notice, read through `txn`: what
-/// [`raise_found_key_notices_in_txn`] raises at the next write's commit.
-pub(crate) fn found_key_notices_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(DUE.iter_from(&vault.store, txn, &[])?.next().is_some())
-}
-
 /// Raises the notices of the next [`NOTICES_PER_WRITE`] records left due, in
 /// a write of their own: the housekeeping drain for a vault that goes quiet
 /// with more due than one write raises (FIX 2648). That write carries nothing
@@ -327,6 +321,64 @@ pub(super) fn found_key_custody_in_txn(
         .map_or_else(Vec::new, |found| {
             found.keys.iter().map(|key| key.custody).collect()
         }))
+}
+
+/// Moves a deleted side row's found-key state to its replacement's origin (FIX
+/// 12779, REVIEW-4444 follow-up): every `FOUND` key under `old` joins `new`,
+/// merged by custody without losing either side's settlement or the earliest
+/// `found_at`, and `old`'s `DUE` marker moves to `new` without losing a
+/// destination marker. Leaves no `FOUND`/`DUE` under `old`. Each moved
+/// custody's mask origin is rebound `old` -> `new` only when it still names
+/// `old`, so a known value the row references keeps its owner. Skips cleanly
+/// when `old` holds nothing. Runs in the caller's write transaction, with the
+/// row move it follows: the handles the new row keeps still resolve.
+pub(crate) fn move_side_row_custody_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    if let Some(old_found) = FOUND.get(store, wtxn, old)? {
+        for key in &old_found.keys {
+            crate::batch::secret_scan::rebind_mask_origin_in_txn(
+                store,
+                wtxn,
+                &key.custody,
+                old,
+                new,
+            )?;
+        }
+        let mut merged = FOUND.get(store, wtxn, new)?.unwrap_or_default();
+        for key in old_found.keys {
+            match merged
+                .keys
+                .iter_mut()
+                .find(|held| held.custody == key.custody)
+            {
+                Some(held) => {
+                    if held.settled.is_none() {
+                        held.settled = key.settled;
+                    }
+                    held.found_at = held.found_at.min(key.found_at);
+                }
+                None => merged.keys.push(key),
+            }
+        }
+        if !merged.keys.is_empty() {
+            FOUND.put(store, wtxn, new, &merged)?;
+        }
+        FOUND.delete(store, wtxn, old)?;
+    }
+    if let Some(old_due) = DUE.get(store, wtxn, old)? {
+        if DUE.get(store, wtxn, new)?.is_none() {
+            DUE.put(store, wtxn, new, &old_due)?;
+        }
+        DUE.delete(store, wtxn, old)?;
+    }
+    Ok(())
 }
 
 /// The values the owner ruled no secret or kept as text by choice, by record:
