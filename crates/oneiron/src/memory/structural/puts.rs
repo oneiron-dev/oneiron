@@ -193,7 +193,7 @@ impl Memory<'_> {
         };
         let record = self.with_actor_content_write_txn(|content| {
             Ok(content.update_artifact(artifact_id, |txn| {
-                self.vault.append_blob_artifact_version_in_txn(
+                self.vault.append_blob_artifact_version_from_host_in_txn(
                     txn,
                     &artifact_id,
                     bytes,
@@ -201,6 +201,10 @@ impl Memory<'_> {
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    None,
+                    None,
+                    None,
+                    self.task_host(),
                 )
             })?)
         })?;
