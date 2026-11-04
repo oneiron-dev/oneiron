@@ -19,11 +19,6 @@ pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 /// instead of an engine error.
 pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
 
-/// Display labels ride stamps, notices, and receipts; bounded to the same
-/// scale as the counterparty key so up to [`MAX_INTERLOCUTOR_THIRD_PARTIES`]
-/// labels stay a bounded echo/work cost.
-pub(crate) const MAX_INTERLOCUTOR_LABEL_BYTES: usize = 512;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
@@ -181,7 +176,7 @@ pub(crate) struct CoreInterlocutorParty {
     #[serde(default)]
     #[schema(example = "kenji@example.com")]
     pub(super) counterparty: Option<String>,
-    /// Display label for an untyped party.
+    /// Display label for an untyped party, echoed in stamps, notices and receipts.
     #[serde(default)]
     #[schema(example = "unknown speaker 2")]
     pub(super) label: Option<String>,
