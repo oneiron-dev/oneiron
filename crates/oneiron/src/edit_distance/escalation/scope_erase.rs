@@ -38,11 +38,7 @@ pub(crate) fn erase_escalation_scope_in_txn(
 
 /// Rewrites the scope of every ledger row naming `hex` to the erased token
 /// and re-keys it under the recomputed digest.
-fn erase_ledger_scopes_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    hex: &str,
-) -> Result<()> {
+fn erase_ledger_scopes_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, hex: &str) -> Result<()> {
     let rows = ESCALATION
         .iter_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -61,11 +57,7 @@ fn erase_ledger_scopes_in_txn(
 /// Rewrites the scope of every standing-policy row naming `hex`, re-keys it
 /// under the recomputed digest, and clears the answerer pair on every row the
 /// erased holder answered.
-fn erase_policy_scopes_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    hex: &str,
-) -> Result<()> {
+fn erase_policy_scopes_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, hex: &str) -> Result<()> {
     let rows = STANDING_POLICY
         .iter_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
