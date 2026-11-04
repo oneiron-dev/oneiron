@@ -116,7 +116,9 @@ pub use self::store::{
     mined_skill_edit, miner_watermark, pending_substitution_skill_edits, resolve_mined_skill_edit,
 };
 pub use self::target::CompilationTarget;
-pub(crate) use self::target::{is_compiled_preference, validate_compiled_preference};
+pub(crate) use self::target::{
+    CompilationTargetValidation, is_compiled_preference, validate_compiled_preference,
+};
 
 // The flat miner.rs module used to provide these names to the sibling test
 // module through `use super::*`: every miner-internal item the tests name

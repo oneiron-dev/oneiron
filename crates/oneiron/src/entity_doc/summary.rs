@@ -237,7 +237,7 @@ pub(crate) fn open_summary_proposal(
     let reader = memory.read_lane(crate::ports::ClaimReadStatus::Recorded)?;
     let sources = read_refs
         .iter()
-        .map(|reference| crate::memory::resolve_entity_ref(vault, reference))
+        .map(|reference| crate::vault::entity_refs::resolve_entity_ref(vault, reference))
         .collect::<oneiron_contracts::memory::MemoryResult<Vec<_>>>()?;
     if sources.contains(&request.entity) {
         return Err(oneiron_contracts::memory::MemoryError::bad_request(

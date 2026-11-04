@@ -39,6 +39,7 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
     attempt_operations: &EngineAttemptOperations,
+    core_write_operations: &EngineCoreWriteOperations,
 };
 
 /// The engine's delete guards.
@@ -1035,5 +1036,34 @@ impl StoreGateHooks for EngineGateHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
+    }
+}
+
+/// The engine's core write operations.
+pub(crate) struct EngineCoreWriteOperations;
+
+impl crate::store::StoreCoreWriteOperations for EngineCoreWriteOperations {
+    fn create_conversation_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        body: &crate::store::conversation_body::ConversationBody,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        text: &[(&str, &str)],
+    ) -> Result<()> {
+        crate::conversation::create_in_txn(vault, txn, id, body, actor, occurred, learned_at, text)
+    }
+
+    fn actor_is_vault_owner_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        actor: EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+    ) -> oneiron_contracts::memory::MemoryResult<bool> {
+        crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, actor_class)
     }
 }

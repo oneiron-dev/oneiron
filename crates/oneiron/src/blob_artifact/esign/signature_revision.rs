@@ -243,7 +243,7 @@ impl Base {
         // Declared before `doc`: reverse drop order keeps the hold alive
         // while the tables, copies, and decodes it admitted live in `doc`.
         let admission = Arc::new(BaseAdmission::new(
-            crate::office_body::document_resources().hold(),
+            crate::entity_doc::document_resources::document_resources().hold(),
         ));
         let doc = Document::load_mem_with_options(
             pdf,

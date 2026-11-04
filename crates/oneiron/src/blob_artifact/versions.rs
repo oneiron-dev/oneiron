@@ -4,7 +4,8 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use crate::blob_artifact::native_output::NativeOutput;
+use crate::edit_settle::{MadeByReader, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;

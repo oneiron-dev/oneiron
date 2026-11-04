@@ -8,7 +8,7 @@ use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::edit_roundtrip::OfficeFormat;
+use crate::blob_artifact::office_address::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};

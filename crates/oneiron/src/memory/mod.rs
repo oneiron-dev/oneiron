@@ -62,6 +62,7 @@ mod conflict_settle;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod core_write_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;

@@ -558,3 +558,6 @@ const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 mod tests;
 
 pub mod host_request;
+
+/// The most turns one transcript page returns.
+pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;
