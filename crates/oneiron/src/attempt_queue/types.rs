@@ -20,9 +20,7 @@ pub use cleanup::{
 pub use exhaust::AttemptTerminalExhaust;
 pub(crate) use hold::AttemptPause;
 
-/// Receipt-family ABI-pin rule: changing this requires a
-/// [`crate::store::STORAGE_ABI_VERSION`] bump.
-pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
+pub(crate) use crate::store::attempt_record::ATTEMPT_RECORD_VERSION;
 pub(super) const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
 pub(super) use crate::store::attempt_cleanup::ATTEMPT_QUEUE_RETRY_REASON_COUNT;
 

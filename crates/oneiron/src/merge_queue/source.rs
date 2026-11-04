@@ -129,7 +129,9 @@ impl Vault {
         work_ref: &str,
     ) -> Result<Option<QueueCheckWork>> {
         if work_ref.len() != 64 || !work_ref.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(crate::store::contract_oracle::invalid("work_ref must be a digest"));
+            return Err(crate::store::contract_oracle::invalid(
+                "work_ref must be a digest",
+            ));
         }
         let txn = self.store.env.read_txn()?;
         CHECK_WORK.get(&self.store, &txn, &format!("{store}:{work_ref}"))
