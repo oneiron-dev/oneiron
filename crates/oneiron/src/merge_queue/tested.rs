@@ -21,10 +21,10 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
-use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire};
 use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::contract_oracle::ContractOracle;
 use crate::store::{
     code_revision_identity::queue_provenance_id,
     code_revision_record::{CodeRevision, CodeTreeInventory},
