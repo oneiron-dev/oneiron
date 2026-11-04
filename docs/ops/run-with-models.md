@@ -3013,8 +3013,8 @@ carry no vault text and need no extraction permission.
 
 Programmatic hosts install `SyncServer::with_tagger_egress` with a typed
 `TaggerEgressPredicate`. An existing `with_extraction_egress` callback sees
-LLM requests only and does not authorize tagger inputs. Standard serve
-installs both callbacks under the same `[models] extraction_egress` flag.
+LLM requests only and does not authorize tagger inputs. Plain and managed
+serve install both callbacks under the same `[models] extraction_egress` flag.
 No source-read authority is minted by either callback; existing source,
 secret and off-record checks remain the callers' responsibility.
 
