@@ -51,11 +51,22 @@ pub enum ArtifactPublicationOutcome {
     Applied,
     /// A row it names has not arrived by window sync yet; send it again.
     Staged,
-    /// Malformed or inconsistent; sending it again would change nothing.
+    /// Admission denied, malformed or inconsistent; nothing was applied.
     Refused,
 }
 
 impl ArtifactPublicationOutcome {
+    /// Reads the outcome from an exactly framed whole-publication receipt.
+    pub fn from_receipt(payload: &[u8]) -> Option<Self> {
+        let [_, _, .., outcome] = payload else {
+            return None;
+        };
+        if payload.len() != RECEIPT_LEN {
+            return None;
+        }
+        Self::from_byte(*outcome)
+    }
+
     const fn byte(self) -> u8 {
         match self {
             Self::Applied => 0,

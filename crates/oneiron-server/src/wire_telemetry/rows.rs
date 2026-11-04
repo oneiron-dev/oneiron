@@ -234,6 +234,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::CommunityCacheBytes),
         Self::Engine(EngineLimit::ConnectorManifestEntries),
         Self::Engine(EngineLimit::SharedMergeEvidenceRows),
+        Self::Engine(EngineLimit::RequestedResultRows),
         Self::Engine(EngineLimit::TournamentLineageRows),
     ];
     /// The config key that sets the row, or, for the memory the embedder

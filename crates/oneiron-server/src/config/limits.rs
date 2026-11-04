@@ -398,6 +398,7 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            requested_result_rows,
             tournament_lineage_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
@@ -647,6 +648,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::RequestedResultRows, requested_result_rows),
             (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
         ] {
             if let Some(bound) = bound {
