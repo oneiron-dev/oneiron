@@ -10,6 +10,8 @@ use crate::entity_id::EntityId;
 use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnapshot};
 use crate::store::GateDecisionId;
 
+use super::rebind_types::{CodeConsentRebind, CodeConsentRebindProposal};
+
 /// The binding row's schema version.
 pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 2;
 
@@ -290,6 +292,8 @@ pub(crate) struct CodeConsentWaitRow {
     #[serde(default)]
     pub(crate) consumption: Option<CodeConsentConsumption>,
     pub(crate) revision: u64,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }
 
 impl CodeConsentWaitRow {
@@ -339,6 +343,7 @@ pub struct CodeConsentWaitView {
     pub wait_id: EntityId,
     pub run_id: EntityId,
     pub state: CodeConsentWaitState,
+    pub revision: u64,
     /// The verb row the held effect is.
     pub verb: String,
     /// The catalog name and tool of the held connector call; empty for a
@@ -389,4 +394,6 @@ pub struct CodeConsentWaitView {
     pub consumption_links: Option<CodeWaitReceiptLinks>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }

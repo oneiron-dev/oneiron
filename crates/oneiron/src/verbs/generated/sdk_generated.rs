@@ -3628,6 +3628,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.waits.rebind_prepare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest,
+                >(),
+            ),
+            (
+                "vault.code.waits.rebind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitRebindRequest,
+                >(),
+            ),
+            (
                 "vault.code.waits.resolve",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_wait_doors::CodeWaitResolveRequest,
@@ -7532,6 +7544,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "execute_code",
     "vault.code.model_heal_count",
     "vault.code.type_diagnostics",
+    "vault.code.waits.rebind",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
     "vault.results.status",
@@ -9371,6 +9384,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
+        >(),
+        "vault.code.waits.rebind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_wait_doors::CodeWaitRebindReceipt,
         >(),
         "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_wait_doors::CodeWaitReceiptView,
@@ -15172,6 +15188,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.type_diagnostics" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.waits.rebind_prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.waits.rebind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21320,6 +21350,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
                 decode(value.clone())?;
         }
+        "vault.code.waits.rebind_prepare" => {
+            let _input: crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.waits.rebind" => {
+            let _input: crate::memory::code_wait_doors::CodeWaitRebindRequest =
+                decode(value.clone())?;
+        }
         "vault.code.waits.resolve" => {
             let _input: crate::memory::code_wait_doors::CodeWaitResolveRequest =
                 decode(value.clone())?;
@@ -24699,6 +24737,10 @@ pub fn invoke(
         "vault.code.type_diagnostics" => {
             encode(vault_code_type_diagnostics(memory, decode(value)?)?)
         }
+        "vault.code.waits.rebind_prepare" => {
+            encode(vault_code_waits_rebind_prepare(memory, decode(value)?)?)
+        }
+        "vault.code.waits.rebind" => encode(vault_code_waits_rebind(memory, decode(value)?)?),
         "vault.code.waits.resolve" => encode(vault_code_waits_resolve(memory, decode(value)?)?),
         "vault.code.waits.receipt" => encode(vault_code_waits_receipt(memory, decode(value)?)?),
         "vault.results.status" => encode(vault_results_status(memory, decode(value)?)?),
@@ -31491,6 +31533,18 @@ pub fn vault_code_type_diagnostics(
         &memory.embedded_owner("vault.code.type_diagnostics")?,
         input,
     )
+}
+pub fn vault_code_waits_rebind_prepare(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest,
+) -> MemoryResult<crate::memory::code_wait_doors::CodeWaitRebindPrepared> {
+    memory.code_wait_rebind_prepare(input)
+}
+pub fn vault_code_waits_rebind(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitRebindRequest,
+) -> MemoryResult<crate::memory::code_wait_doors::CodeWaitRebindReceipt> {
+    memory.code_wait_rebind_as(&memory.embedded_owner("vault.code.waits.rebind")?, input)
 }
 pub fn vault_code_waits_resolve(
     memory: &Memory<'_>,

@@ -84,7 +84,7 @@ pub(crate) fn resume_answered(
         && let Err(refusal) = kept_instrument_auth(server, instrument, Some(&saved.witness), None)
     {
         vault
-            .refuse_answered_code_consent_wait(wait_id, refusal)
+            .refuse_answered_code_consent_wait(wait_id, &saved, refusal)
             .map_err(ledger_error)?;
         return Ok(());
     }

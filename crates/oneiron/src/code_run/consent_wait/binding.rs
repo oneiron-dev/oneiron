@@ -223,6 +223,8 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         settlement: None,
         consumption: None,
         revision: 0,
+        rebind_proposal: None,
+        rebinds: Vec::new(),
     };
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     Ok(Some(wait_id))
