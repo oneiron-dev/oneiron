@@ -597,7 +597,7 @@ fn open_one(
     resolved.page_seal = if oneiron::world_keys::vault_is_sealed(&spec.path)
         .map_err(|error| format!("shared env {vault_id} seal state unreadable: {error:#}"))?
     {
-        crate::commands::page_seal_at(&serve_path, None).map_err(|error| {
+        crate::commands::page_seal_at(&serve_path, &spec.path, None).map_err(|error| {
             format!("shared env {vault_id} page seal did not resolve: {error:#}")
         })?
     } else {
@@ -666,7 +666,7 @@ fn open_lane(
 ) -> Result<Arc<SyncConnection>, String> {
     let vault_id = spec.vault_id;
     let manager = Arc::new(WindowManager::new(
-        vault,
+        Arc::clone(&vault),
         Arc::new(Materializer::with_lease_vault_id(lease_vault_id)),
         SHARED_ENV_USER_ID,
     ));
