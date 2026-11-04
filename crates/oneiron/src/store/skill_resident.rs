@@ -125,14 +125,17 @@ pub(crate) fn validate_owner_put_in_txn(
         // An unresolved Candidate is inert; every other lawful lifecycle
         // state needs its owner before materialization and keeps a retry.
         if replicated
-            && record.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate
+            && record.lifecycle_status
+                != crate::write_envelope::skill_record::SkillLifecycle::Candidate
             && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &resident)?
         {
             return Err(Error::Artifact(
                 ArtifactError::ResidentOwnerDependencyPending,
             ));
         }
-        let deferred = replicated && record.lifecycle_status == crate::write_envelope::skill_record::SkillLifecycle::Candidate;
+        let deferred = replicated
+            && record.lifecycle_status
+                == crate::write_envelope::skill_record::SkillLifecycle::Candidate;
         require_resident_in_txn(store, txn, &resident, deferred)?;
     }
     Ok(())
