@@ -25,7 +25,7 @@ mod actor_erase;
 mod artifact;
 pub use actor_erase::{ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL, UnselectedLensProposalErase};
 pub(crate) use actor_erase::{erase_proposal_actor_in_txn, erase_slot_actor_in_txn};
-mod atom;
+use oneiron_lens_wire::lens::{atom, generated_ui, self_ui, validate, wire_ids};
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
 mod guest;
@@ -45,7 +45,6 @@ pub use inspection::{
 };
 pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
-mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
@@ -81,10 +80,6 @@ pub use selection::{
     LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
-mod self_ui;
-mod validate;
-mod wire_ids;
-mod wire_limits;
 
 #[cfg(test)]
 mod tests;
