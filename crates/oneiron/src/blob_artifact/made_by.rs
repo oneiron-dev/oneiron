@@ -102,7 +102,7 @@ pub(super) fn validate_version_made_by_in_txn(
         secret_scan::scan_metadata_field(text)?;
     }
     if let Some(trigger) = &made_by.trigger
-        && !crate::provenance::birth::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
+        && !crate::store::birth_record::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
     {
         return Err(invalid(
             "made_by trigger must name a live task, ask, run or skill",
