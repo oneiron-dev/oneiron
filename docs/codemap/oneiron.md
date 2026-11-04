@@ -72,15 +72,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/manifest.rs` | src | m | 12 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
 | `src/agent_def/mod.rs` | src | s | 1 mod · 6 re-export · 17 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
 | `src/agent_def/models.rs` | src | m | 7 fn · 1 const · 1 re-export · 7 crate-vis | — | The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words… |
-| `src/agent_def/optional_memory.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 const · 2 crate-vis | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
+| `src/agent_def/optional_memory.rs` | src | m | 4 fn · 2 const · 1 re-export · 2 crate-vis | — | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 10 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
 | `src/agent_def/portable_binding.rs` | src | m | 3 crate-vis | — | Frozen source tree identity at genuine local birth |
 | `src/agent_def/portable_knowledge.rs` | src | s | 3 crate-vis | — | The selected-knowledge facet's bytes (`knowledge/selected.json`) |
 | `src/agent_def/portable_source.rs` | src | s | 12 crate-vis | — | Immutable captured agent source |
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
-| `src/agent_def/refusal.rs` | src | s | 1 struct · 4 enum · 12 fn · 1 const · 4 crate-vis | RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
+| `src/agent_def/refusal.rs` | src | s | 3 enum · 12 fn · 1 const · 1 re-export · 4 crate-vis | RefusalDomain, RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
-| `src/agent_def/types.rs` | src | m | 2 struct · 17 fn · 15 re-export · 59 crate-vis | AgentDefinition, MemoryProfile | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_def/types.rs` | src | m | 17 fn · 17 re-export · 59 crate-vis | — | AgentDefinition domain types, key/limit consts, and constructors |
 | `src/agent_def/widening.rs` | src | s | 1 crate-vis | — | Which puts hand an agent definition back authority it gave up |
 | `src/agent_def/workflow.rs` | src | s | 6 fn · 1 re-export · 1 crate-vis | — | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
@@ -2645,7 +2645,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/native_recalc.rs` | src | s | 2 crate-vis | — | Stage-3 default: in-process xlsx recalculation over the host session |
 | `src/edit_roundtrip/native_recalc_tests.rs` | test | L | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
 | `src/edit_roundtrip/ops.rs` | src | m | 2 struct · 3 enum · 5 fn | AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift | Edit operation vocabulary and anchor effects |
-| `src/edit_roundtrip/paragraph_review.rs` | src | m | 2 struct · 1 fn · 4 crate-vis | ParagraphAsk, ParagraphJudgment | Typed questions over paragraphs (ARCH-0076 §2, "Paragraph or clause"): each selected paragraph of a DOCX… |
+| `src/edit_roundtrip/paragraph_review.rs` | src | m | 2 struct · 1 fn · 3 crate-vis | ParagraphAsk, ParagraphJudgment | Typed questions over paragraphs (ARCH-0076 §2, "Paragraph or clause"): each selected paragraph of a DOCX… |
 | `src/edit_roundtrip/pipeline.rs` | src | m | 1 struct · 2 enum · 3 fn | EditOutcome, EditProposal, RecalcStatus | Round-trip pipeline entry |
 | `src/edit_roundtrip/pptx/comments.rs` | src | s | 1 fn · 4 crate-vis | — | The engine door onto the docedit organ's modern-comment writer: engine identities become Office GUIDs, and… |
 | `src/edit_roundtrip/pptx/identities.rs` | src | s | 2 fn · 1 crate-vis | — | The engine door onto the docedit organ's slide and shape identities, and the annotation locator re-binding… |
@@ -2761,7 +2761,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/type_feedback.rs` | src | s | 5 crate-vis | — | A step's type feedback on the executor (FIX 8277): its check started beside its program, its feedback kept… |
 | `src/engine_executor/types.rs` | src | m | 13 struct · 5 enum · 2 trait · 8 fn · 1 type · 5 const · 3 crate-vis | CallableProgram, EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, ExecutorLegibility, JsCodeModeHost +12 | Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types |
 | `src/engine_executor/wire.rs` | src | m | 7 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
-| `src/engine_store_hooks.rs` | src | L | 8 crate-vis | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
+| `src/engine_store_hooks.rs` | src | L | 9 crate-vis | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
 | `src/entity_doc/carried.rs` | src | m | 12 crate-vis | — | A MESSAGE's document between the owner's machines (FIX 853) |
 | `src/entity_doc/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint getter of entity documents (KS7-2): each entity's head, citation floors, forks, pins, purge… |
 | `src/entity_doc/checkpoint/documents.rs` | src | m | 4 crate-vis | — | The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates… |
@@ -2969,15 +2969,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/ceiling.rs` | src | m | 38 crate-vis | — | — |
 | `src/gate/class_policy.rs` | src | m | 22 crate-vis | — | Vault-resident CLASS policy: waits and act postures, with holder narrowing |
 | `src/gate/coach_offer_reach.rs` | src | m | 2 fn · 5 crate-vis | — | The Coach's born-with reach to ask the vault owner about its own training offers (OF-577, FIX 856; Engine… |
-| `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 19 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
-| `src/gate/confirm/demotion_retry.rs` | src | s | 9 crate-vis | — | The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079) |
+| `src/gate/confirm.rs` | src | m | 1 enum · 2 fn · 2 const · 1 re-export · 15 crate-vis | CriticalWriteConfirmResolution | — |
+| `src/gate/confirm/demotion_retry.rs` | src | s | 2 crate-vis | — | The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079) |
 | `src/gate/confirm/status_grant.rs` | src | s | 3 crate-vis | — | The settlement status rewrite a critical confirm's timeout or answer grants: the single-use authority and… |
 | `src/gate/connector_admission.rs` | src | s | 7 crate-vis | — | Vault policy rows for connector admission capacity |
 | `src/gate/consolidation_readers.rs` | src | s | 3 crate-vis | — | The readers that consolidate a claim, and the question each asks first |
 | `src/gate/constants.rs` | src | s | 127 crate-vis | — | — |
 | `src/gate/consult_fanout_values.rs` | src | s | 4 struct · 1 crate-vis | ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, TaskCreateRateLimit | — |
 | `src/gate/curator_proposal.rs` | src | s | 1 crate-vis | — | The curator finding predicate used by gate policy |
-| `src/gate/decision.rs` | src | s | 28 crate-vis | — | — |
+| `src/gate/decision.rs` | src | s | 23 crate-vis | — | — |
 | `src/gate/decode/decode_class_policy.rs` | src | s | 2 crate-vis | — | `wait_policy` and `act_policy` row parsers |
 | `src/gate/decode/decode_docedit_resource.rs` | src | s | 1 crate-vis | — | Strict three-field document resource policy row decoder (FIX 10590) |
 | `src/gate/decode/decode_manifest.rs` | src | m | 9 crate-vis | — | Manifest envelope plus DecodedPolicyManifest assembly |
@@ -3067,7 +3067,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/project_depth/mod.rs` | src | s | 7 crate-vis | — | Immutable project-scoped policy-manifest contributions |
 | `src/gate/project_depth/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/gate/project_depth/write.rs` | src | m | 1 fn · 4 crate-vis | — | Transaction-bound project-policy birth and owner edit doors |
-| `src/gate/proposal_observation.rs` | src | s | 3 struct · 3 fn · 1 const · 6 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
+| `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 1 re-export · 6 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/record_references.rs` | src | m | 13 crate-vis | — | OF-063: one check that every record a write names resolves for its writer |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | s | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
@@ -3150,7 +3150,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/weave_correction_policy.rs` | src | s | 5 crate-vis | — | Vault-resident per-link correction quota and resolution precedence |
 | `src/gate/weave_grant.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | AutoWeaveGrantRequest, AutoWeaveWriterClass | The owner's auto-weave Grant (OF-351, FIX 3433) |
 | `src/gate/weave_policy.rs` | src | s | 14 crate-vis | — | Trusted manifest rows for the weave lens: nested narrowing, never read authority |
-| `src/gate/witness_message.rs` | src | m | 10 crate-vis | — | ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door |
+| `src/gate/witness_message.rs` | src | m | 9 crate-vis | — | ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door |
 | `src/gate/witness_message/binding.rs` | src | s | 1 crate-vis | — | Whole-envelope witness binding |
 | `src/genui/consent_cards.rs` | src | m | 3 struct · 2 enum · 21 fn | BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentAskCard, ConsentScopeEscalator | Consent-ask and bundle-approve cards with scope vocabularies |
 | `src/genui/consent_eval.rs` | src | m | 3 struct · 6 enum · 11 fn · 6 const · 11 crate-vis | ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentConfirmOutcome, ConsentSurface, GrantMintIntent +1 | DEC-0006 action vocabulary, request/decision/intent types and evaluation helpers |
@@ -5576,11 +5576,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative.rs` | src | m | 4 struct · 2 enum · 7 fn · 2 re-export · 2 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig, SpeculativeThreads | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `src/speculative/scoped.rs` | src | s | 3 fn · 5 crate-vis | — | Credential-bound candidate admission, inside every speculative pass |
 | `src/store/active_write_txn.rs` | src | s | 3 crate-vis | — | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
-| `src/store/actor_scrubs.rs` | src | s | 1 trait · 9 crate-vis | StoreActorScrubs | The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the… |
+| `src/store/actor_scrubs.rs` | src | s | 1 trait · 13 crate-vis | StoreActorScrubs | The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the… |
 | `src/store/agent_birth_custody.rs` | src | s | 6 crate-vis | — | Physical custody of a birthed agent's captured source, read side: which asset holds a child's source, which… |
 | `src/store/agent_birth_identity.rs` | src | s | 1 crate-vis | — | The derived id of the asset that carries a birthed agent's captured source |
+| `src/store/agent_definition.rs` | src | s | 1 struct | AgentDefinition | The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared… |
+| `src/store/agent_memory_profile.rs` | src | s | 1 struct | MemoryProfile | The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget… |
 | `src/store/agent_model.rs` | src | s | 1 struct | AgentModel | One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the… |
+| `src/store/agent_optional_memory.rs` | src | s | 1 struct · 1 enum | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the… |
 | `src/store/agent_record.rs` | src | s | 2 struct · 4 enum · 10 fn · 14 const | AgentCeiling, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef | Stored agent descriptors, schema keys and byte-observation thresholds |
+| `src/store/agent_refusal.rs` | src | s | 1 struct · 1 enum | RefusalDial, RefusalLevel | The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's… |
 | `src/store/agent_scope.rs` | src | s | 1 enum | AgentScope | The run scope persisted with an agent definition: every world, base reality only, or one world plus base… |
 | `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
 | `src/store/asset_body/mod.rs` | src | m | 22 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
@@ -5595,6 +5599,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 1 fn · 1 crate-vis | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/store/attempt_lease.rs` | src | s | 1 crate-vis | — | Lease-owner validation for queued-work storage ports |
 | `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
+| `src/store/attempt_operations.rs` | src | s | 2 crate-vis | — | The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and… |
 | `src/store/attempt_outcomes.rs` | src | s | 3 struct · 6 enum | AbandonAttempt, AbandonOutcome, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome, InterveneAttempt, InterveneOutcome +1 | What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim… |
 | `src/store/attempt_payload_retire.rs` | src | s | 1 crate-vis | — | Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it… |
 | `src/store/attempt_payload_route.rs` | src | s | 1 crate-vis | — | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
@@ -5693,6 +5698,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/credential_custody/erase/fence_journal.rs` | src | s | 2 crate-vis | — | A fence's fact reaches key custody at its erase (FIX 11211): each credential an erase fenced on this thread… |
 | `src/store/credential_custody/fences.rs` | src | m | 13 crate-vis | — | What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence… |
 | `src/store/critic_lens.rs` | src | s | 2 struct · 4 fn · 2 const · 10 crate-vis | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
+| `src/store/critical_confirm_record.rs` | src | s | 1 struct · 2 const · 5 crate-vis | CriticalWriteConfirmBinding | The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the… |
 | `src/store/custody_retirement_status.rs` | src | s | 1 const | — | Completion marker for acknowledged custody retirement |
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
 | `src/store/decision_ask_role.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | AskRole | The role a human decision ask goes to, and the serde form of an answer's actor |
@@ -5748,6 +5754,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/store/gate_decision/write_mode.rs` | src | s | 1 crate-vis | — | Claim-write decision recording and pending-consent mode |
 | `src/store/gate_hooks.rs` | src | s | 4 crate-vis | — | The gate hooks the store layer's open, write, erase and read paths run, supplied by the engine when a store… |
+| `src/store/gate_metrics.rs` | src | s | 5 crate-vis | — | One vault's gate outcome x reason-class counters |
 | `src/store/gate_reason.rs` | src | m | 12 crate-vis | — | Gate outcomes, stable reason codes, and pure metric classification |
 | `src/store/gate_receipt.rs` | src | s | 4 crate-vis | — | Deterministic receipt projection of a stored gate decision |
 | `src/store/grant_scope_custody.rs` | src | s | 3 crate-vis | — | A federation grant's scope opening keys (FIX 7907, 7958, L04's half): the secret each pact epoch's scope… |
@@ -5834,7 +5841,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 118 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 126 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | DescriptionPolicy, MeasuredDescription, ModelDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
@@ -5993,7 +6000,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/verb_invocation.rs` | src | s | 1 struct · 4 fn | InvocationId | Stable invocation identity across transport wrappers and runtime hooks |
 | `src/store/window_protocol.rs` | src | s | 2 enum · 1 const · 2 crate-vis | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/store/window_rows.rs` | src | s | 27 crate-vis | — | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/store/witness_message_body.rs` | src | m | 9 crate-vis | — | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/store/witness_message_body.rs` | src | m | 10 crate-vis | — | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/store/workflow_definition.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/store/world_authority.rs` | src | s | 3 struct · 8 fn · 1 crate-vis | ActiveWorldSelection, ResolvedWorldAuthority, WorldAuthoritySet | The world-access authority values (ONE-1420): one authority set of base reality plus sorted, unique world… |
 | `src/store/world_pad_custody.rs` | src | m | 15 crate-vis | — | The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's… |
