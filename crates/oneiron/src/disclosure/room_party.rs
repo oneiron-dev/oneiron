@@ -262,9 +262,7 @@ impl Vault {
         let admits = |id: &EntityId| read.is_ref_readable_with_policy_in(&txn, &policy, id);
         members
             .iter()
-            .map(|member| {
-                room_party_only_with(self, &txn, &fold, &owners, Some(&admits), *member)
-            })
+            .map(|member| room_party_only_with(self, &txn, &fold, &owners, Some(&admits), *member))
             .collect()
     }
 
