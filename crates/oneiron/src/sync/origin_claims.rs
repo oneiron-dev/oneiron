@@ -272,3 +272,96 @@ pub(crate) fn scrub_origin_claims(
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }
+
+/// Pins `key` history-free before the reverse mirror replaces the carrier
+/// under `map_key` with `raw`, when `raw` is that carrier's
+/// `skill.section_fit` receipt with more of whom it names erased (FIX
+/// 12769): the replaced operation still names them. The pin lands only
+/// when the carried receipt's actor leaf, scrubbed to `""`, is otherwise
+/// identical to the local replacement. Never an authority or replay check.
+///
+/// # Errors
+///
+/// The pin's write.
+pub(in crate::sync) fn pin_section_fit_replacement(
+    vault: &Vault,
+    key: &WindowKey,
+    entities: &LoroMap,
+    map_key: &str,
+    raw: &[u8],
+) -> Result<()> {
+    let Some(local_data) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(());
+    };
+    let Some(local) = section_fit_body(raw, local_data) else {
+        return Ok(());
+    };
+    let carried = map_get_bytes(entities, map_key).and_then(|blob| {
+        let data = blob.get(ENTITY_METADATA_HEADER_LEN..)?;
+        section_fit_body(&blob, data)
+    });
+    if let Some(carried) = carried {
+        let mut normalized = carried.clone();
+        if set_receipt_actor(&mut normalized) && normalized == local && normalized != carried {
+            super::window::require_history_free_window(vault, key)?;
+        }
+    }
+    Ok(())
+}
+
+/// Rewrites, under the same key, each `skill.section_fit` receipt carrier
+/// in `doc` whose actor leaf names an actor this vault erased (FIX 12769):
+/// every export, and the erase sweep. The window `history_free` names is
+/// pinned history-free first. Whether anything changed. Never an authority
+/// or replay check.
+///
+/// # Errors
+///
+/// Storage errors, or a rewrite that cannot be written.
+pub(crate) fn scrub_section_fit_receipts(
+    vault: &Vault,
+    doc: &LoroDoc,
+    history_free: Option<&WindowKey>,
+) -> Result<bool> {
+    let entities = doc.get_map("entities");
+    let mut carried = Vec::new();
+    map_for_each_bytes(&entities, |map_key, blob| {
+        if let Some(data) = blob.get(ENTITY_METADATA_HEADER_LEN..)
+            && let Some(body) = section_fit_body(blob, data)
+        {
+            let header = blob[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            carried.push((map_key.to_owned(), header, body));
+        }
+    });
+    let mut rewrites = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for (map_key, mut blob, body) in carried {
+            let Some(actor) = receipt_actor(&body).and_then(|leaf| EntityId::from_hex(leaf).ok())
+            else {
+                continue;
+            };
+            if !vault.carrier_actor_erased_in_txn(&rtxn, &actor)? {
+                continue;
+            }
+            let mut normalized = body.clone();
+            if !set_receipt_actor(&mut normalized) {
+                continue;
+            }
+            blob.extend_from_slice(&encode_claim_body(&normalized)?);
+            rewrites.push((map_key, blob));
+        }
+    }
+    if rewrites.is_empty() {
+        return Ok(false);
+    }
+    // Pin BEFORE the rewrite: the operation it replaces still names them.
+    if let Some(key) = history_free {
+        super::window::require_history_free_window(vault, key)?;
+    }
+    for (map_key, blob) in &rewrites {
+        map_insert_bytes(&entities, map_key, blob)?;
+    }
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
+}
