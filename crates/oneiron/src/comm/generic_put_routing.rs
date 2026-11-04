@@ -120,7 +120,14 @@ pub fn route_projector_only_comm_put_in_txn(
         CommPutRoute::Door => Ok(false),
         CommPutRoute::Projector(event) => {
             if let Some(event) = event {
-                event.record_in_txn(vault, wtxn, &mut RecordedEventProjection::default())?;
+                let mut projection = RecordedEventProjection::default();
+                event.record_in_txn(vault, wtxn, &mut projection)?;
+                // The source event and the rows its projection wrote go to
+                // the live-window mirror when the caller's write commits.
+                #[cfg(feature = "sync")]
+                crate::batch::queue_committed_rows(vault, wtxn, projection.into_written());
+                #[cfg(not(feature = "sync"))]
+                drop(projection);
             }
             Ok(true)
         }

@@ -16,10 +16,12 @@
 //! question froze. `approve_swap` binds the checkpoint through the training
 //! pack's swap core in that commit; `keep` records the answer and binds
 //! nothing. A deadline, default, abstention, or agent or companion word
-//! approves nothing. Either answer cuts the run's other open asks Stale, and
-//! an answered run is not asked again; the owner's direct swap door still
-//! serves it. Embedder runs are not asked: their swap stages a re-embed
-//! through a space move.
+//! approves nothing. A swap or keep cuts the run's other open asks Stale;
+//! a setup refusal records NeedsSetup on that ask alone. A swapped run, or a
+//! kept result at the same digest, is not asked again, but a changed result
+//! may be asked afresh; the owner's direct swap door still serves it.
+//! Embedder runs are not asked: their swap stages a re-embed through a space
+//! move.
 
 use std::collections::BTreeMap;
 
@@ -78,7 +80,7 @@ const OPTIONS: [(&str, SwapAnswer, &str); 2] = [
 ];
 
 /// Where one owner's question about one result stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwapAskState {
     /// Reserved or asked, with no answer yet.
@@ -87,6 +89,8 @@ pub enum SwapAskState {
     Swapped,
     /// This owner's `keep` kept the current model.
     Kept,
+    /// The owner's swap word reached a setup refusal; nothing bound.
+    NeedsSetup { reason: String },
     /// Another answer, the owner's direct swap or a newer result closed it.
     Closed,
 }
@@ -398,7 +402,8 @@ fn bind_group_in(
 }
 
 /// Each result the Coach may ask about, with the owners not asked about it
-/// yet. A run an owner answered is not asked again.
+/// yet. A swapped run is not asked again; a kept run is asked again only
+/// when its result digest changed.
 fn unasked(vault: &Vault) -> Result<Vec<Unasked>> {
     let txn = vault.store.env.read_txn()?;
     let runs = crate::training_pack::training_runs_in(vault, &txn)?;
@@ -413,10 +418,11 @@ fn unasked(vault: &Vault) -> Result<Vec<Unasked>> {
             continue;
         };
         let routes = ASKS.scan_from(&vault.store, &txn, run.id.as_bytes())?;
-        if routes
-            .iter()
-            .any(|(_, route)| matches!(route.state, SwapAskState::Swapped | SwapAskState::Kept))
-        {
+        if routes.iter().any(|(_, route)| {
+            matches!(&route.state, SwapAskState::Swapped)
+                || (matches!(&route.state, SwapAskState::Kept)
+                    && route.digest.as_str() == digest.as_str())
+        }) {
             continue;
         }
         let left = owners
@@ -471,6 +477,7 @@ fn issue_one(
                 author: WitnessAuthor::System,
                 message_type: SWAP_QUESTION_TYPE.to_owned(),
                 content: swap_question_text(&row.run, &route.expected)?,
+                parts: None,
                 metadata: Some(swap_question_metadata(&key)),
                 is_visible: true,
                 order: 0,
@@ -498,6 +505,17 @@ fn issue_one(
 /// the next tuple goes on. A run that raises no ask still waits for the
 /// owner's direct swap door.
 pub(crate) fn issue_training_swap_asks(vault: &Vault, now: u64) -> usize {
+    // One issuer: only the elected home asks, while every device keeps its
+    // idempotent upkeep. Before the first home election every device keeps
+    // today's behavior. A failed home read asks nothing.
+    match crate::dreamer_runner::maintenance::coach::training_offers_at_home(vault) {
+        Ok(true) => {}
+        Ok(false) => return 0,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "training swap asks home check failed");
+            return 0;
+        }
+    }
     let unasked = match unasked(vault) {
         Ok(unasked) => unasked,
         Err(error) => {
@@ -699,15 +717,29 @@ pub(super) fn resolve_answer_in(
     }
     let state = match choice {
         SwapAnswer::Swap => {
-            vault.approve_training_role_swap_in_txn(
+            match vault.approve_training_role_swap_in_txn(
                 txn,
                 owner,
                 &route.run,
                 SwapChoice::Evaluated,
                 None,
                 Some(&route.expected),
-            )?;
-            SwapAskState::Swapped
+            ) {
+                Ok(_) => SwapAskState::Swapped,
+                Err(
+                    error @ (Error::InvalidConfig(_)
+                    | Error::Refused(_)
+                    | Error::Gate(_)
+                    | Error::EntityNotFound),
+                ) => {
+                    let state = SwapAskState::NeedsSetup {
+                        reason: error.to_string(),
+                    };
+                    ASKS.put(&vault.store, txn, &key, &SwapAskRoute { state, ..route })?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
         }
         SwapAnswer::Keep => SwapAskState::Kept,
     };

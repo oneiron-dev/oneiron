@@ -156,7 +156,7 @@ impl Vault {
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
-                self.soft_erase_active_store_in_txn(wtxn, id, false)?;
+                self.soft_erase_active_store_in_txn(wtxn, id, false, None)?;
             if had_vector {
                 crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
@@ -408,10 +408,14 @@ impl Vault {
             ));
         }
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
-        crate::federation::reject_ruling_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
         let settled = match decoded.request_id.as_ref() {
@@ -429,7 +433,7 @@ impl Vault {
                 return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
-                || crate::workspace_roster::is_project_revision_type(
+                || crate::store::project_kind::is_project_revision_type(
                     &self.store,
                     header.entity_type,
                 )
