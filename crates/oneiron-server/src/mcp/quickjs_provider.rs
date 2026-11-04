@@ -455,6 +455,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         payer: Option<PayerPerson>,
         lease: Option<LiveLeaseState>,
     ) -> Option<Arc<dyn LlmBackend>> {
+        if self.injected.is_some() {
+            return None;
+        }
         self.reader_meter
             .as_ref()
             .map(|build| build(meter, payer, lease))
@@ -484,6 +487,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         planned: &PlannedModel,
         lease: Option<LiveLeaseState>,
     ) -> Option<Arc<dyn LlmBackend>> {
+        if self.injected.is_some() {
+            return None;
+        }
         self.planned_meter
             .as_ref()
             .map(|build| build(meter, payer, planned, lease))

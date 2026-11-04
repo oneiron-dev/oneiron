@@ -35,9 +35,10 @@ pub(crate) struct LiveLease<'a> {
 }
 
 /// The vault-free state of one live lease, shared with a code-mode backend so
-/// its per-rung looks use the caller's ledger, never a second booking.
+/// its per-rung looks use the caller's ledger, never a second booking. Opaque
+/// outside the crate: providers can forward it, never construct or inspect it.
 #[derive(Clone)]
-pub(crate) struct LiveLeaseState {
+pub struct LiveLeaseState {
     scope: Option<SpendScopeId>,
     meter: BudgetGuard,
     budget_units: u64,

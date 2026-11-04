@@ -236,7 +236,9 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
     /// [`Self::reader_backend`] with the caller's shared live-lease state.
     /// The default returns None, so an unmodified provider keeps the existing
-    /// LiveLeaseBackend wrapper and exactly one look per backend call.
+    /// LiveLeaseBackend wrapper and exactly one look per backend call. A Some
+    /// backend MUST look per rung on the threaded lease; one that cannot look
+    /// MUST return None and keep that wrapper.
     fn reader_backend_with_lease(
         &self,
         _meter: BudgetGuard,
@@ -371,6 +373,8 @@ pub trait McpCodeModeProvider: Send + Sync {
         None
     }
     /// [`Self::planned_backend`] with the caller's shared live-lease state.
+    /// A Some backend MUST look per rung on the threaded lease; one that cannot
+    /// look MUST return None and keep the existing LiveLeaseBackend wrapper.
     fn planned_backend_with_lease(
         &self,
         _meter: BudgetGuard,
