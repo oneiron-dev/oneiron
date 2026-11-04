@@ -153,6 +153,48 @@ impl Vault {
     /// * prior is no longer live → [`ClaimError::ProvenanceClaimAlreadyClosed`](crate::error::ClaimError::ProvenanceClaimAlreadyClosed);
     /// * `learned_at` older than the live frontier →
     ///   [`ClaimError::ProvenancePrecedenceViolation`](crate::error::ClaimError::ProvenancePrecedenceViolation).
+    /// Closes a just-restored still-live tied prior whose archived closer
+    /// is already present (blind-review P1 round 5, REVIEW-4378.md +
+    /// REVIEW-4378-kimi.md): the import loop found no later missing row to
+    /// name it, so the cohort would abort its final exact comparison with
+    /// the prior left live. Replays the writer's own closure derivation
+    /// (same record close + policy + materialization, no edge restamp:
+    /// flags already reflect the live head). Idempotent: an already-closed
+    /// prior is left alone.
+    pub(crate) fn close_restored_tied_prior_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        prior_id: &EntityId,
+        close_at: u64,
+    ) -> Result<()> {
+        let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
+        if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
+            return Ok(());
+        }
+        let closed_record = close_record_for_supersession(&prior.record, close_at)?;
+        let (closed_occurred, closed_learned_at, closed_claim_body, closed_data) =
+            closed_claim_put_payload(&prior, &closed_record, ClaimLifecycleStatus::Superseded)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &self.store,
+            wtxn,
+            &closed_claim_body,
+            &closed_record,
+            prior.actor_class,
+            &policy,
+        )?;
+        let (op, binding) = provenance_materialization_op(
+            &self.store,
+            wtxn,
+            prior.id,
+            closed_occurred,
+            closed_learned_at,
+            closed_data,
+        )?;
+        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        Ok(())
+    }
+
     pub fn supersede_edge_provenance(
         &self,
         prior_claim_id: &EntityId,
