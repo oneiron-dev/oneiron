@@ -129,6 +129,7 @@ pub mod attempt_id;
 pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
+pub mod attempt_outcomes;
 pub mod attempt_read_producer;
 pub mod attempt_record;
 pub(crate) mod attempt_retention;
