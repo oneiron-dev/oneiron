@@ -251,7 +251,15 @@ fn record_combined_person_evidence_in_txn(
             .unwrap_or(mine);
     }
     if let Some(anchor) = person_anchor(evidence)
-        && person_row_current(vault, txn, cell, &evidence.receipt, anchor, fold, evidence.at)?
+        && person_row_current(
+            vault,
+            txn,
+            cell,
+            &evidence.receipt,
+            anchor,
+            fold,
+            evidence.at,
+        )?
     {
         return Ok(());
     }
@@ -463,8 +471,13 @@ pub(super) fn project_in_txn(
     // attempt beside each write for the person, the held cell for its
     // coordinates, so the person's cell needs no re-read.
     let mut anchored_person_writes: Vec<(LearningCell, String, LearningEvidence)> = Vec::new();
-    let mut anchored_person_withdrawals: Vec<(LearningCell, String, String, EntityId, EvidenceRow)> =
-        Vec::new();
+    let mut anchored_person_withdrawals: Vec<(
+        LearningCell,
+        String,
+        String,
+        EntityId,
+        EvidenceRow,
+    )> = Vec::new();
     for held in &anchored {
         match effective_evidence_in_txn(vault, txn, held, &amended)? {
             AnchoredEffect::Stand => {}
@@ -612,8 +625,7 @@ pub(super) fn project_in_txn(
                     // stale observation leaves with it.
                     let keep = match (EVIDENCE.get(&vault.store, txn, &person_key)?, stale) {
                         (Some(stored), Some(old)) => {
-                            stored.observation != old.observation
-                                || stored.weight != old.weight
+                            stored.observation != old.observation || stored.weight != old.weight
                         }
                         _ => false,
                     };
@@ -769,15 +781,14 @@ pub(super) fn project_in_txn(
         )?;
         if let Some(credit) =
             crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &evidence.receipt)?
-            && let Some(observation) =
-                recomputed_person_observation(
-                    vault,
-                    txn,
-                    &credit,
-                    &attempt_ref,
-                    held.subject,
-                    None,
-                )?
+            && let Some(observation) = recomputed_person_observation(
+                vault,
+                txn,
+                &credit,
+                &attempt_ref,
+                held.subject,
+                None,
+            )?
         {
             record_recomputed_person_evidence_in_txn(
                 vault,
