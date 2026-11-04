@@ -453,6 +453,10 @@ def serve(host, input_stream, output_stream, answers=None, exact_body=None):
     started = time.monotonic()
     if exact_body is None:
         exact_body = answers is input_stream
+    if exact_body:
+        # FIX 11501 C8: an exact body is only sound when the answers share
+        # the request's own stdin object (no second wrapper on fd 0).
+        assert answers is input_stream
     try:
         header, body = read_request(input_stream, exact_body)
         request_id = header["request_id"]

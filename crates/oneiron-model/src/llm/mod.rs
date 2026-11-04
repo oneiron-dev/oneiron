@@ -98,8 +98,8 @@ pub use self::inference_publisher::InferencePublisher;
 pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
 pub use self::backend::{
-    BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,
-    LlmStreamResult, SingleRouteBackend, SingleSend,
+    BrokerIsolation, BudgetLease, DispatchRelease, LlmBackend, LlmGenerateFuture, LlmResult,
+    LlmStream, LlmStreamResult, SingleRouteBackend, SingleSend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
@@ -123,6 +123,7 @@ pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
     ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
+    ReasoningPartKind,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use self::reply_assertions::{ReplyAssertionRecord, ReplyAssertions};

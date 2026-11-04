@@ -188,7 +188,8 @@ pub mod code_snapshot;
 pub(crate) mod query_memo_codec;
 pub mod query_memos;
 pub(crate) use claim_vad_owed::{
-    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+    claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
+    settle_claim_vad_in_txn,
 };
 pub mod body_descriptor;
 mod commitment_due;
@@ -284,7 +285,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
@@ -334,7 +335,10 @@ pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+    release_vault_handle,
+};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;

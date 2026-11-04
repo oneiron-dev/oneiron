@@ -159,17 +159,17 @@ pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
     settled_step_usage_in_txn, terminal_step_identity,
 };
-pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
-    FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend, LlmCapability,
-    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream,
-    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    DispatchRelease, FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend,
+    LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage,
+    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole,
+    LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError,
+    ModelLocality, ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
     SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
     UnsupportedCapability,
 };

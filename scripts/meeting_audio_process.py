@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import selectors
-import signal
 import subprocess
 import time
 import uuid
@@ -276,7 +275,11 @@ def exchange(command, request, idle, error, progress=None, units=None, request_i
     stdout is one reply line. With a unit gate each worker unit line is
     relayed as one top-level unit the host admits (FIX 11501): the parent
     gate owns admission, indexes and terminal events, while answers are
-    piped back over the worker's still-open stdin."""
+    piped back over the worker's still-open stdin.
+
+    The worker stays in this bridge's process group, which the engine
+    started and owns: an engine deadline kills and reaps the bridge and every
+    worker together. A stall seen here kills and reaps the worker itself."""
     if os.name != "posix":
         raise error("ProcessPlatformUnsupported")
     environment = dict(os.environ)
@@ -286,7 +289,7 @@ def exchange(command, request, idle, error, progress=None, units=None, request_i
     last_output = time.monotonic()
     output = bytearray()
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          env=environment, start_new_session=True) as child:
+                          env=environment) as child:
         try:
             with selectors.DefaultSelector() as selector:
                 for stream, event in [(child.stdin, selectors.EVENT_WRITE), (child.stdout, selectors.EVENT_READ)]:
@@ -324,10 +327,7 @@ def exchange(command, request, idle, error, progress=None, units=None, request_i
             return child.returncode, bytes(output)
         finally:
             if child.poll() is None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                child.kill()
                 child.wait()
 
 
