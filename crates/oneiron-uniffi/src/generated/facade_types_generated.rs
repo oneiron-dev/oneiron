@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1223 facade rows, 4438 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1175.
+// UniFFI census: 1224 facade rows, 4442 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1176.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -37263,6 +37263,15 @@ pub struct AnnotationPinRequest {
     pub locator: AnnotationLocator,
 }
 
+/// `oneiron::anchored_annotation::wire::AnnotationBodyAnchorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationBodyAnchorView {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+}
+
 /// `oneiron::anchored_annotation::wire::AnnotationAnchorView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AnnotationAnchorView {
@@ -37274,6 +37283,8 @@ pub struct AnnotationAnchorView {
     pub locator: AnnotationLocator,
     #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<String>,
+    #[serde(rename = "body", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<AnnotationBodyAnchorView>,
 }
 
 /// `oneiron::anchored_annotation::wire::AnnotationThreadOpenRequest`.
@@ -50304,6 +50315,38 @@ pub struct CallableCardView {
     pub returns: crate::WireJson,
 }
 
+/// `oneiron::skill::call::frozen::amend::CallableAmendRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CallableAmendRequest {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "answer")]
+    pub answer: crate::WireJson,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CallableAmendOutcome {
+    #[serde(rename = "refrozen")]
+    Refrozen,
+    #[serde(rename = "no_case")]
+    NoCase,
+    #[serde(rename = "over_limit")]
+    OverLimit,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CallableAmendReceipt {
+    #[serde(rename = "outcome")]
+    pub outcome: CallableAmendOutcome,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+}
+
 /// `oneiron::verbs::skill_execution::SkillPackReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -61767,6 +61810,12 @@ pub struct OfficeBodyExportRecord {
     pub version: u64,
     #[serde(rename = "frontier")]
     pub frontier: Vec<u8>,
+    #[serde(
+        rename = "rebind_frontier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebind_frontier: Option<Vec<u8>>,
     #[serde(rename = "source_version")]
     pub source_version: u64,
     #[serde(rename = "actor")]
@@ -61936,6 +61985,8 @@ pub enum SeriesField {
     Values,
     #[serde(rename = "family")]
     Family,
+    #[serde(rename = "plot")]
+    Plot,
     #[serde(rename = "x")]
     X,
     #[serde(rename = "bubble_size")]
