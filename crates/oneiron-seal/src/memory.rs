@@ -285,9 +285,9 @@ struct LedgerState {
     /// Reserved, and available to a later admission: what is left plus what
     /// was released.
     spare: u64,
-    /// Admitted to the decodes' allocations and not given back. The seal's
-    /// own copies and holds are not counted: they outlive the passes they
-    /// are made in.
+    /// Admitted to decoded or scoped allocations and not given back. The
+    /// seal's own persistent copies and holds are not counted: they outlive
+    /// the passes they are made in.
     live: u64,
     /// What the service holds for each reservation.
     held: Vec<Box<dyn Send>>,
@@ -334,10 +334,27 @@ impl MemoryLedger {
     }
 
     /// Admits `len` values of `T`, about to be allocated by the seal's own
-    /// code: held until the operation ends, never given back by a pass.
+    /// code: never given back by a parse pass. The owner may return freed
+    /// bytes with [`Self::release_admitted`]; otherwise held until the
+    /// operation ends.
     pub(crate) fn admit_len<T>(&self, len: usize) -> Result<(), SealMemoryRefusal> {
         let bytes = len.saturating_mul(std::mem::size_of::<T>());
         self.take(u64::try_from(bytes).unwrap_or(u64::MAX), false)
+    }
+
+    /// Admits a scoped allocation alongside the decodes it owns. Its scope
+    /// returns what remains live through [`Self::release`].
+    pub(crate) fn admit_transient(&self, bytes: usize) -> Result<(), SealMemoryRefusal> {
+        self.take(wide(bytes), true)
+    }
+
+    /// Returns freed bytes previously charged through [`Self::admit_len`].
+    /// These are not decoder bytes: returning them never debits `live` or
+    /// releases service reservations. Each owner returns its credit once,
+    /// only after the old allocation has been freed.
+    pub(crate) fn release_admitted(&self, bytes: u64) {
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(bytes);
     }
 
     /// Holds `bytes` for one copy the seal keeps, about to be made or just
@@ -353,10 +370,10 @@ impl MemoryLedger {
         })
     }
 
-    /// Returns `bytes` admitted before, whose allocation was replaced or
-    /// freed, to spare room for a later admission to reuse. Never more than
-    /// is live: held service reservations and a kept refusal stay as they
-    /// are, and this never returns host memory.
+    /// Returns `bytes` from decoded or scoped allocations that were freed,
+    /// to spare room for a later admission. Never more than is live: held
+    /// service reservations and a kept refusal stay as they are, and this
+    /// never returns host memory.
     pub(crate) fn release(&self, bytes: u64) {
         Self::give_back(&mut lock(&self.state), bytes);
     }
