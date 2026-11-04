@@ -405,11 +405,11 @@ pub(crate) fn save_shadow_output_in_txn(
         envelope: envelope(
             &input_hash(input),
             model,
-            config,
+            &config,
             output.stack_sha16.as_deref(),
         ),
     };
-    save_in_txn(vault, txn, answer, config, now)?;
+    save_in_txn(vault, txn, answer, &config, now)?;
     tag_set_in_txn(&vault.store, txn, &turn)
 }
 
