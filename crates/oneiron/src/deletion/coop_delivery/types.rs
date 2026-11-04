@@ -23,6 +23,24 @@ pub struct CooperativeDeletionRetention {
     pub retention_class: String,
 }
 
+/// Exact value-map keys on one covered CLAIM copy. Keys are literal,
+/// never dotted paths, inferred names, source/scope fields or replacements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeClaimValueRedaction {
+    pub record: EntityId,
+    pub value_fields: Vec<String>,
+}
+
+/// A local selected-field action, not a peer/export erasure proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeLocalRedaction {
+    pub applied_by: EntityId,
+    pub applied_at: u64,
+    pub result: crate::vault::entity_revision::LocalClaimValueRedaction,
+}
+
 /// The recipient owner attests that they already told the requester,
 /// outside the engine, before these restrictions lifted. This is NOT an
 /// engine-delivery receipt and carries no message content.
@@ -80,6 +98,8 @@ pub struct CooperativeDeletionDisposition {
     pub retention: Option<CooperativeDeletionRetention>,
     /// Copies this answer placed or refreshed under storage-only restriction.
     pub restricted: Vec<EntityId>,
+    /// Selected local CLAIM field/history actions. Peer scope stays open.
+    pub local_redactions: Vec<CooperativeLocalRedaction>,
 }
 
 /// One filed ask, for the recipient owner's review.
@@ -110,6 +130,8 @@ pub struct IncomingCooperativeDeletion {
     pub courtesy_restriction_records: Vec<EntityId>,
     /// Prior external-notice attestations, kept across later choices.
     pub restriction_lifts: Vec<CooperativeRestrictionLiftAttestation>,
+    /// Local selected-field receipts retained across later choices.
+    pub local_redactions: Vec<CooperativeLocalRedaction>,
 }
 
 /// What the owner chose for one filed ask.
@@ -133,6 +155,8 @@ pub struct CooperativeDeletionAnswer {
     /// The owner attests the requester was already told externally before
     /// lifting these copies' restrictions under this ask only.
     pub restriction_notice_given: Vec<EntityId>,
+    /// Under Redact, exact value-map fields on covered CLAIM copies.
+    pub redact: Vec<CooperativeClaimValueRedaction>,
 }
 
 /// What became of one record of a delete choice.

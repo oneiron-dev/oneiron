@@ -97,10 +97,43 @@ pub struct CourtesyDeleteAnswerRequest {
     /// BEFORE lifting these copies under this ask. Not engine-delivery proof.
     #[serde(default)]
     pub restriction_notice_given: Vec<String>,
+    /// Under Redact, exact value-map keys on ordinary CLAIM copies.
+    /// Local history only; not a peer/export erasure promise.
+    #[serde(default)]
+    pub redact: Vec<CourtesyDeleteClaimValueRedaction>,
     /// The requester's host origin, to send the answer back; without it the
     /// answer stays on this side.
     #[serde(default)]
     pub reply_to: Option<String>,
+}
+
+/// One covered CLAIM copy and literal value-map keys selected for removal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CourtesyDeleteClaimValueRedaction {
+    pub record: String,
+    pub value_fields: Vec<String>,
+}
+
+/// One local field/history action, not peer/export erasure proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CourtesyDeleteLocalRedaction {
+    pub record: String,
+    pub value_fields: Vec<String>,
+    pub changed_history_rows: usize,
+    pub revisions: Vec<CourtesyDeleteRedactionRevision>,
+    pub applied_by: String,
+    /// RFC 3339, the time of this local action only.
+    pub applied: String,
+}
+
+/// The exact old/new causal binding, never a re-signature of old content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CourtesyDeleteRedactionRevision {
+    pub previous_revision: String,
+    pub revision: String,
+    pub body_changed: bool,
+    pub short_hash_changed: bool,
 }
 
 /// A retain-under-basis choice's selection and recorded policy codes.
@@ -172,6 +205,7 @@ pub struct CourtesyDeleteChoice {
     pub retention: Option<CourtesyDeleteRetention>,
     /// Copies this answer placed or refreshed under storage-only restriction.
     pub restricted: Vec<String>,
+    pub local_redactions: Vec<CourtesyDeleteLocalRedaction>,
 }
 
 /// One active, user-selected storage-only restriction under this ask.
@@ -224,6 +258,8 @@ pub struct CourtesyDeleteIncoming {
     pub restrictions: Vec<CourtesyDeleteRestriction>,
     /// Explicit owner attestations of prior external notice, never delivery proof.
     pub restriction_lifts: Vec<CourtesyDeleteRestrictionLift>,
+    /// Earlier local actions remain recorded after a later menu choice.
+    pub local_redactions: Vec<CourtesyDeleteLocalRedaction>,
 }
 
 /// What an embedded handle answers for a courtesy delete row: the asks, the
@@ -409,6 +445,11 @@ pub fn courtesy_delete_incoming_ask(
             holds: courtesy_holds(vault, &choice.hold_ids)?,
             excluded: choice.excluded,
             restricted: choice.restricted.iter().map(EntityId::to_hex).collect(),
+            local_redactions: choice
+                .local_redactions
+                .into_iter()
+                .map(local_redaction)
+                .collect(),
             retention: choice.retention.map(|retention| CourtesyDeleteRetention {
                 records: retention.records.iter().map(EntityId::to_hex).collect(),
                 basis_code: retention.basis_code,
@@ -442,6 +483,11 @@ pub fn courtesy_delete_incoming_ask(
         holds,
         restrictions,
         restriction_lifts,
+        local_redactions: filed
+            .local_redactions
+            .into_iter()
+            .map(local_redaction)
+            .collect(),
     })
 }
 
@@ -461,4 +507,27 @@ pub fn read_courtesy_delete_incoming(
 ) -> MemoryResult<Vec<CourtesyDeleteIncoming>> {
     owner.revalidate(vault)?;
     Ok(courtesy_delete_incoming(vault)?)
+}
+
+fn local_redaction(
+    receipt: crate::deletion::CooperativeLocalRedaction,
+) -> CourtesyDeleteLocalRedaction {
+    CourtesyDeleteLocalRedaction {
+        record: receipt.result.record.to_hex(),
+        value_fields: receipt.result.value_fields,
+        changed_history_rows: receipt.result.changed_history_rows,
+        revisions: receipt
+            .result
+            .bindings
+            .into_iter()
+            .map(|binding| CourtesyDeleteRedactionRevision {
+                previous_revision: binding.previous_revision.to_hex(),
+                revision: binding.revision.to_hex(),
+                body_changed: binding.body_changed,
+                short_hash_changed: binding.short_hash_changed,
+            })
+            .collect(),
+        applied_by: receipt.applied_by.to_hex(),
+        applied: rfc3339_secs(receipt.applied_at),
+    }
 }

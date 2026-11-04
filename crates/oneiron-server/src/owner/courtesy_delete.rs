@@ -8,8 +8,9 @@ use base64::engine::general_purpose::STANDARD;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
-    COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer,
-    CooperativeDeletionRetention, decode_self_signed_cooperative_deletion_request, parse_hex,
+    COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeClaimValueRedaction,
+    CooperativeDeletionAnswer, CooperativeDeletionRetention,
+    decode_self_signed_cooperative_deletion_request, parse_hex,
 };
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
@@ -234,6 +235,16 @@ pub(crate) fn answer(
             .restriction_notice_given
             .iter()
             .map(|id| entity_id("restriction_notice_given", id))
+            .collect::<OwnerResult<Vec<_>>>()?,
+        redact: request
+            .redact
+            .iter()
+            .map(|selection| {
+                Ok::<_, OwnerError>(CooperativeClaimValueRedaction {
+                    record: entity_id("redact.record", &selection.record)?,
+                    value_fields: selection.value_fields.clone(),
+                })
+            })
             .collect::<OwnerResult<Vec<_>>>()?,
         retention: request
             .retention

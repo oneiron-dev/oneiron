@@ -33,15 +33,16 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
+mod redact;
 mod refresh;
 mod restrict;
 mod types;
 
 pub use types::{
-    CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState,
-    CooperativeDeletionAnswer, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind,
-    CooperativeDeletionRetention, CooperativeRestrictionLiftAttestation,
-    IncomingCooperativeDeletion,
+    CooperativeClaimValueRedaction, CooperativeDeleteOperation, CooperativeDeleteRecord,
+    CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDisposition,
+    CooperativeDeletionDispositionKind, CooperativeDeletionRetention, CooperativeLocalRedaction,
+    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
 };
 
 /// The queue kind carrying both legs: the ask and the answer.
@@ -438,6 +439,7 @@ impl Vault {
                     courtesy_hold_ids: Vec::new(),
                     courtesy_restriction_records: Vec::new(),
                     restriction_lifts: Vec::new(),
+                    local_redactions: Vec::new(),
                 };
                 INCOMING.put(&self.store, txn, &key, &filed)?;
                 Ok(CooperativeDeletionIngress::Filed)
