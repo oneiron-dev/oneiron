@@ -1,7 +1,7 @@
 //! Account-local learned retrieval state, rebuilt only by the Coach at sleep.
 
 use crate::error::{Error, Result};
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::EngineScan;
 use crate::store::retrieval_policy::{RetrievalPolicyAction, RetrievalPolicyPosterior};

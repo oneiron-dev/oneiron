@@ -592,16 +592,7 @@ impl ComposedEffect {
     }
 }
 
-/// The evaluator's verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConsentDecision {
-    /// Run it; a standing reuse also writes a quiet use receipt.
-    Auto,
-    /// Raise the in-moment ask.
-    Ask,
-    /// Withhold the disclosure (the disclosure-domain fail-safe).
-    Hide,
-}
+pub use crate::store::consent_bound::ConsentDecision;
 
 /// Evaluates one composed effect against the owner's remembered state.
 ///
