@@ -121,9 +121,9 @@ pub use self::model_id::{ModelId, ModelIdError};
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
-    ReasoningPartKind,
+    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
+    LlmStreamEvent, LlmToolSpec, LlmUsage, ReasoningPartKind,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use self::reply_assertions::{ReplyAssertionRecord, ReplyAssertions};
