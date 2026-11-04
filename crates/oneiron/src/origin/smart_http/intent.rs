@@ -176,7 +176,7 @@ pub(super) struct ReceivePackIntent {
     // without this checkpoint has no measured transport totals.
     pub(super) transport_bytes: Option<(u64, u64)>,
     pub(super) refs: Vec<ReceivePackIntentRef>,
-    pointers: Vec<(String, String, u64)>,
+    pointers: Vec<(Vec<u8>, String, u64)>,
     #[serde(default)]
     pub(super) push: Option<GitPushStamp>,
     // What the scan came to, written with the push's marks (FIX 8032): the
