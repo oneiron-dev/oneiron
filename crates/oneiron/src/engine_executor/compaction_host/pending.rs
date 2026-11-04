@@ -183,50 +183,61 @@ impl EngineNativeExecutor<'_> {
         // are its own sources. Only the calls since then are read here, so a
         // long run never outgrows one summary's sources, and a record served
         // before the epoch and purged since withdrew that epoch instead.
-        let captured = newest.map_or(0, |row| row.calls());
-        let calls = usize::try_from(captured)
-            .ok()
-            .and_then(|from| record.bridge_calls.get(from..))
-            .ok_or(crate::Error::CorruptedIndex(
-                "compaction coverage names calls the run never made",
-            ))?;
-        // The host's own words: the run's speech since the newest epoch, and
-        // that epoch, which its requests rendered.
-        let mut host = vec![turn_id];
-        for order in crate::engine_executor::compaction::speech_orders(calls) {
-            host.push(crate::code_run::executor_speech_message_id_in_run(
-                run_ref, run_id, order,
-            )?);
-        }
-        host.extend(newest.map(|row| row.summary_id()));
-        let (sources, request_id) = match &self.storage {
-            crate::code_run::ExecutorStorage::Canonical(vault) => {
-                let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-                (
-                    crate::engine_executor::compaction::served_sources(
-                        &vault.store,
-                        &rtxn,
-                        calls,
-                        host,
-                    )?,
-                    vault.store.clock.entity_id()?,
-                )
+        // A sealing or build error after the pre-chain keeps the unlanded
+        // pre-chain records in the room (REVIEW-4357 P1): without a flight
+        // the hooks never reach a post chain, and no post hooks run here.
+        let build = |window, pins, note| {
+            let calls = usize::try_from(captured)
+                .ok()
+                .and_then(|from| record.bridge_calls.get(from..))
+                .ok_or(crate::Error::CorruptedIndex(
+                    "compaction coverage names calls the run never made",
+                ))?;
+            // The host's own words: the run's speech since the newest epoch, and
+            // that epoch, which its requests rendered.
+            let mut host = vec![turn_id];
+            for order in crate::engine_executor::compaction::speech_orders(calls) {
+                host.push(crate::code_run::executor_speech_message_id_in_run(
+                    run_ref, run_id, order,
+                )?);
             }
-            crate::code_run::ExecutorStorage::Session(binding) => binding.answered(|| {
-                let view = binding.session.read_view()?;
-                let rtxn = view.read().base().env.read_txn()?;
-                Ok((
-                    crate::engine_executor::compaction::served_sources(&view, &rtxn, calls, host)?,
-                    crate::store::ManifestDbs::clock(&view).entity_id()?,
-                ))
-            })?,
+            host.extend(newest.map(|row| row.summary_id()));
+            let (sources, request_id) = match &self.storage {
+                crate::code_run::ExecutorStorage::Canonical(vault) => {
+                    let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+                    (
+                        crate::engine_executor::compaction::served_sources(
+                            &vault.store,
+                            &rtxn,
+                            calls,
+                            host,
+                        )?,
+                        vault.store.clock.entity_id()?,
+                    )
+                }
+                crate::code_run::ExecutorStorage::Session(binding) => binding.answered(|| {
+                    let view = binding.session.read_view()?;
+                    let rtxn = view.read().base().env.read_txn()?;
+                    Ok((
+                        crate::engine_executor::compaction::served_sources(
+                            &view, &rtxn, calls, host,
+                        )?,
+                        crate::store::ManifestDbs::clock(&view).entity_id()?,
+                    ))
+                })?,
+            };
+            let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
+            let calls = u64::try_from(record.bridge_calls.len())
+                .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
+            let request = driver.request_for_log(
+                request_id, &session, window, pins, sources, prior, calls, note, run_id,
+            )?;
+            Ok((sources, request_id, request))
         };
-        let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
-        let calls = u64::try_from(record.bridge_calls.len())
-            .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
-        let request = driver.request_for_log(
-            request_id, &session, window, pins, sources, prior, calls, note, run_id,
-        )?;
+        let (sources, request_id, request) = build(window, pins, note).map_err(|error| {
+            self.keep_unlanded_compact_hooks(hooks);
+            error
+        })?;
         Ok(Ok(Some((request, hooks))))
     }
 }
