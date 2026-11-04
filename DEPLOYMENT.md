@@ -354,6 +354,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+codebase_manifest_files = 10000000 # files one legacy codebase snapshot manifest names; past it the manifest is kept whole and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without
