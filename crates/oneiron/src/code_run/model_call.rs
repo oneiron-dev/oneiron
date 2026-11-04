@@ -309,7 +309,7 @@ pub(crate) fn erase_model_call_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    if crate::deletion::actor_fields::names_no_actor(vault, wtxn, actor)? {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
     for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
