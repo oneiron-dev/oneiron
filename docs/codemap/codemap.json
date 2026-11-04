@@ -44045,7 +44045,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 16,
       "mod": 11,
       "re-export": 27
      }
@@ -44154,7 +44154,6 @@
      "notable": [
       "CatalogSeed",
       "ModelRegistryRow",
-      "ModelScoreDiff",
       "ModelWireFormat",
       "ScoreObservation",
       "ScoreSnapshot",
@@ -44163,11 +44162,11 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 16,
-      "re-export": 2,
-      "struct": 6
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -71891,7 +71890,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 78,
-      "mod": 77,
+      "mod": 78,
       "re-export": 29
      }
     },
@@ -71903,6 +71902,19 @@
      ],
      "path": "src/store/model_description_rows.rs",
      "purpose": "The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`)",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelScoreDiff"
+     ],
+     "path": "src/store/model_score_diff.rs",
+     "purpose": "One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows)",
      "surface": {
       "crate-vis": 1,
       "struct": 1
@@ -89776,7 +89788,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 347,
+     "files": 348,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90016,7 +90028,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6236,
+   "source_files": 6237,
    "test_files": 898
   },
   "oneiron-android": {
