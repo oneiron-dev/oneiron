@@ -93,7 +93,10 @@ impl Vault {
         // row stamped with a shell's id keeps it (FIX 6709). The head's own
         // provenance erase stays the one that retires keys.
         for shell in &shells {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, shell, act)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *shell),
+                act,
+            )?;
         }
         let mut touched = shells.clone();
         touched.insert(*head);

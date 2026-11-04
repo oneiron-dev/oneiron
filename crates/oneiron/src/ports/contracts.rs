@@ -1,13 +1,13 @@
 //! The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions.
 use super::{ChangeLogRecord, EdgeDirection, EntityRecord, SourceSpan};
-use crate::attempt_queue::{
-    ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome,
-};
+use crate::attempt_queue::{ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome};
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange, Vault};
@@ -399,7 +399,7 @@ pub trait JobQueue: Transactions {
     fn port_job_claim_id(
         &self,
         txn: &mut Self::Write<'_>,
-        id: crate::attempt_queue::AttemptId,
+        id: crate::store::attempt_id::AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome>;
     fn port_job_complete(
