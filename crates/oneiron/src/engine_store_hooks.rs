@@ -9,15 +9,24 @@ use crate::error::Result;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::analyzer::MultilingualAnalyzer;
+use crate::batch::row_put::RowPut;
 use crate::config::{HostingPrivacyPosture, VaultConfig};
+#[cfg(feature = "sync")]
+use crate::deletion::delete_bearing_update::DeleteBearingUpdate;
 use crate::edge::EdgeKind;
+#[cfg(feature = "sync")]
+use crate::store::StoreSyncHooks;
+#[cfg(feature = "sync")]
+use crate::store::window_rows::CarrierRemoval;
 use crate::store::{
-    GateDecisionId, Store, StoreDeleteGuards, StoreHooks, StoreProjectWrites, StoreRecordHooks,
-    StoreScopeStamps,
+    GateDecisionId, Store, StoreActorScrubs, StoreDeleteGuards, StoreHooks, StoreProjectWrites,
+    StoreRecordHooks, StoreScopeStamps,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
+#[cfg(feature = "sync")]
+use loro::LoroDoc;
 
 /// The hooks every vault's store opens with.
 pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
@@ -25,6 +34,9 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     scope_stamps: &EngineScopeStamps,
     project_writes: &EngineProjectWrites,
     record_hooks: &EngineRecordHooks,
+    actor_scrubs: &EngineActorScrubs,
+    #[cfg(feature = "sync")]
+    sync_hooks: &EngineSyncHooks,
 };
 
 /// The engine's delete guards.
@@ -38,6 +50,13 @@ pub(crate) struct EngineProjectWrites;
 
 /// The engine's record hooks.
 pub(crate) struct EngineRecordHooks;
+
+/// The engine's actor scrubs for store-declared side tables.
+pub(crate) struct EngineActorScrubs;
+
+/// The engine's sync hooks.
+#[cfg(feature = "sync")]
+pub(crate) struct EngineSyncHooks;
 
 impl StoreDeleteGuards for EngineDeleteGuards {
     fn reject_audience_edit_delete(
@@ -102,6 +121,18 @@ impl StoreDeleteGuards for EngineDeleteGuards {
 impl StoreScopeStamps for EngineScopeStamps {
     fn retire_stamp(&self, store: &Store, txn: &mut RwTxn<'_>, id: EntityId) -> Result<()> {
         crate::federation::record_scope::retire_stamp(store, txn, id)
+    }
+
+    fn stamp_put(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        data: &[u8],
+        put: RowPut,
+    ) -> Result<()> {
+        crate::federation::record_scope::stamp_put(store, txn, id, kind, data, put)
     }
 
     fn restamp_document_pointer(
@@ -284,6 +315,10 @@ impl StoreProjectWrites for EngineProjectWrites {
         crate::workspace_roster::root_project_in(store, txn)
     }
 
+    fn seed_root_project(&self, vault: &crate::Vault) -> Result<()> {
+        crate::workspace_roster::seed_root_project(vault)
+    }
+
     fn project_mint_gate_refs_in_txn(
         &self,
         vault: &crate::Vault,
@@ -401,6 +436,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
     }
 
+    fn erase_room_side_rows(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_room_side_rows(store, txn, id)
+    }
+
     fn erase_audience_actor_in_txn(
         &self,
         vault: &crate::Vault,
@@ -408,5 +452,222 @@ impl StoreRecordHooks for EngineRecordHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
+    }
+}
+
+#[cfg(feature = "sync")]
+impl StoreSyncHooks for EngineSyncHooks {
+    fn check_federation_imports_in_txn(&self, vault: &crate::Vault, txn: &RoTxn<'_>) -> Result<()> {
+        crate::sync::federation_burst::check_active_in_txn(vault, txn)
+    }
+
+    fn push_embed_job_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        entity_id: &EntityId,
+        priority: u8,
+    ) -> Result<()> {
+        crate::sync::queue::push_embed_job_in_txn(store, wtxn, entity_id, priority)
+    }
+
+    fn delete_embed_job_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        entity_id: &EntityId,
+    ) -> Result<bool> {
+        crate::sync::queue::delete_embed_job_in_txn(store, wtxn, entity_id)
+    }
+
+    fn queued_window_labels_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+    ) -> Result<BTreeSet<String>> {
+        crate::sync::queue::queued_window_labels_in_txn(vault, txn)
+    }
+
+    fn queued_window_update_count_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        window_key: &str,
+    ) -> Result<usize> {
+        crate::sync::queue::queued_window_update_count_in_txn(store, txn, window_key)
+    }
+
+    fn scrub_window_updates_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        window_key: &str,
+    ) -> Result<u32> {
+        crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key)
+    }
+
+    fn indexed_windows_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        prefix: &str,
+    ) -> Result<BTreeSet<String>> {
+        crate::sync::residence::indexed_windows_in_txn(store, txn, prefix)
+    }
+
+    fn birth_carriers_remain_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        actors: &BTreeSet<EntityId>,
+    ) -> Result<bool> {
+        crate::sync::row_birth::actor_erase::birth_carriers_remain_in_txn(vault, txn, actors)
+    }
+
+    fn persist_window_update_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        window_key: &str,
+        update_bytes: &[u8],
+    ) -> Result<()> {
+        crate::sync::bridge::persist_window_update_in_txn(vault, wtxn, window_key, update_bytes)
+    }
+
+    fn merge_window_heads(&self, doc: &LoroDoc) -> Result<()> {
+        crate::sync::window::merge_window_heads(doc)
+    }
+
+    fn erase_carried_born_with_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::selector::erase_carried_born_with_in_txn(store, wtxn, id)
+    }
+
+    fn erase_retained_copies_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::federation_burst::erase_retained_copies_in_txn(store, txn, id)
+    }
+
+    fn apply_tombstone_to_window_doc(
+        &self,
+        doc: &LoroDoc,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<()> {
+        crate::sync::window::apply_tombstone_to_window_doc(doc, id, raw_value)
+    }
+
+    fn mark_removed_carriers_first(
+        &self,
+        vault: &crate::Vault,
+        path: CarrierRemoval,
+        carriers: &[(EntityId, Vec<u8>)],
+    ) -> Result<()> {
+        crate::sync::window::mark_removed_carriers_first(vault, path, carriers)
+    }
+
+    fn push_delete_bearing_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        window_key: &str,
+        update: &DeleteBearingUpdate,
+    ) -> Result<u64> {
+        crate::sync::queue::push_delete_bearing_in_txn(vault, wtxn, window_key, update)
+    }
+
+    fn compact_document(&self, vault: &crate::Vault, id: EntityId, erased: bool) -> Result<()> {
+        crate::sync::documents::compact(vault, id, erased)
+    }
+}
+
+impl StoreActorScrubs for EngineActorScrubs {
+    fn erase_card_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_card_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_pending_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_pending_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_host_pin_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_host_pin_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_join_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_join_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_offer_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_offer_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_turn_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_turn_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_companion_principal_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_companion_principal_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_member_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_member_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_member_intent_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
     }
 }
