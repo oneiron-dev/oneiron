@@ -607,9 +607,8 @@ fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
     patterns.is_empty()
         || patterns.iter().any(|pattern| {
             let pattern = pattern.strip_suffix('/').unwrap_or(pattern);
-            let wanted: Vec<&str> = pattern.split('/').collect();
             let mut here = dir.split('/');
-            for (at, segment) in wanted.iter().enumerate() {
+            for segment in pattern.split('/') {
                 if segment.contains("**") {
                     return true;
                 }
@@ -618,21 +617,12 @@ fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
                     // under it.
                     return true;
                 };
-                let last = at + 1 == wanted.len();
-                if segment.contains('*') || segment.contains('?') {
-                    if last {
-                        // A final file-name segment matches only a file
-                        // directly inside, never below the top folder.
-                        return here.next().is_none();
-                    }
-                    continue;
-                }
-                if *segment != name {
+                if !matches(segment, name) {
                     return false;
                 }
             }
-            // The folder sits under the pattern's whole prefix.
-            true
+            // The final file-name segment was already consumed by a folder.
+            false
         })
 }
 
