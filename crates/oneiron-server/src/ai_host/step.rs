@@ -659,10 +659,16 @@ impl StepRunner {
             // under it, and a retry parents on the ticket its source took
             // (FIX 11960). Either conversion failing parents nothing.
             context.entity = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()).ok();
-            context.parent = attempt
+            // A parent resolves only against the admission its ticket was
+            // taken on (FIX 11960): the pair travels together, and the
+            // admit filters a stale admission's number out.
+            let (admission, parent) = attempt
                 .retry_of
                 .and_then(|retry| oneiron::EntityId::from_bytes(*retry.as_bytes()).ok())
-                .and_then(|entity| lookup_work_parent(&entity));
+                .and_then(|entity| lookup_work_parent(&entity))
+                .unzip();
+            context.parent_admission = admission;
+            context.parent = parent;
             context
         });
         // The admitted request is the step's replay capsule (FIX 3028),

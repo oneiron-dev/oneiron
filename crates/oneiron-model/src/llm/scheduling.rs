@@ -344,27 +344,30 @@ pub enum WorkPhysical {
 /// Attempt and run entities to the device ticket their admission took (FIX
 /// 11960): a retry or scoped child parents its device work on the ticket its
 /// source's admission took, so device dependency links mirror run retries
-/// and scoped children. Ticket ids are one monotonic namespace per device
-/// admission and never reused, and a parent link names a ticket of the same
-/// admission only; a lookup miss or a reaped ticket parents nothing, which
-/// is today's behaviour.
-static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, WorkId>>> = OnceLock::new();
+/// and scoped children. Ticket numbers restart at 1 in every admission, so
+/// each entry names its admission with its ticket, and a parent link
+/// resolves only against that same live admission; a lookup miss, an
+/// admission mismatch or a reaped ticket parents nothing, which is today's
+/// behaviour.
+static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, (u64, WorkId)>>> =
+    OnceLock::new();
 
-fn work_parents() -> &'static Mutex<HashMap<EntityId, WorkId>> {
+fn work_parents() -> &'static Mutex<HashMap<EntityId, (u64, WorkId)>> {
     WORK_PARENTS.get_or_init(Default::default)
 }
 
-/// Records the device ticket `entity`'s admission took.
-pub fn record_work_parent(entity: EntityId, ticket: WorkId) {
+/// Records the device ticket `entity`'s admission took, under that
+/// admission's own identity.
+pub fn record_work_parent(entity: EntityId, admission: u64, ticket: WorkId) {
     work_parents()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .insert(entity, ticket);
+        .insert(entity, (admission, ticket));
 }
 
-/// The device ticket `entity`'s admission took, if still known.
+/// The admission and device ticket `entity`'s admission took, if still known.
 #[must_use]
-pub fn lookup_work_parent(entity: &EntityId) -> Option<WorkId> {
+pub fn lookup_work_parent(entity: &EntityId) -> Option<(u64, WorkId)> {
     work_parents()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -390,6 +393,9 @@ pub struct WorkContext {
     pub priority: WorkPriority,
     pub deadline: Option<Instant>,
     pub parent: Option<WorkId>,
+    /// The admission the parent ticket was taken on: a parent resolves only
+    /// against that same live admission (FIX 11960).
+    pub parent_admission: Option<u64>,
     pub cancel: WorkCancel,
     pub physical: WorkPhysical,
     /// The run or attempt entity this context runs as, when one names it:
@@ -404,6 +410,7 @@ impl Default for WorkContext {
             priority: WorkPriority::Normal,
             deadline: None,
             parent: None,
+            parent_admission: None,
             cancel: WorkCancel::new(),
             physical: WorkPhysical::Paid,
             entity: None,

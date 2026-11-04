@@ -120,8 +120,9 @@ pub struct DreamerWakeDriver<'a> {
     /// The device-work cancellation the pass lends its attempts (FIX 11963):
     /// each attempt admits under a clone, and the pass trips it beside the
     /// wake flag at its checkpoints, so in-flight device work aborts with
-    /// the pass.
-    device_cancel: WorkCancel,
+    /// the pass. Concurrent workers share it: each clones this same token
+    /// (FIX 11963), so a wake ask trips every worker's checkpoints alike.
+    pub(super) device_cancel: WorkCancel,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }

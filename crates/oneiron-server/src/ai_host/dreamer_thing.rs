@@ -184,6 +184,10 @@ impl ThingChildHost for ServedThingChildHost {
         // the context admits under it, and the session trips it when the
         // child stops, so in-flight device work aborts with the child.
         let cancel = WorkCancel::new();
+        // A parent resolves only against the admission its ticket was
+        // taken on (FIX 11960): the pair travels together, and the admit
+        // filters a stale admission's number out.
+        let (parent_admission, parent) = lookup_work_parent(&parent_run).unzip();
         let run = self
             .runtime
             .undeclared_run(THING_CHILD_RUN, guard.clone())
@@ -195,7 +199,8 @@ impl ThingChildHost for ServedThingChildHost {
                 deadline,
                 cancel: cancel.clone(),
                 entity: Some(task),
-                parent: lookup_work_parent(&parent_run),
+                parent,
+                parent_admission,
                 ..Default::default()
             });
         let backend = CountedBackend::new(
