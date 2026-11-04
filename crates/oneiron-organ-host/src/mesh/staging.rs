@@ -204,11 +204,16 @@ impl Staging {
         }
         let hash = Hash32::of(bytes);
         let len = bytes.len() as u64;
+        if lock(&self.outgoing).contains_key(&hash) {
+            return Ok(Carried::Staged { hash, len });
+        }
         let mut spilled = self.spill_file()?;
         spilled.write_at(bytes, 0)?;
         spilled.len = len;
-        self.staged.fetch_add(len, Ordering::Relaxed);
-        lock(&self.outgoing).insert(hash, Arc::new(spilled));
+        if let Entry::Vacant(entry) = lock(&self.outgoing).entry(hash) {
+            self.staged.fetch_add(len, Ordering::Relaxed);
+            entry.insert(Arc::new(spilled));
+        }
         Ok(Carried::Staged { hash, len })
     }
 
