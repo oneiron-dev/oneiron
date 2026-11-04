@@ -340,7 +340,7 @@ fn reserve<T>(
         .try_reserve_exact(target - output.len())
         .map_err(|_| WorkError::Memory(floor(bytes)))?;
     let old_bytes = layout_bytes::<T>(old_capacity).unwrap_or(0);
-    ledger.release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+    ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 
