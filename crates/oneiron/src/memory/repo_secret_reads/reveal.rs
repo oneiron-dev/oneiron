@@ -10,6 +10,7 @@
 //! Bulk and hydration reads never come here: they stay mask-only.
 
 use super::super::{Memory, MemoryResult};
+use crate::Vault;
 use crate::blob_artifact::ArtifactExport;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::entity_id::EntityId;
@@ -28,9 +29,18 @@ use crate::secret_custody::{RepoFileOriginal, RepoFileReadDisclosure};
 /// more than one, so the read stays masked rather than guess an origin.
 /// The import source is not joined here (FIX line), so it is `None`.
 ///
+/// Its repo is the store's CODE anchor in the recipient's PROJECT, the repo
+/// a Git read of that store names (CALLS 3262), so a snapshot door's
+/// CODE_ARTIFACT and an export's BLOB_ARTIFACT name the same repo as a run
+/// door and a Git read, and one repo-wide grant covers them all (FIX
+/// 10850). With no recipient PROJECT, or no anchor the owner bound there,
+/// it stays the door's `repo`.
+///
 /// # Errors
-/// A failed mark id derivation.
+/// A failed mark id derivation, or a store failure.
 pub(crate) fn repo_file_original(
+    vault: &Vault,
+    recipient_project: Option<EntityId>,
     repo: EntityId,
     snapshot: Option<EntityId>,
     path: &str,
@@ -38,6 +48,15 @@ pub(crate) fn repo_file_original(
 ) -> Result<Option<RepoFileOriginal>> {
     let Some((store, blob)) = marks.single_origin() else {
         return Ok(None);
+    };
+    let repo = match recipient_project {
+        Some(project) => {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .served_repo_anchor_in_txn(&txn, store, project)?
+                .unwrap_or(repo)
+        }
+        None => repo,
     };
     Ok(Some(RepoFileOriginal {
         repo,
@@ -71,6 +90,14 @@ impl Memory<'_> {
     pub fn for_repo_reveal_recipient(mut self, recipient: RepoRevealRecipient) -> Self {
         self.repo_tool_recipient.bind(recipient);
         self
+    }
+
+    /// The PROJECT the proven recipient of this handle's reads works in, as
+    /// its host bound it; `None` with no proven recipient or no project.
+    fn repo_reveal_project(&self) -> Option<EntityId> {
+        self.repo_tool_recipient
+            .actual()
+            .and_then(RepoRevealRecipient::project)
     }
 
     /// CALL 3 for this handle: a per-file read's `why` asks the owner only
@@ -157,7 +184,14 @@ impl Memory<'_> {
             return Ok(Some(None));
         };
         let original = match why {
-            Some(_) => repo_file_original(*artifact, None, &file.name, &marks)?,
+            Some(_) => repo_file_original(
+                vault,
+                self.repo_reveal_project(),
+                *artifact,
+                None,
+                &file.name,
+                &marks,
+            )?,
             None => None,
         };
         let stored = std::mem::take(&mut file.bytes);
@@ -261,7 +295,14 @@ impl Memory<'_> {
         let Some((_, marks)) = mount.file_marks(path)? else {
             return Ok(None);
         };
-        let original = repo_file_original(repo, Some(mount.code_artifact_id()), path, &marks)?;
+        let original = repo_file_original(
+            self.vault,
+            self.repo_reveal_project(),
+            repo,
+            Some(mount.code_artifact_id()),
+            path,
+            &marks,
+        )?;
         let read_exact =
             || -> Result<Vec<u8>> { mount.read_file(path)?.ok_or(Error::EntityNotFound) };
         self.repo_file_read_projected(original.as_ref(), &marks, why, door, read_exact, readmit)
@@ -292,7 +333,14 @@ impl Memory<'_> {
             repo_secret_marks_for_hash_in_txn(self.vault, &txn, blake3::hash(&bytes).as_bytes())?
         };
         let original = match why {
-            Some(_) => repo_file_original(repo, snapshot, path, &marks)?,
+            Some(_) => repo_file_original(
+                self.vault,
+                self.repo_reveal_project(),
+                repo,
+                snapshot,
+                path,
+                &marks,
+            )?,
             None => None,
         };
         self.repo_file_read_projected(

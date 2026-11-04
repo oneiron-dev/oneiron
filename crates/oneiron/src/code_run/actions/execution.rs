@@ -240,15 +240,17 @@ impl ActionRegistry {
             Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
-        let result = dispatcher.dispatch_for_executor_run(
-            super::ExecutorCallSite {
-                run_id,
-                seq: 0,
-                step_start: 0,
-                earlier: &[],
-            },
-            call.clone(),
-        );
+        let result = dispatcher
+            .dispatch_for_executor_run(
+                super::ExecutorCallSite {
+                    run_id,
+                    seq: 0,
+                    step_start: 0,
+                    earlier: &[],
+                },
+                call.clone(),
+            )
+            .map(|(outcome, _)| outcome);
         // The seats a spawn resolved ride its row, a failure's too (FIX 9180).
         let seats = dispatcher.take_spawn_seats();
         let recorded = match &result {
