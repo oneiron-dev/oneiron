@@ -4285,15 +4285,15 @@ export type LearningBetaValue = { alpha: number; beta: number }
 export type LearningMeanValue = { mean: number; spread: number }
 /** `oneiron::learning::doors::MeasuredLearningValue` */
 export type MeasuredLearningValue = { form: "beta"; value: LearningBetaValue } | { form: "mean"; value: LearningMeanValue } | { form: "counts"; value: Record<string, number> }
-/** `oneiron::claim::learning_estimate::PriorOrigin` */
+/** `oneiron_base::learning_estimate::PriorOrigin` */
 export type PriorOrigin = "shipped" | "provenance" | "carried" | "parent" | "model" | "seed"
 /** `oneiron::learning::doors::LearningPriorValue` */
 export type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>
 /** `oneiron::learning::doors::LearningPriorView` */
 export type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null }
-/** `oneiron::claim::learning_estimate::EstimateLabels` */
+/** `oneiron_base::learning_estimate::EstimateLabels` */
 export type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null }
-/** `oneiron::claim::learning_estimate::Window` */
+/** `oneiron_base::learning_estimate::Window` */
 export type LearningEstimateWindow = { half_life: number }
 /** `oneiron::learning::doors::MeasuredLearningEstimate` */
 export type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: LearningEstimateWindow; ver: string }
