@@ -11,7 +11,7 @@ use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
     WholeVaultExport, WholeVaultExportReceipt, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
 use crate::authority::{HolderExportNeed, HolderExportRequest};
@@ -310,7 +310,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity(self, &id)?
+                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
             {
                 continue;
             }
@@ -364,6 +364,25 @@ impl Vault {
                 &id,
                 header.entity_type,
             )? || !row_live_in_txn(&self.store, &rtxn, &id)?
+            {
+                continue;
+            }
+            // FIX 1496 S5: an epoch summary stays home when any transitive
+            // source is excluded (use-limited or off-record), same as the
+            // JSON bundle door. Non-epoch rows answer None and pass through.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                |source, _| {
+                    Ok(!whole_vault_export_excludes_entity_in_txn(
+                        &self.store,
+                        &rtxn,
+                        source,
+                    )?)
+                },
+            )? == Some(false)
             {
                 continue;
             }
@@ -743,6 +762,9 @@ fn carrier_withheld(
     let Some(carrier) = carrier else {
         return Ok(false);
     };
+    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+        return Ok(true);
+    }
     crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
         match error {
             Error::CorruptedIndex(_) => Ok(true),
