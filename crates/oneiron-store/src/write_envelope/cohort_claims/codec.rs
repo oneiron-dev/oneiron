@@ -2,9 +2,9 @@
 
 use rmpv::Value;
 
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::types::*;
 
