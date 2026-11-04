@@ -162,6 +162,17 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
     Ok(ids)
 }
 
+/// The authenticated image writer's actual erase targets, derived while
+/// the original restore continuation and its transaction are still borrowed.
+pub(crate) fn restore_erased_payload_targets_in_txn(
+    restore: &mut crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+) -> Result<BTreeSet<EntityId>> {
+    let (vault, wtxn, live) = restore.parts();
+    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
+    erased.extend(live);
+    Ok(erased)
+}
+
 /// A checkpoint restore's actor sweep, in its image-write transaction once
 /// the type index is back (FIX 3655): every id a restored hard-delete marker
 /// names, and each of `live`, gets the erase's actor sweep again, so a
@@ -170,10 +181,9 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
 /// the rest of the restored content stays.
 pub(crate) fn rerun_actor_scrubs_in_txn(
     mut restore: crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
-) -> Result<()> {
-    let (vault, wtxn, live) = restore.parts();
-    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
-    erased.extend(live);
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let erased = restore_erased_payload_targets_in_txn(&mut restore)?;
+    let (vault, wtxn, _) = restore.parts();
     // The spawn asks the image brings back for any of them, actor or not,
     // leave its replay rows and step starts again (FIX 9180).
     crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
@@ -202,8 +212,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     }
     // Their dispatch text, carried back by the image's attempt rows, goes
     // again: one pass over the ledger for every id (FIX 7076).
-    crate::attempt_queue::erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
-    Ok(())
+    crate::attempt_queue::ForceCancelAuthority::erase_restored_payloads_in_txn(&mut restore)
 }
 
 /// A legal hold's release, in its own transaction (FIX 6280): the births a

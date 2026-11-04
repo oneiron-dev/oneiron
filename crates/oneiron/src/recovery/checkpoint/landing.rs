@@ -183,7 +183,7 @@ impl Vault {
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
-        vault.with_write_txn_grouped(|txn| {
+        let cancelled = vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
                     .store
@@ -254,7 +254,7 @@ impl Vault {
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+            let cancelled = crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
                 vault: &vault,
                 wtxn: txn,
                 erased: &erased,
@@ -273,8 +273,10 @@ impl Vault {
             )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
-            Ok(())
+            Ok(cancelled)
         })?;
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .erased_payload_cancellations_committed(&cancelled);
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         room.admit_derived(destination)?;
