@@ -46469,7 +46469,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/claims/commit/write/landing.rs",
@@ -46495,7 +46495,7 @@
      "path": "src/memory/claims/commit/write/resolve.rs",
      "purpose": "A claim commit's request, resolved before its write: the typed families it refuses, its references, its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
