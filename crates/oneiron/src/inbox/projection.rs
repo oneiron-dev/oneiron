@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::calendar::outcome::{DueOutcomeCheckIn, check_in_is_still_due};
-use crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL;
+use crate::store::plugin_section_predicate::PREDICATE_PLUGIN_SECTION_INSTALL;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
