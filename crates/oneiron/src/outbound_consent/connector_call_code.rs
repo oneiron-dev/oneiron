@@ -18,6 +18,7 @@ use crate::code_run::CodeConsentDraft;
 use crate::code_run::CodeConsentPendingEffect;
 use crate::code_run::CodeConsentPrincipal;
 use crate::code_run::CodeConsentRememberOffer;
+use crate::code_run::CodeConsentStandingOffer;
 use crate::code_run::CodeConsentWaitView;
 use crate::code_run::code_consent_admission_in_txn;
 use crate::code_run::mint_code_consent_wait_in_txn;
@@ -238,6 +239,15 @@ impl Vault {
             facts.grant_id,
             &facts.call,
         );
+        let standing_offer = if remember_offer.is_none()
+            && !reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK)
+        {
+            crate::gate::code_wait_standing_bound(&gate_input)
+                .as_ref()
+                .and_then(CodeConsentStandingOffer::from_bound)
+        } else {
+            None
+        };
         Ok(Some((
             CodeConsentDraft {
                 site: site.clone(),
@@ -247,6 +257,7 @@ impl Vault {
                 frozen_input_digest: facts.frozen_digest,
                 hold_reasons: reasons.to_vec(),
                 remember_offer,
+                standing_offer,
             },
             gate_input,
         )))
@@ -356,11 +367,18 @@ impl Vault {
             .collect::<Vec<_>>()
             .join(", ");
         let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
+        let standing = row
+            .binding
+            .standing_offer
+            .as_ref()
+            .map_or_else(String::new, |offer| {
+                format!(" Standing offer: {}.", offer.scope_description())
+            });
         Ok(format!(
             "A code run asks before it calls tool \"{tool}\" on connector \"{name}\" (code \
              consent wait {wait}). Its own gate held the call because: {reasons}. Answer one of: \
              {choices}. Nothing is sent until you answer, and the call expires {days} days after \
-             it was held.",
+             it was held.{standing}",
             tool = clip(&call.tool),
             name = clip(&call.name),
             wait = wait_id.to_hex(),

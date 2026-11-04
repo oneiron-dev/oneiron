@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1228 facade rows, 4468 declarations.
+Census: 1228 facade rows, 4469 declarations.
 Inputs: 1159 of 1228 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1064 of 1228 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -12361,11 +12361,18 @@ class CodeWaitResolveRequest(TypedDict):
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
+class CodeConsentStandingOffer(TypedDict):
+    actor_ref: str
+    verb_class: str
+    selectors: list[str]
+    target: NotRequired[str | None]
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
     decision_ref: str
     answered_at_ms: int
+    standing_grant_ref: NotRequired[str | None]
+    standing_receipt_ref: NotRequired[str | None]
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class CodeWaitLedgerLinks(TypedDict):
     prior_ref: NotRequired[str | None]
@@ -12394,6 +12401,7 @@ class CodeWaitReceiptView(TypedDict):
     hold_reasons: list[str]
     ask_ref: NotRequired[EntityId | None]
     allowed_answers: list[CodeWaitChoice]
+    standing_offer: NotRequired[CodeConsentStandingOffer | None]
     answer: NotRequired[CodeWaitAnswerView | None]
     settlement: NotRequired[CodeWaitSettlementView | None]
     consumption: NotRequired[CodeWaitConsumptionView | None]

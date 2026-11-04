@@ -191,6 +191,7 @@ pub(crate) struct CodeConsentBinding {
     pub(crate) pending: CodeConsentPendingEffect,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
+    pub(crate) standing_offer: Option<super::CodeConsentStandingOffer>,
     pub(crate) question: CodeConsentQuestion,
     /// The policy manifest frontier the hold was decided under.
     pub(crate) policy_frontier: [u8; 32],
@@ -221,6 +222,8 @@ pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) decision: GateDecisionId,
     /// The slate a stop-asking answer changed, at its new revision.
     pub(crate) remembered: Option<(EntityId, u64)>,
+    /// The actual standing grant and its separate creation receipt.
+    pub(crate) standing_grant: Option<(String, GateDecisionId)>,
     /// The policy manifest frontier the answer was judged under. The owner
     /// gate decided it; no settlement-policy row is named (CALLS).
     pub(crate) policy_frontier: [u8; 32],
@@ -355,12 +358,18 @@ pub struct CodeConsentWaitView {
     pub ask: Option<EntityId>,
     /// The choices this wait offers.
     pub options: Vec<CodeConsentChoice>,
+    /// The exact server-wide standing scope offered, not authority by itself.
+    pub standing_offer: Option<super::CodeConsentStandingOffer>,
     /// The sealed parked step: its wait generation and step hash.
     pub sealed: Option<(u64, [u8; 32])>,
     pub answer: Option<CodeConsentChoice>,
     pub word_ref: Option<EntityId>,
     /// The consent act's receipt, `gate:<hex>`.
     pub answer_receipt: Option<String>,
+    /// The standing grant actually minted by the first answer, when any.
+    pub standing_grant_ref: Option<String>,
+    /// Its own creation receipt, separate from the one-shot approval.
+    pub standing_receipt_ref: Option<String>,
     pub outcome: Option<CodeConsentSettleOutcome>,
     /// The settlement receipt, `gate:<hex>`.
     pub settlement_receipt: Option<String>,
