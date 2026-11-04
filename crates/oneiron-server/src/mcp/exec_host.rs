@@ -242,6 +242,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+        _caller: Option<(EntityId, Option<String>)>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -255,6 +256,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
+        _caller: Option<(EntityId, Option<String>)>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -464,7 +466,12 @@ pub(crate) type ModelCallBackend =
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
 pub type ReaderMeter = Arc<
-    dyn Fn(BudgetGuard, Option<PayerPerson>, Option<LiveLeaseState>) -> Arc<dyn LlmBackend>
+    dyn Fn(
+            BudgetGuard,
+            Option<PayerPerson>,
+            Option<LiveLeaseState>,
+            Option<(EntityId, Option<String>)>,
+        ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
 >;
@@ -980,7 +987,12 @@ pub(crate) fn enter_engine_native_run(
             )
         })
         .or_else(|| {
-            provider.reader_backend_with_lease(guard.clone(), payer.clone(), Some(scoped.clone()))
+            provider.reader_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                Some(scoped.clone()),
+                None,
+            )
         });
     let per_rung = scoped_backend.is_some();
     // An unmodified provider takes its old wrapper; the scoped code-mode
@@ -989,7 +1001,7 @@ pub(crate) fn enter_engine_native_run(
         Some(backend) => Some(backend),
         None => planned
             .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-            .or_else(|| provider.reader_backend(guard.clone(), payer)),
+            .or_else(|| provider.reader_backend(guard.clone(), payer, None)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
