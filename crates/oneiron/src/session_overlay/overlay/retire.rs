@@ -1,12 +1,13 @@
-//! Promoted-closure retirement reusing Store key builders.
+//! Promoted-closure retirement reusing the store's index-key builders.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use crate::batch::{BatchOp, LONG_INTERVAL_THRESHOLD_SECS};
+use crate::batch::BatchOp;
 use crate::error::{Error, Result};
-use crate::store::Store;
+use oneiron_store::index_keys::{encode_edge_key, encode_temporal_key, encode_type_key};
+use oneiron_store::long_interval::LONG_INTERVAL_THRESHOLD_SECS;
 
 use crate::entity_id::EntityId;
 
@@ -83,30 +84,30 @@ impl SessionOverlay {
                     drop_overlay_row(
                         &mut next,
                         OverlayKeyspace::TypeIndex,
-                        &Store::encode_type_key(*entity_type, id),
+                        &encode_type_key(*entity_type, id),
                     );
                     drop_overlay_row(
                         &mut next,
                         OverlayKeyspace::TemporalOccurredStart,
-                        &Store::encode_temporal_key(occurred.start, id),
+                        &encode_temporal_key(occurred.start, id),
                     );
                     if occurred.start != occurred.end {
                         drop_overlay_row(
                             &mut next,
                             OverlayKeyspace::TemporalOccurredEnd,
-                            &Store::encode_temporal_key(occurred.end, id),
+                            &encode_temporal_key(occurred.end, id),
                         );
                     }
                     drop_overlay_row(
                         &mut next,
                         OverlayKeyspace::TemporalLearned,
-                        &Store::encode_temporal_key(*learned_at, id),
+                        &encode_temporal_key(*learned_at, id),
                     );
                     if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
                         drop_overlay_row(
                             &mut next,
                             OverlayKeyspace::TemporalLongIntervals,
-                            &Store::encode_temporal_key(occurred.end, id),
+                            &encode_temporal_key(occurred.end, id),
                         );
                     }
                 }
@@ -114,12 +115,12 @@ impl SessionOverlay {
                     drop_overlay_row(
                         &mut next,
                         OverlayKeyspace::EdgesOut,
-                        &Store::encode_edge_key(src, *kind, tgt),
+                        &encode_edge_key(src, *kind, tgt),
                     );
                     drop_overlay_row(
                         &mut next,
                         OverlayKeyspace::EdgesIn,
-                        &Store::encode_edge_key(tgt, *kind, src),
+                        &encode_edge_key(tgt, *kind, src),
                     );
                 }
                 _ => {}
