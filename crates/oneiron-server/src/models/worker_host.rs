@@ -399,8 +399,9 @@ async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
     }
 }
 
-/// Returns one hosted supervisor by id for a victim-watch subscription.
-fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
+/// Returns one hosted supervisor by id: a victim-watch subscription, or a
+/// released-body stats report naming its worker (FIX 9297).
+pub(super) fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
     HOST.get().and_then(|host| {
         host.lock()
             .get(worker_id)

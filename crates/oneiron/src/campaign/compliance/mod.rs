@@ -18,11 +18,11 @@
 //!   record was resolved from the vault, bound to this counterparty, and
 //!   class-validated. A dangling reference is
 //!   not weaker evidence, it is no evidence, and the strict path applies.
-//! * **This is enforcement, not a new approval surface.** A blocking verdict
-//!   maps to a hard gate deny in `gate.rs`. Nothing here asks a human to
-//!   approve a compliant send, and an unknown jurisdiction is NOT an automatic
-//!   deny — it routes to the pack's strictest seeded pole, where satisfying
-//!   facts still allow.
+//! * **This is enforcement with an owner answer.** A blocking verdict keeps
+//!   its per-recipient reason and maps to a typed pending hold in `gate.rs`;
+//!   the owner's existing clearance may settle it. An unknown jurisdiction is
+//!   NOT an automatic deny — it routes to the pack's strictest seeded pole,
+//!   where satisfying facts still allow.
 //!
 //! Storage mirrors the `gate` module's `PolicyPack`/`PolicyRule` carrier shape
 //! and the `connector_key` module's propose-versus-stamp amendment posture.
@@ -74,6 +74,7 @@ pub(crate) use self::hydrate::{
     JurisdictionObservation, campaign_compliance_binding, campaign_compliance_gate,
     rank_jurisdiction_observation, select_jurisdiction,
 };
+pub(crate) use self::pack_store::campaign_complaint_pause_threshold_ppm_in_txn;
 
 #[cfg(test)]
 mod tests;
