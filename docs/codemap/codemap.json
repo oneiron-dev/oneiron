@@ -16951,15 +16951,16 @@
      "notable": [
       "ModelCallDigests",
       "ModelCallInputPart",
+      "ModelCallPartRef",
       "ModelCallReasoningPart",
       "ModelCallRecord"
      ],
      "path": "src/code_run/model_call.rs",
      "purpose": "Per-model-call evidence and replay records (FIX 12516)",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 8,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -23830,7 +23831,7 @@
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -34497,6 +34498,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/entity_doc/message_parts.rs",
+     "purpose": "A continuation's ordered-parts append: its stored prefix extended by the terminal's suffix, written as the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/entity_doc/message_stream.rs",
      "purpose": "MESSAGE terminal commits join the common EntityDoc storage transaction",
      "surface": {
@@ -34524,7 +34535,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 2,
       "re-export": 10
      }
@@ -38985,6 +38996,16 @@
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
       "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/witness_message/binding.rs",
+     "purpose": "Whole-envelope witness binding",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -50109,7 +50130,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/codec.rs",
@@ -50260,8 +50281,18 @@
      "path": "src/memory/witness/stream/admission.rs",
      "purpose": "Begin, append and flush",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/admission/parts.rs",
+     "purpose": "A continuation's ordered output parts, in its authorized terminal writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -50326,7 +50357,7 @@
      "path": "src/memory/witness/stream/lifecycle.rs",
      "purpose": "Terminal transitions and the host-driven quiet-stream pump",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -50446,7 +50477,7 @@
      "path": "src/memory/witness/stream/reply_assertions.rs",
      "purpose": "A model stream's reply assertions at its terminal (OF-063, FIX 3416)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -50456,7 +50487,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -71763,7 +71794,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 5,
-      "fn": 16,
+      "fn": 17,
       "struct": 9
      }
     },
@@ -90930,7 +90961,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90986,7 +91017,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91210,7 +91241,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 356,
+     "files": 357,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91954,7 +91985,7 @@
    },
    "over_bar": 137,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6337,
+   "source_files": 6340,
    "test_files": 900
   },
   "oneiron-android": {
@@ -118455,7 +118486,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -118464,6 +118495,16 @@
      "notable": [],
      "path": "src/decision_verdict/hook.rs",
      "purpose": "`ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_verdict/model_calls.rs",
+     "purpose": "The verdict caller a model-call capture attributes (FIX 12742)",
      "surface": {
       "crate-vis": 2
      }
@@ -121969,7 +122010,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 13,
       "re-export": 1,
       "struct": 1
@@ -121994,7 +122035,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 7
      }
@@ -122024,7 +122065,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/ladder/model_call.rs",
-     "purpose": "The rung that answered one generate call (FIX 12743)",
+     "purpose": "The rung that answered one call (FIX 12743)",
      "surface": {
       "crate-vis": 3
      }
@@ -126098,7 +126139,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
     "decision_verdict": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -126443,7 +126484,7 @@
    },
    "over_bar": 42,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1515,
+   "source_files": 1516,
    "test_files": 182
   },
   "oneiron-spawn": {
