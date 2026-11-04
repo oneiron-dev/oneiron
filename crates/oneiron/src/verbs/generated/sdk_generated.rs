@@ -3303,6 +3303,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shares.issue_view_link",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareViewLinkRequest,
+                >(),
+            ),
+            (
                 "vault.shares.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareRevokeRequest,
@@ -7503,6 +7509,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "vault.shares.issue_view_link",
     "host.compact",
     "host.wake",
     "host.budget.hit",
@@ -9256,6 +9263,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
+        }
+        "vault.shares.issue_view_link" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::PairingLink>()
         }
         "host.compact" => crate::code_run::vault_read::request_schema::<
             crate::runtime_hooks::host_doors::HostCompactResult,
@@ -14815,6 +14825,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shares.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.issue_view_link" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21180,6 +21197,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
         }
+        "vault.shares.issue_view_link" => {
+            let _input: crate::task_verb::sdk::ShareViewLinkRequest = decode(value.clone())?;
+        }
         "vault.shares.revoke" => {
             let _input: crate::task_verb::sdk::ShareRevokeRequest = decode(value.clone())?;
         }
@@ -24681,6 +24701,9 @@ pub fn invoke(
         "self.secrets.teardown" => encode(self_secrets_teardown(memory, decode(value)?)?),
         "self.secrets.use" => encode(self_secrets_use(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
+        "vault.shares.issue_view_link" => {
+            encode(vault_shares_issue_view_link(memory, decode(value)?)?)
+        }
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "host.compact" => encode(host_compact(memory, decode(value)?)?),
@@ -31169,6 +31192,12 @@ pub fn vault_shares_create(
     input: crate::task_verb::sdk::ShareCreateRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
     crate::task_verb::sdk::create_share_as_caller(memory, input)
+}
+pub fn vault_shares_issue_view_link(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)
 }
 pub fn vault_shares_revoke(
     memory: &Memory<'_>,

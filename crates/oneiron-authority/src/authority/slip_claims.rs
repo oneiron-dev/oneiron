@@ -41,6 +41,9 @@ pub struct SlipClaims {
     /// minted with (FIX 1925): it admits only that invitation's own doors and
     /// stands only while the invitation is pending. Delegation keeps it.
     pub invitation_ref: Option<String>,
+    /// One admitted brief share. This credential opens only the share's
+    /// rendered view and citations; it carries no general read authority.
+    pub share_ref: Option<String>,
     /// The customer's support delegation (OF-606): set only on a support
     /// slip, which stands only while its signed wall deadline holds on the
     /// recording clock as well. A support slip has no parent and no child,
@@ -101,12 +104,17 @@ impl SlipClaims {
                 .actor_class
                 .as_deref()
                 .is_some_and(|v| !super::ACTOR_BINDING_CLASSES.contains(&v))
-            || [&self.org_ref, &self.grant_ref, &self.invitation_ref]
-                .into_iter()
-                .any(|id| {
-                    id.as_deref()
-                        .is_some_and(|v| oneiron_contracts::EntityId::from_hex(v).is_err())
-                })
+            || [
+                &self.org_ref,
+                &self.grant_ref,
+                &self.invitation_ref,
+                &self.share_ref,
+            ]
+            .into_iter()
+            .any(|id| {
+                id.as_deref()
+                    .is_some_and(|v| oneiron_contracts::EntityId::from_hex(v).is_err())
+            })
             || self
                 .records
                 .iter()
@@ -115,6 +123,26 @@ impl SlipClaims {
             || canonical(self)?.len() > MAX_WIRE_BYTES / 2
         {
             return Err(invalid_authority());
+        }
+        if let Some(share) = &self.share_ref {
+            let view_only = matches!(&self.scope.verbs,
+                crate::federation::ScopeAxis::Some(verbs) if !verbs.is_empty()
+                    && verbs.iter().all(|verb| matches!(verb.as_str(),
+                        "vault.shares.view" | "vault.notes.follow_citation")));
+            if !view_only
+                || oneiron_contracts::EntityId::from_hex(share)?.to_hex() != *share
+                || oneiron_contracts::EntityId::from_hex(&self.holder_ref)?.to_hex()
+                    != self.holder_ref
+                || self.actor_class.is_none()
+                || self.org_ref.is_some()
+                || self.grant_ref.is_some()
+                || self.invitation_ref.is_some()
+                || self.delegation.is_some()
+                || !self.records.is_empty()
+                || !self.channels.is_empty()
+            {
+                return Err(invalid_authority());
+            }
         }
         self.validate_support_delegation()
     }
@@ -137,6 +165,7 @@ impl SlipClaims {
             || self.org_ref.is_some()
             || self.grant_ref.is_some()
             || self.invitation_ref.is_some()
+            || self.share_ref.is_some()
             || super::support_scope_admissible(&self.scope, &self.records, &self.channels).is_err()
         {
             return Err(invalid_authority());
@@ -153,6 +182,7 @@ impl SlipClaims {
         super::effective_slip_comm(self.comm) == super::CommReach::Vault
             && self.scope == Scope::top()
             && self.org_ref.is_none()
+            && self.share_ref.is_none()
             && self.records.is_empty()
             && self.channels.is_empty()
             && !self.single_use
@@ -172,6 +202,7 @@ impl SlipClaims {
             && self.org_ref == parent.org_ref
             && self.grant_ref == parent.grant_ref
             && self.invitation_ref == parent.invitation_ref
+            && self.share_ref == parent.share_ref
             && self.delegation == parent.delegation
             // An absent reach is the vault's, so a child that names none
             // never erases a narrower parent (FIX 3899).

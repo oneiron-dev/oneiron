@@ -3641,6 +3641,9 @@ class Oneiron:
         def create(self, spec):
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
             return json.loads(_translate(lambda: self._client.vault_shares_create(json.dumps(spec))))
+        def issue_view_link(self, spec):
+            """Issues a holder-bound view-only pairing link for one admitted share's recipient."""
+            return json.loads(_translate(lambda: self._client.vault_shares_issue_view_link(json.dumps(spec))))
         def revoke(self, spec):
             return json.loads(_translate(lambda: self._client.vault_shares_revoke(json.dumps(spec))))
         def view(self, spec):

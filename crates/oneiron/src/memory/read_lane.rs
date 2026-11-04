@@ -46,6 +46,40 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// Opens only a bound brief view. A view-only slip cannot enter any
+    /// general read verb; its holder need not be enrolled in this vault.
+    pub(crate) fn shared_brief_read_lane(
+        &self,
+        share: EntityId,
+        verb: &str,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let Some(proof) = self
+            .read_proof
+            .as_ref()
+            .filter(|proof| proof.claims().share_ref.is_some())
+        else {
+            return self.read_lane(ClaimReadStatus::Surfaceable);
+        };
+        let key = ScopedReadActorKey::from_share_view_slip(proof, verb)
+            .filter(|key| {
+                key.share_view_ref() == Some(share)
+                    && key.actor_ref() == self.actor.to_hex()
+                    && key.actor_class() == Some(self.actor_class.gate_actor_class())
+            })
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "credential does not open this shared brief",
+                    &[],
+                )
+            })?;
+        let key = self.in_room_turn(key.for_destination(&self.destination))?;
+        Ok(self
+            .vault
+            .scoped_read(key)
+            .with_claim_status(ClaimReadStatus::Surfaceable))
+    }
+
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
     /// credential grants its actor no read (FIX 6068, 1223): a writer with
     /// none is held to the bounds of what its credential may write to

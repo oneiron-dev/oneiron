@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1225 facade rows, 4462 declarations.
-Inputs: 1156 of 1225 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1061 of 1225 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1226 facade rows, 4465 declarations.
+Inputs: 1157 of 1226 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1062 of 1226 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -11593,6 +11593,18 @@ class ShareCreated(TypedDict):
     created_at: int
     expires_at: NotRequired[int | None]
     travel: TravelChoice
+class ShareViewLinkRequest(TypedDict):
+    share_ref: str
+    actor_class: str
+    slip_lifetime_secs: int
+class PairingPinRef(TypedDict):
+    challenge: list[int]
+    digest: list[int]
+class PairingLink(TypedDict):
+    code: str
+    expires_at: int
+    pin: NotRequired[PairingPinRef | None]
+    comm: CommReach
 class ShareRevokeRequest(TypedDict):
     share_ref: str
 class ShareRevokeReceipt(TypedDict):
