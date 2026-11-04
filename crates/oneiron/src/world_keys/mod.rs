@@ -129,7 +129,9 @@ pub use self::page_seal::{
     reopen_delivered_page_seal, unlock_page_seal, vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
-pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
+pub use self::root::{
+    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
