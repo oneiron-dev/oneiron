@@ -1,9 +1,10 @@
 //! Seat lifecycle operations and consent copy.
-use crate::error::Result;
 use super::normalize_keys::bounded_ref;
 use super::{LINKEDIN_CONNECT_CONSENT_BODY, LinkedInSandboxHostConfig};
+use crate::error::Result;
 pub use crate::outbound::linkedin_policy::{
-    LinkedInAccountRiskLimits, LinkedInSeatDispatchState, LinkedInKillSwitchState, LinkedInSeatSandboxPolicy, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision,
+    LinkedInAccountRiskLimits, LinkedInKillSwitchState, LinkedInSeatDispatchState,
+    LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
 };
 
 pub trait LinkedInSandboxHostHarness {

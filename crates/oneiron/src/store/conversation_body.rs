@@ -1,9 +1,9 @@
 //! Conversation body vocabulary and strict body codecs.
 
-use std::collections::{BTreeMap, BTreeSet};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use crate::{EntityId, Error};
 use crate::error::{RecordError, Result};
+use crate::{EntityId, Error};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -122,7 +122,6 @@ impl ConversationBody {
         Ok(())
     }
 }
-
 
 pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidConversationBody(reason))

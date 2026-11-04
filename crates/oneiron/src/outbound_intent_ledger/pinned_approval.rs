@@ -87,11 +87,36 @@ pub(crate) fn keep_pinned_approval_in_txn(
     let Some(approval) = approval else {
         return Ok(());
     };
+    // FIX 6835 P1: the admission committed before this writer opened, so an
+    // erase of the request may have committed in between and already dropped
+    // any press beside it; recheck the ledger row here and skip the put when
+    // its request is erased or absent. A missing press only re-asks on retry.
+    let intent_id = approval.proof.intent_id();
+    let erased_or_absent = match super::store::get_ledger_record(vault, &*wtxn, &intent_id)? {
+        Some(record) => super::payload::payload_erased(record.payload())?,
+        None => true,
+    };
+    if erased_or_absent {
+        return Ok(());
+    }
     let mut value = [0_u8; 34];
     value[0] = PINNED_APPROVAL_VERSION;
     value[1] = approval.family.tag();
     value[2..].copy_from_slice(approval.proof.effect_digest().as_bytes());
     PINNED_APPROVAL.put(&vault.store, wtxn, &approval.proof.intent_id(), &value)?;
+    Ok(())
+}
+
+/// FIX 6835: drops the press kept beside ledger row `intent_id`, in the
+/// erase's own writer ([`super::store::put_erased_record`], the funnel both
+/// erase paths share). A kept press authorizes nothing without its ledger
+/// row, and a missing one only re-asks, so the delete is unconditional.
+pub(crate) fn drop_pinned_approval_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent_id: &IntentId,
+) -> crate::error::Result<()> {
+    PINNED_APPROVAL.delete(&vault.store, wtxn, intent_id)?;
     Ok(())
 }
 

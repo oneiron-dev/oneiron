@@ -2,13 +2,13 @@
 //! entity / vector / edge / text / temporal operations. Also hosts
 //! edge-record helpers kept for Vault-facing compatibility.
 
-pub(crate) mod speculative_passes;
 mod actors_memory;
 mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
@@ -20,6 +20,7 @@ mod open;
 mod places;
 mod raw_writes;
 
+pub(crate) mod code_consent_host;
 #[cfg(feature = "test-support")]
 mod read_fixture;
 mod reader_table;
@@ -28,7 +29,6 @@ mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
-pub(crate) mod code_consent_host;
 mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
@@ -104,7 +104,8 @@ pub struct Vault {
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
+    pub(crate) housekeeping:
+        std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
@@ -146,6 +147,9 @@ pub struct Vault {
     /// debts and settled none, `0` when none stalled (FIX 11923): while the
     /// count stands, writes skip that drain.
     pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
+    /// The claim VAD payment worker's wake and the claims the write door
+    /// handed it (FIX 11702). In memory only: the debt rows are the debt.
+    pub(crate) claim_vad_payment: crate::housekeeping::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
@@ -215,8 +219,9 @@ pub struct Vault {
     /// The served host that drives an answered code consent wait's effect
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
-    pub(crate) code_consent_host:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>>,
+    pub(crate) code_consent_host: std::sync::OnceLock<
+        std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>,
+    >,
     /// The served host's check that a managed vault's attested owner is its
     /// live owner, which his queued work runs under (FIX 11090), installed
     /// once per open vault ([`Vault::install_managed_owner_check`]). In
@@ -242,6 +247,16 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+}
+
+/// A vault's detached writes run before it closes (FIX 12023): those queued
+/// through its own doors (a call receipt's) need the vault itself, and run
+/// here, on the closing thread, in arrival order with the rest, before any
+/// part of the vault drops. The store's own drop then ends its leader.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.store.finish_detached_writes(Some(&*self));
+    }
 }
 
 #[cfg(test)]
