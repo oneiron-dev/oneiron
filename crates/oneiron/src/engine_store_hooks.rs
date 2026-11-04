@@ -836,6 +836,25 @@ impl StoreGateHooks for EngineGateHooks {
         crate::gate::scoped_read_grant_reads_world(grant, world, credential)
     }
 
+    fn observe_submission_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actor: EntityId,
+        proposal_ref: &str,
+        policy_source: oneiron_store::proposal_observation_record::ProposalPolicySource,
+        revision_changed: bool,
+    ) -> Result<()> {
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            txn,
+            actor,
+            proposal_ref,
+            policy_source,
+            revision_changed,
+        )
+    }
+
     fn erase_count_actor_in_txn(
         &self,
         vault: &crate::Vault,
