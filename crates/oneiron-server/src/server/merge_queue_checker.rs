@@ -325,11 +325,14 @@ fn resolve_left_guests(dir: &std::path::Path) {
     let mut resolved = 0_usize;
     for entry in entries.flatten() {
         let path = entry.path();
+        if path.extension().is_some_and(|extension| extension == "bad") {
+            continue;
+        }
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
         let Ok(record) = serde_json::from_slice::<executor::GuestRecord>(&bytes) else {
-            let _removed = std::fs::remove_file(&path);
+            let _renamed = std::fs::rename(&path, path.with_added_extension("bad"));
             continue;
         };
         // A forced removal ends the container or finds it gone; only a
