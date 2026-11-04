@@ -330,6 +330,31 @@ pub(super) fn owner_export_notices_in(
     Ok(Some(notices))
 }
 
+/// Recipient notices for the artifact bytes and the selected born-with
+/// sources of the owner's export. Placement is advisory: it never narrows
+/// the owner's plain read or adds an export admission check.
+pub(super) fn artifact_export_notices(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+    onward: &ReadDestination,
+) -> Result<Vec<WorldRecipientNotice>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut worlds = BTreeSet::new();
+    for row in rows {
+        let carried = crate::settings::carried_worlds_in(&vault.store, &txn, row)?;
+        if carried.unknown {
+            tracing::warn!("owner artifact export has an unplaced notice source");
+        }
+        worlds.extend(carried.worlds);
+    }
+    let mut notices = Vec::new();
+    for (world, limit) in crate::settings::recipient_limits_in(vault, &txn, &worlds, onward)? {
+        let name = world_label_in_txn(vault, &txn, &world)?;
+        notices.push(WorldRecipientNotice::export(world, name, limit));
+    }
+    Ok(notices)
+}
+
 /// Whether `bytes` spell, as a whole 32-digit hex token, a row a world
 /// withheld from `actual` keeps now: the payload scan every release off this
 /// device runs (a result, a code run's answer, a keyed replay). The owner's
