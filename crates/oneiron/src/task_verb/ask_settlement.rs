@@ -196,6 +196,15 @@ fn settle_with_cutoff_in(
     }
     if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
         || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
+        || !crate::office_body::may_cut_live_edit(
+            vault,
+            txn,
+            id,
+            &group.requested.intent_key,
+            reason,
+            &decision,
+            owner,
+        )?
     {
         return Ok(None);
     }
@@ -301,6 +310,7 @@ fn settle_with_cutoff_in(
     super::training_offer_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_swap_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::comm_widen::resolve_answer_in(vault, txn, &group, &result)?;
+    crate::office_body::resolve_live_edit_holder_ask_in_txn(vault, txn, &result, owner)?;
     crate::office_body::resolve_holder_ask_in_txn(vault, txn, &result)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;
