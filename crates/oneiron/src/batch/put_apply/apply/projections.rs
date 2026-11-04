@@ -22,7 +22,7 @@ pub(super) fn stage_put_projections(
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
 ) -> Result<AppliedPut> {
-    crate::skill_hub::stage_refinement_origin(
+    crate::store::skill_refinement_origin::stage_refinement_origin(
         store,
         wtxn,
         &fixed.id,
