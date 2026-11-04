@@ -562,6 +562,20 @@ pub mod code_document_receipt;
 pub mod plugin_section_predicate;
 pub(crate) mod ppr_cache_invalidation;
 pub(crate) mod vector_insert_plan;
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+
+pub(crate) mod container_output;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+
+pub(crate) mod identity_redirect_rows;
+
+pub mod healer_oversight;
+pub(crate) mod skill_resident;
+pub mod channel_class;
+pub(crate) mod pending_comm_stop;
+pub(crate) mod conversation_summary;
 pub(crate) mod authority_rows;
 pub(crate) mod consent_bound;
 pub(crate) mod gate_reason;

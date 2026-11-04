@@ -514,7 +514,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// refusal keeps the row, and so does a guard that cannot read it: keeping is
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
-    crate::task_authority::reject_fact_delete(store, txn, id).is_err()
+    crate::store::task_authority_guard::reject_fact_delete(store, txn, id).is_err()
         || store
             .delete_guards
             .refuse_revision_delete(store, txn, id)
