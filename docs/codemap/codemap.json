@@ -2413,28 +2413,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AttemptCancelPressure",
-      "AttemptCancelReceipt",
-      "AttemptCancelReceiptKind",
-      "AttemptCancelState",
-      "AttemptCancellation",
-      "AttemptLanding",
-      "AttemptLandingReserve",
-      "AttemptResumePoint",
-      "CancelMode",
-      "CancelStanding",
-      "ForceCancelAuthority",
-      "ForceCancelGrounds",
-      "LandingTrigger"
+      "ForceCancelAuthority"
      ],
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
       "const": 5,
       "crate-vis": 3,
-      "enum": 5,
       "fn": 20,
-      "struct": 8
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -2904,22 +2892,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RunAsk",
-      "RunAskAnswer",
-      "RunAskAnswerKind",
-      "RunAskQuestion",
       "RunAskState",
-      "RunBranchSignal",
-      "RunSignalInput",
-      "RunSignalKind",
-      "RunSignalState"
+      "RunSignalInput"
      ],
      "path": "src/attempt_queue/run_signal.rs",
      "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
      "surface": {
       "crate-vis": 4,
-      "enum": 4,
-      "struct": 5
+      "enum": 1,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -26573,6 +26555,7 @@
      "path": "src/dreamer_consolidation/person_about/sources.rs",
      "purpose": "The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -49543,7 +49526,7 @@
      "purpose": "MESSAGE doors adapt typed calls to the existing witness and stream programs",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -69379,6 +69362,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptCancelPressure",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
+      "AttemptCancelState",
+      "AttemptCancellation",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
+      "CancelMode",
+      "CancelStanding",
+      "ForceCancelGrounds",
+      "LandingTrigger"
+     ],
+     "path": "src/store/attempt_cancel.rs",
+     "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
+     "surface": {
+      "enum": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AttemptQueueCleanupMetricsSnapshot",
       "AttemptQueueCleanupReport",
       "AttemptQueueRetryReason",
@@ -69501,6 +69508,26 @@
      "purpose": "Owner-retained queue kind and identifier range classification",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunBranchSignal",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/store/attempt_run_signal.rs",
+     "purpose": "The durable branch signal and ask rows an attempt row carries: each branch-addressed control signal and its…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "struct": 4
      }
     },
     {
@@ -72171,7 +72198,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 101,
+      "mod": 104,
       "re-export": 31
      }
     },
@@ -73372,6 +73399,18 @@
      "surface": {
       "crate-vis": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionRef"
+     ],
+     "path": "src/store/revision_ref.rs",
+     "purpose": "A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a…",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -81937,15 +81976,15 @@
       "IndexedRevisionInput",
       "PinnedCitation",
       "ReadMode",
-      "ResolvedCitation",
-      "RevisionRef"
+      "ResolvedCitation"
      ],
      "path": "src/vault/entity_revision/types.rs",
      "purpose": "Exact read frontiers and idle refresh contracts for editable entity text",
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -90484,7 +90523,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 407,
+     "files": 410,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90724,7 +90763,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6303,
+   "source_files": 6306,
    "test_files": 898
   },
   "oneiron-android": {
@@ -104647,7 +104686,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 6,
-      "fn": 17,
+      "fn": 18,
       "struct": 5
      }
     },
@@ -109436,8 +109475,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/ai/chat/segments/retry.rs",
-     "purpose": "A reused Retry's fresh session metadata and post-save successor",
+     "path": "src/api/ai/chat/segments/actions.rs",
+     "purpose": "A reused turn action's fresh session metadata and post-save successor",
      "surface": {
       "crate-vis": 4
      }
