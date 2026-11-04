@@ -4,6 +4,7 @@ use der::{Decode, Encode};
 
 use crate::api::{Sha256Digest, SignatureAlgorithm};
 use crate::error::{FatalCode, SealError, SealStage};
+use crate::memory::MemoryLedger;
 
 use super::cms_err;
 use super::der::{DerReader, Tlv, sha256};
@@ -18,11 +19,23 @@ use super::parse::{ParsedSignerInfo, parse_oid};
 // Attribute inspection and signature verification
 // ---------------------------------------------------------------------------
 
+/// Refuse through the operation ledger before allocating `bytes`; a parsing
+/// failure stays the CMS encoding error, a refused ledger the typed error.
+fn admit(bytes: usize, memory: &MemoryLedger) -> Result<(), SealError> {
+    memory
+        .admit_len::<u8>(bytes)
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
+}
+
 /// Parse one Attribute: returns (attr OID content bytes, single value TLV).
-pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(Vec<u8>, Tlv<'_>), SealError> {
+/// The OID copy is admitted inside `parse_oid`.
+pub(crate) fn parse_attribute(
+    attr_der: &[u8],
+    memory: &MemoryLedger,
+) -> Result<(Vec<u8>, Tlv<'_>), SealError> {
     let top = DerReader::new(attr_der).expect(0x30)?;
     let mut r = DerReader::new(top.content);
-    let oid = parse_oid(r.expect(0x06)?)?;
+    let oid = parse_oid(r.expect(0x06)?, memory)?;
     let set = r.expect(0x31)?;
     let mut sr = DerReader::new(set.content);
     let value = sr.read()?;
@@ -37,7 +50,10 @@ pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(Vec<u8>, Tlv<'_>), Sea
 
 /// Enforce the exact three-attribute PAdES baseline (§7.3). Returns the
 /// `message-digest` value.
-pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Digest, SealError> {
+pub(crate) fn check_baseline_attrs(
+    signer: &ParsedSignerInfo,
+    memory: &MemoryLedger,
+) -> Result<Sha256Digest, SealError> {
     if signer.signed_attrs.len() != 3 {
         return Err(cms_err());
     }
@@ -45,7 +61,7 @@ pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Di
     let mut seen_ct = false;
     let mut seen_sc = false;
     for attr in &signer.signed_attrs {
-        let (oid, value) = parse_attribute(attr)?;
+        let (oid, value) = parse_attribute(attr, memory)?;
         if oid == OID_ATTR_CONTENT_TYPE.as_bytes() {
             if seen_ct || value.tag != 0x06 || value.content != OID_DATA.as_bytes() {
                 return Err(cms_err());
@@ -81,8 +97,11 @@ type EssCertIdParts = (Vec<u8>, Vec<u8>, Vec<u8>);
 /// returning (cert hash content, issuer Name DER, serialNumber TLV). The
 /// attribute must be the exact baseline shape: single value, one
 /// ESSCertIDv2, issuerSerial with one directoryName GeneralName.
-pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts, SealError> {
-    let (oid, value) = parse_attribute(attr_der)?;
+pub(super) fn ess_cert_id_v2(
+    attr_der: &[u8],
+    memory: &MemoryLedger,
+) -> Result<EssCertIdParts, SealError> {
+    let (oid, value) = parse_attribute(attr_der, memory)?;
     if oid != OID_ATTR_SIGNING_CERT_V2.as_bytes() || value.tag != 0x30 {
         return Err(cms_err());
     }
@@ -113,6 +132,13 @@ pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts, SealErro
     if !gr.is_done() {
         return Err(cms_err());
     }
+    admit(
+        hash.content
+            .len()
+            .saturating_add(dir_name.content.len())
+            .saturating_add(serial.full.len()),
+        memory,
+    )?;
     Ok((
         hash.content.to_vec(),
         dir_name.content.to_vec(),
@@ -128,8 +154,9 @@ pub(crate) fn check_ess_binding(
     signer_cert_der: &[u8],
     issuer_name_der: &[u8],
     serial_der: &[u8],
+    memory: &MemoryLedger,
 ) -> Result<(), SealError> {
-    let (hash, issuer, serial) = ess_cert_id_v2(attr_der)?;
+    let (hash, issuer, serial) = ess_cert_id_v2(attr_der, memory)?;
     if hash != sha256(signer_cert_der) || issuer != issuer_name_der || serial != serial_der {
         return Err(cms_err());
     }
