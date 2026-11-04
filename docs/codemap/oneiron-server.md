@@ -1347,6 +1347,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/decision_posture.rs` | src | s | 1 crate-vis | — | A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the… |
 | `src/models/ladder/live_fork.rs` | src | s | 3 crate-vis | — | The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint… |
 | `src/models/ladder/model_call.rs` | src | s | 3 crate-vis | — | The rung that answered one call (FIX 12743) |
+| `src/models/ladder/model_list.rs` | src | s | 3 crate-vis | — | A call-local view of the models its reader inherited from the agent |
 | `src/models/ladder/shadow_capture.rs` | src | s | 4 crate-vis | — | The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a… |
 | `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/ladder/step_quota.rs` | src | s | 3 crate-vis | — | A durable attempt's offer under the state every call shares (FIX 9510) |

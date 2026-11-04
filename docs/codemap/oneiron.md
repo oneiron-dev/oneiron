@@ -764,7 +764,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/lane_scope.rs` | src | s | 14 crate-vis | — | FIX 6403: the credential ceiling every e-sign door judges a narrowed caller by |
 | `src/blob_artifact/esign/ledger.rs` | src | m | 3 fn · 1 const · 16 crate-vis | — | Claims are the document state machine |
 | `src/blob_artifact/esign/lifecycle.rs` | src | m | 4 struct · 4 fn · 7 crate-vis | EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder | Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps |
-| `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 22 re-export · 7 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
+| `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 23 re-export · 7 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
 | `src/blob_artifact/esign/model.rs` | src | m | 11 struct · 11 enum · 6 crate-vis | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignAuthenticationMethod, EsignDocument, EsignEvent +14 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/notice_dispatch.rs` | src | m | 1 struct · 2 fn · 1 const · 7 crate-vis | EsignNotice | Durable e-sign transition intents cross OF-327 before edge handoff |
 | `src/blob_artifact/esign/notice_door.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView | `vault.esign.notices.dispatch` (FIX 5239): a signing document's staged transition notices (pending… |
@@ -773,7 +773,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/notice_unattended.rs` | src | m | 1 struct · 1 enum · 2 fn · 3 crate-vis | EsignNoticeGroup, EsignUnattendedNotices | FIX 6219 (Engine design B): a signing document's staged notices (pending, completed, rejection, expiry) go… |
 | `src/blob_artifact/esign/outbound.rs` | src | m | 1 struct · 1 enum · 5 fn · 6 crate-vis | EsignOutboundCommand, EsignOutboundVerb | SGN-02 uses the ordinary OF-327 gate and durable intent ledger |
 | `src/blob_artifact/esign/principals.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SigningAutonomy, SigningPrincipal | Owner-editable principal set and the legal-reality-gated D6 action dial |
-| `src/blob_artifact/esign/public_read.rs` | src | s | 4 fn · 1 crate-vis | — | Capability-scoped PDF bytes |
+| `src/blob_artifact/esign/public_read.rs` | src | s | 1 enum · 5 fn · 1 crate-vis | EsignLeasedReadError | Capability-scoped PDF bytes |
 | `src/blob_artifact/esign/rate.rs` | src | m | 2 struct · 3 fn · 2 const · 3 crate-vis | EsignRateCheck, EsignRateReceipt | Vault-local, receipt-backed ceremony observation and the `[limits]` crossings of signature uploads and… |
 | `src/blob_artifact/esign/render.rs` | src | m | 4 struct · 1 enum · 7 fn · 3 re-export · 2 crate-vis | PdfFieldRect, PdfPreparation, PdfPreparationError, PreparedEsignPdf, SignatureRaster | Lossless PDF preparation and shared field presentation |
 | `src/blob_artifact/esign/render/admitted.rs` | src | s | 1 trait · 8 crate-vis | InspectionMemory | A PDF inspection's memory, admitted by its host before the parse allocates it (FIX 8065) |
@@ -818,7 +818,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/version_codec.rs` | src | s | 2 crate-vis | — | Strict MessagePack framing for blob version records |
 | `src/blob_artifact/version_rows.rs` | src | s | 1 fn · 4 crate-vis | — | The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those… |
 | `src/blob_artifact/versions.rs` | src | L | 2 struct · 1 enum · 9 fn · 1 const · 1 re-export · 26 crate-vis | BlobArtifactAppendOutcome, BlobArtifactVersion, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
-| `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 6 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
+| `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 7 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
 | `src/bm25/codec.rs` | src | s | 1 crate-vis | — | — |
 | `src/bm25/config.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/bm25/diagnostics.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
@@ -1551,9 +1551,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/microvm/tests.rs` | test | m | — | — | — |
 | `src/code_sandbox/mod.rs` | src | s | 7 mod · 6 re-export | — | Sandbox boundary contract for code-mode execution |
 | `src/code_sandbox/paths.rs` | src | s | 1 re-export | — | Sandbox guest path vocabulary is defined in the store layer |
-| `src/code_sandbox/proposal.rs` | src | m | 7 struct · 2 enum · 10 fn · 2 re-export · 1 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
-| `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 15 fn | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
+| `src/code_sandbox/proposal.rs` | src | m | 7 struct · 2 enum · 10 fn · 2 re-export · 2 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
+| `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 15 fn · 1 crate-vis | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
 | `src/code_sandbox/proposal/spool.rs` | src | s | 1 re-export | — | Proposal spool disk-floor contracts, defined at the store layer |
+| `src/code_sandbox/proposal/spooled_edit.rs` | src | s | 1 crate-vis | — | Whole-file proposals compared with a spooled boot snapshot |
 | `src/code_sandbox/quickjs.rs` | src | s | 1 struct · 3 fn | QuickJsRuntimeFactory | Hash-pinned, readiness-checked QuickJS artifact factory |
 | `src/code_sandbox/quickjs/tests.rs` | test | m | — | — | Acceptance tests require the real artifacts produced by the pinned build |
 | `src/code_sandbox/tests.rs` | test | s | — | — | — |
@@ -4621,10 +4622,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/document_fields.rs` | src | s | 3 crate-vis | — | Field vocabulary shared by document writes and value-based recovery |
 | `src/ports/document_rows.rs` | src | s | 11 crate-vis | — | The document-row port: the ARCH-0023b entity-document families of one document slot |
 | `src/ports/integrity.rs` | src | m | 28 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
-| `src/ports/lmdb_aux.rs` | src | m | 5 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
+| `src/ports/lmdb_aux.rs` | src | m | 6 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
 | `src/ports/lmdb_claim.rs` | src | m | 5 crate-vis | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
 | `src/ports/lmdb_document_rows.rs` | src | s | — | — | LMDB/session adapter of the document-row port, over the declared `sync_state` families |
-| `src/ports/lmdb_entity.rs` | src | m | 5 crate-vis | — | LMDB entity, edge and place adapters |
+| `src/ports/lmdb_entity.rs` | src | m | 7 crate-vis | — | LMDB entity, edge and place adapters |
 | `src/ports/lmdb_index.rs` | src | m | 2 crate-vis | — | Search, short-id and deletion-ledger adapters |
 | `src/ports/lmdb_operational_edges.rs` | src | s | — | — | Provenance cache updates after the claim lifecycle has authorized the change |
 | `src/ports/lmdb_operational_entities.rs` | src | s | — | — | Canonical adapter for narrow metadata-preserving operational entity updates |
