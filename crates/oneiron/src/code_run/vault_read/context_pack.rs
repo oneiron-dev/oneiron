@@ -10,16 +10,8 @@ pub use oneiron_contracts::code_run::vault_read::{
     ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest, MediaQueryKind,
 };
 
-/// A media query's kind is the engine's input kind of the same name.
-impl From<MediaQueryKind> for crate::embed::InputKind {
-    fn from(kind: MediaQueryKind) -> Self {
-        match kind {
-            MediaQueryKind::Text => Self::Text,
-            MediaQueryKind::Image => Self::Image,
-            MediaQueryKind::Audio => Self::Audio,
-        }
-    }
-}
+// `From<MediaQueryKind> for InputKind` lives with `InputKind` in
+// `oneiron_store::embedding_vocabulary` (orphan rule).
 
 /// Local serialization of every public `ContextEntity` field.
 ///
