@@ -354,7 +354,10 @@ impl Vault {
             return false;
         };
         if let Some(key) = pre.session() {
-            return self.verb_hook_state.session.unuse_ask(key, token.key(), token.ask());
+            return self
+                .verb_hook_state
+                .session
+                .unuse_ask(key, token.key(), token.ask());
         }
         self.with_write_txn_grouped(|txn| ask::reopen_in_txn(self, txn, token))
             .inspect_err(|error| {
