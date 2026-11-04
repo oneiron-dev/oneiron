@@ -1,7 +1,7 @@
 //! Read-facing views and per-verb inputs for structural puts.
 
-use serde::{Deserialize, Serialize};
 pub use crate::vault::entity_view::EntityView;
+use serde::{Deserialize, Serialize};
 /// One BM25 text-index field for a structural put.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextIndexField {

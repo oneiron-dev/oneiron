@@ -189,8 +189,10 @@ impl ExportBody {
             // Treating it as arbitrary opaque bytes would null it and make a live
             // edited NOTE's JSON archive impossible to decode on import.
             if entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && let Ok(note) =
-                    crate::store::note_body::decode_note_body_using(bytes, crate::store::note_body::NoteKind::wire)
+                && let Ok(note) = crate::store::note_body::decode_note_body_using(
+                    bytes,
+                    crate::store::note_body::NoteKind::wire,
+                )
             {
                 export_note_references(&note, &mut exported);
             }

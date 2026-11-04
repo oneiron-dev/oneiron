@@ -10,12 +10,12 @@ use super::NoteKind;
 const NOTE_KIND: SideTable<String, NoteKindDescriptor, Named> =
     SideTable::new(&side_table::NOTE_KIND);
 
+pub(crate) use crate::store::note_kind::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND};
 pub use crate::store::note_kind::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
-pub(crate) use crate::store::note_kind::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND};
-pub(super) use crate::store::note_kind::{is_shipped_kind, valid_name};
 use crate::store::note_kind::{SHIPPED, shipped};
+pub(super) use crate::store::note_kind::{is_shipped_kind, valid_name};
 
 impl Vault {
     /// Registers immutable PACK-owned kind defaults. A plugin kind is namespaced

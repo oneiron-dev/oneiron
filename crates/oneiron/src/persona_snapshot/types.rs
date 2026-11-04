@@ -10,7 +10,9 @@ pub use crate::store::persona_snapshot_record::PERSONA_SNAPSHOT_COMPILE_STAMP_SC
 /// Schema marker carried by the MemoryPack-lite JSON render.
 pub const MEMORY_PACK_LITE_SCHEMA_VERSION: &str = "oneiron.memory_pack_lite.v1";
 
-pub use crate::store::persona_snapshot_record::{PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION, PERSONA_SNAPSHOT_EXPORT_BODY_KEYS};
+pub use crate::store::persona_snapshot_record::{
+    PERSONA_SNAPSHOT_EXPORT_BODY_KEYS, PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION,
+};
 
 pub(crate) use crate::serialize::persona_export_fields::{
     PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL, PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL,
@@ -49,7 +51,12 @@ pub(super) use crate::store::persona_snapshot_record::FINGERPRINT_HEX_LEN;
 /// text must not survive in it either.
 pub const STRUCK_IDENTITY_LINE_PLACEHOLDER: &str = "(identity struck)";
 
-pub(super) use crate::store::persona_snapshot_record::{KEY_SCHEMA_VERSION, KEY_SUBJECT_REF, KEY_AUDIENCE_REF, KEY_IDENTITY_LINE, KEY_COMPILED_AT_SECS, KEY_STALE_AFTER_SECS, KEY_COMPILED_FINGERPRINT, KEY_TAKES_INCLUDED, KEY_GRANTED_BY, KEY_GRANTED_AT_SECS, KEY_EXPORTED_AT_SECS, KEY_INCLUDED_ROW_IDS, KEY_STRUCK_ROW_IDS, KEY_ARTIFACT_FINGERPRINT, KEY_OMITTED_REFS};
+pub(super) use crate::store::persona_snapshot_record::{
+    KEY_ARTIFACT_FINGERPRINT, KEY_AUDIENCE_REF, KEY_COMPILED_AT_SECS, KEY_COMPILED_FINGERPRINT,
+    KEY_EXPORTED_AT_SECS, KEY_GRANTED_AT_SECS, KEY_GRANTED_BY, KEY_IDENTITY_LINE,
+    KEY_INCLUDED_ROW_IDS, KEY_OMITTED_REFS, KEY_SCHEMA_VERSION, KEY_STALE_AFTER_SECS,
+    KEY_STRUCK_ROW_IDS, KEY_SUBJECT_REF, KEY_TAKES_INCLUDED,
+};
 
 /// Row kind on a compiled persona snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
