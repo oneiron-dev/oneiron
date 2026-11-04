@@ -10,7 +10,9 @@ use crate::invocation_claims::{InvocationClaimStore, invocation_claim_key};
 /// one's reply and gets it, and one naming it for another call is refused at
 /// once. An action's verb-table row reaches its route here with its step's
 /// id, and is claimed once, here. A request no credential authenticates, or
-/// whose header is no id, is left to its route's own refusal.
+/// whose header is no id, is left to its route's own refusal. The caller is
+/// the one the receipt layer resolved for this call ([`ResolvedCaller`],
+/// FIX 2005), never resolved a second time.
 pub(super) async fn facade_invocation_claim(
     State(server): State<Arc<SyncServer>>,
     request: Request,
@@ -20,8 +22,16 @@ pub(super) async fn facade_invocation_claim(
         return next.run(request).await;
     };
     let (mut parts, body) = request.into_parts();
-    let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
-        return next.run(Request::from_parts(parts, body)).await;
+    let resolved = parts
+        .extensions
+        .get::<ResolvedCaller>()
+        .map(|resolved| resolved.auth.clone());
+    let auth = match resolved {
+        Some(auth) => auth,
+        None => match CoreAuth::from_request_parts(&mut parts, &server).await {
+            Ok(auth) => auth,
+            Err(_) => return next.run(Request::from_parts(parts, body)).await,
+        },
     };
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
@@ -66,16 +76,28 @@ pub(super) async fn facade_invocation_claim(
             // The waiter's credential is judged again once the wait is over,
             // before a reply is its (FIX 8212): a revoked or expired one gets
             // the refusal it gets anywhere.
-            let auth = match CoreAuth::from_request_parts(&mut parts, &server).await {
-                Ok(auth) if auth.credential_is_live(server.vault()) => auth,
-                Ok(_) => {
-                    return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
-                        .into_response();
-                }
-                Err(refused) => return refused.into_response(),
-            };
+            if !auth.credential_is_live(server.vault()) {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
+            // An account key carries no slip, token id or attested owner
+            // for the check above to judge, so it always reads live there.
+            // Judge it again after the wait instead (review-4320 P1): a
+            // live cached verdict answers from memory, while a cache miss
+            // (lease race, eviction, full cache) re-presents the waiter's
+            // own bearer to the verifier. Only revoked or expired keys,
+            // or an unreachable control plane, refuse here.
+            if auth.verified_slip().is_none()
+                && auth.jti().is_none()
+                && auth.managed_owner().is_none()
+                && auth.instrument().is_some()
+                && !auth.account_key_still_live(&server, &parts.headers).await
+            {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
             let verb = parts.uri.path().trim_start_matches('/');
-            door_replay_for(server.vault(), &auth, verb, outcome)
+            facade_replay(server.vault(), &auth, verb, outcome)
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -118,6 +140,53 @@ pub(super) async fn facade_invocation_claim(
         )
         .into_response(),
     }
+}
+
+/// The caller the facade's receipt layer resolved for one request, carried
+/// in its extensions to the invocation claim and the route inside it, so
+/// one call resolves its credential once (FIX 2005, FIX 12323). It keeps
+/// the path and headers it was resolved from: a request built on another
+/// one's extensions (an action's row, FIX 10938) is not the request it
+/// names.
+#[derive(Clone)]
+pub(super) struct ResolvedCaller {
+    pub(super) auth: CoreAuth,
+    path: String,
+    headers: HeaderMap,
+}
+
+impl ResolvedCaller {
+    /// `auth`, as resolved for the request `parts` head.
+    pub(super) fn of(auth: CoreAuth, parts: &axum::http::request::Parts) -> Self {
+        Self {
+            auth,
+            path: parts.uri.path().to_owned(),
+            headers: parts.headers.clone(),
+        }
+    }
+}
+
+/// The caller the receipt layer resolved for this same request, its path
+/// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
+/// 12323). Only a caller whose standing the server reads again here, a
+/// slip, a token id or an attested owner, is taken, and only while it is
+/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
+/// extractor resolves it as before, so a revoked or expired credential is
+/// refused there exactly as before, and an account key meets its own
+/// verifier again.
+pub(crate) fn resolved_facade_caller(
+    parts: &axum::http::request::Parts,
+    server: &SyncServer,
+) -> Option<CoreAuth> {
+    let resolved = parts.extensions.get::<ResolvedCaller>()?;
+    let auth = &resolved.auth;
+    let standing =
+        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    (resolved.path == parts.uri.path()
+        && resolved.headers == parts.headers
+        && standing
+        && auth.credential_is_live(server.vault()))
+    .then(|| auth.clone())
 }
 
 /// How long a request naming an invocation another request is running
@@ -375,12 +444,41 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
+    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    (status, Json(body)).into_response()
+}
+
+/// [`door_replay_for`] for a facade waiter: a refusal goes again as the
+/// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
+/// field the first one carried under a request id of its own, so this
+/// call's receipt records its code, while it still names the first call's
+/// receipt, the original.
+fn facade_replay(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    outcome: InvocationOutcome,
+) -> Response {
+    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    match FacadeApiError::replayed(status, &body) {
+        Some(refusal) => refusal.into_response(),
+        None => (status, Json(body)).into_response(),
+    }
+}
+
+/// The first call's status and body, released again for the waiter `auth`.
+fn replayed_reply(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    outcome: InvocationOutcome,
+) -> (StatusCode, serde_json::Value) {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match outcome.release {
         Some(release) => replayed_value(vault, auth, verb, release),
         None => rereleased_refusal(vault, auth, outcome.body),
     };
-    (status, Json(body)).into_response()
+    (status, body)
 }
 
 /// A refusal the first call kept with nothing beside it, released again for

@@ -349,8 +349,7 @@ impl EngineNativeExecutor<'_> {
             let Some(output) = record.outputs.iter().find(|output| {
                 output.handle == binding.handle
                     && (binding.path.is_empty() || output.path == binding.path)
-            })
-            else {
+            }) else {
                 return Err(Error::CorruptedIndex("executor result binding").into());
             };
             let preview: String = if !served_rows_withheld
