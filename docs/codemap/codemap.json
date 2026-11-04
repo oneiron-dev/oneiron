@@ -34072,7 +34072,7 @@
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -69351,6 +69351,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_operations.rs",
+     "purpose": "The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AbandonAttempt",
       "AbandonOutcome",
@@ -72274,7 +72284,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 124,
+      "crate-vis": 126,
       "mod": 108,
       "re-export": 31
      }
@@ -90621,7 +90631,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 435,
+     "files": 436,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90861,7 +90871,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6317,
+   "source_files": 6318,
    "test_files": 895
   },
   "oneiron-android": {
