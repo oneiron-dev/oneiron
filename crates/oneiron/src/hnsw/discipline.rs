@@ -3,7 +3,7 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::keys::{
     ERR_FALLBACK_COUNTER_BYTES, ERR_LEGACY_REBUILDS_BYTES, ERR_SYMMETRIC_MARKER_BYTES,
@@ -24,10 +24,10 @@ pub(crate) enum LinkDiscipline {
 }
 
 pub(crate) fn read_link_discipline(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
 ) -> Result<LinkDiscipline> {
-    match store.hnsw_meta().get(txn, SYMMETRIC_LINKS_KEY)? {
+    match store.index_meta().get(txn, SYMMETRIC_LINKS_KEY)? {
         None => Ok(LinkDiscipline::Legacy),
         Some(raw) if *raw == [SYMMETRIC_LINKS_ENABLED] => Ok(LinkDiscipline::Symmetric),
         Some(_) => Err(Error::CorruptedIndex(ERR_SYMMETRIC_MARKER_BYTES)),
@@ -37,18 +37,21 @@ pub(crate) fn read_link_discipline(
 /// Stamps the vault as maintaining the symmetric-link invariant. Called when
 /// a graph is created from empty (fresh vaults) and when a full rebuild
 /// rewrites every row symmetrically (the one-time migration path).
-pub(super) fn mark_symmetric_links(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
+pub(super) fn mark_symmetric_links(
+    store: &impl VectorIndexDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, SYMMETRIC_LINKS_KEY, &[SYMMETRIC_LINKS_ENABLED])?;
     Ok(())
 }
 
 pub(super) fn read_refresh_fallback_rebuilds(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
 ) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, REFRESH_FALLBACK_REBUILDS_KEY)? else {
+    let Some(raw) = store.index_meta().get(txn, REFRESH_FALLBACK_REBUILDS_KEY)? else {
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
@@ -59,23 +62,23 @@ pub(super) fn read_refresh_fallback_rebuilds(
 }
 
 pub(super) fn increment_refresh_fallback_rebuilds(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
     let next = read_refresh_fallback_rebuilds(store, &*wtxn)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("hnsw refresh fallback counter"))?;
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, REFRESH_FALLBACK_REBUILDS_KEY, &next.to_le_bytes())?;
     Ok(())
 }
 
 pub(super) fn read_legacy_snapshot_rebuilds(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
 ) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, LEGACY_REBUILDS_KEY)? else {
+    let Some(raw) = store.index_meta().get(txn, LEGACY_REBUILDS_KEY)? else {
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
@@ -86,14 +89,14 @@ pub(super) fn read_legacy_snapshot_rebuilds(
 }
 
 pub(super) fn increment_legacy_snapshot_rebuilds(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
     let next = read_legacy_snapshot_rebuilds(store, &*wtxn)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("hnsw legacy rebuild counter"))?;
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, LEGACY_REBUILDS_KEY, &next.to_le_bytes())?;
     Ok(())
 }
