@@ -101,6 +101,10 @@ pub(in crate::office_body) fn apply(
                 ..held
             })
         }
+        XlsxBodyOp::SetConditionalFormat { sheet, id, format } => {
+            set_conditional(doc, sheet, id, format)
+        }
+        XlsxBodyOp::DeleteConditionalFormat { sheet, id } => delete_conditional(doc, sheet, id),
         XlsxBodyOp::Clear { sheet, cell } => write_cell(doc, sheet, cell, |held| BodyCell {
             value: XlsxValue::Blank,
             formula: None,

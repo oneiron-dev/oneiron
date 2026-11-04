@@ -41,7 +41,9 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::page_seal::{OpenedDataKey, WrapTransition};
-use super::{os_fill, refused};
+use super::refused;
+pub(crate) use oneiron_store::vault_page_seal::VaultDataKey;
+pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -62,7 +64,6 @@ pub use self::vocabulary::{
 
 const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
-const COMMITMENT_CONTEXT: &str = "oneiron/vault-key-commitment/v1";
 const PASSKEY_PRF_CONTEXT: &str = "oneiron/vault-key-passkey-prf-input/v1";
 const ESCROW_SEED_LABEL: &[u8] = b"oneiron/vault-key-escrow-recipient/v1";
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
@@ -79,46 +80,6 @@ const ARGON2_MAX: Argon2Cost = Argon2Cost {
 const STATE: SideTable<(), VaultKeyState, Named> = SideTable::new(&side_table::VAULT_KEY_STATE);
 const WRAPS: SideTable<String, StoredWrap, Named> = SideTable::new(&side_table::VAULT_KEY_WRAP);
 
-/// The unlocked vault data key. No `Clone`, no `Serialize`, a `Debug` that
-/// prints nothing, and its bytes are wiped on drop.
-pub(crate) struct VaultDataKey(Zeroizing<[u8; 32]>);
-
-impl std::fmt::Debug for VaultDataKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("VaultDataKey(..)")
-    }
-}
-
-impl VaultDataKey {
-    pub(super) fn generate() -> Result<Self> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        os_fill(&mut bytes[..])?;
-        Ok(Self(bytes))
-    }
-
-    /// The key a managed node's supervisor delivered, copied into a handle
-    /// that wipes it on drop: zero-filled first, then filled, so no plain
-    /// copy is made on the way (FIX 6048).
-    pub(super) fn delivered(bytes: &[u8; 32]) -> Self {
-        let mut guarded = Zeroizing::new([0u8; 32]);
-        guarded.copy_from_slice(bytes);
-        Self(guarded)
-    }
-
-    /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
-    /// pins which bytes are this vault's key and reveals nothing about them.
-    pub(super) fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
-        // Public: the guard's copy is wiped as it drops.
-        *self.derive(COMMITMENT_CONTEXT, vault_id)
-    }
-
-    /// A key of its own for one use, `BLAKE3-derive_key(context, vault id ‖ key)`,
-    /// derived straight into its guard (FIX 6334).
-    pub(super) fn derive(&self, context: &str, vault_id: &[u8; 32]) -> Zeroizing<[u8; 32]> {
-        super::derive_guarded(context, &[&vault_id[..], &self.0[..]])
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VaultKeyState {
     commitment: [u8; 32],
@@ -127,10 +88,10 @@ struct VaultKeyState {
 
 /// A stored wrap's digest: its id and its envelope's BLAKE3.
 fn wrap_digest(stored: &StoredWrap) -> WrapDigest {
-    WrapDigest {
-        id: stored.info.id.clone(),
-        envelope: *blake3::hash(&stored.envelope).as_bytes(),
-    }
+    WrapDigest::new(
+        stored.info.id.clone(),
+        *blake3::hash(&stored.envelope).as_bytes(),
+    )
 }
 
 /// An escrow capsule presented from outside the vault's wraps, filed as
@@ -149,16 +110,6 @@ fn presented_escrow(label: &str, capsule: &[u8]) -> Result<StoredWrap> {
         },
         envelope: capsule.to_vec(),
     })
-}
-
-/// One wrap as a page-seal mirror carries it (OF-570): its id, which names
-/// its kind and label, and the BLAKE3 digest of its sealed envelope. A
-/// sealed vault admits an unlock from its mirror only while it holds the
-/// wrap that opened, envelope for envelope.
-#[derive(Clone, PartialEq, Eq)]
-pub(super) struct WrapDigest {
-    id: String,
-    envelope: [u8; 32],
 }
 
 /// A passkey's PRF output as a KEK: copied once from the caller's guard into
@@ -415,7 +366,7 @@ fn seal_wrap(
     };
     let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
     payload.extend_from_slice(PAYLOAD_LABEL);
-    payload.extend_from_slice(&key.0[..]);
+    payload.extend_from_slice(&key.guarded_bytes()[..]);
     let envelope = seal(&params, seal_key, &payload, &mut SysRng)
         .map_err(|_| refused("sealing the vault key failed"))?;
     Ok(envelope.to_bytes())
@@ -461,7 +412,7 @@ fn open_wrap(
     }
     let mut bytes = Zeroizing::new([0u8; 32]);
     bytes.copy_from_slice(&payload[PAYLOAD_LABEL.len()..]);
-    let key = VaultDataKey(bytes);
+    let key = VaultDataKey::from_guarded(bytes);
     if key.commitment(vault_id) != *commitment {
         return Err(refused("the vault key wrap opens to another key"));
     }
@@ -599,7 +550,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         for wrap in wraps {
             let held = WRAPS
-                .get(&self.store, &txn, &wrap.id)?
+                .get(&self.store, &txn, wrap.id())?
                 .is_some_and(|stored| wrap_digest(&stored) == *wrap);
             if held {
                 return Ok(true);

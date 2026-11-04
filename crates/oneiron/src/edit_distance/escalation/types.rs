@@ -170,9 +170,9 @@ pub struct StandingPolicy {
     /// Receipt ids of the rulings that earned this row. A standing policy that
     /// could not say what it was learned from would be an assertion.
     pub cited_receipts: Vec<String>,
-    /// The answering holder's hex id: `Some` iff accepted (FIX 11345).
+    /// The answering holder's hex id: `Some` iff accepted (FIX 11345), unless the answerer was erased.
     pub accepted_by: Option<String>,
-    /// The holder's decision id hex: `Some` iff accepted (FIX 11345).
+    /// The holder's decision id hex: `Some` iff accepted (FIX 11345), unless the answerer was erased.
     pub decision_ref: Option<String>,
 }
 
