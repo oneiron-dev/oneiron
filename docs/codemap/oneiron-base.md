@@ -24,9 +24,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 2 re-export | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
 | `src/extraction_eval.rs` | src | s | 1 re-export | — | OF-360 extraction-quality evaluation |
 | `src/fusion.rs` | src | s | 1 re-export | — | Score fusion kernels, defined in `oneiron-retrieval` |
+| `src/human_task_followup.rs` | src | s | 5 struct · 2 enum · 3 fn · 1 type · 10 const | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
 | `src/learning_estimate.rs` | src | m | 5 struct · 4 enum · 20 fn · 1 const | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Prior, PriorOrigin +1 | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
 | `src/learning_ranking.rs` | src | s | 1 fn | — | The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus… |
-| `src/lib.rs` | src | s | 2 fn · 21 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
+| `src/lib.rs` | src | s | 2 fn · 22 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
 | `src/limits.rs` | src | s | 1 re-export | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/live_rows.rs` | src | m | 5 struct · 1 enum · 1 trait · 7 fn · 1 type · 4 const | LiveLine, LivePermit, LiveRow, LiveRows, LiveRowsCell, LiveRowsHolder, LiveWaitedOut | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
 | `src/live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
