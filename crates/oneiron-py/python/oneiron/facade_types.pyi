@@ -11930,7 +11930,7 @@ class CodeBlameView(TypedDict):
     units: list[CodeUnitBlameView]
 class CodeProposalViewRequest(TypedDict):
     proposal_ref: str
-RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed", "Rejected"]
+RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed", "Rejected", "Superseded"]
 class CodeProposedStamp(TypedDict):
     actor_ref: NotRequired[str | None]
     session_ref: NotRequired[str | None]
