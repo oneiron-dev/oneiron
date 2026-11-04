@@ -3477,7 +3477,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/ladder/providers.rs` | src | s | 4 struct · 2 trait · 5 fn · 1 re-export | DecisionCall, DecisionModel, DecisionPack, DecisionProvider, ModelDecisionProvider, RuleDecisionProvider | Decision ladder providers and the calls they answer |
 | `src/llm/decision/ladder/roles.rs` | src | s | 4 struct · 1 enum · 2 trait · 4 fn · 1 re-export | AskRole, AskRoleResolver, AskTo, HumanDecisionQueue, HumanDecisionRequest, ResolvedRole, RoleHolder | Decision ladder person asks and the roles they go to |
 | `src/llm/decision/ladder/runner.rs` | src | m | 6 fn · 2 crate-vis | — | Decision ladder runner |
-| `src/llm/decision/ladder/slots.rs` | src | s | 4 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
+| `src/llm/decision/ladder/slots.rs` | src | s | 5 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
 | `src/llm/decision/ladder/tournament.rs` | src | s | 3 crate-vis | — | A choice wider than a provider's option bound, read as a tournament (FIX 11235) |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/locate.rs` | src | s | 1 struct · 4 fn · 1 const | LocatedDecision | Presence before coordinates (owner point 4) |
@@ -4029,7 +4029,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_decision/questions/records.rs` | src | s | 8 struct · 5 enum · 1 fn · 1 crate-vis | CalibrationPair, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation, QuestionAudience +5 | Standing-question outcome, refresh, and evidence values |
 | `src/model_decision/roles.rs` | src | s | 3 enum · 1 fn | AskAct, HolderKind, RoleRank | Actor-free role ranks, ask acts, and holder kinds |
 | `src/model_decision/slides_policy.rs` | src | m | 3 struct · 1 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
-| `src/model_decision/state.rs` | src | s | 3 fn | — | Caller-prepared decision state fitting |
+| `src/model_decision/state.rs` | src | s | 4 fn | — | Caller-prepared decision state fitting |
 | `src/model_decision/types.rs` | src | m | 13 struct · 8 enum · 13 fn · 4 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung +13 | Typed decision questions, answer contracts, and measurement values |
 | `src/model_step_context.rs` | src | s | 1 struct · 1 enum · 1 crate-vis | DurableStepContext, StepOutcome | Caller-owned model-step context and terminal outcomes |
 | `src/model_step_effect.rs` | src | s | 4 crate-vis | — | Durable model-step identity frozen into outbound effects |
