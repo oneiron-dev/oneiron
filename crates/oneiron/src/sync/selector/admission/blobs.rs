@@ -65,7 +65,13 @@ pub(super) fn copy_admitted_entities(
         )
         .and_then(|(here, blob)| map_insert_bytes(&target_entities, &here.to_hex(), &blob));
     });
-    result
+    // FIX 6870: a repo's manifest lands only beside a CODE row this part
+    // admitted into `target`.
+    result.and_then(|()| {
+        crate::sync::repo_manifests::copy_repo_manifest_heads(source, target, |code| {
+            routes.entity_part(&code.to_hex()) == Some(part)
+        })
+    })
 }
 
 #[cfg(feature = "sync")]

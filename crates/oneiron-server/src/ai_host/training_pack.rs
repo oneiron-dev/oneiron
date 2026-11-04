@@ -20,7 +20,9 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
-use oneiron::llm::run_admission::{BudgetLine, CallOutcome, PaidConnector, RunAdmission, RunDeclaration};
+use oneiron::llm::run_admission::{
+    BudgetLine, CallOutcome, PaidConnector, RunAdmission, RunDeclaration,
+};
 use oneiron::training_pack::{
     HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
 };

@@ -186,10 +186,9 @@ fn deep_review_standing_use(owner: EntityId, project: EntityId) -> Result<GrantB
 impl Vault {
     /// Writes one batch of derived claims through the Gate, Proposed first.
     /// An active standing grant covering the corpus's derived-claim review
-    /// approves them, with a use receipt. Otherwise one the Gate admits with
-    /// no tray row is written again as `Auto` only when the policy trusts its
-    /// source for `Auto`. Every other claim stays `Proposed` with no tray row
-    /// of its own: the owner reviews the revision's claims as one batch.
+    /// approves them, with a use receipt. Otherwise every claim stays
+    /// `Proposed` with no tray row of its own: the owner reviews the revision's
+    /// claims as one batch, independently of the source's trust policy.
     pub(super) fn admit_deep_claims_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -224,24 +223,6 @@ impl Vault {
                 review.standing_grant_ref = Some(grant_ref.clone());
             }
         } else {
-            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-            let mut trusted = Vec::new();
-            for (id, candidate, envelope, occurred, learned_at) in &proposed {
-                if self.store.pending_gate_consent_in_txn(txn, id)?.is_none()
-                    && self.get_claim_in_txn(txn, id)?.is_some_and(|landed| {
-                        crate::gate::claim_source_trust_admits_auto(&landed, envelope, &policy)
-                    })
-                {
-                    trusted.push((
-                        *id,
-                        candidate.clone(),
-                        envelope.clone().with_approval(ClaimApprovalStatus::Auto),
-                        *occurred,
-                        *learned_at,
-                    ));
-                }
-            }
-            apply_deep_writes(self, txn, &trusted)?;
             review.decision = ClaimApprovalStatus::Proposed;
             review.standing_grant_ref = None;
         }
