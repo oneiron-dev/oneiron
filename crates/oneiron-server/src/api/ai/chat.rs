@@ -81,8 +81,9 @@ mod segments;
 pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
+pub(crate) use sources::TurnSources;
 
-pub(crate) use answer::{begin_answer, chat_request};
+pub(crate) use answer::{begin_answer, begin_sourced_answer_with_fallback, chat_request};
 pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
