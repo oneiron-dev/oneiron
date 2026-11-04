@@ -191,6 +191,7 @@ impl Store {
             project_forks: crate::workspace_roster::ProjectForks::default(),
             delete_guards: hooks.delete_guards,
             scope_stamps: hooks.scope_stamps,
+            project_writes: hooks.project_writes,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
