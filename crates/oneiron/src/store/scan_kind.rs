@@ -359,6 +359,8 @@ pub enum EngineScan {
     /// its scope (past the advisory 10,000-row threshold it raises one check
     /// and reads on).
     SyncPrefixRows,
+    /// One source's withdrawn dependents, under its dependent-walk policy.
+    DependentWalkRows,
 }
 
 /// Rows one engine scan reads past which it asks whether everything is
