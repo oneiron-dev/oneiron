@@ -1,29 +1,34 @@
 //! Per-field MessagePack decoders, the validate_* ladder, and text helpers.
 
-use super::types::{
-    AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
-    AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
-    AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES, AgentDefinition, CONTEXT_BUDGET_SPLIT_KEYS,
-    CompactionOwnership, ContextBudgetSplit, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_MCP_KEY,
-    KEY_MCP_MIN_VERSION, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
-    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY,
-    KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
-    MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef,
-    MemoryProfile, OUTPUT_DECAY_KEYS,
+use super::keys::{
+    KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_MCP_KEY, KEY_MCP_MIN_VERSION,
+    KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND,
+    KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY,
+    KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
+    MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES, OUTPUT_DECAY_KEYS,
 };
-use crate::claim::ClaimSource;
 use crate::error::{ArtifactError, Error, Result};
-use crate::llm::ModelTierRef;
-use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
+use crate::store::agent_definition::AgentDefinition;
+use crate::store::agent_manifest::{
+    AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, validate_text_field,
+};
+use crate::store::agent_memory_profile::MemoryProfile;
+use crate::store::agent_record::{
+    AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
+    AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES,
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MCP_REF_KEYS,
+    MEMORY_PROFILE_KEYS, McpRef,
+};
+use oneiron_contracts::claim::ClaimSource;
+use oneiron_model::llm::ModelTierRef;
+use oneiron_store::write_envelope::skill_record::{SKILL_DEPENDENCY_KEYS, SkillDependency};
 use rmpv::Value;
 use std::collections::HashSet;
-
-pub(super) use crate::store::agent_manifest::validate_text_field;
 
 /// Strict [`MemoryProfile`] sub-map decode, mirroring the parent map's
 /// discipline exactly: non-map value, non-string keys, unknown keys and
 /// duplicate keys are all refused.
-pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
+pub(crate) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     let Value::Map(entries) = value else {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "memory_profile must be a MessagePack map",
@@ -154,7 +159,7 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
 
 /// Strict `output_decay` sub-map decode: both pinned keys, unsigned, nothing
 /// else.
-fn decode_output_decay(value: &Value) -> Result<crate::compaction::output::OutputDecayPolicy> {
+fn decode_output_decay(value: &Value) -> Result<crate::store::output_decay::OutputDecayPolicy> {
     let invalid = || {
         Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "memory_profile output_decay must map overview_after_turns and stub_after_turns to unsigned integers",
@@ -176,7 +181,7 @@ fn decode_output_decay(value: &Value) -> Result<crate::compaction::output::Outpu
         }
         *slot = Some(value.as_u64().ok_or_else(invalid)?);
     }
-    Ok(crate::compaction::output::OutputDecayPolicy {
+    Ok(crate::store::output_decay::OutputDecayPolicy {
         overview_after_turns: overview.ok_or_else(invalid)?,
         stub_after_turns: stub.ok_or_else(invalid)?,
     })
@@ -231,7 +236,7 @@ fn decode_context_budget_split(value: &Value) -> Result<ContextBudgetSplit> {
     })
 }
 
-pub(super) fn encode_mcp_ref(mcp: &McpRef) -> Value {
+pub(crate) fn encode_mcp_ref(mcp: &McpRef) -> Value {
     Value::Map(vec![
         (Value::from(KEY_MCP_KEY), Value::from(mcp.key.as_str())),
         (
@@ -241,7 +246,7 @@ pub(super) fn encode_mcp_ref(mcp: &McpRef) -> Value {
     ])
 }
 
-pub(super) fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
+pub(crate) fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
     let Value::Array(values) = value else {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "skills must be a MessagePack array",
@@ -310,7 +315,7 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
     })
 }
 
-pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
+pub(crate) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
     let Value::Array(values) = value else {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "connectors must be a MessagePack array",
@@ -328,7 +333,7 @@ pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
-pub(super) fn decode_mcp_refs(value: &Value) -> Result<Vec<McpRef>> {
+pub(crate) fn decode_mcp_refs(value: &Value) -> Result<Vec<McpRef>> {
     let Value::Array(values) = value else {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "codeModeMcps must be a MessagePack array",
@@ -397,13 +402,13 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
     })
 }
 
-pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
+pub(crate) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
     if matches!(
         def.wake_cadence,
         Some(
-            super::types::AgentWakeCadence::Companion {
+            crate::store::agent_record::AgentWakeCadence::Companion {
                 every_turns: Some(0)
-            } | super::types::AgentWakeCadence::Leader {
+            } | crate::store::agent_record::AgentWakeCadence::Leader {
                 every_turns: Some(0)
             }
         )
@@ -644,7 +649,7 @@ fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn text_value(value: &Value, max_bytes: usize, context: &'static str) -> Result<String> {
+pub(crate) fn text_value(value: &Value, max_bytes: usize, context: &'static str) -> Result<String> {
     let text = value
         .as_str()
         .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)))?;
