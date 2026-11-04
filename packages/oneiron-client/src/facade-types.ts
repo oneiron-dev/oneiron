@@ -4014,11 +4014,11 @@ export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; qu
 export type EmbeddingSpaceProbeDeleteRequest = { id: string }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleted` */
 export type EmbeddingSpaceProbeDeleted = { ok: boolean }
-/** `oneiron::policy_model::contract::PolicyOutputContract` */
+/** `oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract` */
 export type PolicyOutputContract = "binary" | "category_json" | "rationale_json"
-/** `oneiron::policy_model::pattern::PolicyPatternRole` */
+/** `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRole` */
 export type PolicyPatternRole = "escalate" | "decide" | "log"
-/** `oneiron::policy_model::pattern::PolicyPatternRule` */
+/** `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRule` */
 export type PolicyPatternRule = { id: string; pattern: string; category: string; role?: PolicyPatternRole }
 /** `oneiron::gate::policy_manifest_doors::content_policy::OwnerPolicyConfiguration` */
 export type OwnerPolicyConfiguration = { owner_policy_enabled?: boolean; owner_policy_document?: string | null; owner_policy_output_contract?: PolicyOutputContract | null; owner_policy_patterns?: PolicyPatternRule[] }
