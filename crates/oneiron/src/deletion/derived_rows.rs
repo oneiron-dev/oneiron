@@ -37,9 +37,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
-    crate::saved_query::erase_memos_for_source_in_txn,
+    crate::store::query_memo_lifetime::erase_memos_for_source_in_txn,
     // FIX 10466: every inference snapshot whose dependency set reaches it.
-    crate::inference_snapshot::erase_in_txn,
+    crate::store::snapshot_catalog::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
     crate::memory::erase_reply_assertions_in_txn,
     // FIX 9970: a TURN's unpersisted-wake label.

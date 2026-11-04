@@ -338,10 +338,10 @@ side_tables! {
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
-        => crate::own_rate::erase_check_actor_in_txn;
+        => crate::store::own_rate_rows::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
-        => crate::own_rate::erase_window_actor_in_txn;
+        => crate::store::own_rate_rows::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
