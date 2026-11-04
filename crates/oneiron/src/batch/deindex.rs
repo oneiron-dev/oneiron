@@ -156,7 +156,7 @@ pub(crate) fn deindex_entity(
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
     crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
-    crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
+    crate::store::claim_refinement_control::erase_claim_refinement_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
     crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(store, wtxn, id)?;
     // OF-272: the write unit re-keys the identity a deleted head leaves.
