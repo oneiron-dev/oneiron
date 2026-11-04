@@ -194,8 +194,11 @@ impl Store {
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
             actor_scrubs: hooks.actor_scrubs,
+            gate_hooks: hooks.gate_hooks,
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
+            attempt_operations: hooks.attempt_operations,
+            core_write_operations: hooks.core_write_operations,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
@@ -217,6 +220,7 @@ impl Store {
             )),
             inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
+            ppr_cache_invalidation: &crate::ppr::PprCacheInvalidator,
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,
@@ -401,6 +405,7 @@ impl Store {
         }
         let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
+            self.gate_hooks,
             &self.entities,
             &self.sync_state,
             &self.type_index,
@@ -448,7 +453,7 @@ impl Store {
         let mut attempts = Vec::new();
         for row in crate::ports::JobQueueRead::port_job_rows(self, &wtxn, None)? {
             let (id, raw) = row?;
-            attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
+            attempts.push(crate::store::attempt_record_codec::decode_record(&raw, id)?);
         }
         for attempt in &attempts {
             self.put_attempt_run_index_in_txn(

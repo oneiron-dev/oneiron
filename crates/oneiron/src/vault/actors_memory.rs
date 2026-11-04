@@ -482,7 +482,7 @@ impl Vault {
         &self,
         actor_key: crate::claim::ScopedReadActorKey,
         request: crate::store::code_memory_values::CodeMemoryPullRequest,
-    ) -> Result<crate::code_memory::CodeMemoryPullResult> {
+    ) -> Result<crate::store::code_memory_values::CodeMemoryPullResult> {
         let scoped_read = self.scoped_read(actor_key);
         crate::code_memory::pull_code_memory(self, &scoped_read, request)
     }

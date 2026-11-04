@@ -39,7 +39,6 @@ use crate::blob_artifact::native_output::NativeOutput;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
-use crate::lens::RecordRef;
 use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
@@ -47,6 +46,7 @@ use crate::memory::{
 use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
 use crate::ports::ClaimReadStatus;
 use crate::store::receipt_row::ReceiptRecord;
+use crate::store::record_ref::RecordRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
