@@ -16,6 +16,7 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Authorization is separate from attribution. Owner evidence is opaque;
 /// automated writes resolve a live DEC-0006 entity-bound action grant in-txn.
@@ -788,13 +789,21 @@ pub(super) fn all_forks(
 }
 
 pub(super) fn erase_forks(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
+    let mut proposals = BTreeSet::new();
     for fork in all_forks(store, txn, entity)? {
         ENTITY_DOC_FORK_SNAPSHOT.delete(store, txn, &fork.fork)?;
         ENTITY_DOC_FORK.delete(store, txn, &fork.fork)?;
-        let id = EntityId::from_hex(&fork.proposal)?;
+        proposals.insert(fork.proposal);
+    }
+    for proposal in proposals {
+        let id = EntityId::from_hex(&proposal)?;
         let mut bundle = read_bundle(store, txn, &id)?;
         bundle.forks.retain(|row| row.entity != entity.to_hex());
-        ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        if bundle.forks.is_empty() {
+            ENTITY_DOC_PROPOSAL_BUNDLE.delete(store, txn, &id.to_hex())?;
+        } else {
+            ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        }
     }
     Ok(())
 }

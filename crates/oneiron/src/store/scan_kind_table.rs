@@ -5,7 +5,7 @@ use super::scan_kind::EngineScan;
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 138] = [
+    pub const ALL: [Self; 139] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -144,6 +144,7 @@ impl EngineScan {
         Self::ProjectFoldDepth,
         Self::ReceiptSourceRows,
         Self::SyncPrefixRows,
+        Self::DependentWalkRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -296,6 +297,7 @@ impl EngineScan {
             Self::ProjectFoldDepth => "project_fold_depth",
             Self::ReceiptSourceRows => "receipt_source_rows",
             Self::SyncPrefixRows => "sync_prefix_rows",
+            Self::DependentWalkRows => "dependent_walk_rows",
         }
     }
 
@@ -439,6 +441,7 @@ impl EngineScan {
             Self::ProjectFoldDepth => 152,
             Self::ReceiptSourceRows => 153,
             Self::SyncPrefixRows => 154,
+            Self::DependentWalkRows => 155,
         }]
     }
 }
