@@ -13,7 +13,7 @@ use super::{
     GitWireReceipt, GitWireRecordState, GitWireRepo, GitWireResult, lock_repository,
 };
 use crate::error::Result;
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 
 impl GitWire<'_> {
