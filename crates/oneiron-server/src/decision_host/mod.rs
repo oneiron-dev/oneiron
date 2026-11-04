@@ -35,7 +35,10 @@ use oneiron::llm::decision::{
     ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
     RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
-use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
+use oneiron::llm::run_admission::{
+    CallOutcome, HostAccount, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
+    RunReceiptSink,
+};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
@@ -685,6 +688,10 @@ impl HouseRead {
 struct SystemOneRung {
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
+    /// A call that carries its caller's run admits its measurement on that run as this
+    /// paid connector (FIX 10443): the seat's key is the customer's own, and its usage
+    /// reports tokens, one unit each.
+    connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
     runtime: tokio::runtime::Handle,
@@ -721,6 +728,25 @@ impl SystemOneRung {
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
         .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        // A bearer held from bind sits in this process's memory; a broker key stays
+        // behind the vault's custody door.
+        let custody = if settings.key_env.is_some() {
+            KeyCustody::T1
+        } else {
+            KeyCustody::T0
+        };
+        let connector = PaidConnector {
+            connector: "system-one".to_owned(),
+            route: OfferRoute::new("system-one", "system-one")?,
+            locality: ModelLocality::ThirdParty,
+            payer: Payer::CustomerKey,
+            credential_binding: None,
+            catalog_revision: None,
+            custody,
+            unit_cost: 1,
+            cost_unit: LeaseUnit::tokens(),
+            rates: Vec::new(),
+        };
         Ok(Self {
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
@@ -728,6 +754,7 @@ impl SystemOneRung {
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),
+            connector,
             posture,
             remote_opt_in: settings.remote_opt_in,
             runtime,

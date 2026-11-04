@@ -269,7 +269,7 @@ impl DecisionBand {
 }
 
 /// Owner ceiling; a resident can select a cheaper rung but never widen it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionDial {
     pub first: DecisionRung,
@@ -430,6 +430,9 @@ pub struct EvidenceVersion {
     #[serde(with = "super::codec::entity")]
     #[schemars(with = "String")]
     pub id: EntityId,
+    /// Hex on a JSON wire, its bytes in storage (FIX 12262).
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub body_hash: [u8; 32],
 }
 
