@@ -42,7 +42,7 @@ impl Vault {
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
             && let Some(&entity_type) = raw.first()
             && (crate::batch::delete_door_protected(entity_type)
-                || crate::workspace_roster::is_project_revision_type(&self.store, entity_type))
+                || crate::store::project_kind::is_project_revision_type(&self.store, entity_type))
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 entity_type,
