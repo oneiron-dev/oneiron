@@ -893,7 +893,7 @@ impl Vault {
                 Ok(false)
             }
             None => {
-                crate::sync::documents::compact(self, id, erased)?;
+                self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
         }

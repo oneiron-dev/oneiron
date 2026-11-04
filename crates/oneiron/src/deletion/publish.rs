@@ -686,7 +686,7 @@ impl Vault {
             || doc.is_shallow()
             || crate::sync::note::is_native(doc);
         if history_free {
-            crate::sync::window::merge_window_heads(doc)?;
+            self.store.sync_hooks.merge_window_heads(doc)?;
         }
         Ok(history_free)
     }
@@ -833,7 +833,9 @@ impl Vault {
             // over-drop; delete-bearing rows are preserved inside the
             // scrub). The `u:w:` rows the snapshot just subsumed are
             // active payload carriers too.
-            crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
+            self.store
+                .sync_hooks
+                .scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
             crate::sync::window::prune_subsumed_window_updates_in_txn(
                 self,
                 wtxn,
@@ -856,7 +858,7 @@ impl Vault {
             // publish txn. Authority recovery was durably staged before the
             // live mutation, so restart replay cannot observe an
             // authority-required tombstone without that requirement.
-            crate::sync::bridge::persist_window_update_in_txn(
+            self.store.sync_hooks.persist_window_update_in_txn(
                 self,
                 wtxn,
                 window_key.as_str(),
