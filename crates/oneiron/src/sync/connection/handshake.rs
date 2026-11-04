@@ -319,6 +319,7 @@ impl SyncConnection {
     ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
+        client.document_retries = Default::default();
         client.asset_bodies = Default::default();
         client.home_peer = crate::authority::PeerMachine::Unknown;
         client.reset_window_pads();
