@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval.rs` | src | m | 9 fn · 6 const · 2 re-export | — | Extraction-quality evaluation facade |
 | `src/extraction_eval/qa.rs` | src | s | 2 struct · 1 crate-vis | Of360GoldQa, Of360QaAnswer | Gold-anchored QA lane with exact normalized-answer scoring |
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
-| `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
+| `src/lib.rs` | src | s | 4 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | m | 1 struct · 8 fn | StreamAssembly | Shared typed stream assembly |
 | `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 10 fn · 4 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
@@ -65,4 +65,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/session.rs` | src | m | 28 struct · 3 enum · 8 fn · 8 const | CanonicalCheckpointRef, ConversationAnchor, RegionDescriptor, SessionAppend, SessionAppended, SessionCapability, SessionCheckpoint, SessionCheckpointed +23 | Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the… |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
+| `src/model_binding.rs` | src | s | 3 struct · 4 enum · 5 fn · 1 const | CalibratedVerdict, ModelBinding, ModelDisposition, ModelRole, ModelSlot, VerdictBinding, VerdictMode | Model-role bindings and calibrated verdict values |
+| `src/teacher_probe_policy.rs` | src | s | 1 struct · 5 fn · 1 const | TeacherProbePolicy | Resolved extraction-teacher probe policy values |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |
