@@ -1,6 +1,5 @@
 //! Corrections when already-consumed units land after a scope closed.
 
-use crate::attempt_queue::AttemptId;
 use crate::error::Result;
 use crate::scan_check::EngineScan;
 use std::collections::HashSet;
@@ -64,12 +63,11 @@ impl AgentDispatcher<'_> {
         if scope.state != SpendState::Closed {
             return Ok(());
         }
-        let mut attempt = [0; 16];
-        if hex::decode_to_slice(id.as_str(), &mut attempt).is_ok() {
+        if let Some(attempt) = scope.exploration_attempt {
             crate::skill::revise_exploration_route_in_txn(
                 self.vault,
                 txn,
-                AttemptId::from_bytes(attempt),
+                attempt,
                 &scope.unit,
                 scope.spent_units,
             )?;

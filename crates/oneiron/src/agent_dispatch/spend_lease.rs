@@ -142,6 +142,7 @@ impl AgentDispatcher<'_> {
             closed_at: None,
             agent: None,
             calibration_sample: None,
+            exploration_attempt: None,
             payer,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -279,6 +280,7 @@ impl AgentDispatcher<'_> {
             closed_at: None,
             agent,
             calibration_sample: None,
+            exploration_attempt: None,
             payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -314,6 +316,7 @@ impl AgentDispatcher<'_> {
             closed_at: None,
             agent,
             calibration_sample: None,
+            exploration_attempt: None,
             payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -567,6 +570,7 @@ impl AgentDispatcher<'_> {
         }
         scope.state = SpendState::Closed;
         scope.closed_at = Some(now);
+        scope.exploration_attempt = Some(*child);
         scope.calibration_sample = match scope.agent {
             Some(agent) => Some(self.fold_spend_sample_in_txn(
                 txn,

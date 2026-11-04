@@ -6899,6 +6899,12 @@ pub struct SpendScope {
         skip_serializing_if = "Option::is_none"
     )]
     pub calibration_sample: Option<SpendCalibrationSample>,
+    #[serde(
+        rename = "exploration_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exploration_attempt: Option<AttemptId>,
     #[serde(rename = "payer", default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<SpendPayer>,
 }

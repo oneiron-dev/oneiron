@@ -2196,6 +2196,7 @@ class SpendScope(TypedDict):
     closed_at: NotRequired[int | None]
     agent: NotRequired[EntityId | None]
     calibration_sample: NotRequired[SpendCalibrationSample | None]
+    exploration_attempt: NotRequired[AttemptId | None]
     payer: NotRequired[SpendPayer | None]
 class SpendSignalWrapUp(TypedDict):
     signal: Literal["wrap_up"]

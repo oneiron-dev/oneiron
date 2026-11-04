@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::run_admission::{JobStartRefused, LeaseUnit};
@@ -81,6 +82,9 @@ pub struct SpendScope {
     /// This vault's folded calibration sample; absent until settlement or
     /// when this scope has no local sample. Handoffs do not carry it.
     pub calibration_sample: Option<SpendCalibrationSample>,
+    /// The attempt whose terminal settled this scope's exploration charge.
+    /// A retry can own the route while sharing an earlier attempt's scope.
+    pub exploration_attempt: Option<AttemptId>,
     /// A root's payer consent (OF-531); `None` on every child, which reads its
     /// root's, and on a root no payer accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
