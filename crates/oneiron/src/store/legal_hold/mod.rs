@@ -530,6 +530,9 @@ pub(crate) fn use_limit_in_txn(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<LegalHoldUseLimit>> {
+    if use_limit_marker_absent(dbs, txn, record) {
+        return Ok(None);
+    }
     let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
         return Ok(None);
     };
@@ -537,6 +540,84 @@ pub(crate) fn use_limit_in_txn(
         return Ok(None);
     }
     Ok(Some(limit))
+}
+
+/// Most use-limit markers one recall loads into its marker set; past it
+/// the recall reads each record's marker as before. The cap bounds the
+/// load, never an answer.
+const MAX_RECALL_USE_LIMIT_MARKERS: usize = 4_096;
+
+thread_local! {
+    /// The use-limit markers of one recall's committed snapshot on this
+    /// thread ([`use_limit_marker_absent`]).
+    static USE_LIMIT_MARKERS: std::cell::RefCell<UseLimitMarkers> =
+        std::cell::RefCell::new(UseLimitMarkers::default());
+}
+
+/// The records a use-limit marker stands at in one committed snapshot, read
+/// with one prefix scan, so a recall that asks about many rows answers an
+/// absent marker from memory (L15 recall speed). A marker present still
+/// runs the point read and the retaining-hold join.
+#[derive(Default)]
+struct UseLimitMarkers {
+    at: Option<(u64, usize, usize)>,
+    /// `None`: this snapshot reads markers per record (past the cap, a key
+    /// of another shape, or a failed scan).
+    records: Option<std::collections::HashSet<[u8; 16]>>,
+}
+
+/// Whether no use-limit marker stands at `record` in the snapshot `txn`
+/// reads, answered from that snapshot's marker set while a recall's scope
+/// is open; `false` wherever the set is not kept, so the caller reads the
+/// marker itself.
+fn use_limit_marker_absent(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, record: &EntityId) -> bool {
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_snapshot_facts reads every marker, as before.
+    if crate::stage_timing::try_on("no_snapshot_facts") {
+        return false;
+    }
+    let Some(key) = dbs.side_recall_memo_key(txn) else {
+        return false;
+    };
+    let kept = USE_LIMIT_MARKERS.with(|memo| {
+        let memo = memo.borrow();
+        (memo.at == Some(key)).then(|| {
+            memo.records
+                .as_ref()
+                .map(|records| !records.contains(record.as_bytes()))
+        })
+    });
+    if let Some(absent) = kept {
+        return absent.unwrap_or(false);
+    }
+    let records = use_limit_records(dbs, txn);
+    let absent = records
+        .as_ref()
+        .is_some_and(|records| !records.contains(record.as_bytes()));
+    USE_LIMIT_MARKERS.with(|memo| {
+        *memo.borrow_mut() = UseLimitMarkers {
+            at: Some(key),
+            records,
+        };
+    });
+    absent
+}
+
+/// Every record a use-limit marker stands at in the snapshot `txn` reads,
+/// or `None` past [`MAX_RECALL_USE_LIMIT_MARKERS`] rows, at a key that is
+/// not one record id, or on a failed scan.
+fn use_limit_records(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Option<std::collections::HashSet<[u8; 16]>> {
+    let mut records = std::collections::HashSet::new();
+    for (rows, row) in USE_LIMITS.iter_raw_from(dbs, txn, &[]).ok()?.enumerate() {
+        if rows >= MAX_RECALL_USE_LIMIT_MARKERS {
+            return None;
+        }
+        let (key, _) = row.ok()?;
+        records.insert(<[u8; 16]>::try_from(key.as_slice()).ok()?);
+    }
+    Some(records)
 }
 
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase

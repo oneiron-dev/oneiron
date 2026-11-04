@@ -45,9 +45,55 @@ pub(crate) use crate::store::PendingScanChecks;
 pub use crate::store::ScanCheck;
 
 fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
-    Ok(POLICY
-        .get(store, txn, &scan.tag())?
-        .unwrap_or(scan.default_threshold()))
+    Ok(policy_row_in_txn(store, txn, scan.tag())?.unwrap_or(scan.default_threshold()))
+}
+
+thread_local! {
+    static POLICY_ROWS: std::cell::RefCell<PolicyRows> =
+        std::cell::RefCell::new(PolicyRows::default());
+}
+
+/// Bench port of the row's store/scan_count.rs memo onto this older base.
+#[derive(Default)]
+struct PolicyRows {
+    at: Option<(u64, usize, usize)>,
+    rows: Vec<([u8; 1], Option<u64>)>,
+}
+
+fn policy_row_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    tag: [u8; 1],
+) -> Result<Option<u64>> {
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_snapshot_facts reads the row every time, as before.
+    if crate::stage_timing::try_on("no_snapshot_facts") {
+        return POLICY.get(store, txn, &tag);
+    }
+    let Some(key) = crate::ports::recall_memo_key(store, txn) else {
+        return POLICY.get(store, txn, &tag);
+    };
+    let kept = POLICY_ROWS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some(key) {
+            memo.at = Some(key);
+            memo.rows.clear();
+        }
+        memo.rows
+            .iter()
+            .find(|(kept, _)| *kept == tag)
+            .map(|(_, row)| *row)
+    });
+    if let Some(row) = kept {
+        return Ok(row);
+    }
+    let row = POLICY.get(store, txn, &tag)?;
+    POLICY_ROWS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at == Some(key) {
+            memo.rows.push((tag, row));
+        }
+    });
+    Ok(row)
 }
 
 /// One scan's rows, counted against its threshold row.
