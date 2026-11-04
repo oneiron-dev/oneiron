@@ -4,7 +4,7 @@
 
 use super::*;
 
-impl<'a> ContextPackBuilder<'a> {
+impl ContextPackBuilder<'_> {
     /// Runs the configured pack, filters it to what `lane` may serve, and
     /// serializes it, finalizing the run row with the serialized terminal.
     /// Mirrors `run_serialized_with_stats` (config capture, serialization,
