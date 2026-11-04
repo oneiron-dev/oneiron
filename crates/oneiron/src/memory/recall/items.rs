@@ -1,5 +1,4 @@
 //! Builds typed recall items from actor-admitted rows at the selected revision.
-use crate::lens::RecordRefFromView;
 use super::*;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 
