@@ -304,7 +304,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 - trigger phrases:
   - "what does the house model read for this question?"
   - "probe the decision read"
-- safety: Writes and decides nothing; requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
+- safety: Decides nothing; may retain per-call evidence, never request bodies or probability readouts, subject to the caller's actor/session recording gates. Requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
 
 #### mcp-gateway - `POST /mcp`
 
@@ -669,6 +669,8 @@ Authentication: `Authorization: Bearer <owner-grade credential>`; scoped credent
 Body (JSON, at most 256 KiB): `{ "question": "...", "options": ["...", "..."], "state": { ... } }`. `options` (2 to 64 distinct labels, in order) is absent for a yes/no question. `state` is an object of at most 65,536 bytes that the caller built; the probe reads nothing from the vault. The model, its endpoint, the read recipe and the paired and person questions are the host's configuration (`[models.decision_read]`); a request cannot choose them.
 
 `200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). Each is normalized over its own labels. `revision` names the served weights and the recipe.
+
+Best-effort evidence records each settled read attempt under the caller's resolved actor. It retains a fingerprint of the ordered reader-bound request, the served model/revision and the terminal outcome. Reader failures have unknown usage; a malformed returned pack keeps its observed usage. Request bodies and probability readouts are not retained. Evidence is skipped when the actor is unresolved or conflicting, or when the bound session is off-record at arrival or settlement. A record covers the logical read attempt, not each internal completion or tokenizer request.
 
 Errors: `400 invalid_request` (a bad question, options or state); `402 budget_denied`; `502 label_read`, whose `error.llm` names the failed check (`EmittedText`, `NotEosStop`, `MissingLabels` or `Malformed`; a failed read is never a probability of zero); `503 decision_read_unavailable` (no `[models.decision_read]`, or its recipe has no `[probe]`); `503 decision_read_waited_out` (the probe waited past `limits.queue_wait_timeout_ms` for its turn, and nothing was started).
 

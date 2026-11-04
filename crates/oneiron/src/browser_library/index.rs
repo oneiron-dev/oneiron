@@ -463,6 +463,10 @@ pub(crate) fn erase_dirty_actor_in_txn(
         }
     }
     for digest in taken {
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", DIRTY.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &DIRTY.key_bytes(&digest))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         DIRTY.delete(&vault.store, wtxn, &digest)?;
     }
     Ok(())

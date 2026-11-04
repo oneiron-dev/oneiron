@@ -78,7 +78,7 @@ side_tables! {
     /// it was made at and the generation it revoked, until a pass that can sign carries it. Holds
     /// no value and no proof. Key: id16 (custody record id).
     SECRET_CUSTODY_PENDING_REVOKE: VaultMeta b"secret_custody:pending_revoke:v1:" Named Engine
-        => crate::secret_custody::erase_pending_revoke_actor_in_txn;
+        => crate::store::pending_custody_revoke::erase_pending_revoke_actor_in_txn;
     /// The rewrap request whose bindings this vault took into one custody record it holds as a
     /// receiver (CALLS CUSTODY_REBIND_PENDING_FLOOR): a replay of its carrier never applies again,
     /// while a carrier kept as this vault's latest whose bindings the live floor refused stays
@@ -121,6 +121,9 @@ side_tables! {
     /// A record whose found keys still owe the owner their needs-you notice: raised at the next
     /// write's commit boundary, then removed. Key: id16 (the record).
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
+    /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
+    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -275,6 +278,9 @@ side_tables! {
     /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
     /// u64be(sequence).
     POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
+    /// The owner's grant/revoke act on an access grant in the commit that changed it
+    /// (FIX 10980). Writer-trusted local receipt, not a signed op. Key: u64be(sequence).
+    ACCESS_GRANT_OWNER_ACT: VaultMeta b"settings:owner_act_access_grant:v1:" Named;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
@@ -332,13 +338,15 @@ side_tables! {
     /// One holder's delivery of one export-first removal archive: the delivery version it was
     /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
     /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
-    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// The record ids an export-first removal's export counted, beside its
     /// receipt (FIX 11886). Key: hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT_RECORDS: VaultMeta b"shared-act:removal-export-records:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
-    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// One delivery of a removal archive a removed person's device took in: its digest, what
     /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
     /// id) ":" decimal (delivery version).

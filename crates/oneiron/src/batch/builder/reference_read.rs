@@ -188,6 +188,7 @@ pub(super) fn staged_reference_denial(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
         crate::store::GateWriteMode {

@@ -1,0 +1,124 @@
+//! A STOP written as a message (FIX 12101). A Slack or LINE counterparty
+//! opts out by writing a stop keyword as their whole message. The connector
+//! bridge reads the message's words before it wakes anyone, and a STOP
+//! becomes the typed OptOut interaction an adapter or `/v1/core` admits,
+//! through the same admission: it holds sends to the sender on the channel
+//! from that write, and the comm projector makes it their standing opt-out.
+//! The message itself still wakes its actor as any other message does.
+
+use unicode_normalization::UnicodeNormalization;
+
+use crate::Vault;
+use crate::channel_identity_provider::{
+    LINE_CHANNEL, is_line_chat_audience_key, line_source_audience_key,
+};
+use crate::error::Result;
+
+use super::handoff::admit_surface_event_once_in_txn;
+use super::{SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
+
+/// The words that opt a sender out of a channel when they are the whole
+/// message: trimmed, NFKC-folded (full-width letters read as ASCII) and
+/// compared ignoring ASCII case.
+pub const STOP_REPLY_KEYWORDS: &[&str] = &[
+    "STOP",
+    "STOPALL",
+    "UNSUBSCRIBE",
+    "CANCEL",
+    "END",
+    "QUIT",
+    "配信停止",
+    "停止",
+];
+
+/// What the OptOut a STOP message becomes adds to the message's correlation
+/// id: one OptOut per message, however often the bridge reads it.
+const STOP_REPLY_CORRELATION_SUFFIX: &str = ":stop_reply";
+
+/// Where an archived LINE event names the member who wrote it.
+const LINE_SOURCE_USER_POINTER: &str = "/event/source/userId";
+
+/// Whether `text` is one of [`STOP_REPLY_KEYWORDS`] and nothing else.
+#[must_use]
+pub fn is_stop_reply(text: &str) -> bool {
+    let folded: String = text.nfkc().collect();
+    let folded = folded.trim();
+    STOP_REPLY_KEYWORDS
+        .iter()
+        .any(|keyword| folded.eq_ignore_ascii_case(keyword))
+}
+
+/// Admits the OptOut interaction a STOP message becomes, for `event`'s
+/// sender on its channel, beside the message. `false` when `event` is not a
+/// message, carries no words the vault holds, is not a STOP, or is a chat
+/// message that names no member. A second call for the same message replays
+/// the first admission.
+pub(super) fn admit_stop_reply_opt_out(
+    vault: &Vault,
+    event: &SurfaceEvent,
+    now: u64,
+) -> Result<bool> {
+    if !matches!(event.action, SurfaceEventAction::Message) {
+        return Ok(false);
+    }
+    let Some(payload_ref) = event.payload_ref.as_deref() else {
+        return Ok(false);
+    };
+    let Some(text) = vault.read_provider_event_text(&event.channel, payload_ref)? else {
+        return Ok(false);
+    };
+    if !is_stop_reply(&text) {
+        return Ok(false);
+    }
+    let Some(sender) = stop_reply_sender(vault, event, payload_ref)? else {
+        return Ok(false);
+    };
+    let mut opt_out = event.clone();
+    opt_out.correlation_id = format!("{}{STOP_REPLY_CORRELATION_SUFFIX}", event.correlation_id);
+    opt_out.action = SurfaceEventAction::Interaction {
+        interaction: SurfaceInteractionKind::OptOut,
+        target_ref: None,
+        reaction: None,
+    };
+    if sender != event.counterparty {
+        opt_out.source.user_ref = sender.reference_key();
+        opt_out.counterparty = sender;
+    }
+    vault.with_write_txn_grouped(|txn| {
+        admit_surface_event_once_in_txn(vault, txn, &opt_out, None, now)
+    })?;
+    Ok(true)
+}
+
+/// Who a STOP message opts out: its party, and for a LINE group or room
+/// message the member who wrote it, never the whole chat. `None` for a chat
+/// message whose member neither its stamp nor its archived body names.
+fn stop_reply_sender(
+    vault: &Vault,
+    event: &SurfaceEvent,
+    payload_ref: &str,
+) -> Result<Option<SurfaceCounterpartyStamp>> {
+    let chat_party = matches!(
+        &event.counterparty,
+        SurfaceCounterpartyStamp::Unknown { counterparty_key }
+            if event.channel == LINE_CHANNEL && is_line_chat_audience_key(counterparty_key)
+    );
+    if !chat_party {
+        return Ok(Some(event.counterparty.clone()));
+    }
+    if !is_line_chat_audience_key(&event.source.user_ref) {
+        return Ok(Some(SurfaceCounterpartyStamp::unknown(
+            event.source.user_ref.clone(),
+        )));
+    }
+    let member = vault
+        .read_provider_event(payload_ref)?
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .and_then(|value| {
+            value
+                .pointer(LINE_SOURCE_USER_POINTER)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|user| line_source_audience_key(None, Some(user)))
+        });
+    Ok(member.map(SurfaceCounterpartyStamp::unknown))
+}

@@ -7938,17 +7938,26 @@ dependencies = [
  "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-code-source",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
+ "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -8040,8 +8049,11 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tiktoken-rs",
  "tokio",
@@ -8136,6 +8148,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-code-source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-base",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
@@ -8195,6 +8224,15 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]
@@ -8312,6 +8350,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-linear"
 version = "0.1.0"
 dependencies = [
@@ -8324,6 +8374,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
@@ -8456,6 +8514,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -8484,6 +8543,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-container",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
@@ -8514,6 +8574,20 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8567,6 +8641,16 @@ dependencies = [
  "unicode-script",
  "unicode-segmentation",
  "whichlang",
+]
+
+[[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8693,11 +8777,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+]
+
+[[package]]
 name = "oneiron-spawn"
 version = "0.1.0"
 dependencies = [
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "oneiron-store"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "heed",
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-docedit",
+ "oneiron-model",
+ "rmp-serde",
+ "rmpv",
+ "rustix",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+ "xxhash-rust",
+ "zeroize",
 ]
 
 [[package]]
@@ -8730,6 +8848,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
