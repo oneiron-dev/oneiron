@@ -16,7 +16,9 @@ use super::boundary::{
     read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64, validate_dimensions,
     validate_entity_payload_len,
 };
-use super::codebase::{CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot};
+use super::codebase::{
+    CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot, napi_codebase_snapshot,
+};
 use super::email::{core_email_adapter, core_email_inbound};
 use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
@@ -478,21 +480,13 @@ impl NapiVault {
     pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
         self.refuse_bound_host_write()?;
         let eid = parse_entity_id(&id)?;
-        let snapshot = read_codebase_snapshot(&self.vault, snapshot)?;
-        // Take the bodies before conversion consumes the boundary struct, so
-        // custody filtering can hash-check each declared entry.
+        let mut memory = CodebaseMemory::new();
+        let snapshot = read_codebase_snapshot(&self.vault, snapshot, &mut memory)?;
         let file_count = snapshot.files.len();
-        let contents = snapshot
-            .files
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .content
-                    .as_ref()
-                    .map(|bytes| (entry.path.clone(), bytes.to_vec()))
-            })
-            .collect::<std::collections::HashMap<String, Vec<u8>>>();
-        let snapshot = core_codebase_snapshot(snapshot).map_err(napi::Error::from_reason)?;
+        let contents = CodebaseContents::from_files(&snapshot.files, &mut memory)
+            .map_err(napi::Error::from_reason)?;
+        let snapshot =
+            core_codebase_snapshot(snapshot, &mut memory).map_err(napi::Error::from_reason)?;
         // Without any content every entry would quarantine, silently replacing a
         // prior snapshot with an empty manifest. Refuse before touching storage.
         if file_count > 0 && contents.is_empty() {
@@ -500,10 +494,11 @@ impl NapiVault {
                 "codebase snapshot file contents required; refusing all-quarantine empty-manifest persist",
             ));
         }
+        memory
+            .reserve(contents.max_scratch_len())
+            .map_err(napi::Error::from_reason)?;
         self.vault
-            .put_codebase_snapshot(&eid, &snapshot, &move |path: &str| {
-                contents.get(path).cloned()
-            })
+            .put_codebase_snapshot(&eid, &snapshot, &|path: &str| contents.get(path))
             .map_err(to_napi_err)
     }
 

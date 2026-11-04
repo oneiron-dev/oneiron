@@ -6,6 +6,8 @@ use oneiron::codebase::CODEBASE_FILE_PATH_MAX_BYTES;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId, MemoryError};
 
+use super::codebase::CodebaseMemory;
+
 pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 
 // ONE-1441 WIRE-P1: the `MAX_NAPI_*` names are now ALIASES of the shared
@@ -125,16 +127,21 @@ pub(super) fn read_vector(
 pub(super) fn read_codebase_snapshot(
     vault: &oneiron::Vault,
     snapshot: Object<'_>,
+    memory: &mut CodebaseMemory,
 ) -> napi::Result<super::types::NapiCodebaseSnapshot> {
-    let files: Array<'_> = required_field(&snapshot, "files")?;
-    let _ = vault.measure_limit(EngineLimit::CodebaseManifestFiles, files.len() as u64);
-    let files = (0..files.len())
-        .map(|index| read_codebase_file_entry(&files, index))
-        .collect::<napi::Result<Vec<_>>>()?;
+    let files_array: Array<'_> = required_field(&snapshot, "files")?;
+    let len = files_array.len();
+    let _ = vault.measure_limit(EngineLimit::CodebaseManifestFiles, len as u64);
+    let mut files = memory
+        .vector::<super::types::NapiCodebaseFileEntry>(len as usize)
+        .map_err(napi::Error::from_reason)?;
+    for index in 0..len {
+        files.push(read_codebase_file_entry(&files_array, index, memory)?);
+    }
     Ok(super::types::NapiCodebaseSnapshot {
-        project_id: required_field(&snapshot, "projectId")?,
-        repo_ref: required_field(&snapshot, "repoRef")?,
-        commit_hash: snapshot.get::<Option<String>>("commitHash")?.flatten(),
+        project_id: read_required_js_string(&snapshot, "projectId", memory)?,
+        repo_ref: read_required_js_string(&snapshot, "repoRef", memory)?,
+        commit_hash: read_optional_js_string(&snapshot, "commitHash", memory)?,
         fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
         scope_key: snapshot.get::<Option<Buffer>>("scopeKey")?.flatten(),
         files,
@@ -146,6 +153,7 @@ pub(super) fn read_codebase_snapshot(
 fn read_codebase_file_entry(
     files: &Array<'_>,
     index: u32,
+    memory: &mut CodebaseMemory,
 ) -> napi::Result<super::types::NapiCodebaseFileEntry> {
     let entry: Object<'_> = files
         .get(index)?
@@ -157,12 +165,56 @@ fn read_codebase_file_entry(
             "codebase snapshot path must be <= {CODEBASE_FILE_PATH_MAX_BYTES} bytes, got {len}"
         )));
     }
+    let path = js_string_owned(path, len as u64, memory)?;
     Ok(super::types::NapiCodebaseFileEntry {
-        path: path.into_utf8()?.into_owned()?,
+        path,
         content_hash: required_field(&entry, "contentHash")?,
         size_bytes: required_field(&entry, "sizeBytes")?,
         content: entry.get::<Option<Buffer>>("content")?.flatten(),
     })
+}
+
+fn read_required_js_string(
+    object: &Object<'_>,
+    name: &str,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<String> {
+    let js: napi::JsString<'_> = required_field(object, name)?;
+    let len = js.utf8_len()? as u64;
+    js_string_owned(js, len, memory)
+}
+
+fn read_optional_js_string(
+    object: &Object<'_>,
+    name: &str,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<Option<String>> {
+    let js: Option<napi::JsString<'_>> = object.get(name)?.flatten();
+    match js {
+        None => Ok(None),
+        Some(js) => {
+            let len = js.utf8_len()? as u64;
+            js_string_owned(js, len, memory).map(Some)
+        }
+    }
+}
+
+fn js_string_owned(
+    js: napi::JsString<'_>,
+    len: u64,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<String> {
+    let peak = len
+        .checked_add(
+            len.checked_add(1)
+                .ok_or_else(|| napi::Error::from_reason("string too long"))?,
+        )
+        .ok_or_else(|| napi::Error::from_reason("string too long"))?;
+    memory.reserve(peak).map_err(napi::Error::from_reason)?;
+    let owned = js.into_utf8()?.into_owned()?;
+    let actual = owned.capacity() as u64;
+    memory.allocated(peak, actual);
+    Ok(owned)
 }
 
 fn required_field<T: FromNapiValue>(object: &Object<'_>, name: &str) -> napi::Result<T> {
