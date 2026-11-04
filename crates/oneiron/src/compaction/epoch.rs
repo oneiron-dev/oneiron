@@ -301,7 +301,9 @@ impl EpochPlacement {
             Some(facet) => facet,
             None => crate::claim::default_facet_in(store, txn)?,
         };
-        crate::federation::record_scope::settle_epoch_birth(store, txn, summary, world, facet)
+        store
+            .scope_stamps
+            .settle_epoch_birth(store, txn, summary, world, facet)
     }
 }
 
