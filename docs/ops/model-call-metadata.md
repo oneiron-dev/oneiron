@@ -88,3 +88,10 @@ checks and warn-only writer. Profiled children keep their separate backend and
 meter and remain outside this coverage. Injected providers ignore the caller;
 other unbound reader-backend callers remain uncaptured. No planned factory,
 model route, funding, fallback, request, response or refusal behavior changes.
+
+For a reader's already-bound session, privacy checks read its current live mode
+at both arrival and terminal. Off-record and anonymous modes suppress evidence,
+including roomless owner sessions with no `entered_by` actor. A closed, missing
+or unreadable bound session also suppresses evidence without changing execution.
+This bound-session check is not available to the raw MCP header factory, which
+keeps its existing actor/session identity predicate.
