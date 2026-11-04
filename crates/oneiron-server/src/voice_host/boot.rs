@@ -47,7 +47,6 @@ use std::time::Duration;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
-use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
 use oneiron::voice_cascade::uds::SocketGuard;
@@ -640,8 +639,11 @@ fn bind_room(
         .room_audience_members_under(&read, room, Some(caller))
         .map_err(|_| refused(Refusal::Room))?;
     let mut candidates = Vec::new();
-    for party in vault.room_parties(&members).map_err(failed)? {
-        if let RoomParty::Contact(contact) = party
+    // FIX 6558: the contact each member is known by in the room: a live
+    // co-Owner classes VaultOwner now and keeps its contact as a candidate,
+    // exactly the set the binding-only parties named before.
+    for entry in vault.room_party_entries(&members).map_err(failed)? {
+        if let Some(contact) = entry.contact
             && !candidates.contains(&contact)
             && candidates.len() < MAX_ROOM_CANDIDATES
         {
