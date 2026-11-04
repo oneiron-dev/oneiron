@@ -12,4 +12,5 @@ pub mod receive_scan;
 pub mod secret_manifest;
 pub mod secret_record;
 pub mod store_clock;
+pub mod vault_page_seal;
 pub mod window_key;
