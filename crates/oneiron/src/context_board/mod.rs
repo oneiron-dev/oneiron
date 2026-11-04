@@ -5,6 +5,8 @@
 
 mod capabilities;
 mod children;
+pub mod consult_result;
+pub mod task_kind;
 pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };
@@ -27,6 +29,7 @@ mod observations_tests;
 mod own_changes;
 mod read_set;
 mod room;
+pub(crate) mod room_offer;
 mod room_verbs;
 #[cfg(test)]
 mod room_verbs_tests;
@@ -85,6 +88,7 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
@@ -160,3 +164,9 @@ pub(super) fn one_line_token(s: &str) -> String {
         })
         .collect()
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
+
+pub mod agent_run_status;

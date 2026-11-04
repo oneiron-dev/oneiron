@@ -38,6 +38,7 @@ use oneiron_llm_openai::{
 use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
+use super::http::is_cloud_node;
 use super::llama_identity::{AnsweringIdentity, execution_mode};
 use super::output_cap::OutputCap;
 use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind, ResponseFormatWire};
@@ -287,6 +288,7 @@ impl BrokerBackend {
             join(&self.prefix, &path),
             headers.into_iter().collect(),
             wire_model.to_owned(),
+            is_cloud_node(),
             &bytes,
         );
         header
@@ -371,6 +373,20 @@ pub(super) async fn call_with_key(
     header: &CallHeader,
     body: &[u8],
 ) -> LlmResult<oneiron_broker::BrokerReply> {
+    call_with_key_released(client, keys, secret, header, body, None, None).await
+}
+
+/// [`call_with_key`] with the caller's release invoked after connection and
+/// key retrieval, immediately before the broker sends the bytes.
+pub(super) async fn call_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerReply> {
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
     let secret = secret.to_owned();
@@ -384,6 +400,12 @@ pub(super) async fn call_with_key(
             );
             LlmError::from(FatalLlmError::Auth)
         })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
     connection
         .call(header, body, key)
         .await

@@ -5,7 +5,7 @@ use super::{FORK_DOCS, FORKS, TypedForkState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::{Deserialize, Serialize};
 
 /// Who a body row names (a fork's opener or settler, an office export's

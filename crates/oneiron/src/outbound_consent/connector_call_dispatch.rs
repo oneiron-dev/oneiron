@@ -151,8 +151,15 @@ fn step_from_dispatch(
                 push_reason(&mut reasons, CONNECTOR_ENDPOINT_CHANGED);
                 Step::NotDelivered { intent, reasons }
             }
-            Some(OutboundSendOutcome::Failed(_)) => {
+            Some(OutboundSendOutcome::Failed(failure)) => {
                 push_reason(&mut reasons, "delivery_failed");
+                // The typed refusal that stopped the send reaches the
+                // caller beside it (FIX 11565); the send stays retryable,
+                // as a refusal its cause can cure (a renewed grant, a new
+                // binding) resumes.
+                if let Some(secret) = failure.secret {
+                    push_reason(&mut reasons, secret.kind.as_str());
+                }
                 Step::Retryable { intent, reasons }
             }
             Some(

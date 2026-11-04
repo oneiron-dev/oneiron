@@ -30,6 +30,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::task_verb::erase_lifecycle_receipts_in_txn,
     crate::vault_cleanup::erase_in_txn,
     crate::dreamer_runner::maintenance::erase_source_copies_in_txn,
+    // FIX 10460: the queue copy of a public model step's failure text.
+    // First: it reads the step's terminal claim out of the live submission
+    // row, which the submission scrub below replaces with Erased.
+    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.

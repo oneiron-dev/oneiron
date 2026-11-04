@@ -20,8 +20,9 @@ use super::site_folder::{
 };
 use super::support::map_value;
 use super::{HubFile, HubPin, HubRef, PREDICATE_SKILL_HUB_PROVENANCE};
+use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
-use crate::browser_library::{PROGRAM_ADMISSION_KIND, ProgramAdmissionJob};
+use crate::browser_library::ProgramAdmissionJob;
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

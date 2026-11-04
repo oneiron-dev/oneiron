@@ -99,3 +99,7 @@ use crate::entity_id::EntityId;
 use crate::skill::{SkillLifecycle, SkillRecord};
 #[cfg(test)]
 use rmpv::Value;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::state::context_board_plugin_block_accepts_masked;

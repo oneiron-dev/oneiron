@@ -18,12 +18,10 @@ use crate::dreamer_wake::{
     WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
-    call_as_step_checked,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::scope_summary::{
@@ -32,6 +30,11 @@ use crate::scope_summary::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
+    TierPrecedence,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -423,9 +426,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 seat_effort: None,
                 // The call reads exactly the versions the Dreamer was admitted
                 // to read.
-                scope: crate::llm::Scope {
+                scope: oneiron_model::llm::Scope {
                     readable: evidence.readable.clone(),
-                    ..crate::llm::Scope::default()
+                    ..oneiron_model::llm::Scope::default()
                 },
                 // The scope's transcript leaves the vault exactly as an
                 // extraction's does, so it passes the same egress gate.

@@ -1,11 +1,12 @@
 //! Standing-grant resolution plus scoped-MCP channel check and grant touch.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::consent::tool_scope::ScopedMcpConsentDecision;
+use crate::consent::tool_scope::evaluate_scoped_mcp_call;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::input::ExternalEffectGateInput;
 use crate::gate::resolution::PolicyManifestResolution;
-use crate::outbound_consent::{ScopedMcpConsentDecision, evaluate_scoped_mcp_call};
 use crate::outbound_grant::{
     StandingOutboundGrant, decode_standing_outbound_grant_body,
     standing_outbound_grant_ids_for_principal,
@@ -82,7 +83,7 @@ pub(super) fn standing_outbound_grant_for_effect(
                             prepared.decision(scoped_grant)
                         } else {
                             ScopedMcpConsentDecision::Escalate(
-                                crate::outbound_consent::ScopedMcpEscalationReason::InvalidGrant,
+                                crate::consent::tool_scope::ScopedMcpEscalationReason::InvalidGrant,
                             )
                         }
                     },

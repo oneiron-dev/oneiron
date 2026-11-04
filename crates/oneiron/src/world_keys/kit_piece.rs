@@ -11,12 +11,15 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::recovery::{
-    KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, PieceHome, RestoredKitSecret, join_kept_piece, restore_kit,
+use crate::{
+    recovery::KitPieceStore,
+    recovery::{join_kept_piece, restore_kit},
+    store::recovery_kit::{KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    store::recovery_kit::{KitSecretKind, PieceHome, RestoredKitSecret},
 };
 
 use super::keystore_error;
+use super::kit::{UNLISTED_KITS, kit_key};
 
 impl Vault {
     /// Where a kit issued over `homes` keeps this machine's piece: `None` with no
@@ -76,6 +79,15 @@ impl Vault {
         matches!(
             self.kept_kit_piece(KitPiecePair::Current(kind)),
             Ok(Some(_))
+        )
+    }
+
+    /// Whether this machine keeps its current piece of the exact kit `kit` of
+    /// `kind`. Another kit's piece never counts toward this kit's passphrase choice.
+    pub fn keeps_kit_piece_for(&self, kind: KitSecretKind, kit: KitId) -> bool {
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(piece)) if piece.kit_id() == kit
         )
     }
 
@@ -156,7 +168,9 @@ impl Vault {
     }
 
     /// Deletes this install's pending piece of the world kit `kit` (FIX 12046),
-    /// best-effort: a delete that fails is logged, and the piece stays.
+    /// best-effort: a delete that fails is logged, and the piece stays, named
+    /// in [`UNLISTED_KITS`] so a later settle's sweep retries the delete
+    /// (FIX 12202): no committed row names this kit.
     fn drop_pending_kit_piece(&self, kit: KitId) {
         let dropped = self.kit_piece_store_here().and_then(|store| match store {
             Some(store) => store
@@ -169,6 +183,14 @@ impl Vault {
                 kind = ?error.kind(),
                 "a world kit that can no longer be confirmed keeps its pending kit-piece slots"
             );
+            let named =
+                self.with_write_txn(|txn| UNLISTED_KITS.put(&self.store, txn, &kit_key(kit), &kit));
+            if let Err(error) = named {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the unlisted kit could not be named for a later sweep either"
+                );
+            }
         }
     }
 }

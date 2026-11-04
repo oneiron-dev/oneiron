@@ -67,8 +67,11 @@ fn init_with_env(
         ask_tagger(&mut args, &mut input, &mut output)?;
     }
     // Asked once: only when this init creates the vault, and only on a
-    // terminal. Anything but a yes writes nothing, which reads as off.
+    // terminal. Anything but a yes writes nothing, which reads as off. An
+    // unfinished sealed creation is removed before that choice, so its
+    // replacement is a first creation too.
     let vault_dir = env.vault_path().unwrap_or(args.path.as_path());
+    oneiron::world_keys::remove_unfinished_sealed_creation(vault_dir)?;
     let learning = !vault_dir.join("data.mdb").exists()
         && input.is_terminal()
         && ask_learning(&mut input, &mut output)?;

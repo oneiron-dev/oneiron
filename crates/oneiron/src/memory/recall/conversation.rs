@@ -14,7 +14,6 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::pipeline::{CandidateGate, SnapshotCandidateFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
@@ -22,6 +21,8 @@ use crate::registry::{
 };
 use crate::scope_summary::{WordSources, word_sources_through_in};
 use crate::store::StoreRead;
+use crate::store::retrieval_values::CandidateGate;
+use crate::store::retrieval_values::SnapshotCandidateFilter;
 
 impl Memory<'_> {
     /// The explicit conversation set met with the selected PERSON's authored
@@ -29,21 +30,37 @@ impl Memory<'_> {
     pub(super) fn selected_conversations(
         &self,
         scope: &RecallScope,
+        store: &StoreRead<'_>,
     ) -> MemoryResult<Option<BTreeSet<EntityId>>> {
-        let mut explicit = BTreeSet::new();
-        for reference in &scope.conversation_refs {
-            let id = self.resolve_ref(reference)?;
-            self.expect_scope_kind(id, ENTITY_TYPE_CONVERSATION, "conversation_refs")?;
-            explicit.insert(id);
-        }
-        let explicit = (!scope.conversation_refs.is_empty()).then_some(explicit);
+        // Short refs open their own read transaction; resolve every ref before
+        // holding the transaction used for kind checks and the person walk.
+        let explicit = scope
+            .conversation_refs
+            .iter()
+            .map(|reference| self.resolve_ref(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
         let person = scope
             .person_ref
             .as_deref()
-            .map(|reference| {
-                let person = self.resolve_ref(reference)?;
-                self.expect_scope_kind(person, ENTITY_TYPE_PERSON, "person_ref")?;
-                self.person_conversations(person)
+            .map(|reference| self.resolve_ref(reference))
+            .transpose()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let mut selected = BTreeSet::new();
+        for id in explicit {
+            self.expect_scope_kind(
+                store,
+                &txn,
+                id,
+                ENTITY_TYPE_CONVERSATION,
+                "conversation_refs",
+            )?;
+            selected.insert(id);
+        }
+        let explicit = (!scope.conversation_refs.is_empty()).then_some(selected);
+        let person = person
+            .map(|person| {
+                self.expect_scope_kind(store, &txn, person, ENTITY_TYPE_PERSON, "person_ref")?;
+                self.person_conversations(store, &txn, person)
             })
             .transpose()?;
         Ok(match (explicit, person) {
@@ -57,12 +74,16 @@ impl Memory<'_> {
     }
 
     /// A scope ref names its declared row kind, never merely an existing id.
-    fn expect_scope_kind(&self, id: EntityId, expected: u8, field: &str) -> MemoryResult<()> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let actual = self
-            .vault
-            .store
-            .port_entity_record(&txn, &id)?
+    fn expect_scope_kind(
+        &self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        expected: u8,
+        field: &str,
+    ) -> MemoryResult<()> {
+        let actual = store
+            .port_entity_record(txn, &id)?
             .map(|row| row.entity_type);
         if actual == Some(expected) {
             return Ok(());
@@ -80,39 +101,41 @@ impl Memory<'_> {
     /// Every conversation with a live MESSAGE `AuthoredBy` this PERSON. The
     /// whole adjacency is read: no page bound may silently drop a matching
     /// room, and no mention or address edge participates.
-    fn person_conversations(&self, person: EntityId) -> MemoryResult<BTreeSet<EntityId>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+    fn person_conversations(
+        &self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        person: EntityId,
+    ) -> MemoryResult<BTreeSet<EntityId>> {
         let mut conversations = BTreeSet::new();
-        for edge in self.vault.store.port_edges(
-            &txn,
+        for edge in store.port_edges(
+            txn,
             &person,
             EdgeDirection::In,
             Some(EdgeKind::AuthoredBy),
             None,
         )? {
             let message = edge?.target;
-            let Some(record) = self.vault.store.port_entity_record(&txn, &message)? else {
+            let Some(record) = store.port_entity_record(txn, &message)? else {
                 continue;
             };
             if record.entity_type != ENTITY_TYPE_MESSAGE {
                 continue;
             }
-            let deletion = self.vault.store.port_deletion_state(&txn, &message)?;
+            let deletion = store.port_deletion_state(txn, &message)?;
             if deletion.archived || deletion.deleted || deletion.stale {
                 continue;
             }
-            for link in self.vault.store.port_edges(
-                &txn,
+            for link in store.port_edges(
+                txn,
                 &message,
                 EdgeDirection::Out,
                 Some(EdgeKind::BelongsTo),
                 None,
             )? {
                 let conversation = link?.target;
-                if self
-                    .vault
-                    .store
-                    .port_entity_record(&txn, &conversation)?
+                if store
+                    .port_entity_record(txn, &conversation)?
                     .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
                 {
                     conversations.insert(conversation);
@@ -125,14 +148,14 @@ impl Memory<'_> {
 
 /// The recall authority gate followed by conversation/PERSON narrowing. The
 /// provenance readers run only for a candidate the credential already admits.
-pub(super) struct ConversationGate<'a> {
+pub(crate) struct ConversationGate<'a> {
     inner: &'a dyn CandidateGate,
     vault: &'a crate::Vault,
     selected: &'a Option<BTreeSet<EntityId>>,
 }
 
 impl<'a> ConversationGate<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         inner: &'a dyn CandidateGate,
         vault: &'a crate::Vault,
         selected: &'a Option<BTreeSet<EntityId>>,

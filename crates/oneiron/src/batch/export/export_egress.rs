@@ -50,7 +50,7 @@ pub(crate) fn whole_vault_export_withholds_result(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     run_id: EntityId,
-    output: &crate::code_run::CodeRunRawOutput,
+    output: &crate::store::result_manifest::CodeRunRawOutput,
 ) -> Result<Option<&'static str>> {
     vault.code_run_result_withheld_in_txn(rtxn, Some(run_id), output)
 }

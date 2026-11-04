@@ -1755,7 +1755,8 @@ sealed, so a restore elsewhere unlocks the pages with either.
 
 The world kit carries your recovery root: the key every private world's key is also wrapped to.
 It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
-nothing. No piece ever lives on the host. Run these on a stopped vault:
+nothing. A `this-machine` home keeps its piece in the install's keystore; the other homes leave it
+with you. Run these on a stopped vault:
 
 ```sh
 oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
@@ -1766,7 +1767,8 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+`security-key`, `passphrase` or `this-machine`. Each stored piece is written to `--out` as
+`piece-<x>.txt`, its
 recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
 `file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
 with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
@@ -1775,8 +1777,9 @@ you saved them. Confirm makes the kit's root live on this machine and marks ever
 replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
 `world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
 that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
-their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
-slot can hold a piece.
+their own old root; replacing a kit does not revoke it. `this-machine` keeps its piece in the
+install's keystore, and a restore on that install counts it as one of the two. It is refused when
+the keystore cannot hold the piece.
 
 `issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
@@ -1901,7 +1904,9 @@ refusal shows the root its pieces rebuild. Pass `--fingerprint <root>`, read on 
 machines that pins it, or go ahead with `--confirm-root <root>`, the root the refusal showed. The
 go-ahead holds for that root alone: pieces that rebuild another root are refused with the root
 they do rebuild, so you confirm again in one step. A kit this vault still lists as pending is
-refused: `confirm` it instead.
+refused: `confirm` it instead. On an install that keeps a piece, `restore` counts it: give one
+fewer `--piece`, down to no `--piece` when the kept piece and the passphrase open the kit. A
+`confirm` still re-reads the pieces you saved and never counts the kept piece.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
 pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit
@@ -1913,7 +1918,10 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 ```
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
-with any other unlock, it refuses `--piece` and `--vault-id`.
+with any other unlock, it refuses `--piece` and `--vault-id`. On an already-open plain vault,
+add-device counts this install's kept piece of the same kit id for either kit kind and asks for a
+passphrase only when the available pieces need one. Fresh restores and sealed opens keep their
+existing pre-open piece and passphrase rules.
 
 ### Publish the sealed bundle to a home
 
@@ -1929,8 +1937,9 @@ is named beside the receipt; that note decides nothing.
 
 On an install that holds no copy of the vault yet, the world kit alone restores it from its sealed
 cloud bundle. Run it on a stopped install, with the world kit's pieces, not the vault-key kit's:
-two `--piece` files, or one and the passphrase from stdin or `--secret-file`. `--vault-id` is the
-64-hex id the kit is bound to, as `status` prints it on one of your machines. Name one source:
+two `--piece` files, or one and the passphrase from stdin or `--secret-file`. No kept piece joins
+this pre-open restore; it uses only the pieces given. `--vault-id` is the 64-hex id the kit is
+bound to, as `status` prints it on one of your machines. Name one source:
 
 ```sh
 oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt --vault-id <hex> --sealed-bundle bundle --sealed-pads pads
