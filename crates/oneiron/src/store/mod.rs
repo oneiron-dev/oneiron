@@ -158,6 +158,8 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
 #[cfg(feature = "sync")]
