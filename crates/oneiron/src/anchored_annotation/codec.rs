@@ -4,7 +4,7 @@
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
-    FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    FORMAT_HTML, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -64,6 +64,8 @@ const KEY_SLIDE: &str = "slide";
 
 const KEY_SHAPE_ID: &str = "shape_id";
 
+const KEY_PART_ID: &str = "part_id";
+
 /// Task role byte for the productivity `role` body ("role": <byte>).
 const TASK_BODY_ROLE_KEY: &str = "role";
 
@@ -89,6 +91,9 @@ pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result
             )),
             "docx locator para_path" => Error::Artifact(ArtifactError::InvalidAnchor(
                 "docx locator para_path is empty or too long",
+            )),
+            "html locator part_id" => Error::Artifact(ArtifactError::InvalidAnchor(
+                "html locator part_id is empty or too long",
             )),
             _ => Error::Artifact(ArtifactError::InvalidAnchor(
                 "pptx locator shape_id is empty or too long",
@@ -120,6 +125,16 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_SLIDE), Value::from(*slide)),
             (Value::from(KEY_SHAPE_ID), Value::from(shape_id.as_str())),
         ]),
+        Locator::Html {
+            part_id,
+            char_start,
+            char_end,
+        } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_HTML)),
+            (Value::from(KEY_PART_ID), Value::from(part_id.as_str())),
+            (Value::from(KEY_CHAR_START), Value::from(*char_start)),
+            (Value::from(KEY_CHAR_END), Value::from(*char_end)),
+        ]),
     }
 }
 
@@ -141,6 +156,12 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let slide = map_u64(value, KEY_SLIDE)?;
             let shape_id = map_str(value, KEY_SHAPE_ID)?.to_owned();
             Locator::pptx(slide, shape_id)
+        }
+        FORMAT_HTML => {
+            let part_id = map_str(value, KEY_PART_ID)?.to_owned();
+            let char_start = map_u64(value, KEY_CHAR_START)?;
+            let char_end = map_u64(value, KEY_CHAR_END)?;
+            Locator::html(part_id, char_start, char_end)
         }
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",

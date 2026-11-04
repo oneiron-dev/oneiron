@@ -37281,6 +37281,15 @@ pub enum AnnotationLocator {
         #[serde(rename = "shape_id")]
         shape_id: String,
     },
+    #[serde(rename = "html")]
+    Html {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
 }
 
 /// `oneiron::anchored_annotation::wire::ArtifactUnitView`.

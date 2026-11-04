@@ -11815,7 +11815,12 @@ class AnnotationLocatorPptx(TypedDict):
     format: Literal["pptx"]
     slide: int
     shape_id: str
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx
+class AnnotationLocatorHtml(TypedDict):
+    format: Literal["html"]
+    part_id: str
+    char_start: int
+    char_end: int
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
