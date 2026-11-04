@@ -71,6 +71,40 @@ async fn vault_commitments_get(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_commitments_ledger(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.commitments.ledger")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.commitments.ledger", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.commitments.ledger", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_commitments_ledger(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_commitments_instances(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38886,6 +38920,7 @@ async fn call_verb_row(
     match verb {
         "vault.commitments.create" => Box::pin(vault_commitments_create(server, call, input)).await,
         "vault.commitments.get" => Box::pin(vault_commitments_get(server, call, input)).await,
+        "vault.commitments.ledger" => Box::pin(vault_commitments_ledger(server, call, input)).await,
         "vault.commitments.instances" => {
             Box::pin(vault_commitments_instances(server, call, input)).await
         }
