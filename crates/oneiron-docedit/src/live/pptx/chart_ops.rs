@@ -11,6 +11,7 @@ use super::table_ops::order;
 use super::{LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
 use crate::live::conversion::Conversion;
+pub(super) use categories::born_points;
 use categories::lower_set;
 use std::collections::{BTreeSet, VecDeque};
 

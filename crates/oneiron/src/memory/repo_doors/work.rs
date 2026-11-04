@@ -40,10 +40,13 @@ pub(crate) struct RepoQueueTarget {
 /// read under the repo's coordinator with the queue's pointers. A detached
 /// HEAD, another ref, a remote pointer, or a store with no queue is
 /// [`RepoAccessRefusal::WrongRef`]: no `main`, no `HEAD` and no per-ref queue
-/// is guessed.
+/// is guessed. A queue whose merge effect needs recovery, or whose HEAD
+/// moved off the queue's head, holds the ref for now: that is the retryable
+/// error it raised, never a wrong ref (FIX 6950).
 ///
 /// # Errors
-/// The coordinator cannot be taken.
+/// The coordinator cannot be taken, or the queue is held for recovery or a
+/// moved HEAD ([`Error::ConcurrentWrite`], retryable).
 pub(crate) fn resolve_repo_queue_target(
     vault: &Vault,
     repo_ref: &RepoRef,
@@ -56,10 +59,12 @@ pub(crate) fn resolve_repo_queue_target(
     if attached_head(&repo).as_deref() != Some(git_ref) {
         return Ok(Err(RepoAccessRefusal::WrongRef));
     }
-    let Ok(pointers) = MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers())
-    else {
-        return Ok(Err(RepoAccessRefusal::WrongRef));
-    };
+    let pointers =
+        match MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers()) {
+            Ok(pointers) => pointers,
+            Err(held @ Error::ConcurrentWrite(_)) => return Err(held),
+            Err(_) => return Ok(Err(RepoAccessRefusal::WrongRef)),
+        };
     Ok(Ok(RepoQueueTarget {
         repo,
         head: pointers.head,
@@ -125,6 +130,7 @@ pub(super) fn work_view(receipt: &ViewReceipt, stamp: &RepoRunStamp) -> RepoWork
             .map(|(path, hash)| super::RepoWorkFile {
                 path: path.clone(),
                 content_hash_blake3: bytes_to_hex_lower(hash),
+                projection: receipt.projections.get(path).cloned(),
             })
             .collect(),
     }
@@ -283,8 +289,10 @@ impl Memory<'_> {
             .collect();
         // A run's work holds the masked copy of each admitted file a repo
         // mark covers (FIX 7608); its stamp keeps the canonical green.
-        let selected = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?
-            .into_contents();
+        let copy = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?;
+        // Each masked file's descriptor rides the work's receipt (FIX 8965).
+        let projections = copy.projections();
+        let selected = copy.into_contents();
         // The final writer admits every selected path again (FIX 8799).
         let selected_target = repo_target(input.repo, &input.git_ref, selected.keys());
         let entries = selected
@@ -308,6 +316,7 @@ impl Memory<'_> {
             binding.actor.entity_ref(),
             snapshot.fork_hash,
             &selected,
+            projections,
             |txn, view| {
                 Ok(
                     match self.vault.admit_repo_run_in_txn(

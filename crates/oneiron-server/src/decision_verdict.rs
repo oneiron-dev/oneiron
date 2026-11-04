@@ -55,6 +55,13 @@ use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
 
 pub(crate) mod hook;
+mod model_calls;
+
+/// This thread's verdict actor for the model-call capture in
+/// `BigModel::decide` (FIX 12742): the principal [`run_verdict`] bound while
+/// the verdict answers, `None` outside that scope, where the capture is
+/// skipped and never guessed.
+pub(crate) use model_calls::actor as verdict_actor;
 
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
@@ -246,18 +253,20 @@ pub(crate) fn run_verdict(
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
         WriteActor::new(principal, class),
     );
-    let answered = on_caller_meter(&meter, || {
-        on_caller_payer(payer, || {
-            answer_verdict(
-                server,
-                principal,
-                class,
-                reader,
-                lane,
-                held,
-                request,
-                evidence_read,
-            )
+    let answered = model_calls::scoped(principal, || {
+        on_caller_meter(&meter, || {
+            on_caller_payer(payer, || {
+                answer_verdict(
+                    server,
+                    principal,
+                    class,
+                    reader,
+                    lane,
+                    held,
+                    request,
+                    evidence_read,
+                )
+            })
         })
     });
     let now = vault.now_recorded_at();

@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{Display, Write as _};
 
+mod dxf;
+pub(crate) use dxf::write_dxfs;
+pub use dxf::{XlsxDifferentialFormat, check_differential_format};
+
 /// The first number format id a workbook defines; lower ids are built in.
 const FIRST_CUSTOM_FORMAT: u32 = 164;
 const MAX_FORMAT_CODE: usize = 255;
