@@ -6,9 +6,8 @@
 mod claims;
 mod context;
 mod evaluate;
-mod schedule_context;
+use oneiron_delivery_vocabulary::delivery_window::{schedule_context, types};
 pub use schedule_context::OutboundScheduleContext;
-mod types;
 mod validate;
 mod window;
 

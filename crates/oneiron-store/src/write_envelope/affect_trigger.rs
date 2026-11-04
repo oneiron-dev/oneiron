@@ -2,10 +2,10 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 pub const AFFECT_TRIGGER_PREDICATE: &str = "affect.trigger";
 const AFFECT_TRIGGER_KEY_AFFECTED_PERSON: &str = "affectedPerson";
 const AFFECT_TRIGGER_KEY_TRIGGER_REF: &str = "triggerRef";

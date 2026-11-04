@@ -315,6 +315,7 @@ impl BatchBuilder<'_> {
                 checker,
                 origin,
                 &caller_envelopes,
+                &births,
             ) {
                 // A gate rejection is itself an intentional ledger event. Keep
                 // that denial receipt, matching the historical gate semantics;

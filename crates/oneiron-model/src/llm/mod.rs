@@ -121,9 +121,9 @@ pub use self::model_id::{ModelId, ModelIdError};
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
-    ReasoningPartKind,
+    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
+    LlmStreamEvent, LlmToolSpec, LlmUsage, ReasoningPartKind,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use self::reply_assertions::{ReplyAssertionRecord, ReplyAssertions};
@@ -158,5 +158,6 @@ pub use self::scheduling::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
     SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
-    WorkPhysical, WorkPriority,
+    WorkPhysical, WorkPriority, forget_work_parent, lookup_work_parent, record_work_parent,
+    take_work_parent,
 };

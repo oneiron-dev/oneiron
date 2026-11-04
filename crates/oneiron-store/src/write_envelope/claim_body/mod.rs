@@ -2,13 +2,13 @@
 
 use super::claim_predicate::{validate_predicate, validate_session_tag};
 use oneiron_base::edge::EdgeKind;
-use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
-use oneiron_contracts::error::{Error, Result};
-use oneiron_contracts::temporal::TimeRange;
 use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
     VerdictBasis,
 };
+use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
+use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::temporal::TimeRange;
 use rmpv::Value;
 
 mod codec;

@@ -8,6 +8,17 @@ pub(crate) fn pin_key(target: EntityId) -> Vec<u8> {
     [PIN_PREFIX, target.as_bytes()].concat()
 }
 
+impl Vault {
+    pub(crate) fn machine_history_pinned(&self, target: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .vault_meta
+            .get(&txn, &pin_key(*target))?
+            .is_some())
+    }
+}
+
 /// Pin a challenge-bound host packet before receiving any claim bytes.
 /// Its rows may still be missing; the pin only WITHHOLDS that target until
 /// the full signed closure is fetched and adopted. A peer cannot assert an

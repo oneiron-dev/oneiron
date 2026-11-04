@@ -7,7 +7,6 @@ use icu_normalizer::ComposingNormalizer;
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
-const MAX_SCRIPT_BYTES: usize = 256 * 1024;
 const MAX_DEPTH: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,9 +54,6 @@ impl AnalyzedScript {
     fn parse(path: &str, source: &str, allowed_calls: &BTreeSet<String>) -> Result<Self, String> {
         if !path.ends_with(".py") {
             return Err("unsupported script format for sandbox screening".into());
-        }
-        if source.len() > MAX_SCRIPT_BYTES {
-            return Err("Python script profile byte bound exceeded".into());
         }
         let mut parser = Parser::new();
         parser

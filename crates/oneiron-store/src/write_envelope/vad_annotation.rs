@@ -1,11 +1,11 @@
 //! VAD annotation claim values, stable ids, and cleanup result data.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::derived_domains::VAD_ANNOTATION_CLAIM;
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::entity_id::derived_domains::VAD_ANNOTATION_CLAIM;
+use oneiron_contracts::error::{Error, Result};
 use rmpv::Value;
 
 pub const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
@@ -42,10 +42,7 @@ fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
         ),
     ])
 }
-pub fn vad_annotation_claim_body(
-    id: &EntityId,
-    annotation: &VadAnnotation,
-) -> Result<ClaimBody> {
+pub fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         VAD_ANNOTATION_CLAIM_PREDICATE,
         ClaimSubject::Entity(*id),

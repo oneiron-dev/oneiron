@@ -368,7 +368,10 @@ pub(super) fn create_document_in(
         now,
     )?;
     if let Some(project) = body.project {
-        crate::federation::record_scope::stamp_blob_project(&vault.store, txn, document, project)?;
+        vault
+            .store
+            .scope_stamps
+            .stamp_blob_project(&vault.store, txn, document, project)?;
     }
     Ok(())
 }

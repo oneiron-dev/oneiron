@@ -14,10 +14,13 @@
 //! it; the worker answers [`ScheduleAck`] once its owner thread has applied
 //! it between rounds. A call's `final` or `released` carries its
 //! [`SchedulingReceipt`].
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
+use oneiron_contracts::EntityId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::Notify;
@@ -338,6 +341,59 @@ pub enum WorkPhysical {
     KeylessOwnServer,
 }
 
+/// Attempt and run entities to the device ticket their admission took (FIX
+/// 11960): a retry or scoped child parents its device work on the ticket its
+/// source's admission took, so device dependency links mirror run retries
+/// and scoped children. Ticket numbers restart at 1 in every admission, so
+/// each entry names its admission with its ticket, and a parent link
+/// resolves only against that same live admission; a lookup miss, an
+/// admission mismatch or a reaped ticket parents nothing, which is today's
+/// behaviour.
+static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, (u64, WorkId)>>> = OnceLock::new();
+
+fn work_parents() -> &'static Mutex<HashMap<EntityId, (u64, WorkId)>> {
+    WORK_PARENTS.get_or_init(Default::default)
+}
+
+/// Records the device ticket `entity`'s admission took, under that
+/// admission's own identity.
+pub fn record_work_parent(entity: EntityId, admission: u64, ticket: WorkId) {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(entity, (admission, ticket));
+}
+
+/// The admission and device ticket `entity`'s admission took, if still known.
+#[must_use]
+pub fn lookup_work_parent(entity: &EntityId) -> Option<(u64, WorkId)> {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(entity)
+        .copied()
+}
+
+/// Removes and returns the admission and device ticket `entity`'s admission
+/// took, if still known. A retry takes its source's mapping when it takes
+/// over (FIX 11960): the source is superseded, and nothing else may parent
+/// on its ticket after the retry's own admission records under the retry.
+#[must_use]
+pub fn take_work_parent(entity: &EntityId) -> Option<(u64, WorkId)> {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(entity)
+}
+
+/// Forgets `entity`'s ticket once nothing can parent on it anymore.
+pub fn forget_work_parent(entity: &EntityId) {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(entity);
+}
+
 /// Host scheduling and physical-custody context for one run-admission handle.
 /// It is metadata, never prompt text, conditioning, or a budget widening.
 /// Unlabeled work is Foreground; memory work maps to Background at the
@@ -348,8 +404,14 @@ pub struct WorkContext {
     pub priority: WorkPriority,
     pub deadline: Option<Instant>,
     pub parent: Option<WorkId>,
+    /// The admission the parent ticket was taken on: a parent resolves only
+    /// against that same live admission (FIX 11960).
+    pub parent_admission: Option<u64>,
     pub cancel: WorkCancel,
     pub physical: WorkPhysical,
+    /// The run or attempt entity this context runs as, when one names it:
+    /// its admission records the device ticket under it (FIX 11960).
+    pub entity: Option<EntityId>,
 }
 
 impl Default for WorkContext {
@@ -359,8 +421,10 @@ impl Default for WorkContext {
             priority: WorkPriority::Normal,
             deadline: None,
             parent: None,
+            parent_admission: None,
             cancel: WorkCancel::new(),
             physical: WorkPhysical::Paid,
+            entity: None,
         }
     }
 }

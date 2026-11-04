@@ -305,6 +305,48 @@ async fn try_capacity(
     })?;
     let content_digest = pdf::hash_byte_range(&draft.bytes, br)?;
     let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der)?;
+    // Conservative Vec-capacity peak for cms::attr_signing_cert_v2 /
+    // cms::build_signed_data working copies (20I+20S+7C + OIDs/headers/slots).
+    // Issuer/serial prefix heaps excluded (separately filed); draft/token held
+    // separately. Hold spans attrs through patch_contents.
+    let _cms_hold = {
+        let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+        let ilen = issuer.len();
+        let slen = serial.len();
+        let c0 = identity.signer_certificate_der.len();
+        let ch: usize = identity
+            .certificate_chain_der
+            .iter()
+            .map(Vec::len)
+            .fold(0usize, usize::saturating_add);
+        let c = c0.saturating_add(ch);
+        let n = identity.certificate_chain_der.len();
+        let sig_alg = match identity.algorithm {
+            SignatureAlgorithm::RsaPkcs1v15Sha256 => 15usize,
+            SignatureAlgorithm::EcdsaP256Sha256 => 12usize,
+        };
+        let fixed = 1551usize.saturating_add(sig_alg.saturating_mul(8));
+        let bytes = ilen
+            .saturating_mul(20)
+            .saturating_add(slen.saturating_mul(20))
+            .saturating_add(c.saturating_mul(7))
+            .saturating_add(fixed)
+            .saturating_add(h_tlv.saturating_mul(120))
+            .saturating_add(
+                n.saturating_add(1)
+                    .saturating_mul(std::mem::size_of::<&[u8]>())
+                    .saturating_mul(2),
+            )
+            .saturating_add(
+                crate::api::MAX_OPERATION_ID_BYTES
+                    .saturating_add(crate::api::OPERATION_ID_SUFFIX_RESERVE)
+                    .saturating_mul(2),
+            );
+        ctx.limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?
+    };
     let attrs = vec![
         cms::attr_content_type_data(),
         cms::attr_message_digest(&content_digest),
@@ -319,11 +361,41 @@ async fn try_capacity(
         digest: cms::sha256(&signing),
     };
     let signature = request_signature(ctx, identity, request, &signing).await?;
+    // Downstream signature copies in cms::build_signed_data only (8*Sig+8*H).
+    // Backend-returned signature bytes excluded. Hold spans build through patch.
+    let _cms_sig_hold = {
+        let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+        let slen = signature.len();
+        let bytes = slen
+            .saturating_mul(8)
+            .saturating_add(h_tlv.saturating_mul(8));
+        ctx.limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?
+    };
+    let mut _cms_tok_hold: Option<crate::memory::LedgerHold> = None;
     let mut unsigned = Vec::new();
     let mut token = None;
     if target >= PadesProfile::BaselineT {
         let imprint = cms::sha256(&signature);
         if let Some(t) = fetch_timestamp_token(ctx, &imprint).await? {
+            // Token attribute wrapping in cms::attr_ts_token plus build copies
+            // (9*T+117+26*H+slots), admitted before construction. Token body
+            // already owns its hold (no double count).
+            let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+            let tlen = t.content_info_der.len();
+            let bytes = tlen
+                .saturating_mul(9)
+                .saturating_add(117)
+                .saturating_add(h_tlv.saturating_mul(26))
+                .saturating_add(4usize.saturating_mul(std::mem::size_of::<Vec<u8>>()));
+            _cms_tok_hold = Some(
+                ctx.limits
+                    .memory
+                    .hold(bytes)
+                    .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?,
+            );
             unsigned.push(cms::attr_ts_token(&t.content_info_der));
             token = Some(t);
         }

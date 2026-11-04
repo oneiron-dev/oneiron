@@ -1,11 +1,11 @@
 //! Subject identity and substrate vocabulary with pure claim-shape validation.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::error::{Error, Result};
-use oneiron_base::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 pub use crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE;
+use oneiron_base::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 /// Subject-model vocabulary version. Claim bodies retain the generic claim ABI.
 pub const SUBJECT_MODEL_SCHEMA_VERSION: u64 = 1;
@@ -128,9 +128,7 @@ pub fn imported_subject_body(body: &ClaimBody) -> Result<ClaimBody> {
     Ok(body)
 }
 
-pub fn validate_actor_subject_claim_structure(
-    body: &ClaimBody,
-) -> Result<(EntityId, EntityId)> {
+pub fn validate_actor_subject_claim_structure(body: &ClaimBody) -> Result<(EntityId, EntityId)> {
     let ClaimSubject::Entity(actor) = body.subject else {
         return Err(Error::InvalidClaimBody(
             "actor.subject_ref subject must name an actor entity",

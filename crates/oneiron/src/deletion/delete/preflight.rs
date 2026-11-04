@@ -29,12 +29,18 @@ impl Vault {
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         self.require_room_delete_gate(txn, id, None, false)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
-        crate::federation::reject_ruling_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_ruling_delete(&self.store, txn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
         if reason != DeleteReason::GdprDelete {
-            crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+            self.store
+                .delete_guards
+                .reject_audience_edit_delete(&self.store, txn, id)?;
         }
-        crate::workspace_roster::precheck_goal_delete(&self.store, txn, *id, gated)?;
+        self.store
+            .delete_guards
+            .precheck_goal_delete(&self.store, txn, *id, gated)?;
         self.store.guard_pack_map_carrier_delete_in_txn(txn, id)?;
         if reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(txn, id)?;
@@ -42,7 +48,7 @@ impl Vault {
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
             && let Some(&entity_type) = raw.first()
             && (crate::batch::delete_door_protected(entity_type)
-                || crate::workspace_roster::is_project_revision_type(&self.store, entity_type))
+                || crate::store::project_kind::is_project_revision_type(&self.store, entity_type))
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 entity_type,
