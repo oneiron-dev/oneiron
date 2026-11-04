@@ -358,12 +358,33 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<ProposalBundle> {
+        self.open_text_proposal_with_outcome(proposal, requests, authorization, at, None)
+    }
+
+    /// Opens a text rework answering the passed delta receipt, when one exists.
+    pub fn open_text_proposal_with_outcome(
+        &self,
+        proposal: &EntityId,
+        requests: &[ForkRequest],
+        authorization: &DocAuthorization<'_>,
+        at: u64,
+        delta_receipt: Option<&str>,
+    ) -> Result<ProposalBundle> {
         let mut registry = self
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let (out, landed) = self.with_write_txn_grouped(|txn| {
-            open_proposal_in_txn(self, txn, proposal, requests, authorization, at, &[], None)
+            open_proposal_in_txn(
+                self,
+                txn,
+                proposal,
+                requests,
+                authorization,
+                at,
+                &[],
+                delta_receipt,
+            )
         })?;
         registry.clear();
         drop(registry);
