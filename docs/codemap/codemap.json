@@ -2198,7 +2198,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -2208,7 +2208,8 @@
      "path": "src/artifact_hosting/publication_sync/parts.rs",
      "purpose": "Bounded publication parts (FIX 9575)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -11251,7 +11252,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 4
      }
@@ -11268,7 +11269,7 @@
      "path": "src/calendar/connectors/outbound.rs",
      "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -11584,7 +11585,7 @@
      "path": "src/calendar/ingest/mod.rs",
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 2,
       "re-export": 3
      }
@@ -11603,7 +11604,7 @@
      "purpose": "ICS feed poll queue, cursor store, and poll runner",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -11768,7 +11769,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "mod": 19,
       "re-export": 17
@@ -22349,7 +22350,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 16,
       "struct": 4
@@ -24391,7 +24392,7 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 11,
       "mod": 1,
@@ -24491,7 +24492,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -26427,6 +26428,16 @@
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood/memberships.rs",
+     "purpose": "Relationship units named by a listed PERSON's admitted membership claims",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -53142,7 +53153,7 @@
      "purpose": "FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6,
       "struct": 2
      }
@@ -55458,7 +55469,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -58814,7 +58825,7 @@
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -58972,7 +58983,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 5,
       "re-export": 19
      }
@@ -61412,7 +61423,17 @@
      "path": "src/room_codec.rs",
      "purpose": "Room row part codecs without the sync feature (FIX 12405)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/room_codec/offer_parts.rs",
+     "purpose": "Large Offer wording rides as parts; its actor fields stay editable inline",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -65645,7 +65666,7 @@
      "path": "src/skill/call/frozen.rs",
      "purpose": "Frozen callable cases (FIX 12093)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "re-export": 1
      }
@@ -71138,7 +71159,7 @@
      "path": "src/store/document_frame_tags.rs",
      "purpose": "Document frame tags shared by persisted document consumers and transport",
      "surface": {
-      "const": 10,
+      "const": 11,
       "mod": 1
      }
     },
@@ -72946,7 +72967,7 @@
      "path": "src/store/outbound_send_receipt.rs",
      "purpose": "Outbound gate bindings, durable send receipts, and the delivered-send idempotency index",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -75851,7 +75872,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -76626,7 +76647,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 15,
       "re-export": 1,
       "struct": 2
@@ -77671,7 +77692,7 @@
      "path": "src/sync/repo_manifests.rs",
      "purpose": "FIX 6870 phase 1: a repo's portable manifest on the window plane",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -77682,6 +77703,16 @@
      "purpose": "A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/repo_manifests/conflicts.rs",
+     "purpose": "FIX 12763: narrow helpers for one portable manifest carrier",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -78771,13 +78802,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DocumentFrame"
+      "DocumentFrame",
+      "DocumentWaitedOut"
      ],
      "path": "src/sync/transport/documents.rs",
      "purpose": "Entity-key frames and bounded, non-nesting document batches",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "enum": 1,
+      "fn": 8,
       "re-export": 2,
       "struct": 1
      }
@@ -78997,7 +79030,7 @@
       "crate-vis": 25,
       "fn": 6,
       "mod": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1
      }
     },
@@ -79074,6 +79107,21 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoManifestConflictDiscard",
+      "RepoManifestConflictReview"
+     ],
+     "path": "src/sync/window/repo_manifest_conflict.rs",
+     "purpose": "Owner review and keep-held resolution for a repo-manifest conflict",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -88052,7 +88100,7 @@
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -90453,7 +90501,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91097,10 +91145,10 @@
      "purpose": "ONE-207: the retrieval half of the effort dial"
     },
     "room_codec": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Room row part codecs without the sync feature (FIX 12405)"
     },
     "run_tree": {
@@ -91321,7 +91369,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 335,
+     "files": 337,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91533,7 +91581,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6380,
+   "source_files": 6384,
    "test_files": 895
   },
   "oneiron-android": {
@@ -111604,7 +111652,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -113374,7 +113422,7 @@
      "path": "src/api/facade/slim_doors.rs",
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -114524,7 +114572,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 55
+      "crate-vis": 56
      }
     },
     {
@@ -120238,7 +120286,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/handler/documents.rs",
@@ -127191,7 +127239,7 @@
     "handler": {
      "files": 36,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
@@ -127462,7 +127510,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1521,
    "test_files": 182

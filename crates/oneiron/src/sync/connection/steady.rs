@@ -429,6 +429,12 @@ impl SyncConnection {
                         continue;
                     };
                     client.remove_outdated_ephemeral();
+                    let retries = client.retry_document_requests();
+                    if !retries.is_empty() {
+                        document_buffer.extend(retries);
+                        debounce_deadline.get_or_insert_with(||
+                            Instant::now() + Duration::from_millis(debounce_ms));
+                    }
                     let mut housekeeping_left_rx = self.left.subscribe();
                     let send_result = tokio::select! {
                         biased;
