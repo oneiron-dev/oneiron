@@ -20,13 +20,13 @@ use std::str;
 pub type ObjectId = (u32, u16);
 
 /// Dictionary object.
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct Dictionary(IndexMap<Vec<u8>, Object>);
 
 /// Stream object
 /// Warning - all streams must be indirect objects, while
 /// the stream dictionary may be a direct object
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Stream {
     /// Associated stream dictionary
     pub dict: Dictionary,
@@ -46,7 +46,7 @@ pub struct Stream {
 /// one — including a discarded `stream`-first alternative — must not recurse
 /// through the native stack. Both walk with an explicit heap stack and keep
 /// element and entry order identical to the derived implementations.
-#[derive(PartialEq)]
+/// Equality also uses an explicit stack, including nested stream dictionaries.
 pub enum Object {
     Null,
     Boolean(bool),
@@ -58,6 +58,142 @@ pub enum Object {
     Dictionary(Dictionary),
     Stream(Stream),
     Reference(ObjectId),
+}
+
+/// Borrowed pairs left to compare; no graph depth reaches the native stack.
+struct ObjectEquality<'admission, 'left, 'right> {
+    pending: Vec<(&'left Object, &'right Object)>,
+    admission: Option<&'admission dyn DecodeAdmission>,
+}
+
+impl<'admission, 'left, 'right> ObjectEquality<'admission, 'left, 'right> {
+    fn new(admission: Option<&'admission dyn DecodeAdmission>) -> Self {
+        Self {
+            pending: Vec::new(),
+            admission,
+        }
+    }
+
+    fn push(
+        &mut self,
+        left: &'left Object,
+        right: &'right Object,
+    ) -> std::result::Result<(), DecodeAdmissionError> {
+        if let Some(admission) = self.admission {
+            decode_admission::reserve(admission, &mut self.pending, 1)?;
+        }
+        self.pending.push((left, right));
+        Ok(())
+    }
+
+    fn dictionary(
+        &mut self,
+        left: &'left Dictionary,
+        right: &'right Dictionary,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        if left.len() != right.len() {
+            return Ok(false);
+        }
+        for (key, left_value) in &left.0 {
+            let Some(right_value) = right.0.get(key) else {
+                return Ok(false);
+            };
+            self.push(left_value, right_value)?;
+        }
+        Ok(true)
+    }
+
+    fn stream(
+        &mut self,
+        left: &'left Stream,
+        right: &'right Stream,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        if left.content != right.content
+            || left.allows_compression != right.allows_compression
+            || left.start_position != right.start_position
+        {
+            return Ok(false);
+        }
+        self.dictionary(&left.dict, &right.dict)
+    }
+
+    fn run(mut self) -> std::result::Result<bool, DecodeAdmissionError> {
+        while let Some((left, right)) = self.pending.pop() {
+            let equal = match (left, right) {
+                (Object::Null, Object::Null) => true,
+                (Object::Boolean(left), Object::Boolean(right)) => left == right,
+                (Object::Integer(left), Object::Integer(right)) => left == right,
+                (Object::Real(left), Object::Real(right)) => left == right,
+                (Object::Name(left), Object::Name(right)) => left == right,
+                (Object::String(left, left_format), Object::String(right, right_format)) => {
+                    left == right && left_format == right_format
+                }
+                (Object::Reference(left), Object::Reference(right)) => left == right,
+                (Object::Array(left), Object::Array(right)) => {
+                    if left.len() != right.len() {
+                        return Ok(false);
+                    }
+                    for (left, right) in left.iter().zip(right) {
+                        self.push(left, right)?;
+                    }
+                    true
+                }
+                (Object::Dictionary(left), Object::Dictionary(right)) => {
+                    self.dictionary(left, right)?
+                }
+                (Object::Stream(left), Object::Stream(right)) => self.stream(left, right)?,
+                _ => false,
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl Drop for ObjectEquality<'_, '_, '_> {
+    fn drop(&mut self) {
+        let bytes = self
+            .pending
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(&Object, &Object)>());
+        drop(std::mem::take(&mut self.pending));
+        if let Some(admission) = self.admission {
+            admission.release(bytes);
+        }
+    }
+}
+
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.pending.push((self, other));
+        work.run()
+            .expect("unadmitted equality has no fallible reservation")
+    }
+}
+
+impl PartialEq for Dictionary {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.dictionary(self, other)
+            .expect("unadmitted equality has no fallible reservation")
+            && work
+                .run()
+                .expect("unadmitted equality has no fallible reservation")
+    }
+}
+
+impl PartialEq for Stream {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.stream(self, other)
+            .expect("unadmitted equality has no fallible reservation")
+            && work
+                .run()
+                .expect("unadmitted equality has no fallible reservation")
+    }
 }
 
 impl Drop for Object {
@@ -385,6 +521,18 @@ impl From<ObjectId> for Object {
 }
 
 impl Object {
+    /// Compares every nested value without recursion, admitting comparison
+    /// scratch before it grows and returning it after it drops.
+    pub fn eq_admitted(
+        &self,
+        other: &Self,
+        admission: &dyn DecodeAdmission,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        let mut work = ObjectEquality::new(Some(admission));
+        work.push(self, other)?;
+        work.run()
+    }
+
     pub fn string_literal<S: Into<Vec<u8>>>(s: S) -> Self {
         Object::String(s.into(), StringFormat::Literal)
     }
