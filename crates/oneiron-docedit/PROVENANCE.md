@@ -63,3 +63,14 @@ and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `Parse
 operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
 deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
 writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.
+
+The non-final tracked-deletion change (2026-11-05) touches `src/edit/mod.rs` and
+`src/tracked_model.rs`. The tracked delete verb can preserve earlier inline
+revisions in an ordinary non-final, unmoved paragraph by lowering its runs
+individually instead of flattening them under one block deletion. Empty,
+numbered, section-bearing and tracked-final paragraphs keep the existing
+validation path, as do moves, replacements and direct edits. The wrapper
+recognizes only its own fully deleted paragraph marks in accepted order;
+imported revisions keep their existing visibility. A surviving physical final
+mark that fails the shared body's order comparison uses the existing
+whole-window default-author projection, not a relaxed order check.
