@@ -3,7 +3,7 @@
 use std::num::NonZeroU64;
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::backup::host_holds_recipient_id;
-use crate::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 /// The host recipient a hosted vault seals its checkpoints' host-order
 /// family to: the public bundle its supervisor pinned and delivered (a
@@ -11,9 +11,9 @@ use crate::{Error, Result};
 /// and its nonzero epoch. Never read from the owner's settings.
 #[derive(Clone, PartialEq)]
 pub struct HostHoldsRecipient {
-    pub(crate) public: HybridPublicKey,
-    pub(crate) id: [u8; 32],
-    pub(crate) epoch: NonZeroU64,
+    pub public: HybridPublicKey,
+    pub id: [u8; 32],
+    pub epoch: NonZeroU64,
 }
 
 impl std::fmt::Debug for HostHoldsRecipient {

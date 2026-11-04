@@ -121,7 +121,7 @@ pub mod ports {
 
 pub mod canonical_document;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod custody_retirement_status;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
