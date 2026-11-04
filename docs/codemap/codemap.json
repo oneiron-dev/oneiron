@@ -21839,6 +21839,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/widen/offers.rs",
+     "purpose": "Owner-scoped pages of the existing open contact-disclosure offers",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -24545,7 +24555,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -83176,6 +83186,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/tagging_arm.rs",
+     "purpose": "One-time tagging arming on an already-open vault (ARCH-0036 live setup)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -90614,7 +90635,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91720,7 +91741,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91820,7 +91841,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6404,
+   "source_files": 6406,
    "test_files": 895
   },
   "oneiron-android": {
@@ -115355,6 +115376,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/disclosure_routes/offers.rs",
+     "purpose": "The owner's open-offer list, using the singular offer's frozen view",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -117810,7 +117841,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 13,
       "re-export": 25,
       "struct": 1
@@ -118025,13 +118056,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/init.rs",
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -118368,7 +118399,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -124595,7 +124626,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -125625,7 +125656,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SyncServer"
@@ -125633,7 +125664,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 34,
       "fn": 15,
       "re-export": 1,
       "struct": 1
@@ -125879,8 +125910,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/model_setup.rs",
+     "purpose": "Live first-run model slots and the workers a setup attaches after startup",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -127351,7 +127392,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 658,
+     "files": 659,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127778,7 +127819,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 77,
+     "files": 78,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -127855,9 +127896,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 45,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1531,
+   "source_files": 1533,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
