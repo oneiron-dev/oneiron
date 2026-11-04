@@ -29,25 +29,27 @@ pub(in crate::task_verb) struct FanoutRecipientScrub {
 }
 
 /// Drops `actor`'s `per_peer` entries (order preserved) and rewrites the
-/// `unpriced_parts` patterns naming it; `consult_count` drops the removed
-/// sum, the rest stays frozen as stated. `true` when anything named it.
+/// `unpriced_parts` patterns naming it. `consult_count` stays frozen as
+/// stated: `per_peer` mixes consult and ordinary TASK deliveries with no
+/// per-entry provenance (REVIEW-4453 P1-2), so subtracting would zero a
+/// surviving peer's consults. `true` when anything named it.
 pub(in crate::task_verb) fn scrub_statement_for(
     statement: &mut FanoutStatement,
     actor: &EntityId,
 ) -> bool {
-    let mut dropped: u64 = 0;
+    let mut dropped = false;
     statement.per_peer.retain(|entry| {
         if entry.peer == *actor {
-            dropped = dropped.saturating_add(entry.count);
+            dropped = true;
             false
         } else {
             true
         }
     });
-    statement.consult_count = statement.consult_count.saturating_sub(dropped);
     let hex = actor.to_hex();
     let assignee = format!("assignee={hex}");
     let consult = format!("consult peer={hex}");
+    let agent = format!("agent={hex}");
     let mut renamed = false;
     for part in &mut statement.unpriced_parts {
         if part.contains(&assignee) {
@@ -58,8 +60,12 @@ pub(in crate::task_verb) fn scrub_statement_for(
             *part = part.replace(&consult, &format!("consult peer={ERASED_CALL_IDENTITY}"));
             renamed = true;
         }
+        if part.contains(&agent) {
+            *part = part.replace(&agent, &format!("agent={ERASED_CALL_IDENTITY}"));
+            renamed = true;
+        }
     }
-    dropped > 0 || renamed
+    dropped || renamed
 }
 
 /// Rebuilds the scrubbed plan from the scrubbed payload plus the total
