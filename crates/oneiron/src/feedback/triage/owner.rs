@@ -79,6 +79,9 @@ pub struct FeedbackTriageStatus {
     pub children: Vec<FeedbackTriageChild>,
     /// What holds triage back now, across every sweep.
     pub holds: Vec<FeedbackTriageHold>,
+    /// Each in-flight revision across every sweep: handed off with no
+    /// committed result, its job neither failed nor settled (FIX 7553).
+    pub pending: Vec<FeedbackTriagePending>,
     /// Each unacknowledged revision whose evidence the owner erased, across
     /// every sweep, and each of this sweep's acknowledged ones, in erased
     /// form; none of them is a child or a hold (FIX 8305).
@@ -119,6 +122,9 @@ pub struct FeedbackTriageChild {
     pub last_error: Option<String>,
     /// The committed result; `None` while unacknowledged.
     pub result: Option<FeedbackTriageResult>,
+    /// Its part/synthesis progress; `None` for an item triaged whole
+    /// (FIX 10307).
+    pub progress: Option<FeedbackTriageProgress>,
 }
 
 /// What holds triage back.
@@ -140,6 +146,36 @@ pub enum FeedbackTriageHold {
         /// That job's last error, if any.
         last_error: Option<String>,
     },
+}
+
+/// One revision handed off with no committed result, its job neither
+/// failed nor settled: in flight across every sweep (FIX 7553).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackTriagePending {
+    /// The item and revision.
+    pub source_ref: FeedbackTriageSourceRef,
+    /// Its current triage job.
+    pub attempt: EntityId,
+    /// That job's queue state; `None` when the queue holds no such row.
+    pub state: Option<AttemptState>,
+    /// That job's last error, if any.
+    pub last_error: Option<String>,
+}
+
+/// One long note's part/synthesis progress, over its current generation's
+/// nodes (FIX 10307).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackTriageProgress {
+    /// Answered parts.
+    pub parts_answered: u32,
+    /// Parts in the current generation.
+    pub parts_total: u32,
+    /// Answered synthesis nodes.
+    pub synthesis_answered: u32,
+    /// Synthesis nodes in the current generation.
+    pub synthesis_total: u32,
 }
 
 /// A stable order for a source's items: an inbox's arrival numbers in
@@ -208,14 +244,15 @@ impl Vault {
 
     /// Binds the SKILL the feedback triage runs, or unbinds it, at the
     /// revision the owner read. Naming the skill bound already changes
-    /// nothing and keeps the revision. The skill must be a live SKILL; the
-    /// triage job's load checks that it is active and approved.
+    /// nothing and keeps the revision. The skill must be a live, active,
+    /// approved shared SKILL; the triage job's load rechecks it.
     ///
     /// # Errors
     ///
     /// A proof that no longer holds; [`Error::ConcurrentWrite`] when `seen`
     /// is not the current revision; a skill that is not a live SKILL;
-    /// storage errors.
+    /// [`Error::InvalidClaimBody`] for an inactive, unapproved or resident-
+    /// fork SKILL; storage errors.
     pub fn set_feedback_triage_binding(
         &self,
         owner: &AuthenticatedOwner,
@@ -235,7 +272,17 @@ impl Vault {
                 if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                     return Err(Error::EntityNotFound);
                 }
-                self.read_skill_record_in_txn(txn, skill)?;
+                let record = self.read_skill_record_in_txn(txn, skill)?;
+                if crate::skill::resident_of(&record)?.is_some() {
+                    return Err(Error::InvalidClaimBody(
+                        "skill belongs to a different resident",
+                    ));
+                }
+                if !crate::skill::skill_loadable(&record) {
+                    return Err(Error::InvalidClaimBody(
+                        "pack load requires an active approved skill",
+                    ));
+                }
             }
             let next = FeedbackTriageBinding {
                 skill: input.skill,
@@ -253,9 +300,9 @@ impl Vault {
     /// One sweep's status: its queue state, the binding, each source's
     /// continuation, each revision it handed off or queued again with its
     /// job's state and committed result, what holds triage back across
-    /// every sweep, and each unacknowledged revision whose evidence the
-    /// owner erased, by name only. `None` when the queue holds no such
-    /// attempt.
+    /// every sweep, each in-flight revision across every sweep, and each
+    /// unacknowledged revision whose evidence the owner erased, by name
+    /// only. `None` when the queue holds no such attempt.
     ///
     /// # Errors
     ///
@@ -287,6 +334,7 @@ impl Vault {
         let queue = AttemptQueue::new(self);
         let mut children = Vec::new();
         let mut holds = Vec::new();
+        let mut pending = Vec::new();
         let mut erased = Vec::new();
         if binding.skill.is_none() {
             holds.push(FeedbackTriageHold::SkillUnbound);
@@ -318,14 +366,53 @@ impl Vault {
             let state = record.as_ref().map(|record| record.state);
             let last_error = record.and_then(|record| record.last_error);
             if handoff.result.is_none() {
-                holds.push(FeedbackTriageHold::Unacknowledged {
-                    source_ref: handoff.source_ref.clone(),
-                    attempt: handoff.attempt,
-                    state,
-                    last_error: last_error.clone(),
-                });
+                // In flight (FIX 7553): a job neither failed nor settled
+                // waits in `pending`, never in `holds`.
+                if state.is_some_and(|s| !s.is_terminal()) {
+                    pending.push(FeedbackTriagePending {
+                        source_ref: handoff.source_ref.clone(),
+                        attempt: handoff.attempt,
+                        state,
+                        last_error: last_error.clone(),
+                    });
+                } else {
+                    holds.push(FeedbackTriageHold::Unacknowledged {
+                        source_ref: handoff.source_ref.clone(),
+                        attempt: handoff.attempt,
+                        state,
+                        last_error: last_error.clone(),
+                    });
+                }
             }
             if mine {
+                // The current generation's part/synthesis progress (FIX
+                // 10307): parts sit at level 0, synthesis above; retired
+                // generations stay out.
+                let progress = handoff.work.as_ref().map(|work| {
+                    let mut parts_answered = 0;
+                    let mut parts_total = 0;
+                    let mut synthesis_answered = 0;
+                    let mut synthesis_total = 0;
+                    for node in &work.nodes {
+                        if node.level == 0 {
+                            parts_total += 1;
+                            if node.answer.is_some() {
+                                parts_answered += 1;
+                            }
+                        } else {
+                            synthesis_total += 1;
+                            if node.answer.is_some() {
+                                synthesis_answered += 1;
+                            }
+                        }
+                    }
+                    FeedbackTriageProgress {
+                        parts_answered,
+                        parts_total,
+                        synthesis_answered,
+                        synthesis_total,
+                    }
+                });
                 children.push(FeedbackTriageChild {
                     source_ref: handoff.source_ref,
                     evidence: handoff.evidence,
@@ -333,6 +420,7 @@ impl Vault {
                     state,
                     last_error,
                     result: handoff.result,
+                    progress,
                 });
             }
         }
@@ -346,6 +434,7 @@ impl Vault {
             bound_sources: Vec::new(),
             children,
             holds,
+            pending,
             erased,
         }))
     }

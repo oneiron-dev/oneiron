@@ -13,12 +13,17 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+use super::super::manifest_drift::ResolvedConnectorManifest;
 use super::super::record::{ConnectorKeyRecord, ConnectorKeyStatus, invalid_body};
 use super::super::slate::{
     ConnectorGrantSlate, bind_connector_slate_in_txn, read_connector_slate_in_txn,
 };
 use super::super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
+};
+use super::manifest_ops::{
+    ConnectorManifestQualifier, OwnerAttestedManifestQualifier, qualify_staged_manifest,
+    validate_staged_manifest,
 };
 use super::qualification::{
     ConnectorQualificationError, require_pack_qualification, slate_catalog,
@@ -71,27 +76,73 @@ impl Vault {
         Ok(staged)
     }
 
+    /// Drops the slate staged beside admitted key `id`'s routing one: a
+    /// refresh that reaches no further than the routing slate reports
+    /// `staged:false`, and must not leave qualify/attest targeting an
+    /// obsolete expansion. A key with nothing staged is returned unchanged,
+    /// with no op record.
+    pub fn drop_staged_connector_slate(
+        &self,
+        id: &EntityId,
+        at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.staged_slate_ref.is_none() {
+            return Ok(record);
+        }
+        let dropped = ConnectorKeyRecord {
+            staged_slate_ref: None,
+            ..record
+        };
+        dropped.validate()?;
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &dropped)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.drop_staged_slate",
+            &dropped,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        wtxn.commit()?;
+        Ok(dropped)
+    }
+
     /// Runs all ARCH-0028 probes on the slate staged beside admitted key
     /// `id` at `expected_revision`, under the owner's current stamp on it.
     /// A pass swaps it in: the key routes on the staged slate, with its new
     /// rows, under the receipt this run earned. The key and the staged slate
     /// are re-read after the probes, so a restage or a restamp during the
-    /// run swaps nothing.
+    /// run swaps nothing. Its manifest stays off routing until both suites
+    /// pass, then the slate and approved manifest commit together.
+    #[allow(clippy::too_many_arguments)]
     pub fn qualify_staged_connector_slate(
         &self,
+        owner: &AuthenticatedOwner,
         id: &EntityId,
+        manifest: ResolvedConnectorManifest,
         expected_revision: &str,
+        manifest_suite: &dyn ConnectorManifestQualifier,
         connector: &dyn QualificationConnector,
         plan: &QualificationPlan,
         oracle: &dyn GroundingOracle,
         at: u64,
     ) -> std::result::Result<(ConnectorKeyRecord, QualificationReport), ConnectorQualificationError>
     {
-        let (staged_id, stamped_revision, manifest_hash, schemas) = {
+        validate_staged_manifest(&manifest, expected_revision)?;
+        let (before, staged_id, stamped_revision, manifest_hash, schemas) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            let (_, staged_id, staged) =
+            let (record, staged_id, staged) =
                 self.stamped_staged_slate_in_txn(&txn, id, expected_revision)?;
+            if crate::gate::resolve_policy_manifest(&self.store, &txn)?.is_fail_closed() {
+                return Err(invalid_body("connector admission policy is unavailable").into());
+            }
             (
+                record,
                 staged_id,
                 staged.revision(),
                 staged.manifest_hash(),
@@ -100,10 +151,25 @@ impl Vault {
                     .ok_or_else(|| invalid_body("resolved connector schemas required"))?,
             )
         };
+        let manifest_report = if before.retained_manifest.as_ref() != Some(&manifest) {
+            Some(qualify_staged_manifest(
+                manifest_suite,
+                &manifest,
+                expected_revision,
+            )?)
+        } else {
+            None
+        };
         let report = qualify_connector_with_schemas(connector, plan, oracle, Some(&schemas))?;
         let mut wtxn = self.store.env.write_txn()?;
         let (record, current_id, staged) =
             self.stamped_staged_slate_in_txn(&wtxn, id, expected_revision)?;
+        if record.retained_manifest != before.retained_manifest
+            || record.pending_manifest != before.pending_manifest
+            || record.admission_epoch != before.admission_epoch
+        {
+            return Err(Error::ConcurrentWrite("connector manifest candidate").into());
+        }
         if current_id != staged_id
             || staged.revision() != stamped_revision
             || staged.manifest_hash() != manifest_hash
@@ -117,16 +183,21 @@ impl Vault {
             manifest_hash,
             at,
         )?;
-        let swapped = self.swap_staged_slate_in_txn(
+        let (swapped, counts) = self.swap_staged_slate_in_txn(
             &mut wtxn,
+            owner,
             id,
             record,
             (staged_id, &staged),
             receipt,
+            (manifest, manifest_report),
             "gate.connector_key.qualify_staged",
             at,
         )?;
         wtxn.commit().map_err(Error::from)?;
+        for (quota, measured) in counts {
+            self.measure_connector_manifest_entries(quota, measured);
+        }
         self.measure_connector_key_shape(&swapped);
         Ok((swapped, report))
     }
@@ -140,20 +211,23 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         id: &EntityId,
+        manifest: ResolvedConnectorManifest,
         expected_revision: &str,
         at: u64,
     ) -> Result<ConnectorKeyRecord> {
+        validate_staged_manifest(&manifest, expected_revision)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &wtxn)?;
-        crate::memory::verify_deletion_authority_in_txn(
-            self,
-            &wtxn,
-            actor,
-            crate::edge::EdgeActorClass::Human,
-        )
-        .map_err(|_| invalid_body("connector attestation needs the owner"))?;
         let (record, staged_id, staged) =
             self.stamped_staged_slate_in_txn(&wtxn, id, expected_revision)?;
+        let manifest_report = if record.retained_manifest.as_ref() != Some(&manifest) {
+            Some(qualify_staged_manifest(
+                &OwnerAttestedManifestQualifier { owner },
+                &manifest,
+                expected_revision,
+            )?)
+        } else {
+            None
+        };
         let mut digest = blake3::Hasher::new();
         digest.update(OWNER_ATTESTED_QUALIFICATION_SUITE.as_bytes());
         digest.update(owner.decision_id().to_hex().as_bytes());
@@ -165,16 +239,21 @@ impl Vault {
             staged.manifest_hash(),
             at,
         )?;
-        let swapped = self.swap_staged_slate_in_txn(
+        let (swapped, counts) = self.swap_staged_slate_in_txn(
             &mut wtxn,
+            owner,
             id,
             record,
             (staged_id, &staged),
             receipt,
+            (manifest, manifest_report),
             "gate.connector_key.owner_attest_staged",
             at,
         )?;
         wtxn.commit()?;
+        for (quota, measured) in counts {
+            self.measure_connector_manifest_entries(quota, measured);
+        }
         self.measure_connector_key_shape(&swapped);
         Ok(swapped)
     }
@@ -216,13 +295,41 @@ impl Vault {
     fn swap_staged_slate_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
         id: &EntityId,
         record: ConnectorKeyRecord,
         (staged_id, staged): (EntityId, &ConnectorGrantSlate),
         receipt: ConnectorQualificationReceipt,
+        (manifest, manifest_report): (ResolvedConnectorManifest, Option<String>),
         op: &'static str,
         at: u64,
-    ) -> Result<ConnectorKeyRecord> {
+    ) -> Result<(ConnectorKeyRecord, [(u64, u64); 3])> {
+        let actor = owner.revalidate_in_txn(self, wtxn)?;
+        crate::memory::verify_deletion_authority_in_txn(
+            self,
+            wtxn,
+            actor,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|_| invalid_body("connector manifest owner binding required"))?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        if policy.is_fail_closed() {
+            return Err(invalid_body("connector admission policy is unavailable"));
+        }
+        let holder = record.actor_entity_ref.as_ref().map(EntityId::to_hex);
+        let counts =
+            manifest.admission_counts(policy.connector_admission.effective(holder.as_deref()));
+        let manifest_changed = manifest_report.is_some();
+        let manifest_receipt = manifest_report
+            .map(|report| {
+                ConnectorQualificationReceipt::new(
+                    report,
+                    receipt.protocol_revision.clone(),
+                    manifest.hash()?,
+                    at,
+                )
+            })
+            .transpose()?;
         let admission_epoch = record
             .admission_epoch
             .checked_add(1)
@@ -236,19 +343,40 @@ impl Vault {
             qualification_receipt: Some(receipt),
             ..record
         };
-        swapped.validate()?;
-        rewrite_connector_key_in_txn(&self.store, wtxn, id, &swapped)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        let approved = ConnectorKeyRecord {
+            qualification_receipt: manifest_receipt
+                .or_else(|| swapped.qualification_receipt.clone()),
+            retained_manifest: Some(manifest),
+            pending_manifest: None,
+            ..swapped.clone()
+        };
+        approved.validate()?;
+        rewrite_connector_key_in_txn(&self.store, wtxn, id, &approved)?;
         append_connector_key_op_record(
             &self.store,
             wtxn,
             id,
             op,
-            &swapped,
+            if manifest_changed {
+                &swapped
+            } else {
+                &approved
+            },
             policy.read_frontier_hash()?,
             at,
         )?;
-        self.sync_derived_keys_in_txn(wtxn, &swapped, at)?;
-        Ok(swapped)
+        if manifest_changed {
+            append_connector_key_op_record(
+                &self.store,
+                wtxn,
+                id,
+                "gate.connector_key.manifest_approve",
+                &approved,
+                policy.read_frontier_hash()?,
+                at,
+            )?;
+        }
+        self.sync_derived_keys_in_txn(wtxn, &approved, at)?;
+        Ok((approved, counts))
     }
 }

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1217 facade rows, 4410 declarations.
-Inputs: 1145 of 1217 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1050 of 1217 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1223 facade rows, 4427 declarations.
+Inputs: 1149 of 1223 fully typed, 71 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read
+Results: 1047 of 1223 fully typed, 160 typed down to an opaque serde_json::Value leaf, 16 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 6.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -329,6 +329,7 @@ class DiaryEntryReceipt(TypedDict):
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
     include_used: NotRequired[bool]
+SealedPadReader = Literal["owner", "admin", "coach"]
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -339,6 +340,7 @@ class DiaryReadRecord(TypedDict):
     grants: list[str]
     request: NotRequired[EntityId | None]
     source: str
+    ruled_reader: NotRequired[SealedPadReader | None]
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId
@@ -349,6 +351,7 @@ class DiaryReadRequest(TypedDict):
     state: DiaryReviewState
     answered_at: NotRequired[int | None]
     read: NotRequired[EntityId | None]
+    ruled_reader: NotRequired[SealedPadReader | None]
 class DiaryReadsView(TypedDict):
     review: bool
     reads: list[DiaryReadRecord]
@@ -1439,6 +1442,10 @@ class DiaryQueryOutcomeDeclined(TypedDict):
 class DiaryQueryOutcomeNotCovered(TypedDict):
     state: Literal["not_covered"]
 DiaryQueryOutcome = DiaryQueryOutcomeGranted | DiaryQueryOutcomePendingReview | DiaryQueryOutcomeDeclined | DiaryQueryOutcomeNotCovered
+class AdminPadReadsRequest(TypedDict):
+    agent: str
+class AdminPadReadsView(TypedDict):
+    reads: list[DiaryReadRecord]
 class TaskRequest(TypedDict):
     task_ref: str
 ClaimApprovalStatus = Literal["auto", "proposed", "approved", "rejected"]
@@ -4300,9 +4307,11 @@ class TurnProgramRegistration(TypedDict):
 class DisarmTurnProgram(TypedDict):
     registration: EntityId
 class TurnProgramRebindRequest(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
+    turn_ref: NotRequired[str | None]
+    registration: NotRequired[str | None]
 class TurnProgramRebindReceipt(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
     admission: str
     predecessor_slip: str
     successor_slip: str
@@ -6635,17 +6644,12 @@ class SlimResumeStepRequestOutboundIntent(TypedDict):
     kind: Literal["outbound_intent"]
     intent_id: str
 SlimResumeStepRequest = SlimResumeStepRequestModel | SlimResumeStepRequestOutboundIntent
-StepProgression = Literal["started", "response_received", "logged", "finished"]
-class ModelStepCheckpoint(TypedDict):
-    progression: StepProgression
-    updated_ms: NotRequired[int | None]
-    claim_ref: NotRequired[str | None]
 SavedIntentState = Literal["pending", "done", "abandoned", "deferred"]
 class SavedResumeStepModel(TypedDict):
     kind: Literal["model"]
     attempt_id: str
     step_hash: str
-    checkpoint: ModelStepCheckpoint
+    checkpoint: Any
 class SavedResumeStepOutboundIntent(TypedDict):
     kind: Literal["outbound_intent"]
     step: SlimResumeStep
@@ -7442,6 +7446,70 @@ class ConnectRejoined(TypedDict):
     world_ref: EntityId
     status: ConnectRejoinStatus
     request: NotRequired[str | None]
+class ForeignWorldPrivacyExportRequest(TypedDict):
+    request: str
+ForeignWorldPrivacyLeg = Literal["ask", "answer"]
+class ReadLocationOneMachine(TypedDict):
+    OneMachine: EntityId
+ReadLocation = Literal["MyMachines", "Everywhere"] | ReadLocationOneMachine
+SealedCopies = Literal["off", "my_machines", "cloud_and_my_machines"]
+class ModelOrderOrdered(TypedDict):
+    Ordered: list[str]
+ModelOrder = Literal["Inherit"] | ModelOrderOrdered
+class WorldPrivacy(TypedDict):
+    read: ReadLocation
+    sealed: SealedCopies
+    models: ModelOrder
+class WorldPrivacyRequestStatusPending(TypedDict):
+    state: Literal["pending"]
+class WorldPrivacyRequestStatusApplied(TypedDict):
+    state: Literal["applied"]
+    receipt_id: str
+    holder: str
+class WorldPrivacyRequestStatusDeclined(TypedDict):
+    state: Literal["declined"]
+    holder: str
+WorldPrivacyRequestStatus = WorldPrivacyRequestStatusPending | WorldPrivacyRequestStatusApplied | WorldPrivacyRequestStatusDeclined
+class ForeignWorldPrivacyCarry(TypedDict):
+    leg: ForeignWorldPrivacyLeg
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world: str
+    ask: str
+    agent: NotRequired[str | None]
+    settings: WorldPrivacy
+    answer: NotRequired[WorldPrivacyRequestStatus | None]
+class ForeignWorldPrivacyDelivery(TypedDict):
+    body: ForeignWorldPrivacyCarry
+    signature: str
+WorldPrivacyRequestKind = Literal["proposal", "widen_ask"]
+class ForeignWorldPrivacyLink(TypedDict):
+    pact: str
+    vault: str
+    world: str
+    request: NotRequired[str | None]
+    agent: NotRequired[str | None]
+    answer: NotRequired[WorldPrivacyRequestStatus | None]
+class WorldPrivacyRequest(TypedDict):
+    request_id: str
+    kind: WorldPrivacyRequestKind
+    agent: NotRequired[str | None]
+    opener_lineage: NotRequired[list[str]]
+    author: str
+    world: str
+    settings: WorldPrivacy
+    seen: str
+    holders: list[str]
+    needs: NotRequired[list[str]]
+    yes: NotRequired[list[str]]
+    ask: NotRequired[int | None]
+    status: WorldPrivacyRequestStatus
+    at: int
+    grant_omitted: NotRequired[str | None]
+    owned_by: NotRequired[ForeignWorldPrivacyLink | None]
+    asked_from: NotRequired[ForeignWorldPrivacyLink | None]
 class TrustedContactReach(TypedDict):
     sender: EntityId
     channel: str
@@ -9719,8 +9787,8 @@ class LegalHold(TypedDict):
 class LegalHoldWidenRequest(TypedDict):
     hold_id: EntityId
     targets: list[LegalHoldTarget]
-LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_completed", "lifted"]
-LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
+LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_withdrawn", "erase_completed", "lifted"]
+LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "owner_withdrew", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
 class LegalHoldEvent(TypedDict):
     hold_id: EntityId
     kind: LegalHoldKind
@@ -9780,6 +9848,14 @@ class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
     changed: NotRequired[LiftAndEraseShownState | None]
+class LegalHoldWithdrawEraseRequest(TypedDict):
+    records: list[EntityId]
+EraseWithdrawal = Literal["withdrawn", "not_waiting", "confirmed_by_another_owner", "under_way"]
+class LegalHoldWithdrawnErase(TypedDict):
+    record: EntityId
+    status: EraseWithdrawal
+class LegalHoldErasesWithdrawn(TypedDict):
+    records: list[LegalHoldWithdrawnErase]
 class CourtesyDeleteSendRequest(TypedDict):
     pact: str
     worlds: NotRequired[list[str]]
@@ -9838,15 +9914,12 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-class VectorEvidenceFloors(TypedDict):
-    floor: float
-    strong: float
 class EmbeddingSpace(TypedDict):
     id: str
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[VectorEvidenceFloors | None]
+    evidence: NotRequired[Any | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -10334,6 +10407,12 @@ DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[s
 StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
 class CreateStandingGrantRequest(TypedDict):
     bound: StandingGrantBound
+AutoWeaveWriterClass = Literal["agent", "system"]
+class AutoWeaveGrantRequest(TypedDict):
+    writer: str
+    writer_class: AutoWeaveWriterClass
+    scope: str
+    scope_id: str
 class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
@@ -10357,10 +10436,17 @@ class ConsentRegistryDelegation(TypedDict):
     wall_expires_at: int
     status: SupportGrantStatus
     comm: CommReach
+class RepoAccessBounds(TypedDict):
+    repo: EntityId
+    project: EntityId
+    refs: list[str]
+    readable: NotRequired[list[str]]
+    editable: NotRequired[list[str]]
 class ConsentRegistryAgentGrant(TypedDict):
     agent: EntityId
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
+    repo_bounds: NotRequired[RepoAccessBounds | None]
     confers: bool
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
@@ -10566,14 +10652,14 @@ class GateCheckerReceipt(TypedDict):
     binding: VerdictBinding
     receipt_ref: str
 MeasuredLearningPredicate = Literal["learning.reliability", "learning.edit_cost", "learning.retest_noise", "learning.setting"]
-class CellTypeRef(TypedDict):
+class TaskTypeRefTypeRef(TypedDict):
     node_id: str
     tree_version: int
 class LearningCellKey(TypedDict):
     subject: str
     predicate: MeasuredLearningPredicate
     executor: NotRequired[str | None]
-    typeRef: NotRequired[CellTypeRef | None]
+    typeRef: NotRequired[TaskTypeRefTypeRef | None]
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
@@ -10605,7 +10691,7 @@ class EstimateLabels(TypedDict):
     converted: NotRequired[float]
     on_judge_model: NotRequired[float]
     outcome_counts: NotRequired[dict[str, float] | None]
-class EstimateWindow(TypedDict):
+class LearningEstimateWindow(TypedDict):
     half_life: int
 MeasuredLearningEstimate = dict[str, Any]
 class LearningHeadView(TypedDict):
@@ -10655,7 +10741,7 @@ class CreditOptions(TypedDict):
     depth_cap: NotRequired[int | None]
     check_every_hop: bool
 class PackAttributionFields(TypedDict):
-    typeRef: CellTypeRef
+    typeRef: TaskTypeRefTypeRef
     executor: str
     agent_definition: NotRequired[str | None]
     judge: NotRequired[str | None]
@@ -10731,7 +10817,7 @@ class ObjectiveConfession(TypedDict):
 class AttemptConfession(TypedDict):
     attempt: AttemptId
     subject: EntityId
-    type_ref: CellTypeRef
+    type_ref: TaskTypeRefTypeRef
     objectives: list[ObjectiveConfession]
 class AuditDraw(TypedDict):
     rate: float
@@ -11976,7 +12062,7 @@ class LearningCell(TypedDict):
     predicate: LearningPredicate
     subject: EntityId
     executor: NotRequired[str | None]
-    type_ref: NotRequired[CellTypeRef | None]
+    type_ref: NotRequired[TaskTypeRefTypeRef | None]
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
@@ -13378,12 +13464,6 @@ class AgentDreamingSetRequest(TypedDict):
     new_version: str
     mode: DreamingModeInput
     dreaming_model: NotRequired[str | None]
-class RepoAccessBounds(TypedDict):
-    repo: EntityId
-    project: EntityId
-    refs: list[str]
-    readable: NotRequired[list[str]]
-    editable: NotRequired[list[str]]
 class AgentGrantMintRequest(TypedDict):
     agent: EntityId
     authority_scope: Scope
@@ -16191,7 +16271,7 @@ class AmendmentJudgmentView(TypedDict):
     at: int
     rejected: bool
     executor: NotRequired[str | None]
-    type_ref: NotRequired[CellTypeRef | None]
+    type_ref: NotRequired[TaskTypeRefTypeRef | None]
     judge: NotRequired[str | None]
     judge_model: NotRequired[str | None]
     on_judge_model: bool
@@ -16341,7 +16421,7 @@ class FatalLlmErrorUnsupported(TypedDict):
     Unsupported: UnsupportedCapability
 class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased", "JobLost"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
 TransportFaultKind = Literal["not_sent", "io_after_send", "refused", "unexpected_frame", "ended_with_error"]
 class TransportFault(TypedDict):
@@ -16367,7 +16447,7 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 class RetryableLlmErrorTransportFault(TypedDict):
     TransportFault: TransportFault
-RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
+RetryableLlmError = Literal["WorldRouteNotAdmitted", "ServerError", "Timeout", "StreamCut", "DeviceAdmissionStopped"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
 BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
@@ -16398,7 +16478,7 @@ class ModelStepReceipt(TypedDict):
     step_hash: str
     model: ModelId
     retry: ModelStepRetryPolicy
-    progression: NotRequired[StepProgression | None]
+    progression: NotRequired[Any | None]
     result: NotRequired[ModelStepResult | None]
 class ModelStepReceiptRequest(TypedDict):
     step_key: str
@@ -17314,14 +17394,13 @@ class AiVerdict(TypedDict):
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
-HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
-    posture: NotRequired[HostingPrivacyPosture | None]
+    posture: NotRequired[str | None]
     criteria: NotRequired[QuestionCriteria[str] | None]
 SourceConflict = Literal["facet", "project", "world", "relationship", "scope_term", "principal", "unrepresentable"]
 class OmittedNeighbor(TypedDict):
@@ -17385,14 +17464,14 @@ class QuestionDefinition(TypedDict, Generic[Q]):
     binding: NotRequired[OutcomeBinding | None]
     criteria: NotRequired[QuestionCriteria[str]]
     audience: NotRequired[QuestionAudience]
-    posture: NotRequired[HostingPrivacyPosture | None]
+    posture: NotRequired[Any | None]
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
     artifacts: NotRequired[list[ArtifactUnits]]
 DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
-    definition: QuestionDefinitionInput
+    definition: Any
 QuestionAskerClass = Literal["human", "agent", "system"]
 class FrozenReadLane(TypedDict):
     credential: NotRequired[list[int] | None]
@@ -17400,6 +17479,7 @@ class FrozenReadLane(TypedDict):
     records: NotRequired[list[str]]
     worlds: NotRequired[ScopeAxis[ScopeId] | None]
     room_facets: NotRequired[EntityId | None]
+    withheld: NotRequired[list[str]]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
@@ -19703,6 +19783,7 @@ class MemberAnswer(TypedDict):
     landed: NotRequired[list[int] | None]
     at: int
 class ProposalMember(TypedDict):
+    artifact: EntityId
     fork: EntityId
     opener: BodyActor
     run_root: NotRequired[EntityId | None]
@@ -19715,10 +19796,12 @@ class ProposalSettlement(TypedDict):
     at: int
     reason: NotRequired[str | None]
 class ProposalAsk(TypedDict):
+    artifact: EntityId
     ask: EntityId
     forks: list[EntityId]
     at: int
 class ProposalAskRefusal(TypedDict):
+    artifact: EntityId
     forks: list[EntityId]
     reason: str
     at: int
@@ -19727,7 +19810,7 @@ class OfficeBodyProposal(TypedDict):
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
     asks: NotRequired[list[ProposalAsk]]
-    ask_refused: NotRequired[ProposalAskRefusal | None]
+    ask_refused: NotRequired[list[ProposalAskRefusal]]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str
@@ -19737,14 +19820,15 @@ class ApproveScopeOneItem(TypedDict):
     one_item: str
 ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
 class OfficeBodyReviewedFork(TypedDict):
+    artifact_ref: str
     fork_ref: str
+    reviewed_head: list[int]
     reviewed_fork: list[int]
 class OfficeBodyProposalSettleRequest(TypedDict):
     artifact_ref: str
     proposal_ref: str
     verdict: SettleVerdict
     scope: NotRequired[ApproveScope | None]
-    reviewed_head: list[int]
     reviewed: list[OfficeBodyReviewedFork]
     reason: NotRequired[str | None]
 class OfficeBodyExportVerbRequest(TypedDict):
@@ -20116,18 +20200,6 @@ class DreamerWakeView(TypedDict):
     calls: NotRequired[list[DreamerWakeCallView]]
     next_cursor: NotRequired[str | None]
     live: NotRequired[DreamerWakeLiveView | None]
-class SettledStepRequest(TypedDict):
-    job_ref: str
-    step_hash: str
-class SettledStepView(TypedDict):
-    job_ref: str
-    run_id: NotRequired[str | None]
-    claim_ref: str
-    step_hash: str
-    model: ModelId
-    purpose: str
-    params_hash: str
-    response: LlmResponse
 class CheckpointReadRequest(TypedDict):
     run_ref: str
     from_step: NotRequired[int]
@@ -20176,9 +20248,23 @@ class TurnProgramAdmissionItem(TypedDict):
     outcome: ProgramAdmissionOutcomeView
     decided_at: int
     withheld: list[str]
+class OwedWakeHoldView(TypedDict):
+    reason: str
+    held_at: int
+    expires_at: NotRequired[int | None]
+    expired: NotRequired[bool | None]
+class TurnProgramOwedWakeItem(TypedDict):
+    registration: EntityId
+    actor: EntityId
+    actor_class: str
+    revision: str
+    sealed_scope: NotRequired[str | None]
+    held: NotRequired[OwedWakeHoldView | None]
+    withheld: list[str]
 class TurnProgramAdmissionView(TypedDict):
     turn_ref: str
     admissions: list[TurnProgramAdmissionItem]
+    owed: list[TurnProgramOwedWakeItem]
     next_cursor: NotRequired[str | None]
     undecodable_admission_rows_examined: int
 class ProgramRunRequest(TypedDict):
@@ -20273,7 +20359,7 @@ class SettledProgramStepView(TypedDict):
     result_digest: str
     result_ref: NotRequired[str | None]
     availability: ProgramResultAvailability
-    model_step: NotRequired[SettledStepView | None]
+    model_step: NotRequired[Any | None]
     body_base64: NotRequired[str | None]
 class ProgramCheckpointRequest(TypedDict):
     root: str

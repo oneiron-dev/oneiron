@@ -62,11 +62,10 @@ use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
-use crate::secret_custody::{
-    SecretCustodyStatus, policy_manifest_bodies_strict, read_secret_custody_admission_in_txn,
-    resolve_secret_ref_in_txn,
-};
+use crate::secret_custody::resolve_secret_ref_in_txn;
 use crate::secret_lease::{SecretLease, SecretTaintRef};
+use crate::secret_record::read_secret_custody_admission_in_txn;
+use crate::secret_record::{SecretCustodyStatus, policy_manifest_bodies_strict};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 

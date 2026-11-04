@@ -25,7 +25,31 @@ impl Sent {
     /// Certain non-delivery: the `tools/call` request never left.
     pub(super) fn not_sent(kind: OutboundFailureKind, code: Option<u16>) -> Self {
         Self {
-            outcome: OutboundSendOutcome::Failed(OutboundSendFailure { kind, code }),
+            outcome: OutboundSendOutcome::Failed(OutboundSendFailure {
+                kind,
+                code,
+                secret: None,
+            }),
+            reply: None,
+            awaiting: None,
+            body: None,
+            error: None,
+            resume: None,
+            remote_task: None,
+            held: None,
+        }
+    }
+
+    /// Certain non-delivery the credential door refused with the typed
+    /// secret refusal `secret` (FIX 11565): rejected, never a transport
+    /// failure, and the caller reads which refusal it was.
+    pub(super) fn refused(secret: oneiron::outbound_intent_ledger::SecretSendRefusal) -> Self {
+        Self {
+            outcome: OutboundSendOutcome::Failed(OutboundSendFailure {
+                kind: OutboundFailureKind::Rejected,
+                code: None,
+                secret: Some(secret),
+            }),
             reply: None,
             awaiting: None,
             body: None,

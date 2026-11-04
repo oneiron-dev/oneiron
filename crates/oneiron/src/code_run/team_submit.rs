@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 
-/// The predicate of the review a submit writes: whether the team's output,
-/// as pinned, is accepted. The Gate's default manifest declares it critical,
-/// so the review waits for the owner.
-pub(crate) const TEAM_DELIVERABLE_REVIEW_PREDICATE: &str = "team.deliverable.acceptance";
+pub(crate) use crate::gate::team_review::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 
 /// An existing blob artifact's exact version, `blob:<artifact hex>:<version>`.
 const BLOB_OUTPUT_KIND: &str = "blob";

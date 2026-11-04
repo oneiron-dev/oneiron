@@ -42,7 +42,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::activity::AttemptActivity;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::receipt::CallAttemptRef;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The activity `silent` judged one leased attempt's quiet by (OF-568 L5),

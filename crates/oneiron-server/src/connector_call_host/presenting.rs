@@ -218,8 +218,6 @@ impl Presenting {
             Ok(())
         };
         let effector = self.effector.as_str();
-        // A grant refusal at the send answers as its typed refusal (FIX 6673).
-        let mut grant_refused = false;
         let door = match door {
             Door::Grant {
                 grant,
@@ -238,19 +236,14 @@ impl Presenting {
                     Ok(ConnectorGrantRedemption::Held { reason }) => {
                         return Sent::held(reason);
                     }
-                    Err(error) => {
-                        grant_refused = matches!(error, oneiron::Error::Secret(_));
-                        Ok(None)
-                    }
+                    Err(error) => Err(error),
                 },
-                None => match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
-                    Ok(redeemed) => Ok(custody
-                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
-                    Err(error) => {
-                        grant_refused = matches!(error, oneiron::Error::Secret(_));
-                        Ok(None)
-                    }
-                },
+                None => vault
+                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                    .map(|redeemed| {
+                        custody
+                            .map(|custody| SentPresentation::cleared(custody, redeemed.generation))
+                    }),
             },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
@@ -269,18 +262,24 @@ impl Presenting {
         if let Some(reason) = held {
             return Sent::held(reason);
         }
+        // A typed secret refusal at any door answers as its typed refusal
+        // (FIX 6673, FIX 11565); any other door error keeps today's
+        // transport answer.
+        let refused = match &door {
+            Err(oneiron::Error::Secret(secret)) => {
+                Some(oneiron::outbound_intent_ledger::SecretSendRefusal::from_secret_error(secret))
+            }
+            _ => None,
+        };
         // The record a door that presented its value resolved (FIX 5455),
         // and the generation it released.
         *presented = door.ok().flatten();
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
-        sent.unwrap_or_else(|| {
-            if grant_refused {
-                // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
-                Sent::not_sent(OutboundFailureKind::Rejected, None)
-            } else {
-                Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
-            }
+        sent.unwrap_or_else(|| match refused {
+            // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
+            Some(secret) => Sent::refused(secret),
+            None => Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         })
     }
 }

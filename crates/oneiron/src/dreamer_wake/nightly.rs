@@ -175,6 +175,8 @@ fn plan_children_in_txn(
     now: u64,
 ) -> Result<()> {
     let policy = recipes::policy_in_txn(vault, txn)?;
+    // Excluded conversations' spans are filtered inside
+    // `recipe_spans_in_txn`, before its limit.
     let spans = sieve::recipe_spans_in_txn(vault, txn, policy.nightly_spans as usize)?;
     let store = DreamerRunnerStore::new(vault);
     let mut ids = BTreeSet::new();

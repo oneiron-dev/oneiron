@@ -145,7 +145,7 @@ impl BodySpill {
         let key = match &dir.sealed {
             Some(_) => {
                 let mut vault = [0u8; 32];
-                crate::world_keys::os_fill(&mut vault)?;
+                crate::key_material::os_fill(&mut vault)?;
                 Some(Arc::new(FileKey::generate(vault)?))
             }
             None => None,

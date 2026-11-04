@@ -79,16 +79,9 @@ pub mod presets;
 /// campaign semantics — this module is the single door.
 pub mod surface;
 
-/// Stable short-id namespace for CAMPAIGN entities.
-///
-/// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
-/// not the CRM pack as a whole, and is collision-vetted by the registration API
-/// against both static and already-registered runtime prefixes. This is a
-/// namespace token, not an entity-type byte.
-pub const CAMPAIGN_SHORT_ID_PREFIX: &str = "ca";
+pub use crate::registry::pack_namespaces::CAMPAIGN_SHORT_ID_PREFIX;
 
-/// Pack provenance persisted in the vault-scoped structural-kind registration.
-pub const CRM_PACK_ID: &str = "oneiron-crm";
+pub use crate::registry::pack_namespaces::CRM_PACK_ID;
 
 /// Registers the CAMPAIGN structural kind for a NEW vault.
 /// The caller declares its replication family; the assigned byte never implies one.

@@ -1,16 +1,19 @@
 //! Weighted starting points for skill cells. Borrowed history never adds own runs.
 
 use crate::Vault;
+use crate::claim::learning_estimate::Estimate;
+use crate::claim::learning_estimate::EstimateForm;
+use crate::claim::learning_estimate::EstimateValue;
+use crate::claim::learning_estimate::Prior;
+use crate::claim::learning_estimate::PriorOrigin;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::TypeRef;
 use crate::learning::evidence::ensure_cell_in_txn;
 use crate::learning::prior::PRIOR;
 use crate::learning::project::window_in_txn;
 use crate::learning::read::read_learning_in_txn;
-use crate::learning::{
-    Estimate, EstimateForm, EstimateValue, LearningCell, LearningRead, Prior, PriorOrigin,
-};
+use crate::learning::{LearningCell, LearningRead};
+use crate::receipt::task_type_ref::TypeRef;
 
 use super::provenance::skill_reliability_prior_in_txn;
 

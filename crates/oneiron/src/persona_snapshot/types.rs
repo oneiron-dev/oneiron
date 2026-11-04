@@ -40,40 +40,10 @@ pub const PERSONA_SNAPSHOT_EXPORT_BODY_KEYS: [&str; 14] = [
     "artifactFingerprint",
 ];
 
-/// Minimal projection: enough to answer "what was exported and when?".
-pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL: &[&str] =
-    &["subjectRef", "exportedAtSecs"];
-
-/// Standard projection: the export spine without the row-id lists.
-pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD: &[&str] = &[
-    "subjectRef",
-    "audienceRef",
-    "identityLine",
-    "compiledAtSecs",
-    "staleAfterSecs",
-    "grantedBy",
-    "exportedAtSecs",
-];
-
-/// Full projection: every pinned body key, then the optional `omittedRefs`
-/// key a copy made without its vault refs stores.
-pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL: &[&str] = &[
-    "schemaVersion",
-    "subjectRef",
-    "audienceRef",
-    "identityLine",
-    "compiledAtSecs",
-    "staleAfterSecs",
-    "compiledFingerprint",
-    "takesIncluded",
-    "grantedBy",
-    "grantedAtSecs",
-    "exportedAtSecs",
-    "includedRowIds",
-    "struckRowIds",
-    "artifactFingerprint",
-    KEY_OMITTED_REFS,
-];
+pub(crate) use crate::serialize::persona_export_fields::{
+    PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL, PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL,
+    PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD,
+};
 
 /// Default cap on top-salience subject claim rows in a compile.
 pub const DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS: usize = 12;
@@ -137,10 +107,7 @@ pub(super) const KEY_STRUCK_ROW_IDS: &str = "struckRowIds";
 
 pub(super) const KEY_ARTIFACT_FINGERPRINT: &str = "artifactFingerprint";
 
-/// Optional body key, outside the pinned set: the vault ref slots a copy
-/// made without its refs left out (FIX 1199). A copy that carries its refs
-/// stores no such key.
-pub(super) const KEY_OMITTED_REFS: &str = "omittedRefs";
+pub(super) use crate::serialize::persona_export_fields::KEY_OMITTED_REFS;
 
 /// Row kind on a compiled persona snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

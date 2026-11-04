@@ -15,6 +15,7 @@ mod local;
 mod manifest;
 mod migrations;
 mod organs;
+pub mod predicate_rewrites;
 mod setup;
 mod setup_actor;
 mod setup_cards;

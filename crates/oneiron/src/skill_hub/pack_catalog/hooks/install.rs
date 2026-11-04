@@ -213,7 +213,10 @@ impl Vault {
                     row.author = HookAuthor::Agent {
                         agent: agent.entity_ref(),
                     };
-                    row.selector.blocking = false;
+                    // The binding runs at the agent's ceiling: never
+                    // blocking, and without the wider Skip/Ask/Rewrite
+                    // outcomes, which wait for the owner's approval.
+                    row.selector = super::proposal::agent_ceiling_selector(&hook.selector);
                     // A wider ask goes to the owner as a proposal (ARCH-0080
                     // §10); the binding runs at the agent's ceiling meanwhile.
                     self.propose_wider_hook_in_txn(txn, id, &row, &hook.selector, at)?;

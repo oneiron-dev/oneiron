@@ -11,8 +11,8 @@ use super::{
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::learning_setting::SettingSpec;
-use crate::self_heal::AgentHealthSignal;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::diagnostic_record::AgentHealthSignal;
 
 /// The review runs at all (1) or not (0).
 pub const HEALTH_REVIEW: SettingSpec = SettingSpec {

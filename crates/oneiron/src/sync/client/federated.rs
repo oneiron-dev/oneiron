@@ -22,12 +22,7 @@ use crate::sync::transport::{
 };
 use crate::sync::types::WindowKey;
 
-/// Trust is selected by the authenticated import context, never by claim bytes.
-#[derive(Debug, Clone, Copy)]
-pub enum ImportTier {
-    OwnDevice,
-    Federated(FederationAdmissionRole),
-}
+pub use crate::store::window_protocol::ImportTier;
 
 impl SyncClient {
     /// Replays raw window bytes by their caller-bound tier. Federation is admitted

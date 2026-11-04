@@ -63,7 +63,7 @@ impl FloorWrites<'_> {
         vault: &Vault,
         session_ref: &str,
         plans: &[PromotePlan],
-    ) -> Result<Vec<crate::result_body::ResultBodyPin>> {
+    ) -> Result<Vec<crate::store::result_body_pins::ResultBodyPin>> {
         let results: Vec<_> = plans
             .iter()
             .flat_map(|plan| message_results(&plan.ops))
