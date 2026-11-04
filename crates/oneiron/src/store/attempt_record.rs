@@ -253,3 +253,12 @@ pub struct AttemptTerminalExhaust {
 fn is_zero(value: &u32) -> bool {
     *value == 0
 }
+
+pub(crate) fn attempt_record_order(
+    left: &AttemptRecord,
+    right: &AttemptRecord,
+) -> std::cmp::Ordering {
+    left.created_at
+        .cmp(&right.created_at)
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
+}
