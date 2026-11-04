@@ -297,7 +297,7 @@ impl EdgeStore for Memory {
             kind,
             weight,
             self.clock.now_recorded_at(),
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         if kind == EdgeKind::DerivedFrom {
