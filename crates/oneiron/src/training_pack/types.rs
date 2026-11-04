@@ -1,5 +1,5 @@
 //! Pins and receipts shared by the training pack and its host adapters.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -157,7 +157,7 @@ pub struct DetectorProvenance {
     pub consent_receipt: String,
 }
 
-pub use crate::skill_optimize::training_choice::{ComputeChoice};
+pub use crate::skill_optimize::training_choice::ComputeChoice;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputePin {
@@ -173,7 +173,7 @@ pub struct ComputePin {
     pub cost_unit: LeaseUnit,
 }
 
-pub use crate::skill_optimize::training_choice::{TrainingState};
+pub use crate::skill_optimize::training_choice::TrainingState;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainingDispatch {
@@ -181,12 +181,16 @@ pub struct TrainingDispatch {
     pub budget: BudgetLine,
     pub permit: Value,
     pub dispatched: bool,
+    /// The completion that first recorded a result claimed the run's one
+    /// Used settlement; a later idempotent completion settles nothing.
+    pub settlement_claimed: bool,
 }
 
 /// The teachers a run declaration names, as the owner authorized them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingTeachersPin {
     pub models: Vec<ModelId>,
+    pub aliases: BTreeMap<String, ModelId>,
     pub target: String,
     pub purpose: String,
 }
@@ -197,9 +201,11 @@ pub struct TrainingTeachersPin {
 pub struct TrainingDeclarationPin {
     pub teachers: Option<TrainingTeachersPin>,
     pub budget: BudgetLine,
+    pub connectors: BTreeSet<String>,
+    pub custody_overrides: BTreeSet<String>,
 }
 
-pub use crate::skill_optimize::training_choice::{TrainingAuthorizationSource};
+pub use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
 
 /// The owner a run, an authorization or a swap receipt names: an actor, or
 /// no one once that actor was erased (FIX 3520). It reads and writes as the
@@ -412,7 +418,7 @@ pub struct TrainingPackDraft {
     pub consented_sources: Vec<EntityId>,
 }
 
-pub use crate::skill_optimize::training_choice::{SwapChoice};
+pub use crate::skill_optimize::training_choice::SwapChoice;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoleSwapReceipt {

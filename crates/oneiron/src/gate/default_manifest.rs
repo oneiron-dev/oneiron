@@ -14,18 +14,18 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use super::class_policy::ActPosture;
 use super::constants::{
     ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
-    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_REASON_MAX_BYTES_KEY,
-    ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
-    GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
-    POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
-    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
-    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
-    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
-    POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+    AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACT_POLICY_KEY,
+    POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+    POLICY_CONSULT_FANOUT_CONTROLS_KEY, POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
+    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
     POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
@@ -42,9 +42,7 @@ use super::operational_policy::{
     LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
 };
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
-use super::resolution::{
-    DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
-};
+use super::resolution::DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS;
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
@@ -137,7 +135,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     // The conversation-mirror MACHINE attests connector-observed reactions
     // (OF-372). Derived the same way, so a moved domain fails closed too.
-    let conversation_mirror_actor_ref = crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
+    let conversation_mirror_actor_ref =
+        crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -367,7 +366,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO),
+                        Value::from(
+                            crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -384,7 +385,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH),
+                        Value::from(
+                            crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -1139,7 +1142,7 @@ fn skill_tradeoff_limits_entry() -> (Value, Value) {
     )
 }
 
-/// The shipped attribution limits: precedence and the two byte/count caps.
+/// The shipped attribution limits: precedence and the receipts cap.
 fn attribution_limits_default_entry() -> (Value, Value) {
     (
         Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -1147,10 +1150,6 @@ fn attribution_limits_default_entry() -> (Value, Value) {
             (
                 Value::from(ATTRIBUTION_PRECEDENCE_KEY),
                 Value::from("nested_narrowing"),
-            ),
-            (
-                Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
-                Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
             ),
             (
                 Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
@@ -1402,7 +1401,8 @@ pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
-pub(crate) fn default_consult_fanout_policy() -> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
+pub(crate) fn default_consult_fanout_policy()
+-> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
     let shipped = shipped_consult_fanout_rows();
     crate::gate::consult_fanout_values::ConsultFanOutPolicy {
         approval_threshold: shipped.threshold,

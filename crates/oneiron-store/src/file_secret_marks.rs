@@ -103,7 +103,6 @@ pub fn masked_copy_withheld(reason: &'static str) -> Error {
     Error::Secret(SecretError::MaskedCopyWithheld { reason })
 }
 
-
 /// One key: its byte span in the stored file, or in the decoded member that
 /// holds it, and the custody record that holds its value.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

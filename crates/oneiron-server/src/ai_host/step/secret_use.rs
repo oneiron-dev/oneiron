@@ -131,7 +131,9 @@ impl<'a> StepSecretUse<'a> {
     /// tool call in between; that answer, the rung that gave it and whether
     /// any tool round ran. Each round is the step's model call again: its
     /// permit, its gate, its meter bounded by `lease`'s live room, and the
-    /// same errors end it.
+    /// same errors end it. The returned request is the final round's: craft
+    /// refreshed and tool calls and results appended, the bytes the last
+    /// answer goes with.
     pub(super) fn converse(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -139,7 +141,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-    ) -> LlmResult<(LlmResponse, ModelId, bool)> {
+    ) -> LlmResult<(LlmResponse, ModelId, bool, LlmRequest)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
         let may_send = || {
@@ -173,7 +175,7 @@ impl<'a> StepSecretUse<'a> {
                 })
                 .collect();
             if calls.is_empty() {
-                return Ok((response, served, rounds));
+                return Ok((response, served, rounds, request));
             }
             rounds = true;
             // The round's spend goes on the lease before its tools run, so

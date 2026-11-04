@@ -12,8 +12,8 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::store::housekeeping_schedule::HousekeepingBudget;
 use crate::store::housekeeping_report::HousekeepingReport;
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 use crate::store::housekeeping_schedule::HousekeepingSweep;
 
 /// The housekeeping sweep a support repair runs.
@@ -49,6 +49,7 @@ impl Vault {
         repair: SupportRepair,
         budget: HousekeepingBudget,
     ) -> Result<HousekeepingReport> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
@@ -61,6 +62,8 @@ impl Vault {
             return Err(invalid_authority());
         }
         txn.commit()?;
+        // The spend is committed; the sweep holds no lease beside it.
+        drop(_spend_guard);
         self.housekeeping_one(repair_sweep(repair), budget)
     }
 }

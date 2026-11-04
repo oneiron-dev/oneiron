@@ -1,7 +1,7 @@
 //! Door inputs and snapshot results.
 
-use crate::{EntityId, TimeRange, WriteActor};
 use crate::error::Error;
+use crate::{EntityId, TimeRange, WriteActor};
 
 /// Which chain or retained sub-session a scope addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,8 +1,8 @@
 //! Bounded, vault-owned cache of score-free context evidence.
 
+use crate::entity_id::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use crate::entity_id::EntityId;
 
 const MAX_CACHE_ENTRIES: usize = 32;
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
@@ -86,4 +86,3 @@ impl L2BaseCache {
 fn summary_bytes(summary: &L2BaseSummary) -> usize {
     summary.body.len() + (summary.evidence_ids.len() + summary.subjects.len()) * 16
 }
-
