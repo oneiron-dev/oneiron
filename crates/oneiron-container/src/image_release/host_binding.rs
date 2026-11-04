@@ -33,8 +33,8 @@
 
 use super::{
     Blake3Digest, HostCapabilities, IMAGE_RELEASE_ENVELOPE_FILE, IMAGE_RELEASE_FILE,
-    IMAGE_SIGNATURE_POLICY, ImageReleaseObservation, ManifestObservation, ObservedArtifacts,
-    ReleaseDocuments, ReleaseSignatureVerifier, observe_release,
+    IMAGE_SIGNATURE_POLICY, ImageReleaseObservation, LaunchBackend, ManifestObservation,
+    ObservedArtifacts, ReleaseDocuments, ReleaseSignatureVerifier, observe_release,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -91,16 +91,24 @@ enum Binding {
 
 /// The ONE launch-door entry: reads the documents the host bound to
 /// `selected`, probes this host when there are documents to check it
-/// against, and observes. Infallible: it never refuses or fails a launch.
+/// against, and observes for `backend`. Infallible: it never refuses or
+/// fails a launch.
 #[must_use]
 pub fn observe_bound_release(
     selected: SelectedImage<'_>,
     observed: &ObservedArtifacts,
     verifier: &dyn ReleaseSignatureVerifier,
+    backend: LaunchBackend,
 ) -> ImageReleaseObservation {
     let image_digest = selected.key();
     let observation = match binding(selected) {
-        Binding::Unbound => observe_release(None, observed, &HostCapabilities::default(), verifier),
+        Binding::Unbound => observe_release(
+            None,
+            observed,
+            &HostCapabilities::default(),
+            verifier,
+            Some(backend),
+        ),
         Binding::Unavailable(reason) => {
             ImageReleaseObservation::documents_unavailable(reason, IMAGE_SIGNATURE_POLICY)
         }
@@ -112,6 +120,7 @@ pub fn observe_bound_release(
             observed,
             &probe_host(),
             verifier,
+            Some(backend),
         ),
     };
     let manifest_state = match &observation.manifest {

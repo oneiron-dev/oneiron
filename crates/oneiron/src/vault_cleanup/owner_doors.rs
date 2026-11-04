@@ -19,10 +19,10 @@ use super::{
     CleanupRunRevertAnswer,
 };
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::attempt_id::AttemptId;
 use oneiron_contracts::memory::MemoryResult;
 
 impl Vault {
