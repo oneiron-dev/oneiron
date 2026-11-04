@@ -39,14 +39,17 @@ use crate::outbound_consent::{
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
 
-pub use crate::code_run::{CONNECTOR_RESULT_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED, CONNECTOR_QUESTIONS_NOT_RETAINED};
+pub use crate::code_run::{
+    CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
+    CONNECTOR_RESULT_NOT_RETAINED,
+};
 
 /// The derive-key context of a served call's synthetic attempt id.
 const CONNECTOR_ATTEMPT_CONTEXT: &str = "oneiron connector call attempt v1";
 
 pub use crate::code_run::{ConnectorCallReply, ConnectorToolResult};
 
-pub use crate::code_run::{ConnectorAnswerRequest, ConnectorQuestionAnswer, ConnectorAnswerAction};
+pub use crate::code_run::{ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer};
 
 /// `connector.schema`'s input: a catalogued connector and one of its tools.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

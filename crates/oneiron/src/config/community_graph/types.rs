@@ -117,4 +117,3 @@ pub struct PprCommunityCache<'a> {
     pub(crate) sizes: BTreeMap<CommunityId, usize>,
     pub(crate) graph_size: usize,
 }
-

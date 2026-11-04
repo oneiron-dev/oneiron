@@ -235,11 +235,9 @@ pub fn check_unix_seconds(label: &str, value: f64) -> Result<u64, MemoryError> {
 /// The longest ref `vault.refs.resolve` reads, in bytes.
 pub const RECORD_REF_MAX_BYTES: usize = 256;
 
-
 /// Call mode's deadline unless a vault sets its own. ARCH-0042
 /// #call-mode-budget holds call-mode recall at p95 ≤ 100 ms server-side at
 /// 10k records (≤ 150 ms at 100k), a starting bar the perf pass drives
 /// lower. It is the default of `VaultConfig::call_mode_deadline`,
 /// and a request's own `deadline_ms` overrides that.
 pub const DEFAULT_CALL_MODE_DEADLINE: std::time::Duration = std::time::Duration::from_millis(100);
-

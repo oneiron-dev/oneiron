@@ -1,7 +1,7 @@
 //! Vector-free voice attribution and session roster records.
 
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// How well spread a stored centroid's enrollment material is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

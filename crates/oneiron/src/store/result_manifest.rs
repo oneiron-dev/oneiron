@@ -1,7 +1,7 @@
 //! Result-body manifests, occurrence identifiers and their format bounds.
 
-use crate::{EntityId, Error, Result};
 use crate::error::ArtifactError;
+use crate::{EntityId, Error, Result};
 
 pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
 pub(crate) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
@@ -229,4 +229,3 @@ pub(crate) fn invalid_code_run_replay(message: &'static str) -> Error {
 pub(crate) struct StagedSinks {
     pub(crate) mint: crate::store::BodyMint,
 }
-

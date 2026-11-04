@@ -34,12 +34,12 @@ use super::constants::{
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
 use super::witness_message::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::skill_optimize::TrainingOffer;
-use crate::task_verb::{ TaskAskSpec, TaskAskTarget};
-use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::gate::task_assignee::TaskAssignee;
+use crate::skill_optimize::TrainingOffer;
+use crate::task_verb::{TaskAskSpec, TaskAskTarget};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
