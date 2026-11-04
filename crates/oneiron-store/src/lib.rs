@@ -32,6 +32,7 @@ pub mod session_overlay;
 pub mod store_clock;
 pub mod vault_page_seal;
 pub mod vector_index;
+pub mod vector_insert_plan;
 pub mod vector_row;
 pub mod vector_refinement;
 pub mod window_key;
