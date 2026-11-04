@@ -1,8 +1,8 @@
 //! Row staging, preflight, budget checks, read probes.
 use std::sync::Arc;
 
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 use super::super::journal::JournalEntry;
 use super::super::keyspace::{
@@ -12,12 +12,12 @@ use super::super::snapshot::OverlaySnapshot;
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::SessionOverlay;
 use super::retained::{mutation_heap, staged_entry_heap};
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
     // This apply helper deliberately has no budget input or budget-error branch.
-    pub(crate) fn put(
+    pub fn put(
         self: &Arc<Self>,
         keyspace: OverlayKeyspace,
         key: &[u8],
@@ -46,7 +46,7 @@ impl SessionOverlay {
     /// counted in its total, so a room at its limit takes exactly the writes
     /// it took before; a delete of the row, or a clear of its keyspace, ends
     /// the mark. The mark commits or aborts with the segment, as its rows do.
-    pub(crate) fn mark_bookkeeping_row(
+    pub fn mark_bookkeeping_row(
         self: &Arc<Self>,
         keyspace: OverlayKeyspace,
         key: &[u8],
@@ -78,11 +78,11 @@ impl SessionOverlay {
         dead_code,
         reason = "ONE-1728 witness/retrieval supplies the first lib-target overlay delete"
     )]
-    pub(crate) fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
+    pub fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
         self.delete_with_base_backing(keyspace, key, true)
     }
 
-    pub(crate) fn delete_with_base_backing(
+    pub fn delete_with_base_backing(
         self: &Arc<Self>,
         keyspace: OverlayKeyspace,
         key: &[u8],
@@ -97,7 +97,7 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
-    pub(crate) fn delete_duplicate(
+    pub fn delete_duplicate(
         self: &Arc<Self>,
         keyspace: OverlayKeyspace,
         key: &[u8],
@@ -171,7 +171,7 @@ impl SessionOverlay {
         Ok(())
     }
 
-    pub(crate) fn clear(self: &Arc<Self>, keyspace: OverlayKeyspace) -> Result<()> {
+    pub fn clear(self: &Arc<Self>, keyspace: OverlayKeyspace) -> Result<()> {
         let mutation = OverlayMutation::Clear { keyspace };
         self.preflight_segment_mutation(&mutation)?;
         self.stage_mutation(mutation)
@@ -183,18 +183,18 @@ impl SessionOverlay {
     /// [`JournalRole`] and the witnessing write's own `learned_at`/`occurred`,
     /// so promote can never fall back on inferring ownership from index keys
     /// or on restamping the room clock.
-    pub(crate) fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
+    pub fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
         // Keep the stored vocabulary inside the payloads this journal can
         // scrub and the session replay path can understand. The substrate
         // oracle also stages a payload-free Delete to check journal atomicity.
         if !matches!(
             entry.op,
-            crate::batch::BatchOp::Put { .. }
-                | crate::batch::BatchOp::Edge { .. }
-                | crate::batch::BatchOp::Text { .. }
-                | crate::batch::BatchOp::Vector { .. }
-                | crate::batch::BatchOp::MediaVector { .. }
-                | crate::batch::BatchOp::Delete { .. }
+            crate::batch_op::BatchOp::Put { .. }
+                | crate::batch_op::BatchOp::Edge { .. }
+                | crate::batch_op::BatchOp::Text { .. }
+                | crate::batch_op::BatchOp::Vector { .. }
+                | crate::batch_op::BatchOp::MediaVector { .. }
+                | crate::batch_op::BatchOp::Delete { .. }
         ) {
             return Err(Error::InvariantViolation(
                 "session journal cannot stage an unsupported batch op",
@@ -337,7 +337,7 @@ impl SessionOverlay {
     /// immutable session snapshot. Closed overlays retain this immutable
     /// state until the registry drops them, so close cannot create a false
     /// negative between classification and the write-door decision.
-    pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
+    pub fn contains_entity(&self, id: &EntityId) -> Result<bool> {
         let state = self.state.load();
         let KeyspaceState::Single { rows, .. } =
             state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
@@ -352,7 +352,7 @@ impl SessionOverlay {
         ))
     }
 
-    pub(crate) fn has_entities(&self) -> Result<bool> {
+    pub fn has_entities(&self) -> Result<bool> {
         let state = self.state.load();
         let KeyspaceState::Single { rows, .. } =
             state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
@@ -369,7 +369,7 @@ impl SessionOverlay {
     /// Whether this overlay stages anything at all, in any keyspace: a row,
     /// a tombstone over base or a cleared keyspace. A read through it may
     /// reflect any of them, an entity, a vector, a posting or a deletion.
-    pub(crate) fn stages_anything(&self) -> bool {
+    pub fn stages_anything(&self) -> bool {
         let state = self.state.load();
         state
             .keyspaces
@@ -380,7 +380,7 @@ impl SessionOverlay {
             })
     }
 
-    pub(crate) fn snapshot(self: &Arc<Self>) -> Result<OverlaySnapshot> {
+    pub fn snapshot(self: &Arc<Self>) -> Result<OverlaySnapshot> {
         let active = ACTIVE_SEGMENT.with(|slot| {
             let slot = slot.borrow();
             slot.as_ref().and_then(|segment| {
@@ -404,7 +404,7 @@ impl SessionOverlay {
         dead_code,
         reason = "ONE-1726 budget oracle introspection; production admission uses the private field"
     )]
-    pub(crate) const fn budget_bytes(&self) -> usize {
+    pub const fn budget_bytes(&self) -> usize {
         self.budget_bytes
     }
 }
