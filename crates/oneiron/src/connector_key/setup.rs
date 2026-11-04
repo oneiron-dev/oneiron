@@ -63,6 +63,14 @@ const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+// Identity scopes can accompany Google's Gmail grant without adding mail access.
+const GMAIL_IDENTITY_SCOPES: [&str; 5] = [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+];
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -543,7 +551,8 @@ fn connection_bound(
 }
 
 /// The provider's word against the owner's: an account must be named, and
-/// reported scopes must be exactly the allowed ones.
+/// reported scopes must be allowed, apart from undeclared Google identity
+/// scopes accompanying a Gmail grant. Declared-but-declined scopes still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
     allowed: &[String],
@@ -570,7 +579,11 @@ fn judge_evidence(
         let unexplained: Vec<&str> = held
             .iter()
             .copied()
-            .filter(|scope| !explained.contains(scope))
+            .filter(|scope| {
+                !explained.contains(scope)
+                    && !(declared.verify == GMAIL_PROFILE_CHECK
+                        && GMAIL_IDENTITY_SCOPES.contains(scope))
+            })
             .collect();
         let declined: Vec<&str> = held
             .iter()

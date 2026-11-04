@@ -134,12 +134,30 @@ pub mod code_tree_blob;
 pub mod conversation_body;
 pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
+mod project_writes;
+pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod model_description_rows;
@@ -153,6 +171,7 @@ pub mod pack_hook_actor_class;
 pub(crate) mod pad_object_membership;
 pub mod person_billing_account;
 pub mod positive_skill_proposals;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -275,6 +294,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
@@ -332,8 +353,8 @@ pub(crate) use body_envelope::{
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
     erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
