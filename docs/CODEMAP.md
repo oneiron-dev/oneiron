@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6275 | 900 | 117 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6274 | 900 | 117 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 53 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 24 | 2 | 0 |
@@ -52,6 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1497 | 182 | 35 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 2 | 0 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 52 | 1 | 1 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
@@ -113,7 +114,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `config` | file+dir | 10 | m | — | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `connect_delivery` | file | 1 | s | — | Connect delivery and rejoin wire vocabulary |
 | `connector_key` | dir | 52 | L | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
-| `connector_key_status` | file | 1 | s | — | Connector-key lifecycle status and its pinned wire strings |
 | `consent` | dir | 40 | m | yes | DEC-0006 unified consent-mode — bounded standing grants |
 | `consent_graduation` | dir | 9 | m | yes | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
 | `consult_ladder` | dir | 5 | m | — | Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer… |
@@ -820,6 +820,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `tests` | file | 1 | — | The walk that stands in where close_range is missing or refused finds a descriptor above the soft limit… |
+
+## oneiron-store
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `connector_key_status` | file | 1 | s | Connector-key lifecycle status and its pinned wire strings |
 
 ## oneiron-uniffi
 

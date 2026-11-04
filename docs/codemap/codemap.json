@@ -20996,19 +20996,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ConnectorKeyStatus"
-     ],
-     "path": "src/connector_key_status.rs",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings",
-     "surface": {
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
      "purpose": "—",
@@ -42603,8 +42590,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 212,
-      "re-export": 92
+      "mod": 211,
+      "re-export": 93
      }
     },
     {
@@ -89948,13 +89935,6 @@
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
-    "connector_key_status": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings"
-    },
     "consent": {
      "files": 40,
      "impl_vault": true,
@@ -91218,7 +91198,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6275,
+   "source_files": 6274,
    "test_files": 900
   },
   "oneiron-android": {
@@ -125445,6 +125425,46 @@
    "purpose": "Starting a subprocess with only the descriptors it is meant to have",
    "source_files": 1,
    "test_files": 2
+  },
+  "oneiron-store": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorKeyStatus"
+     ],
+     "path": "src/connector_key_status.rs",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The store layer of the oneiron engine",
+     "surface": {
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "connector_key_status": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The store layer of the oneiron engine",
+   "source_files": 2,
+   "test_files": 0
   },
   "oneiron-uniffi": {
    "files": [
