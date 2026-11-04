@@ -2,8 +2,7 @@
 use std::collections::BTreeSet;
 
 use super::*;
-use crate::store::Store;
-use crate::store::key_custody::{self, CustodyPlan, Requirement};
+use crate::store::{CustodyForkRequirement as Requirement, CustodyPlan, Store, custody_binding_in_txn};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -102,7 +101,7 @@ pub(crate) fn read_back_archived_calendar_rows(
     if planned.live.is_empty() {
         return Ok(());
     }
-    let binding = key_custody::binding_in_txn(store, txn)?.ok_or_else(literal::invalid)?;
+    let binding = custody_binding_in_txn(store, txn)?.ok_or_else(literal::invalid)?;
     for row in &planned.live {
         row.carrier
             .read_back(&binding, row.kind, row.key, row.digest)?;

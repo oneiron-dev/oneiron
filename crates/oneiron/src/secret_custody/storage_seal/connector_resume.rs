@@ -43,7 +43,7 @@ pub(crate) fn open_connector_resume_in_txn(
 /// Validates a retained resume carrier under an activation's forked binding.
 /// The plaintext stays inside the validation callback and is wiped on return.
 pub(crate) fn read_back_connector_resume_for_activation(
-    binding: &crate::store::key_custody::CustodyBinding,
+    binding: &crate::store::CustodyBinding,
     call_ref: &EntityId,
     generation: u32,
     sealed: &[u8],

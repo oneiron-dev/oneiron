@@ -455,6 +455,9 @@ pub(crate) use group_commit::{
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
+};
 pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;

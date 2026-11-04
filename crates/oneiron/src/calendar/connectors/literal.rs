@@ -9,8 +9,7 @@ use crate::secret_custody::{
     open_connector_resume_in_txn, read_back_connector_resume_for_activation,
     retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
-use crate::store::Store;
-use crate::store::key_custody::{CustodyBinding, CustodyPlan, Requirement};
+use crate::store::{CustodyBinding, CustodyForkRequirement as Requirement, CustodyPlan, Store};
 use crate::vault::Vault;
 
 const CODEC: u8 = 1;
