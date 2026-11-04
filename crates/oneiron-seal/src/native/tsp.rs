@@ -5,8 +5,10 @@ use x509_tsp::{TspVersion, TstInfo};
 
 use crate::api::{Sha256Digest, VerifyCheckStatus};
 use crate::error::{FatalCode, SealError, SealStage};
+use crate::memory::{Held, MemoryLedger, SealMemoryRefusal};
 
 use super::cms::{self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256};
+use super::held_bytes;
 
 pub(crate) const OID_TST_INFO: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x01\x04";
 
@@ -41,15 +43,39 @@ pub(crate) fn build_request(
     Ok(cms::tlv(0x30, &body))
 }
 
-/// Parsed + policy-checked timestamp response.
+/// Why a timestamp token was not validated: the token itself, or memory
+/// its copies and decodes were refused, which ends the operation as the
+/// seal's memory error, never as an invalid token (FIX 12260).
+#[derive(Debug)]
+pub(crate) enum TokenError {
+    /// The token fails a check; every caller treats each check alike.
+    Invalid,
+    Memory(SealMemoryRefusal),
+}
+
+impl From<SealError> for TokenError {
+    fn from(_: SealError) -> Self {
+        Self::Invalid
+    }
+}
+
+impl From<SealMemoryRefusal> for TokenError {
+    fn from(refusal: SealMemoryRefusal) -> Self {
+        Self::Memory(refusal)
+    }
+}
+
+/// Parsed + policy-checked timestamp response. Its copies are held on the
+/// seal's ledger until it drops (FIX 12260).
 pub(crate) struct ValidatedToken {
-    pub content_info_der: Vec<u8>,
-    pub tsa_chain_ders: Vec<Vec<u8>>,
+    pub content_info_der: Held<Vec<u8>>,
+    pub tsa_chain_ders: Held<Vec<Vec<u8>>>,
 }
 
 /// Extract the TimeStampToken ContentInfo DER from a TimeStampResp, requiring
-/// status `granted` (0) or `grantedWithMods` (1) with a present token.
-fn extract_token(resp_der: &[u8]) -> Result<Vec<u8>, SealError> {
+/// status `granted` (0) or `grantedWithMods` (1) with a present token. It is
+/// read in place.
+fn extract_token(resp_der: &[u8]) -> Result<&[u8], SealError> {
     let mut top = DerReader::new(resp_der);
     let resp = top.expect(0x30)?;
     if !top.is_done() {
@@ -64,7 +90,7 @@ fn extract_token(resp_der: &[u8]) -> Result<Vec<u8>, SealError> {
     if r.is_done() {
         return Err(ts_err()); // granted but token absent
     }
-    Ok(r.expect(0x30)?.full.to_vec())
+    Ok(r.expect(0x30)?.full)
 }
 
 /// Nonce as a DER INTEGER body: minimal-length two's complement — strip
@@ -148,10 +174,13 @@ impl pkix_chain::Profile for SealProfile {
     }
 }
 
+/// The chain decoded, one slot per certificate.
 fn parse_certs(ders: &[Vec<u8>]) -> Result<Vec<x509_cert::Certificate>, SealError> {
-    ders.iter()
-        .map(|d| x509_cert::Certificate::from_der(d).map_err(|_| ts_err()))
-        .collect()
+    let mut chain = Vec::with_capacity(ders.len());
+    for d in ders {
+        chain.push(x509_cert::Certificate::from_der(d).map_err(|_| ts_err())?);
+    }
+    Ok(chain)
 }
 
 /// Validate a TimeStampResp against the request's imprint/nonce/policy and
@@ -160,7 +189,7 @@ fn parse_certs(ders: &[Vec<u8>]) -> Result<Vec<x509_cert::Certificate>, SealErro
 /// over-skew response is refused BEFORE it can be returned as validated —
 /// the caller's TSA failover (or profile degradation) stays available
 /// instead of the seal embedding a token its own self-verification would
-/// reject.
+/// reject. Its parse, decodes and copies are held on `memory` (FIX 12260).
 pub(crate) fn validate_response(
     resp_der: &[u8],
     expected_imprint: &Sha256Digest,
@@ -168,52 +197,47 @@ pub(crate) fn validate_response(
     expected_policy_oid: Option<&str>,
     anchors: &[pkix_chain::TrustAnchor],
     clock_ms: u64,
-) -> Result<ValidatedToken, SealError> {
+    memory: &MemoryLedger,
+) -> Result<ValidatedToken, TokenError> {
     let token_ci = extract_token(resp_der)?;
-    let parsed = cms::parse_cms(&token_ci)?;
+    let parsed = cms::parse_cms(token_ci)?.held(memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     check_digest_algs(&parsed)?;
-    let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
-    let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
+    let econtent = parsed.econtent.as_deref().ok_or_else(ts_err)?;
+    let tst = TstInfo::from_der(econtent).map_err(|_| ts_err())?;
+    let _tst_held = memory.hold(held_bytes::tst_info(&tst, econtent.len()))?;
     check_tst_fields(&tst, expected_imprint, nonce, expected_policy_oid)?;
     let signer = &parsed.signer;
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     token_content_type_check(signer)?;
-    if token_message_digest(signer)? != cms::sha256(&econtent) {
-        return Err(ts_err());
+    if token_message_digest(signer)? != cms::sha256(econtent) {
+        return Err(ts_err().into());
     }
     let tsa_idx = find_bound_cert(&parsed.certificates, signer)?;
     let tsa_cert_der = &parsed.certificates[tsa_idx];
     let tsa_alg = cms::cert_signature_algorithm(tsa_cert_der)?;
     if !cms::sig_alg_permitted(tsa_alg, &signer.signature_alg_oid) {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     let signing_input = cms::signed_attrs_signature_input(signer);
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
-    let chain_ders: Vec<Vec<u8>> = std::iter::once(tsa_cert_der.clone())
-        .chain(
-            parsed
-                .certificates
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != tsa_idx)
-                .map(|(_, c)| c.clone()),
-        )
-        .collect();
+    let chain_ders = cms::chain_copy(&parsed.certificates, tsa_idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
     // The verify path rejects a genTime ahead of the clock past the
     // documented skew (never clamps); the seal path must refuse the same
     // token here or the artifact fails its own mandatory self-verification.
     if super::verify::gen_time_beyond_skew(gen_time_unix, clock_ms) {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
-    validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
+    validate_tsa_chain(&chain_ders, anchors, gen_time_unix, memory)?;
+    // The token the seal embeds is its own copy, held before it is made.
+    let token_held = memory.hold(token_ci.len())?;
     Ok(ValidatedToken {
-        content_info_der: token_ci,
+        content_info_der: Held::new(token_ci.to_vec(), token_held),
         tsa_chain_ders: chain_ders,
     })
 }
@@ -272,12 +296,15 @@ fn find_bound_cert(certs: &[Vec<u8>], signer: &cms::ParsedSignerInfo) -> Result<
 
 /// Token signature against the TSA cert, then path validation with the
 /// critical-and-sole timestamping EKU rule (pkix-chain verify_time_stamper).
+/// The decoded chain is held on `memory` as soon as it is built.
 fn validate_tsa_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
-) -> Result<(), SealError> {
+    memory: &MemoryLedger,
+) -> Result<(), TokenError> {
     let chain = parse_certs(chain_ders)?;
+    let _chain_held = memory.hold(held_bytes::certificates(&chain, chain_ders))?;
     pkix_chain::verify_time_stamper(
         &chain,
         anchors,
@@ -295,9 +322,10 @@ fn validate_tsa_chain(
 }
 
 /// An integrity-validated timestamp whose trust is reported separately.
+/// Its chain copy is held on the verification's ledger (FIX 12260).
 pub(crate) struct VerifiedToken {
     pub gen_time_unix: u64,
-    pub tsa_chain_ders: Vec<Vec<u8>>,
+    pub tsa_chain_ders: Held<Vec<Vec<u8>>>,
     pub trust: VerifyCheckStatus,
 }
 
@@ -306,72 +334,69 @@ pub(crate) struct VerifiedToken {
 /// request nonce/policy checks are seal-time only. Returns the token's
 /// genTime as unix seconds for applicable-time path validation plus the
 /// validated TSA chain DERs so the DSS binding can require the profile
-/// material to speak about this chain (§7.5 step 3).
+/// material to speak about this chain (§7.5 step 3). Its parse, decodes and
+/// copies are held on `memory` (FIX 12260).
 pub(crate) fn validate_token_for_verify(
     token_der: &[u8],
     expected_imprint: &Sha256Digest,
     anchors: &[pkix_chain::TrustAnchor],
-) -> Result<VerifiedToken, SealError> {
-    let parsed = cms::parse_cms(token_der)?;
+    memory: &MemoryLedger,
+) -> Result<VerifiedToken, TokenError> {
+    let parsed = cms::parse_cms(token_der)?.held(memory)?;
     if parsed.econtent_oid != OID_TST_INFO {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     check_digest_algs(&parsed)?;
-    let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
-    let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
+    let econtent = parsed.econtent.as_deref().ok_or_else(ts_err)?;
+    let tst = TstInfo::from_der(econtent).map_err(|_| ts_err())?;
+    let _tst_held = memory.hold(held_bytes::tst_info(&tst, econtent.len()))?;
     // TSTInfo version enforced on BOTH tsp paths (the seal-time path gets it
     // via check_tst_fields): only v1 tokens exist under RFC 3161. NOTE: with
     // x509-tsp 0.1 the Enumerated decode rejects unknown versions first —
     // this check is the explicit posture if the crate ever grows variants.
     if tst.version != TspVersion::V1 {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     if tst.message_imprint.hash_algorithm.oid != OID_SHA256 {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     if tst.message_imprint.hashed_message.as_bytes() != expected_imprint {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     let signer = &parsed.signer;
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     token_content_type_check(signer)?;
-    if token_message_digest(signer)? != cms::sha256(&econtent) {
-        return Err(ts_err());
+    if token_message_digest(signer)? != cms::sha256(econtent) {
+        return Err(ts_err().into());
     }
     let idx = find_bound_cert(&parsed.certificates, signer)?;
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der)?;
     if !cms::sig_alg_permitted(alg, &signer.signature_alg_oid) {
-        return Err(ts_err());
+        return Err(ts_err().into());
     }
     let input = cms::signed_attrs_signature_input(signer);
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
-    let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
-        .chain(
-            parsed
-                .certificates
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != idx)
-                .map(|(_, c)| c.clone()),
-        )
-        .collect();
+    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
     let trust = match parse_certs(&chain_ders) {
-        Ok(chain) => match pkix_chain::verify_time_stamper(
-            &chain,
-            anchors,
-            &SealProfile,
-            gen_time_unix,
-            &pkix_chain::DefaultVerifier,
-            &pkix_chain::NoRevocation,
-            &pkix_chain::NoAiaFetcher,
-        ) {
-            Ok(_) => VerifyCheckStatus::Pass,
-            Err(error) => super::verify::pkix_path_status(&error),
-        },
+        Ok(chain) => {
+            let _chain_held = memory.hold(held_bytes::certificates(&chain, &chain_ders))?;
+            match pkix_chain::verify_time_stamper(
+                &chain,
+                anchors,
+                &SealProfile,
+                gen_time_unix,
+                &pkix_chain::DefaultVerifier,
+                &pkix_chain::NoRevocation,
+                &pkix_chain::NoAiaFetcher,
+            ) {
+                Ok(_) => VerifyCheckStatus::Pass,
+                Err(error) => super::verify::pkix_path_status(&error),
+            }
+        }
         Err(_) => VerifyCheckStatus::Fail,
     };
     Ok(VerifiedToken {

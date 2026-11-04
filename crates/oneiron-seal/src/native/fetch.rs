@@ -143,7 +143,9 @@ mod http {
         /// The response's own bytes: a hit shares them and their
         /// reservation, and copies nothing.
         body: SharedBytes,
-        content_type: Option<String>,
+        /// Shared: a hit reads it under the lock and copies it only once its
+        /// own copy is reserved.
+        content_type: Option<Arc<str>>,
         /// Holds the entry's copy of `content_type`.
         _content_type_held: Lease,
         inserted: Instant,
@@ -224,22 +226,43 @@ mod http {
                 .into()
         }
 
-        fn cache_get(&self, key: &CacheKey) -> Option<FetchResponse> {
-            let mut cache = self.cache.lock().ok()?;
-            let at = cache.entries.iter().position(|e| e.key == *key)?;
-            let entry = &cache.entries[at];
-            // Integrity self-check: the cached body must still match the
-            // digest recorded under the canonical key.
-            if entry.inserted.elapsed() > CACHE_TTL
-                || super::super::cms::sha256(&entry.body) != entry.response_digest
-            {
-                cache.entries.swap_remove(at);
-                return None;
-            }
-            Some(FetchResponse {
-                body: Arc::clone(&entry.body),
-                content_type: entry.content_type.clone(),
-            })
+        /// The cached response for `key`, if one is kept and still valid: a
+        /// new response over the cached body, whose own content type and
+        /// shared header are reserved before they are made (FIX 8455).
+        async fn cache_get(
+            &self,
+            key: &CacheKey,
+            deadline: tokio::time::Instant,
+        ) -> Result<Option<FetchResponse>, FetchError> {
+            let (body, content_type) = {
+                let Ok(mut cache) = self.cache.lock() else {
+                    return Ok(None);
+                };
+                let Some(at) = cache.entries.iter().position(|e| e.key == *key) else {
+                    return Ok(None);
+                };
+                let entry = &cache.entries[at];
+                // Integrity self-check: the cached body must still match the
+                // digest recorded under the canonical key.
+                if entry.inserted.elapsed() > CACHE_TTL
+                    || super::super::cms::sha256(&entry.body) != entry.response_digest
+                {
+                    cache.entries.swap_remove(at);
+                    return Ok(None);
+                }
+                (Arc::clone(&entry.body), entry.content_type.clone())
+            };
+            let beside = self
+                .lease(
+                    AdmittedBytes::beside_bytes(content_type.as_deref()),
+                    deadline,
+                )
+                .await
+                .map_err(FetchError::Memory)?;
+            Ok(Some(FetchResponse {
+                body: Arc::new(AdmittedBytes::share(&body, beside)),
+                content_type: content_type.as_deref().map(str::to_owned),
+            }))
         }
 
         /// Keeps `resp` for later requests with the same key. The cache is
@@ -267,7 +290,11 @@ mod http {
                 };
                 Some(held)
             };
-            let content_type_bytes = resp.content_type.as_ref().map_or(0, String::len);
+            // The entry's shared copy: its bytes and the header of its `Arc`.
+            let content_type_bytes = resp
+                .content_type
+                .as_ref()
+                .map_or(0, |ct| ct.len() + 2 * std::mem::size_of::<usize>());
             let Ok(content_type_held) = self.lease(content_type_bytes, deadline).await else {
                 return;
             };
@@ -294,7 +321,7 @@ mod http {
                 key,
                 response_digest,
                 body: Arc::clone(&resp.body),
-                content_type: resp.content_type.clone(),
+                content_type: resp.content_type.as_deref().map(Arc::from),
                 _content_type_held: content_type_held,
                 inserted: Instant::now(),
             };
@@ -398,12 +425,16 @@ mod http {
         /// read races the same deadline (a stalled body is a Timeout, not an
         /// unbounded wait). No size cuts it short (Rule 5). Before the buffer
         /// grows, its new allocation is reserved while the old one's lease
-        /// still holds, so the moment both are live is reserved too. The
-        /// body keeps its lease; on an error the two drop together.
+        /// still holds, so the moment both are live is reserved too. Once
+        /// whole it drops its doubled capacity when an exact lease is to be
+        /// had (FIX 8457). The body keeps its lease, and `beside` for the
+        /// response's content type and shared header; on an error they drop
+        /// together.
         async fn stream_body<S>(
             &self,
             stream: &mut S,
             content_type: Option<String>,
+            beside: Lease,
             deadline: tokio::time::Instant,
         ) -> Result<FetchResponse, FetchError>
         where
@@ -425,6 +456,14 @@ mod http {
                 }
                 body.extend(&chunk).map_err(FetchError::Memory)?;
             }
+            // Optional: without an exact lease the body keeps the capacity
+            // it has, and its lease.
+            if body.slack() > 0
+                && let Ok(exact) = self.lease(body.len(), deadline).await
+            {
+                body.shrink(exact);
+            }
+            body.hold_beside(beside);
             Ok(FetchResponse {
                 body: Arc::new(body),
                 content_type,
@@ -458,11 +497,11 @@ mod http {
     impl SealFetcher for SsrfGuardedHttpFetcher {
         async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
             let key = Self::cache_key(&request);
-            if let Some(hit) = self.cache_get(&key) {
-                return Ok(hit);
-            }
             let deadline =
                 tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
+            if let Some(hit) = self.cache_get(&key, deadline).await? {
+                return Ok(hit);
+            }
             let mut url = request.url.clone();
             // Every hop is followed, its policy re-run, inside the deadline:
             // `max_redirects` is a threshold, never a refusal (Rule 5).
@@ -486,11 +525,17 @@ mod http {
             let content_type = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string);
+                .and_then(|v| v.to_str().ok());
+            // The response's copy of its content type and the header around
+            // its body are reserved before they are made (FIX 8455).
+            let beside = self
+                .lease(AdmittedBytes::beside_bytes(content_type), deadline)
+                .await
+                .map_err(FetchError::Memory)?;
+            let content_type = content_type.map(str::to_owned);
             let mut stream = response.bytes_stream();
             let out = self
-                .stream_body(&mut stream, content_type, deadline)
+                .stream_body(&mut stream, content_type, beside, deadline)
                 .await?;
             self.cache_put(key, &out, deadline).await;
             Ok(out)

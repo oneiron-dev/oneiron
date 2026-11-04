@@ -37,17 +37,7 @@ pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 /// A scored entity result. Defined in `oneiron-retrieval`, where fusion ranks it.
 pub use oneiron_retrieval::pipeline::ScoredEntity;
 
-/// Retrieval signal type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
-#[non_exhaustive]
-pub enum Signal {
-    Vector,
-    Text,
-    Phonetic,
-    Temporal,
-    Ppr,
-    Hyde,
-}
+pub use crate::store::retrieval_signal::Signal;
 
 pub(super) const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 pub(super) const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
