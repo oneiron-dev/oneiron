@@ -8,7 +8,7 @@ use crate::side_table::{self, Named, SideTable};
 const SETTING: SideTable<(), WebConnectorSetting, Named> =
     SideTable::new(&side_table::WEB_CONNECTOR_SETTING);
 
-pub use crate::settings::web_connector::{WebProviderKey, WebConnectorSetting};
+pub use crate::settings::web_connector::{WebConnectorSetting, WebProviderKey};
 
 impl Vault {
     /// The vault's web connector setting, or the ruled default when the owner

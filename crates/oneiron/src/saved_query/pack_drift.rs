@@ -31,7 +31,9 @@ pub struct PackDrift {
     pub affected_predicates: Vec<String>,
 }
 
-pub use crate::skill_hub::pack_catalog::predicate_rewrites::{PackMigrationMap, PackPredicateRewrite};
+pub use crate::skill_hub::pack_catalog::predicate_rewrites::{
+    PackMigrationMap, PackPredicateRewrite,
+};
 
 /// The rung the repair ladder settled on.
 #[derive(Debug, Clone, PartialEq, Eq)]

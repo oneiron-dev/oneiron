@@ -361,4 +361,3 @@ pub enum EngineScan {
 /// okay: ten times the count each of the origin scans once refused at. A
 /// scan with a default of its own asks at the count it once cut short at.
 pub const DEFAULT_SCAN_CHECK_THRESHOLD: u64 = 1_000_000;
-

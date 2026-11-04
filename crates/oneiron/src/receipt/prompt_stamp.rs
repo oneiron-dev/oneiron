@@ -15,4 +15,3 @@ pub struct PromptRecompileStamp {
     pub assembled_fingerprint: Option<String>,
     pub source_paths: Vec<String>,
 }
-

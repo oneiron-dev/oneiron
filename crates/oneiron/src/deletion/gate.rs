@@ -90,7 +90,9 @@ impl<'a> GatedDeletion<'a> {
         self.owner_act
     }
 
-    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
+    pub(super) fn room_authority(
+        &self,
+    ) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
         Some((self.context.room?, self.context.room_role?))
     }
 
