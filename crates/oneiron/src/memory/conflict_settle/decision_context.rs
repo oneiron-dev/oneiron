@@ -77,13 +77,14 @@ fn member_decision(
 
 /// Answers every member with its newest read-carrying decision. One member
 /// without such a decision withholds the aggregate's whole read context.
+/// Copied bundles carry their complete erase refs into the new receipt.
 pub(super) fn answering_members(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     members: &[EntityId],
     loop_claim: EntityId,
     kind: Option<&str>,
-) -> GateDecisionContext {
+) -> Result<(GateDecisionContext, Vec<[u8; 16]>)> {
     let mut answered = Vec::with_capacity(members.len());
     for member in members {
         answered.extend(member_decision(vault, txn, member));
@@ -92,12 +93,24 @@ pub(super) fn answering_members(
     if answered.len() != members.len() {
         context.read.clear();
     }
+    let mut claim_refs: Vec<[u8; 16]> = members.iter().map(|member| *member.as_bytes()).collect();
+    if !context.read.is_empty() {
+        for record in &answered {
+            if record.claim_id.is_none() {
+                claim_refs.extend(
+                    vault
+                        .store
+                        .gate_decision_claim_refs_in_txn(txn, record.decision_id)?,
+                );
+            }
+        }
+    }
     for link in answering_claim(vault, txn, loop_claim, kind).links {
         if !context.links.contains(&link) {
             context.links.push(link);
         }
     }
-    context
+    Ok((context, claim_refs))
 }
 
 /// Adds the kept claim named by a resolved claim's durable resolution, then
@@ -119,24 +132,21 @@ pub(super) fn add_resolved_kept(
         _ => None,
     };
     if let Some(resolution) = resolution {
-        members.extend(crate::dreamer_consolidation::marker_ids(
-            resolution, "kept",
-        ));
+        members.extend(crate::dreamer_consolidation::marker_ids(resolution, "kept"));
     }
     members.sort_unstable();
     members.dedup();
     Ok(())
 }
 
-/// Appends a conflict receipt as a claim-free bundle bound to every member.
+/// Appends a conflict receipt bound to its explicit and inherited members.
 pub(super) fn append(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &GateDecisionRecord,
-    members: &[EntityId],
+    claim_refs: &[[u8; 16]],
 ) -> Result<()> {
-    let claim_refs: Vec<[u8; 16]> = members.iter().map(|member| *member.as_bytes()).collect();
     vault
         .store
-        .append_gate_decision_with_claim_refs_in_txn(wtxn, record, &claim_refs)
+        .append_gate_decision_with_claim_refs_in_txn(wtxn, record, claim_refs)
 }

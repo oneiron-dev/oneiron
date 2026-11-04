@@ -354,11 +354,11 @@ impl Memory<'_> {
                     marker.as_bytes().to_vec(),
                     now,
                 );
-                receipt.context = decision_context::answering_members(
-                    self.vault, &*txn, &members, marker, None,
-                );
+                let (context, claim_refs) =
+                    decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
+                receipt.context = context;
                 receipt.grant_ref = grant_ref;
-                decision_context::append(self.vault, txn, &receipt, &members)?;
+                decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
                 return Ok(ConflictSettleOutcome::ImportReviewPending {
                     staged,
                     receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
@@ -390,22 +390,21 @@ impl Memory<'_> {
                         .collect(),
                     now,
                 );
-                record.context = decision_context::answering_members(
+                let (context, claim_refs) = decision_context::answering_members(
                     self.vault,
                     &*txn,
                     &members,
                     approved.claim,
                     None,
-                );
+                )?;
+                record.context = context;
                 record.grant_ref.clone_from(&grant_ref);
-                decision_context::append(self.vault, txn, &record, &members)?;
+                decision_context::append(self.vault, txn, &record, &claim_refs)?;
                 Some(format!("gate:{}", record.decision_id.to_hex()))
             }
             (Some(_), _) => return Err(not_approved().into()),
         };
-        let mut members = Vec::with_capacity(
-            conflict.members.len() + settled.superseded.len() + 3,
-        );
+        let mut members = Vec::with_capacity(conflict.members.len() + settled.superseded.len() + 3);
         members.push(marker);
         members.extend(conflict.members.iter().copied());
         members.extend(settled.superseded.iter().copied());
@@ -420,10 +419,11 @@ impl Memory<'_> {
             marker.as_bytes().to_vec(),
             now,
         );
-        receipt.context =
-            decision_context::answering_members(self.vault, &*txn, &members, marker, None);
+        let (context, claim_refs) =
+            decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
+        receipt.context = context;
         receipt.grant_ref = grant_ref;
-        decision_context::append(self.vault, txn, &receipt, &members)?;
+        decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
         Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
             marker,
             settlement,
@@ -569,14 +569,15 @@ impl Memory<'_> {
                 reverted.marker.as_bytes().to_vec(),
                 now,
             );
-            receipt.context = decision_context::answering_members(
+            let (context, claim_refs) = decision_context::answering_members(
                 self.vault,
                 &*txn,
                 &members,
                 resolved,
                 Some(KIND),
-            );
-            decision_context::append(self.vault, txn, &receipt, &members)?;
+            )?;
+            receipt.context = context;
+            decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
             Ok(ConflictRevertReceipt {
                 resolved,
                 reverted,

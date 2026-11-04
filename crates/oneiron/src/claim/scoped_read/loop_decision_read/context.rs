@@ -207,7 +207,10 @@ impl<'v> ScopedRead<'v> {
             if self.entity_record_in(txn, &anchor.root)?.is_none() {
                 return Ok(false);
             }
-            if !self.audience_readable_in(txn, &anchor.turn)? {
+            let turn = crate::vault::live_entity_row_in_txn(&self.store_read(), txn, &anchor.turn)?;
+            if turn.live_type() != Some(crate::registry::ENTITY_TYPE_TURN)
+                || !self.audience_readable_in(txn, &anchor.turn)?
+            {
                 return Ok(false);
             }
         }

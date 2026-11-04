@@ -54,7 +54,7 @@ impl Store {
     }
 
     /// Reads the complete association, independent of the secondary index.
-    pub(super) fn gate_decision_claim_refs_in_txn(
+    pub(crate) fn gate_decision_claim_refs_in_txn(
         &self,
         txn: &RoTxn<'_>,
         id: GateDecisionId,
