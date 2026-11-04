@@ -5,7 +5,6 @@ import asyncio
 import json
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from itertools import islice
 from typing import Any
 from uuid import uuid4
 
@@ -128,9 +127,7 @@ class OneironStore(BaseStore):
         raise TypeError("unsupported LangGraph store operation")
 
     def batch(self, ops: Iterable[Op]) -> list[Result]:
-        operations = list(islice(ops, 10001))
-        if len(operations) > 10000:
-            raise ValueError("batch exceeds 10000 operations")
+        operations = list(ops)
         prepared = [self._prepare(op) for op in operations]
         results: list[Result] = []
         for verb, request in prepared:
