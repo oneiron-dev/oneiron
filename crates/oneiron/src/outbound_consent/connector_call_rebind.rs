@@ -81,3 +81,51 @@ pub(crate) fn code_wait_rebind_effects_in_txn(
     }
     Ok((compose(current_binding)?, compose(successor_binding)?))
 }
+
+/// Resolve only the code wait owning this persisted frozen intent.
+/// The native wait door validates its current consumed authorization in `txn`.
+pub(crate) fn code_wait_retry_approval_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+) -> Result<bool, IntentLedgerError> {
+    let Some(current) =
+        crate::outbound_intent_ledger::read_intent_record_in_txn(vault, txn, &record.id)?
+    else {
+        return Ok(false);
+    };
+    if current.state != crate::outbound_intent_ledger::IntentState::Pending
+        || current.attempt_id != record.attempt_id
+        || current.call_seq != record.call_seq
+        || current.payload() != record.payload()
+        || current.server != record.server
+        || current.tool != record.tool
+        || current.resolved_endpoint != record.resolved_endpoint
+        || current.budget_accounting.key_ref != record.budget_accounting.key_ref
+        || current
+            .capability_provenance()
+            .map(|capability| capability.grant_id())
+            != record
+                .capability_provenance()
+                .map(|capability| capability.grant_id())
+    {
+        return Ok(false);
+    }
+    let Some(candidate) = frozen_scoped_candidate_in_txn(vault, txn, &current)? else {
+        return Ok(false);
+    };
+    let call_ref = super::connector_call::connector_call_ref(
+        &candidate.principal_ref,
+        super::connector_call::ConnectorCallInvocation {
+            attempt_id: current.attempt_id,
+            call_seq: current.call_seq,
+        },
+    )?;
+    let Some(wait_id) = PENDING_CALLS
+        .get(&vault.store, txn, &call_ref)?
+        .and_then(|pending| pending.code_consent_wait)
+    else {
+        return Ok(false);
+    };
+    Ok(vault.code_consent_retry_approval_in_txn(txn, &current, wait_id)?)
+}
