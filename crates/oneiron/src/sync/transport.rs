@@ -248,6 +248,9 @@ pub mod window_sub_tags {
     /// A window pad receipt for an owner-lane `UPDATE` that came sealed, or a receiver's
     /// `NotReady` for one it could not install.
     pub const WINDOW_PAD_RECEIPT: u8 = 16;
+    /// The home held this residence update without persisting or importing it.
+    /// The same window pad receipt binds the reply; the queued row stays owed.
+    pub const RESIDENCE_HELD: u8 = 17;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).

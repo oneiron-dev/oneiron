@@ -321,6 +321,7 @@ impl SyncConnection {
         client.artifact_publication_resend.clear();
         client.asset_bodies = Default::default();
         client.home_peer = crate::authority::PeerMachine::Unknown;
+        client.residence_acks.clear();
         client.reset_window_pads();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key

@@ -662,8 +662,8 @@ impl SyncConnection {
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
-    /// missing earlier ACK retains the rest of that window's rows, delete
-    /// markers included. Windows are separate documents, so a row the home
+    /// missing earlier ACK or a Held reply retains the rest of that window's
+    /// rows, delete markers included. Windows are separate documents, so a row the home
     /// never acknowledged (a window it refused to grant again, say) holds
     /// back only its own window. A row a device-only world keeps here is
     /// never sent, so never acknowledged: it clears, and its operations stay
@@ -690,8 +690,13 @@ impl SyncConnection {
                 held_back.insert(queued.window_key);
                 continue;
             };
-            if *ack != *blake3::hash(&queued.encoded).as_bytes() {
+            if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
                 return Err("home residence acknowledgment digest mismatch".into());
+            }
+            if !ack.is_durable() {
+                retained.insert(queued.seq);
+                held_back.insert(queued.window_key);
+                continue;
             }
             confirmed.push(queued.seq);
         }
