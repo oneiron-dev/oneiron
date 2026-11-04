@@ -1,6 +1,6 @@
 //! Per-vault read-side affect retrieval policy.
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 use oneiron_contracts::affect::Vad;
 
 /// Highest arousal stretch: a claim at arousal 1 ages over at most
@@ -76,12 +76,12 @@ impl AffectRetrievalPolicy {
     }
 
     /// Whether the read-side factor stage reads claim affect at all.
-    pub(crate) fn shapes_access_factor(&self) -> bool {
+    pub fn shapes_access_factor(&self) -> bool {
         self.arousal_stretch > 0.0 || self.availability_floor.is_some()
     }
 
     /// Whether the emotion-congruence stage runs for `query`.
-    pub(crate) fn congruence_query(&self, query: Option<Vad>) -> Option<Vad> {
+    pub fn congruence_query(&self, query: Option<Vad>) -> Option<Vad> {
         query.filter(|_| self.emotion_weight > 0.0)
     }
 }
