@@ -8707,6 +8707,16 @@ dependencies = [
 [[package]]
 name = "oneiron-store"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "heed",
+ "oneiron-contracts",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "zeroize",
+]
 
 [[package]]
 name = "oneiron-uniffi"
