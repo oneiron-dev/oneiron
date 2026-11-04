@@ -62,15 +62,15 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
    For `write`, `delete` and `rename`, every path must be in the workspace
    mount and carries at most one effect (a rename occupies both its paths).
    The host applies each accepted effect to its copy of the base tree's shape
-   and refuses a file/directory conflict or a result over the size or count
-   limits. Duplicates, traversal, other mounts and excess bytes/count fail
+   and refuses a file/directory conflict or a result over the size limits.
+   Duplicates, traversal, other mounts and excess bytes fail
    closed. Symlinks and special files are not representable and must refuse.
    Each accepted proposal gets `receipt` (accepted true); any refused proposal
    fails the whole run.
 
-Per-file limit: 1 MiB; total source/proposals: 16 MiB each; files: 8192;
-requests: 16384. Source bytes are copied through the socket. Host source trees
-are never attached as writable devices. Proposed changes do not touch them.
+Per-file limit: 1 MiB; total source/proposals: 16 MiB each; requests: 16384.
+Source bytes are copied through the socket. Host source trees are never
+attached as writable devices. Proposed changes do not touch them.
 Collection is consume-once and only possible after successful completion.
 
 ## Evidence status

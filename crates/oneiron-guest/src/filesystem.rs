@@ -4,7 +4,7 @@ use crate::{
     Error, Result,
     protocol::{MAX_FILE, Snapshot},
 };
-use oneiron_sandbox_contract::{MAX_WORKSPACE_DIRECTORIES, WorkspacePath, WorkspaceShape};
+use oneiron_sandbox_contract::{WorkspacePath, WorkspaceShape};
 use std::{
     ffi::{CStr, CString},
     fs::File,
@@ -148,7 +148,6 @@ impl Workspace {
         // Keep bounded path names, not one open fd per directory. A wide tree
         // must work under the child's small RLIMIT_NOFILE as well as a deep one.
         let mut stack = vec![String::from("/mnt/workspace")];
-        let mut directories = 0;
         while let Some(prefix) = stack.pop() {
             let mut directory = self.root.try_clone()?;
             if prefix != "/mnt/workspace" {
@@ -165,10 +164,6 @@ impl Workspace {
                 virtual_relative(&path)?;
                 let kind = entry_kind(&directory, &name)?;
                 if kind == libc::S_IFDIR {
-                    directories += 1;
-                    if directories > MAX_WORKSPACE_DIRECTORIES {
-                        return Err(Error::Filesystem("snapshot directory count"));
-                    }
                     stack.push(path);
                 } else if kind == libc::S_IFREG {
                     visit(open_regular(&directory, &name, false, false)?, path, false)?;

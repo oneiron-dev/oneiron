@@ -41,10 +41,10 @@ requires `source` in addition to the host's version, vm_id, tier, pids, and
 component_bytes fields. Only `foreign` and `untrusted` tiers are accepted.
 
 Limits: 8 MiB frames; 64 MiB components in sequential nonempty chunks; 1 MiB
-source and files; 16 MiB aggregate files; 8192 files/directories; 64 path levels;
-4096-byte virtual paths; 16384 wire requests (one slot reserved for finish).
+source and files; 16 MiB aggregate files; 4096-byte virtual paths; 16384 wire
+requests (one slot reserved for finish).
 Host calls have a 16383-call ceiling and cumulative read/random output is
-limited to 16 MiB. The merged workspace is also bounded to 16 MiB / 8192 files.
+limited to 16 MiB. The merged workspace is also bounded to 16 MiB.
 The runtime caps each store to one 64 MiB memory, eight tables, 10000 table
 elements, 32 instances, and 100000000 fuel. The host wall-clock watchdog bounds
 compilation, credential I/O, and VM execution.
