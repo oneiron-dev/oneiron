@@ -4,7 +4,8 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
-use crate::claim::{PointRead, ReadRow, ScopedRead};
+use crate::ports::{PointRead, ReadRow};
+use crate::claim::{ScopedRead};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;

@@ -20,7 +20,7 @@ use super::run_record::{self, KEY_REVERT, KEY_SNAPSHOT};
 use super::run_snapshot::{CleanupSnapshotEntry, KEY_ENTRIES, decode_snapshot, entity_at};
 use super::{CleanupKind, KEY_AT, KEY_ENTITY, KEY_KIND, field};
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::batch::EntityMetadataHeader;
 use crate::deletion::{TombstoneReason, decode_tombstone_value};
 use crate::entity_id::EntityId;

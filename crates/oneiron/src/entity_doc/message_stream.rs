@@ -135,7 +135,7 @@ fn birth_message_in_txn(
         .ok_or(Error::CorruptedIndex("message text"))?;
     // A MESSAGE its writing door already stamped keeps that birth on its
     // document's birth commit (FIX 10929).
-    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, entity)?;
+    let born = crate::store::birth_record::row_birth_in_txn(&vault.store, txn, entity)?;
     // The birth commit names the actor's stamp token (FIX 10930).
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let born = born.as_ref().map(|birth| &birth.made_by);
