@@ -773,17 +773,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentDefinition",
-      "MemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
       "fn": 17,
-      "re-export": 15,
-      "struct": 2
+      "re-export": 17
      }
     },
     {
@@ -32699,7 +32695,7 @@
      "path": "src/edit_roundtrip/paragraph_review.rs",
      "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -69060,7 +69056,7 @@
      "path": "src/store/actor_scrubs.rs",
      "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "trait": 1
      }
     },
@@ -69082,6 +69078,30 @@
      "purpose": "The derived id of the asset that carries a birthed agent's captured source",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentDefinition"
+     ],
+     "path": "src/store/agent_definition.rs",
+     "purpose": "The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryProfile"
+     ],
+     "path": "src/store/agent_memory_profile.rs",
+     "purpose": "The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget…",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -72254,7 +72274,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 122,
+      "crate-vis": 124,
       "mod": 108,
       "re-export": 31
      }
@@ -90601,7 +90621,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 433,
+     "files": 435,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90841,7 +90861,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6315,
+   "source_files": 6317,
    "test_files": 895
   },
   "oneiron-android": {
@@ -127255,6 +127275,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignRateThresholds"
+     ],
+     "path": "src/esign_rate_thresholds.rs",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -127311,7 +127343,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 35
+      "mod": 36
      }
     },
     {
@@ -129152,6 +129184,13 @@
      "layout": "file",
      "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
+    "esign_rate_thresholds": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to"
+    },
     "file_secret_marks": {
      "files": 1,
      "impl_vault": false,
@@ -129323,7 +129362,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 149,
+   "source_files": 150,
    "test_files": 4
   },
   "oneiron-uniffi": {
