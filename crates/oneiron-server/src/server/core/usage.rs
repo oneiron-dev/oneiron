@@ -59,9 +59,9 @@ impl SyncServer {
         });
     }
 
-    /// Writes the recall doors' buffered retrieval rows in one grouped write,
-    /// if any. Serve calls it at stop, before the vault closes; the buffer's
-    /// drop is the backstop for paths that stop elsewhere (FIX 11011).
+    /// Flushes retrieval meters and retries the taken memory-only settlement
+    /// snapshot before serve closes the vault. Each buffer's drop is the
+    /// backstop for paths that stop elsewhere (FIX 11011, FIX 737).
     pub(crate) fn flush_retrieval_meters(&self) {
         self.flush_usage_meters(true);
     }
@@ -73,11 +73,9 @@ impl SyncServer {
         }
     }
 
-    /// Starts the retrieval-meter flush worker once: every
-    /// [`crate::usage::RETRIEVAL_FLUSH_SECS`] it writes what the recall doors
-    /// buffered in one grouped write. Started where the window receipts start;
-    /// an empty buffer takes no write, and a failed flush keeps its rows for
-    /// the next tick (FIX 11011).
+    /// Starts the existing meter worker once. Each tick flushes retrieval rows
+    /// and one bounded settlement retry pass. Started where window receipts
+    /// start; failed writes keep their payloads for the next tick.
     pub(crate) fn start_retrieval_meter_flush(server: &Arc<SyncServer>) {
         // Like the window receipts: router construction may happen before its
         // runtime exists, so the first runtime-backed request retries this
