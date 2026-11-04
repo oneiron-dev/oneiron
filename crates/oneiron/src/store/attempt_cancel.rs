@@ -6,6 +6,9 @@
 //! accounts them; the attempt row stores them.
 use serde::{Deserialize, Serialize};
 
+#[cfg(doc)]
+use crate::attempt_queue::{ATTEMPT_RUNTIME_ACTOR, ForceCancelAuthority};
+
 /// Why an attempt was asked to LAND (ONE-1896 §5).
 ///
 /// Typed provenance, never a bare "cancelling" boolean: a landing forced by a
@@ -103,7 +106,7 @@ pub enum CancelMode {
 /// Durable terminal cancellation receipt, authored by the runtime.
 ///
 /// `actor` is copied from the landing lease owner or from
-/// [`ForceCancelAuthority`](crate::attempt_queue::ForceCancelAuthority), never from free request text.
+/// [`ForceCancelAuthority`], never from free request text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptCancellation {
     pub mode: CancelMode,
@@ -159,7 +162,7 @@ pub enum AttemptCancelReceiptKind {
 pub struct AttemptCancelReceipt {
     pub sequence: u64,
     pub at: u64,
-    /// Who authored the row. Runtime rows carry [`ATTEMPT_RUNTIME_ACTOR`](crate::attempt_queue::ATTEMPT_RUNTIME_ACTOR).
+    /// Who authored the row. Runtime rows carry [`ATTEMPT_RUNTIME_ACTOR`].
     pub actor: String,
     pub kind: AttemptCancelReceiptKind,
     #[serde(default)]
