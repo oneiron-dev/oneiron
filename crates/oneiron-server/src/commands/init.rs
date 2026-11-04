@@ -401,7 +401,11 @@ pub(crate) fn setup_models_on_open_vault(
         crate::config::default_config_path(),
     )
     .map_err(crate::owner::OwnerError::Host)?;
-    if current.vault_path != startup.vault_path
+    let absolute = |path: &std::path::Path| {
+        std::path::absolute(path).map_err(|error| crate::owner::OwnerError::Host(error.into()))
+    };
+    let vault_path = absolute(&current.vault_path)?;
+    if vault_path != absolute(&startup.vault_path)?
         || current.dimensions != startup.dimensions
         || current.map_size != startup.map_size
         || current.gpu != startup.gpu
@@ -417,7 +421,7 @@ pub(crate) fn setup_models_on_open_vault(
             "model setup answers were not accepted: {error:#}"
         ))
     })?;
-    if prepared.config.vault_path != current.vault_path
+    if absolute(&prepared.config.vault_path)? != vault_path
         || prepared.config.dimensions != current.dimensions
     {
         return Err(crate::owner::OwnerError::Invalid(format!(
