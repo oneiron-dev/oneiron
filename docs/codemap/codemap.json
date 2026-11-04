@@ -66460,7 +66460,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 23,
       "re-export": 21
      }
     },
@@ -66517,15 +66517,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SiteSkillExposure"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/site_exposure.rs",
-     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "purpose": "Site-skill exposures (FIX 11436): the rows live in `store::site_skill_exposure`; this module keeps the skill…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -70652,12 +70648,9 @@
       "EgressPredicate",
       "Embedder",
       "EmbedderLocality",
-      "EmbeddingDevice",
       "EmbeddingMatchEvidence",
-      "EmbeddingProvenance",
       "EmbeddingProvenanceCount",
       "EmbeddingSpace",
-      "InputKind",
       "KindSlotBindings",
       "MediaEmbedReport",
       "MediaEmbedder",
@@ -70669,11 +70662,12 @@
      "path": "src/store/embedding.rs",
      "purpose": "Embedding space, input, provenance and host-provider vocabulary",
      "surface": {
-      "const": 10,
-      "crate-vis": 9,
-      "enum": 5,
-      "fn": 11,
-      "struct": 9,
+      "const": 9,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 7,
+      "re-export": 2,
+      "struct": 8,
       "trait": 3,
       "type": 1
      }
@@ -71969,7 +71963,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 83,
+      "mod": 84,
       "re-export": 31
      }
     },
@@ -73241,6 +73235,20 @@
      "purpose": "The scan an erase's scrub makes of one side table: every row whose key and value decode, with any row whose…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SiteSkillExposure"
+     ],
+     "path": "src/store/site_skill_exposure.rs",
+     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -90051,7 +90059,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 366,
+     "files": 367,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90291,7 +90299,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6262,
+   "source_files": 6263,
    "test_files": 898
   },
   "oneiron-android": {
@@ -126258,6 +126266,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BatchOp"
+     ],
+     "path": "src/batch_op.rs",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SealedBundleGeneration"
      ],
      "path": "src/bundle_generations.rs",
@@ -126558,6 +126578,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EmbeddingDevice",
+      "EmbeddingProvenance",
+      "InputKind"
+     ],
+     "path": "src/embedding_vocabulary.rs",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -126614,7 +126651,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 23
+      "mod": 25
      }
     },
     {
@@ -128043,6 +128080,13 @@
     }
    ],
    "modules": {
+    "batch_op": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it"
+    },
     "bundle_generations": {
      "files": 1,
      "impl_vault": false,
@@ -128084,6 +128128,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
+    },
+    "embedding_vocabulary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
     "file_secret_marks": {
      "files": 1,
@@ -128207,7 +128258,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 121,
+   "source_files": 123,
    "test_files": 1
   },
   "oneiron-uniffi": {
