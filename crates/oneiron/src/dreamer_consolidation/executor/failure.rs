@@ -26,7 +26,8 @@ pub(super) fn park_partition_failure_with_spend(
         }
         DurableStepError::SpentSchemaValidation { usage, .. }
         | DurableStepError::SpentFinalizeRefused { usage }
-        | DurableStepError::SpentLlm { usage, .. } => charges.record_usage(usage),
+        | DurableStepError::SpentLlm { usage, .. }
+        | DurableStepError::SpentFallback { usage, .. } => charges.record_usage(usage),
         _ => {}
     }
     let cause = if matches!(error, DurableStepError::SpentSchemaValidation { .. }) {

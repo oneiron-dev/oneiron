@@ -31,6 +31,7 @@ pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
 pub(crate) use validation::trusted_soft_addressing_edge;
 
 pub use canonical::*;
+pub(crate) use document::note_fork_decided;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
 pub(crate) use document::{materialize_window_documents, validate_window_documents};
