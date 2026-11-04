@@ -216,6 +216,88 @@ pub(crate) fn conflict_marker(
         envelope,
     })
 }
+/// Settles only the matching supersession coaching marker, if it still waits.
+/// The caller has already granted the replacement and closed the prior in `txn`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the settlement binds the granted pair and the completing door's actor"
+)]
+pub(super) fn settle_coaching_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    new: &EntityId,
+    old: &EntityId,
+    body: &ClaimBody,
+    original: &WriteEnvelope,
+    closer: Option<WriteActor>,
+    now: u64,
+) -> Result<Option<crate::dreamer_consolidation::SettlementApplied>> {
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Ok(None);
+    };
+    let marker = conflict_marker(new, old, body, original)?;
+    match marker.landed_in_txn(vault, txn) {
+        Ok(true) => {}
+        Ok(false) | Err(Error::InvalidClaimBody("supersession companion identity collision")) => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    }
+    let Some(conflict) =
+        crate::dreamer_consolidation::open_conflicts_in_txn(vault, txn, Some(subject))?
+            .into_iter()
+            .find(|conflict| conflict.marker == marker.id && !conflict.reverted)
+    else {
+        return Ok(None);
+    };
+    if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, new)? {
+        return Ok(None);
+    }
+    let person =
+        closer.is_some_and(|actor| actor.actor_class() == crate::edge::EdgeActorClass::Human);
+    let source = if person {
+        ClaimSource::UserStated
+    } else {
+        ClaimSource::Generated
+    };
+    let envelope = WriteEnvelope::with_lineage(
+        closer.unwrap_or_else(|| original.actor()),
+        source,
+        marker.envelope.provenance().clone(),
+        if person {
+            ClaimApprovalStatus::Approved
+        } else {
+            ClaimApprovalStatus::Auto
+        },
+        original.lineage().clone().with(source),
+    );
+    let held = std::cell::Cell::new(false);
+    let mut settlement_txn = vault.store.env.nested_write_txn(txn)?;
+    let applied = crate::dreamer_consolidation::apply_settlement_in_txn(
+        vault,
+        &mut settlement_txn,
+        &conflict,
+        crate::dreamer_consolidation::ConflictSettlement::Keep(*new),
+        &envelope,
+        closer,
+        person,
+        crate::dreamer_consolidation::KeepAs::Auto(&held),
+        now,
+    );
+    match applied {
+        Ok(outcome) => {
+            settlement_txn.commit()?;
+            Ok(Some(outcome))
+        }
+        Err(Error::Gate(crate::error::GateError::GateWriteRejected { .. })) => {
+            // A held or denied answer must not undo the already-granted pair.
+            drop(settlement_txn);
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn write_coaching(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
