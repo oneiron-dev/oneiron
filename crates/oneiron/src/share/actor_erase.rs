@@ -88,5 +88,8 @@ pub(crate) fn erase_admission_actor_in_txn(
             erase_recipient_in_txn(vault, wtxn, id, grant, at)?;
         }
     }
+    // FIX 4980: non-brief grants naming the erased principal become inert
+    // history too; the 4231 path above keeps the admitted shares.
+    crate::access_grant::erase_principal_grants_in_txn(vault, wtxn, actor)?;
     Ok(())
 }
