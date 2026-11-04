@@ -131,10 +131,16 @@ fn selected_in_txn(
 }
 
 fn attempt_id(text: &str) -> MemoryResult<AttemptId> {
-    let raw =
-        hex::decode(text).map_err(|_| MemoryError::bad_request("attempt must be 32 hex digits"))?;
-    AttemptId::from_bytes(&raw)
-        .map_err(|_| MemoryError::bad_request("attempt must be 32 hex digits"))
+    let invalid = || MemoryError::bad_request("attempt must be 32 hex digits");
+    if text.len() != 32 || !text.is_ascii() {
+        return Err(invalid());
+    }
+    let mut raw = [0_u8; 16];
+    for (byte, pair) in raw.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).map_err(|_| invalid())?, 16)
+            .map_err(|_| invalid())?;
+    }
+    AttemptId::from_bytes(&raw).map_err(|_| invalid())
 }
 
 fn not_archived() -> MemoryError {
