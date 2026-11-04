@@ -5,24 +5,16 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod entity {
     use super::*;
-    pub fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(id: &EntityId, serializer: S) -> Result<S::Ok, S::Error> {
         id.to_hex().serialize(serializer)
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<EntityId, D::Error> {
         parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 pub mod entities {
     use super::*;
-    pub fn serialize<S: Serializer>(
-        ids: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(ids: &[EntityId], serializer: S) -> Result<S::Ok, S::Error> {
         ids.iter()
             .map(EntityId::to_hex)
             .collect::<Vec<_>>()
