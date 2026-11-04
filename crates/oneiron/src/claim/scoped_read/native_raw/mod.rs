@@ -23,16 +23,38 @@ impl<'a> NativeRawRead<'a> {
         }
     }
 
-    /// The admitted live entity body, or absence.
+    /// The admitted live body, with repo secrets projected in the same snapshot.
     pub fn entity_body(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         Ok(self
             .lane
-            .read(&[PointRead::id(*id)], None)?
-            .value
-            .into_iter()
-            .next()
-            .flatten()
-            .and_then(|row| row.body))
+            .read_projected(
+                &[PointRead::id(*id)],
+                None,
+                |txn, rows| -> Result<Option<Vec<u8>>> {
+                    let Some(row) = rows.into_iter().next().flatten() else {
+                        return Ok(None);
+                    };
+                    let Some(body) = row.body else {
+                        return Ok(None);
+                    };
+                    let body = if self.lane.actor_key.secret_sight()
+                        == crate::secret_custody::SecretSight::Masked
+                    {
+                        crate::memory::repo_secret_reads::repo_asset_body_in_txn(
+                            self.lane.vault,
+                            txn,
+                            id,
+                            row.entity_type,
+                            &body,
+                        )?
+                        .unwrap_or(body)
+                    } else {
+                        body
+                    };
+                    Ok(Some(body))
+                },
+            )?
+            .value)
     }
 
     /// The admitted live entity's stored type byte.
