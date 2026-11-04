@@ -32,7 +32,7 @@ use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
 };
-use super::wire::{HealedExecutorReply, heal_executor_reply};
+use super::wire::{HealedExecutorReply, heal_executor_text};
 use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
@@ -221,12 +221,9 @@ impl EngineNativeExecutor<'_> {
                     .await
             }?;
             let execution_text = self.post_turn_hooks(turn, &response)?;
-            // Only the post-hook execution view is healed below. The raw
-            // provider response stays separate as evidence (FIX 9840).
-            let mut execution_response = response.clone();
-            execution_response.message.content = vec![ContentPart::Text {
-                text: execution_text,
-            }];
+            // Only the post-hook execution view is healed below, as its text:
+            // no copy of the reply is made for it (FIX 448). The raw provider
+            // response stays separate as evidence (FIX 9840).
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).
             self.gated_write
@@ -242,11 +239,17 @@ impl EngineNativeExecutor<'_> {
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
             // staged, hashed, or replayed; the reply's own console bytes are
             // already gone, and `trailing_speak` belongs to ONE-1686.
+            if response.finish_reason != crate::FinishReason::Stop {
+                return Err(Error::InvalidClaimBody(
+                    "executor LLM response did not finish cleanly",
+                )
+                .into());
+            }
             let HealedExecutorReply {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_reply(&execution_response)?;
+            } = heal_executor_text(&execution_text)?;
             record_script_output(
                 &self.storage,
                 &mut record,
@@ -562,7 +565,10 @@ impl EngineNativeExecutor<'_> {
             // beside the bindings they describe, and so does the seal of the
             // code consent wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
-            let next_generation = self
+            // A flaky commit converts to success on one identical retry
+            // (FIX 1443): a first commit that actually landed fails the
+            // retry closed on its generation mismatch instead.
+            let next_generation = match self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
@@ -570,7 +576,22 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
-                )?;
+                ) {
+                Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                    tracing::warn!(
+                        "{error:?}: step checkpoint commit hit a storage error; retrying once"
+                    );
+                    self.storage
+                        .put_code_run_replay_record_with_receipts_if_generation(
+                            &record,
+                            expected_generation,
+                            repairs.healed().then_some(&config.model),
+                            &host.receipts,
+                            parked.as_ref(),
+                        )?
+                }
+                result => result?,
+            };
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
             // this delivery under stable witness ids, so it can recover a

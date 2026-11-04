@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use heed::RoTxn;
 use loro::cursor::Side;
 use loro::{ID, LoroDoc};
 
@@ -11,6 +12,7 @@ use super::storage::{HeadRow, load_frontier, load_head};
 use super::{CodeDocumentFrontier, CodeOpAttribution, CodeRangeChange, CodeSpanBlame};
 use crate::Vault;
 use crate::error::Result;
+use crate::store::Store;
 
 /// Birth text is written by reserved peer 0, never by an editing session.
 const BIRTH_PEER: u64 = 0;
@@ -141,6 +143,63 @@ impl Vault {
             })
             .collect()
     }
+}
+
+/// For each `(start_line, end_line)` of `ranges` (one-based, inclusive), the
+/// operations that wrote surviving text of those lines of `document`'s head,
+/// in sequence order, read in `txn` (FIX 342). `None` when the document has
+/// no head or its head holds another text than `text`: no operation is
+/// named for bytes the document does not hold.
+///
+/// # Errors
+/// A corrupt head or a store failure.
+pub(crate) fn code_document_line_writers_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    document: &[u8; 32],
+    text: &str,
+    ranges: &[(u32, u32)],
+) -> Result<Option<Vec<Vec<CodeOpAttribution>>>> {
+    let Some(head) = load_head(store, txn, document)? else {
+        return Ok(None);
+    };
+    let doc = head.doc()?;
+    if doc.get_text("body").to_string() != text {
+        return Ok(None);
+    }
+    let starts = line_starts(text);
+    let total = text.chars().count();
+    ranges
+        .iter()
+        .map(|&(start_line, end_line)| {
+            let at = |line: u32| {
+                usize::try_from(line)
+                    .ok()
+                    .and_then(|line| starts.get(line.saturating_sub(1)).copied())
+            };
+            let start = at(start_line).unwrap_or(total);
+            let end = at(end_line.saturating_add(1)).unwrap_or(total).max(start);
+            let mut writers = BTreeSet::new();
+            for id in char_ids(&doc, start, end)? {
+                if let Some(index) = owner(&head, id)? {
+                    writers.insert(index);
+                }
+            }
+            attributions(&head, &writers)
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+/// The Unicode-scalar offset each line of `text` starts at, first line first.
+fn line_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (offset, character) in text.chars().enumerate() {
+        if character == '\n' {
+            starts.push(offset + 1);
+        }
+    }
+    starts
 }
 
 /// The insertion ID of each character in `[start, end)`.

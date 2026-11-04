@@ -111,11 +111,6 @@ impl Memory<'_> {
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> MemoryResult<EntityRefReceipt> {
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
-        let body = crate::blob_artifact::BlobArtifactBody::new(
-            input.name.clone(),
-            input.media_type.clone(),
-        );
-        let data = crate::blob_artifact::encode_blob_artifact_body(&body)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -130,6 +125,27 @@ impl Memory<'_> {
             {
                 return Ok(true);
             }
+            // FIX 9968: a metadata re-registration keeps the current
+            // BLOB_ARTIFACT body's `secret_taint_refs`; only a first
+            // registration writes the empty default.
+            let mut body = crate::blob_artifact::BlobArtifactBody::new(
+                input.name.clone(),
+                input.media_type.clone(),
+            );
+            if let Some(raw) = self.vault.get_raw_in(content.read(), &id)? {
+                let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+                    crate::error::Error::CorruptedIndex("blob artifact entity header"),
+                )?;
+                if header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT {
+                    let current = crate::blob_artifact::decode_blob_artifact_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    )?;
+                    if !current.secret_taint_refs.is_empty() {
+                        body = body.with_secret_taint_refs(current.secret_taint_refs);
+                    }
+                }
+            }
+            let data = crate::blob_artifact::encode_blob_artifact_body(&body)?;
             content.apply_batch(self.vault.batch_in().put(
                 &id,
                 ENTITY_TYPE_BLOB_ARTIFACT,
@@ -215,8 +231,32 @@ impl Memory<'_> {
         version: u64,
     ) -> MemoryResult<Option<Vec<u8>>> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
-        self.vault
-            .read_blob_artifact_version_as(&artifact_id, version, self.secret_sight()?)
-            .map_err(MemoryError::from)
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let result = lane.read_projected(
+            &[crate::claim::PointRead::id(artifact_id)],
+            None,
+            |txn, rows| {
+                let Some(row) = rows
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .filter(|row| row.body.is_some())
+                else {
+                    return Ok::<_, MemoryError>(None);
+                };
+                if row.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
+                    return Ok(None);
+                }
+                self.produced_from([artifact_id]);
+                let sight = self.secret_sight_in_txn(txn)?;
+                let bytes = self
+                    .vault
+                    .read_blob_artifact_version_sighted_in_txn(txn, &artifact_id, version, sight)?
+                    .map(|bytes| self.vault.resolve_docx_authors_in_txn(txn, bytes))
+                    .transpose()?;
+                Ok(bytes)
+            },
+        )?;
+        Ok(result.value)
     }
 }

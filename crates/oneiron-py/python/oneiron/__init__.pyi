@@ -337,6 +337,8 @@ class CheckpointPinBinding(TypedDict):
     # The SLH-DSA-SHA2-256s public key.
     slhdsa: str
     epoch: int
+    # What keeps the install's checkpoint signing seed at rest, as the owner is told it.
+    assurance: Literal["hardware", "platform", "software", "process"]
     signature: CheckpointPinSignature
 
 class CheckpointPin(TypedDict):
@@ -1355,6 +1357,8 @@ class Oneiron:
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -1411,6 +1415,9 @@ class Oneiron:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
         def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+    class _VaultSkillsCallableVerbs:
+        def amend(self, spec: Facade.CallableAmendRequest) -> Facade.CallableAmendReceipt:
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
@@ -2290,6 +2297,8 @@ class Oneiron:
         def replace(self, spec: Facade.WebConnectorSetting) -> Facade.WebConnectorSetting:
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
     class _VaultSecretsVerbs:
+        def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
+            """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
         def register(self, spec: Facade.SecretRegisterRequest) -> Facade.SecretRegisterReply:

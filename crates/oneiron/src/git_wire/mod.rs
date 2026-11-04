@@ -26,6 +26,7 @@
 
 mod argv;
 mod bridge;
+pub(crate) mod bundle_tree;
 mod checkout;
 mod checkout_remote;
 mod config;
@@ -39,6 +40,7 @@ mod import_fetch;
 mod mirror_plan_push;
 mod mirror_plan_review;
 mod mirror_push;
+pub(crate) mod mutation_commands;
 mod objects;
 mod operation;
 mod plan;
@@ -117,9 +119,9 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, PushedHeadReceipt, TeardownReceiptMatch,
 };
 #[cfg(test)]
-use crate::codebase::RepoRef;
-#[cfg(test)]
 use crate::error::Error;
+#[cfg(test)]
+use crate::store::code_snapshot::RepoRef;
 #[cfg(test)]
 use std::ffi::OsString;
 #[cfg(test)]

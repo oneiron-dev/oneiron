@@ -9,7 +9,7 @@ pub(super) fn revision_puts(
 ) -> Result<Vec<BatchOp>> {
     let mut puts = Vec::new();
     for (id, data, occurred, learned_at) in captured {
-        let entity_type = crate::workspace_roster::project_revision_type(store)
+        let entity_type = crate::store::project_kind::project_revision_type(store)
             .ok_or(Error::InvariantViolation("project revision kind missing"))?;
         puts.push(BatchOp::Put {
             id,

@@ -83,16 +83,6 @@ async fn chat_completions(
     body: Bytes,
 ) -> Response {
     let arrived = tokio::time::Instant::now();
-    let request = ProxyRequest::of(&body);
-    let chat: ChatCompletionRequest = match serde_json::from_slice(&body) {
-        Ok(chat) => chat,
-        Err(refused) => {
-            let refused = invalid("invalid_body", refused.to_string());
-            return request.unattributed(&server, refused);
-        }
-    };
-    // FIX 8189: the caller's clock runs from arrival, its resolution included.
-    let clock = choices::CallerClock::starting(arrived, chat.deadline_ms);
     let Ok(actor) = super::resolve_mcp_caller(
         McpSurfaceMode::Primary,
         "memory-proxy",
@@ -103,9 +93,19 @@ async fn chat_completions(
     )
     .await
     else {
-        return request.unattributed(&server, unauthorized());
+        return ProxyRequest::raw(&body).unattributed(&server, unauthorized());
     };
+    let request = ProxyRequest::of(&body);
     let caller = ProxyCaller::of(&server, &actor, &request);
+    let chat: ChatCompletionRequest = match serde_json::from_slice(&body) {
+        Ok(chat) => chat,
+        Err(refused) => {
+            let refused = invalid("invalid_body", refused.to_string());
+            return caller.answer(&server, request, None, &[], Err(refused));
+        }
+    };
+    // FIX 8189: the caller's clock runs from arrival, its resolution included.
+    let clock = choices::CallerClock::starting(arrived, chat.deadline_ms);
     let mut listed = Vec::new();
     // OF-568 L4: the attempt whose live run the call holds, as the hold
     // witnessed it.

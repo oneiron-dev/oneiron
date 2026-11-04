@@ -411,7 +411,7 @@ pub(crate) fn copy_repo_manifest_heads(
     let source_map = source.get_map(REPO_MANIFESTS_MAP);
     let target_entities = target.get_map("entities");
     let mut copies = Vec::new();
-    for (map_key, bytes) in head_rows(&source_map, |_| true) {
+    for (map_key, bytes) in head_rows(&source_map, |key| RepoPortableId::from_hex(key).is_some()) {
         let Ok(carried) = decode(&bytes) else {
             continue;
         };

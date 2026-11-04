@@ -181,9 +181,27 @@ while read -r old new; do
 	printf 'move %s %s\n' "$old" "$new" >> "$blobspart"
 	# A checkout push's changed paths, NUL-terminated after one framed
 	# "move <old> <new> <bytes>" line, every status and both rename names.
+	# A creation lists what it changed past the history an existing ref
+	# already reaches: from its first boundary commit, nothing when no new
+	# commit comes, and its whole tree only when no existing ref reaches any
+	# of its history (FIX 7139).
 	if [ "$listpaths" = 1 ]; then
+		listbase=$base
+		case "$old" in
+			*[!0]*) ;;
+			*)
+				git --no-replace-objects rev-list --boundary "$new" --not --all \
+					> "$names"
+				boundary=$(LC_ALL=C awk '/^-/ { print substr($0, 2); exit }' "$names")
+				if [ -n "$boundary" ]; then
+					listbase=$boundary
+				elif [ ! -s "$names" ]; then
+					listbase=$new
+				fi
+				;;
+		esac
 		git --no-replace-objects diff-tree -r -z --name-only --no-renames \
-			--no-commit-id "$base" "$new" > "$names"
+			--no-commit-id "$listbase" "$new" > "$names"
 		size=$(($(wc -c < "$names")))
 		total=$((total + size + ${#old} + ${#new} + 32))
 		[ "$total" -le "$max" ] || disk_floor

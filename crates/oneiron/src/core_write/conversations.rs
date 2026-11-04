@@ -4,86 +4,21 @@
 //! these same Vault doors, so a button, an agent's call and the REST write
 //! make one write.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 use super::batch::CoreWriteLane;
 use super::shape::{
-    AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
+    ActorAnnouncementAuthority, AnnouncementAuthority, core_body_for_write, core_text_pairs,
     core_write_times, entity_id, stage_core_put, text_pairs, write_id,
 };
+use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};
 use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-
-/// A conversation to create. A body that names members also authors the
-/// room's membership ledger, its creator and its role grants, as the
-/// writing actor; a body with none is a plain put.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConversationCreateInput {
-    /// The conversation's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// Unix seconds; defaults to `learned_at`.
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    /// Unix seconds; defaults to `occurred_start`.
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    /// Unix seconds; defaults to now.
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    /// The conversation body: kind, members, roles, title and the rest.
-    pub body: Value,
-    /// Explicit text-index fields; when omitted, the body's top-level strings.
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// One TURN to put under a conversation, with its checked ChildOf edge.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConversationTurnCreateInput {
-    /// The CONVERSATION the TURN belongs to.
-    pub conversation: String,
-    /// The TURN's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    pub body: Value,
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// The entity a core write stored: its id, its type, the learned time it
-/// sampled and the body as stored.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreEntityWriteReceipt {
-    pub id: String,
-    pub entity_type: u8,
-    pub learned_at: u64,
-    pub body: Value,
-}
-
-impl CoreEntityWriteReceipt {
-    fn new(id: EntityId, entity_type: u8, learned_at: u64, body: Value) -> Self {
-        Self {
-            id: id.to_hex(),
-            entity_type,
-            learned_at,
-            body,
-        }
-    }
-}
 
 impl Vault {
     /// Creates a conversation, held to `lane` (FIX 10781): an id a stored

@@ -597,6 +597,7 @@ vaultSealComplete(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
+vaultSecretsCodeRunLifts(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
 vaultSecretsRegister(input: unknown): unknown
 vaultSecretsRotate(input: unknown): unknown
@@ -896,6 +897,7 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+vaultSkillsCallableAmend(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown

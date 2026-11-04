@@ -8,15 +8,42 @@ description = "Store layer of the oneiron engine"
 repository.workspace = true
 
 [dependencies]
+arc-swap = { workspace = true }
 blake3 = { workspace = true, features = ["zeroize"] }
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
+half = "2"
 heed = { workspace = true }
+oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+tracing = { version = "0.1" }
+uuid = { workspace = true }
+xxhash-rust = { workspace = true }
 zeroize = "1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Forwarded by `oneiron/sync`: the overlay's sync-only string-range accessor.
+sync = []
+# Forwarded by `oneiron/test-support`: the session overlay's allocation
+# observer and its test-only snapshot reads, which core's tests call. Never
+# installs an allocator; each crate's own test binary registers one.
+test-support = []
 
 [lints]
 workspace = true

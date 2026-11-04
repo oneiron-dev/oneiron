@@ -97,7 +97,7 @@ pub(crate) fn capture_canonical_window_within(
         schema_manifest: CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 2,
+            container_schema_version: 3,
             analyzer_manifest_blake3: *blake3::hash(
                 vault
                     .analyzer
@@ -143,13 +143,19 @@ pub(crate) fn capture_canonical_window_within(
         }
         snapshot.base_edges.push(edge);
     }
-    for (key, row) in binary_rows_within(doc, "room_turns", budget)? {
-        snapshot.room_turns.push(CanonicalRoomTurn {
-            id: parse_id(&key)?,
-            row,
-        });
+    let turns = binary_rows_within(doc, "room_turns", budget)?;
+    for (key, row) in
+        crate::room_codec::room_parts::capture_rows(&turns, &mut |bytes| budget.take(bytes))?
+    {
+        if !crate::room_codec::carrier_parts::is_part_key(&key) {
+            parse_id(&key)?;
+        }
+        snapshot.room_turns.push(CanonicalRoomTurn { key, row });
     }
-    for (key, row) in binary_rows_within(doc, "room_facts", budget)? {
+    let facts = binary_rows_within(doc, "room_facts", budget)?;
+    for (key, row) in
+        crate::room_codec::room_parts::capture_rows(&facts, &mut |bytes| budget.take(bytes))?
+    {
         snapshot.room_facts.push(CanonicalRoomFact { key, row });
     }
     for (key, carrier) in binary_rows_within(doc, "custody", budget)? {

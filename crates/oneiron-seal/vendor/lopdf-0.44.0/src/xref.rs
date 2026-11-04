@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::io::{Result, Write};
+
+use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
 
 #[derive(Debug, Clone)]
 pub struct Xref {
@@ -61,6 +64,26 @@ impl Xref {
         for (id, entry) in xref.entries {
             self.entries.entry(id).or_insert(entry);
         }
+    }
+
+    /// [`Xref::merge`], with `admission` asked for a share of a map node
+    /// before each entry it adds (FIX 8450). A refusal stops the merge and is
+    /// returned. Without an admission this is `merge`.
+    pub(crate) fn merge_admitted(
+        &mut self, xref: Xref, admission: Option<&dyn DecodeAdmission>,
+    ) -> std::result::Result<(), DecodeAdmissionError> {
+        let Some(admission) = admission else {
+            self.merge(xref);
+            return Ok(());
+        };
+        let entry_bytes = decode_admission::btree_entry_bytes::<u32, XrefEntry>();
+        for (id, entry) in xref.entries {
+            if let Entry::Vacant(vacant) = self.entries.entry(id) {
+                admission.admit(entry_bytes)?;
+                vacant.insert(entry);
+            }
+        }
+        Ok(())
     }
 
     pub fn clear(&mut self) {

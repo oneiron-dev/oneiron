@@ -13,10 +13,7 @@
 //! ([`kept`]). Projection (KS7-2), the mixed sync carriers (KS7-3), erase,
 //! hold and retention staging (KS7-4) and capture and restore (KS7-5) call
 //! them, now that KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on.
-#![allow(
-    dead_code,
-    reason = "a history purge's generation roll and the strict live-key read wait on callers"
-)]
+#![allow(dead_code, reason = "the strict live-key read waits on callers")]
 
 pub(crate) mod capture;
 pub(crate) mod instance;

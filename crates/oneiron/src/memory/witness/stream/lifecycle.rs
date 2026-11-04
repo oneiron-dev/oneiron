@@ -35,6 +35,7 @@ impl Memory<'_> {
             None,
             &WitnessAssertions::default(),
             None,
+            None,
         )
     }
     /// [`Self::finalize_stream`], committed only while `admit` holds inside
@@ -55,6 +56,7 @@ impl Memory<'_> {
             ),
             None,
             &WitnessAssertions::default(),
+            None,
             Some(&admit),
         )
     }
@@ -76,6 +78,38 @@ impl Memory<'_> {
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, None, finish_reason, assertions, admit)
+    }
+
+    /// [`Self::finalize_model_stream_if`] for a model reply whose ordered
+    /// output parts are witnessed with its text: the same finish, finality
+    /// and gate semantics, with `parts` carried transiently into the new
+    /// MESSAGE as birth facts. The witnessed text stays what the caller
+    /// already saved through the stream; parts never enter the checkpoint,
+    /// the receipt, metadata or any other row. On a continuation, `parts`
+    /// is only this generation's suffix: the stored prefix stays verbatim,
+    /// and the same writer appends the suffix with its text. An empty suffix
+    /// leaves today's text-only continuation unchanged. Internal until the
+    /// parts admission and server call-site wiring land.
+    pub(crate) fn finalize_model_stream_parts_if(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Vec<crate::ContentPart>,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, Some(parts), finish_reason, assertions, admit)
+    }
+
+    fn finalize_model_stream_with_parts(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Option<Vec<crate::ContentPart>>,
         finish_reason: FinishReason,
         assertions: &WitnessAssertions,
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
@@ -116,6 +150,7 @@ impl Memory<'_> {
             outcome,
             Some(finish_reason),
             assertions,
+            parts,
             gate,
         )
     }
@@ -144,6 +179,7 @@ impl Memory<'_> {
             (StreamFinality::Cancelled, reason),
             None,
             &WitnessAssertions::default(),
+            None,
             None,
         )
     }
@@ -181,6 +217,10 @@ impl Memory<'_> {
     }
 }
 impl Vault {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stream close joins its outcome, parts, assertions and its gate"
+    )]
     fn finish_stream_entry(
         &self,
         entry: &Arc<Mutex<State>>,
@@ -188,6 +228,7 @@ impl Vault {
         outcome: (StreamFinality, StreamFinalityReason),
         finish_reason: Option<FinishReason>,
         assertions: &WitnessAssertions,
+        parts: Option<Vec<crate::ContentPart>>,
         gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
@@ -199,6 +240,7 @@ impl Vault {
             outcome,
             finish_reason,
             assertions,
+            parts,
             false,
             gate,
         )?;
@@ -246,6 +288,7 @@ impl Vault {
                     (StreamFinality::Partial, reason),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     false,
                     None,
                 )
@@ -386,6 +429,7 @@ impl Vault {
                     ),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     true,
                     None,
                 ) && !state.terminal

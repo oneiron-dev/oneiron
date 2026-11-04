@@ -120,19 +120,7 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-/// What a put is to the row it writes: [`stamp_put`] mints a first position
-/// for a row stored with none only at its local birth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RowPut {
-    /// A local put of a row not stored before it, or a sweep that settles a
-    /// stored row's first position.
-    Birth,
-    /// A local put of a row stored before it: a row stored with no position,
-    /// as a replicated row is, keeps none (FIX 11925).
-    LocalReput,
-    /// A peer's replicated row.
-    Replicated,
-}
+pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
 /// keeps the default birth: base reality, under the record's own substrate
@@ -428,9 +416,34 @@ impl Vault {
     /// Storage errors.
     pub fn record_world(&self, id: &EntityId) -> Result<Option<Option<EntityId>>> {
         let txn = self.store.env.read_txn()?;
-        match crate::vault::live_entity_row_in_txn(&self.store, &txn, id)? {
+        self.record_world_in_txn(&txn, id)
+    }
+
+    /// One read snapshot for a dependency walk: every row the walk reads
+    /// comes from this transaction, so the walk pays one transaction, not
+    /// two per row plus one per summary (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn dependency_read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        Ok(self.store.env.read_txn()?)
+    }
+
+    /// [`Self::record_world`] on the caller's read snapshot, so a walk over
+    /// many rows pays one transaction, not one per row (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Option<EntityId>>> {
+        match crate::vault::live_entity_row_in_txn(&self.store, txn, id)? {
             crate::vault::LiveEntityRow::Live { entity_type, body } => {
-                record_world_in(&self.store, &txn, *id, entity_type, &body)
+                record_world_in(&self.store, txn, *id, entity_type, &body)
             }
             crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
                 Ok(None)

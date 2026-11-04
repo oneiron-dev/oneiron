@@ -59,7 +59,7 @@ pub(super) fn rewrite_put_body(
     if fixed.replicated
         && !crate::registry::is_delete_protected_engine_record(fixed.entity_type)
         && revision.put.is_none()
-        && !crate::dreamer_runner::authority::is_base_agent_actor(&fixed.id)?
+        && !crate::store::base_agent::is_base_agent_actor(&fixed.id)?
         && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &fixed.id)?
     {
         return Err(Error::InvariantViolation(

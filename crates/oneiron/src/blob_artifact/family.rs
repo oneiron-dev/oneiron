@@ -4,14 +4,15 @@
 //! a document, a sheet, a deck or an image; bodies and fidelity rules stay per
 //! kind. This module names the kinds and reads the contract's common views.
 
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::lens::RecordRef;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::store::record_ref::RecordRef;
 use crate::write_envelope::provenance::made_by::MadeBy;
 
 use super::born_from::BornFromSource;
@@ -129,11 +130,30 @@ impl VersionReconciliation {
     }
 }
 
+/// Projects stored versions to the vault's current erase state after their
+/// raw chain and claim bindings have been checked (FIX 9619).
+fn artifact_version_views_erased(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    versions: &[BlobArtifactVersion],
+) -> Result<Vec<ArtifactVersionView>> {
+    versions
+        .iter()
+        .map(|version| {
+            let projected = super::project_version_erased_in_txn(vault, txn, version)?;
+            Ok(ArtifactVersionView::from(&projected))
+        })
+        .collect()
+}
+
 /// One blob artifact as the family contract shows it: its kind, its body's
 /// name and type, its head, and its whole version tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactView {
     pub artifact_id: EntityId,
+    /// The artifact as a typed record ref (OF-063, FIX 9340), built from its
+    /// id with no read.
+    pub artifact: RecordRef,
     pub kind: ArtifactKind,
     pub name: String,
     pub media_type: String,
@@ -175,13 +195,15 @@ impl Vault {
             return Ok(None);
         };
         let versions = self.blob_artifact_versions(id)?;
+        let txn = self.store.env.read_txn()?;
         Ok(Some(ArtifactView {
             artifact_id: *id,
+            artifact: RecordRef::from_id(ENTITY_TYPE_BLOB_ARTIFACT, id, None),
             kind: ArtifactKind::of_media_type(&body.media_type),
             name: body.name,
             media_type: body.media_type,
             head: versions.last().map(|version| version.version),
-            versions: versions.iter().map(ArtifactVersionView::from).collect(),
+            versions: artifact_version_views_erased(self, &txn, &versions)?,
         }))
     }
 
@@ -203,13 +225,15 @@ impl Vault {
         let Some(body) = self.get_blob_artifact(id)? else {
             return Ok(None);
         };
+        let txn = self.store.env.read_txn()?;
         Ok(Some(ArtifactView {
             artifact_id: *id,
+            artifact: RecordRef::from_id(ENTITY_TYPE_BLOB_ARTIFACT, id, None),
             kind: ArtifactKind::of_media_type(&body.media_type),
             name: body.name,
             media_type: body.media_type,
             head: versions.last().map(|version| version.version),
-            versions: versions.iter().map(ArtifactVersionView::from).collect(),
+            versions: artifact_version_views_erased(self, &txn, &versions)?,
         }))
     }
 
@@ -274,6 +298,7 @@ impl Vault {
             return Ok(None);
         };
         let bytes = read(&record)?;
+        let record = super::project_version_erased_in_txn(self, txn, &record)?;
         Ok(Some(ArtifactExport {
             artifact_id: *id,
             version,

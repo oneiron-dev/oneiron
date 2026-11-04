@@ -6,12 +6,10 @@
 use std::path::Path;
 
 use super::MergeFile;
-use crate::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
+use crate::git_wire::bundle_tree::{BundleTreeEdit, stage_bundle_tree_edits};
 use crate::store::code_document_values::CodeFileMetadataEdit;
-use crate::{
-    repo_mutation::stage_received_tree_edits, store::repo_proposal_record::ReceivedTreeEdit,
-};
+use crate::store::contract_oracle::{invalid, safe_entry_path};
 
 /// A symlink's Git mode.
 const MODE_SYMLINK: u32 = 0o120_000;
@@ -33,7 +31,7 @@ pub(super) fn validate_received_merge_file(
         || edit.replacement.validate().is_err()
         || file.expected.is_some() != edit.expected.present
         || file.content.is_some() != edit.replacement.present
-        || (file.expected == file.content && edit.expected == edit.replacement)
+        || (file.expects(file.content.as_deref()) && edit.expected == edit.replacement)
     {
         return Err(invalid("received merge file state change is invalid"));
     }
@@ -41,8 +39,9 @@ pub(super) fn validate_received_merge_file(
 }
 
 /// Applies a received bundle's `files` to the speculative tree `root`: each
-/// path must hold exactly its expected bytes and mode, read without
-/// following a link, before any entry changes.
+/// path must hold exactly its expected state (bytes, or their BLAKE3 for a
+/// withheld base, FIX 10974) and mode, read without following a link,
+/// before any entry changes.
 ///
 /// # Errors
 /// A stale or overlapping base, or a Git failure.
@@ -55,12 +54,12 @@ pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile])
             .ok_or_else(|| invalid("a received bundle file carries its state change"))?;
         // Parents never follow a link; a final symlink is read as itself (FIX 9977).
         let (bytes, mode) = entry_state(&safe_entry_path(root, &file.path)?)?;
-        if bytes != file.expected || mode != edit.expected.mode {
+        if !file.expects(bytes.as_deref()) || mode != edit.expected.mode {
             return Err(Error::ConcurrentWrite(
                 "proposal bytes overlap or base is stale",
             ));
         }
-        edits.push(ReceivedTreeEdit {
+        edits.push(BundleTreeEdit {
             path: file.path.clone(),
             content: file.content.clone(),
             mode: edit.replacement.mode.unwrap_or(0),
@@ -69,7 +68,7 @@ pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile])
     edits.sort_by(|left, right| {
         (left.content.is_some(), &left.path).cmp(&(right.content.is_some(), &right.path))
     });
-    stage_received_tree_edits(root, &edits, true)
+    stage_bundle_tree_edits(root, &edits, true)
 }
 
 /// The bytes and Git mode a path holds, without following a link: a

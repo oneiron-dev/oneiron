@@ -6,9 +6,11 @@ use super::*;
 ///
 /// Infallible capture for Vault sites (settle/inbox/craft, landed): full
 /// subject-ancestry thread/room walks plus body and prompt-source worlds.
-/// Complete unless any walk, scan, decode, or worlds read fails, in which
-/// case the single incomplete empty value (never a refusal, never partial).
-/// Content-free ids only; no Grant, facets, session room, or mutation.
+/// Complete only with the candidate's own CLAIM header and successful
+/// walks, scans, decodes, and worlds reads; otherwise the single incomplete
+/// empty value (never a refusal, never partial).
+/// Content-free ids and the candidate header's own occurred range only;
+/// no Grant, facets, session room, or mutation.
 /// Callsites attach only to an existing read context via `with_anchors`.
 pub(crate) fn gate_claim_anchors_in(
     vault: &Vault,
@@ -16,13 +18,33 @@ pub(crate) fn gate_claim_anchors_in(
     id: &EntityId,
     body: &crate::ClaimBody,
 ) -> crate::store::GateReadAnchors {
-    gate_claim_anchors_inner(&vault.store, Some(vault), txn, id, body, Some(&[]))
-        .unwrap_or_else(|_| crate::store::GateReadAnchors::incomplete())
+    let occurred = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)
+        .ok()
+        .flatten()
+        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+        .filter(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        .map(|header| crate::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        });
+    gate_claim_anchors_inner(
+        &vault.store,
+        Some(vault),
+        txn,
+        id,
+        body,
+        Some(&[]),
+        occurred,
+    )
+    .unwrap_or_else(|_| crate::store::GateReadAnchors::incomplete())
 }
 
 /// Writer anchors for one claim (FIX 11000 PARTLY).
 ///
-/// Infallible capture for the Store-only site (claim_write, unlanded):
+/// Infallible capture for the Store-only site (claim_write, unlanded).
+/// This body-only door has no candidate header: an existing row could be
+/// the prior revision, so its occurred range is never borrowed. The capture
+/// is incomplete until this door can prove the candidate's own header.
 /// Store walks with Vault bails (TASK/SUMMARY encountered, TURN needing a
 /// summary cover, CLAIM naming a merge summary all mean incomplete) plus
 /// proven pending-birth prompt sources. `pending_prompt` is `Some` proven
@@ -37,7 +59,7 @@ pub(crate) fn gate_claim_anchors_store_in(
     body: &crate::ClaimBody,
     pending_prompt: Option<&[EntityId]>,
 ) -> crate::store::GateReadAnchors {
-    gate_claim_anchors_inner(store, None, txn, id, body, pending_prompt)
+    gate_claim_anchors_inner(store, None, txn, id, body, pending_prompt, None)
         .unwrap_or_else(|_| crate::store::GateReadAnchors::incomplete())
 }
 
@@ -52,8 +74,12 @@ fn gate_claim_anchors_inner(
     id: &EntityId,
     body: &crate::ClaimBody,
     pending_prompt: Option<&[EntityId]>,
+    occurred: Option<crate::TimeRange>,
 ) -> Result<crate::store::GateReadAnchors> {
     use crate::store::{GateReadAnchors, GateThreadAnchor};
+    let Some(occurred) = occurred else {
+        return Err(Error::EntityNotFound);
+    };
     let subjects: Vec<EntityId> = match &body.subject {
         crate::claim::ClaimSubject::Entity(subject) => vec![*subject],
         crate::claim::ClaimSubject::Edge { source, target, .. } => vec![*source, *target],
@@ -77,8 +103,7 @@ fn gate_claim_anchors_inner(
         }
         worlds.extend(carried.worlds);
     }
-    let stored_own =
-        crate::provenance::birth::prompted::prompt_sources_in_txn(store, txn, id)?;
+    let stored_own = crate::provenance::birth::prompted::prompt_sources_in_txn(store, txn, id)?;
     for prompt in &stored_own {
         let carried = crate::settings::carried_worlds_in(store, txn, prompt)?;
         if carried.unknown {
@@ -103,7 +128,9 @@ fn gate_claim_anchors_inner(
     let reached: Vec<EntityId> = reached.into_iter().collect();
     let rooms: Vec<EntityId> = rooms.into_iter().collect();
     let worlds: Vec<EntityId> = worlds.into_iter().collect();
-    Ok(GateReadAnchors::complete(threads, reached, rooms, worlds))
+    Ok(GateReadAnchors::complete(
+        threads, reached, rooms, worlds, occurred,
+    ))
 }
 
 /// Thread anchors from `subjects`: placed (root, turn) under CONTENT plus

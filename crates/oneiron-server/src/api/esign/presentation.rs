@@ -1,6 +1,6 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
 use super::editor_auth::{EditorDesk, EditorIngress};
-use super::parse_lease::ParseLease;
+use super::parse_lease;
 use super::*;
 use axum::extract::{FromRequest, Request};
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
@@ -79,6 +79,10 @@ pub(super) async fn layout(
     .unwrap_or_else(|refusal| refusal)
 }
 
+/// `POST /sign/preview`: the item's fields laid out on its pinned PDF's
+/// pages. The PDF is inspected as the editor's geometry door inspects its
+/// own (FIX 12230): its bytes leased from this machine's memory and the lease
+/// grown for its parse, on a blocking worker.
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -113,10 +117,16 @@ pub(super) async fn preview(
     ) else {
         return refused();
     };
-    let Ok(pages) =
-        render::inspect_pdf_pages_within(&bytes, server.vault.esign_stream_decode_bytes())
-    else {
-        return refused();
+    let memory = server.memory.clone();
+    let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
+    let pages = match tokio::task::spawn_blocking(move || {
+        parse_lease::inspected_in_memory(&memory, &bytes, stream_decode_bytes)
+    })
+    .await
+    {
+        Ok(Ok(pages)) => pages,
+        Ok(Err(response)) => return response,
+        Err(_) => return refused(),
     };
     laid_out(LayoutRequest {
         fields: page
@@ -163,13 +173,14 @@ pub(super) async fn editor_script() -> Response {
 }
 /// `POST /sign/geometry`: byte-only inspection, no template parse, blob
 /// write, or outbound effects. With no editor header it is the door it was:
-/// the PDF under the route's 16 MiB body limit and `EditorBudget`'s window.
-/// An admitted editor's PDF (FIX 5618) spools whole and is inspected on the
-/// worker that holds its slot; its size is the `[limits]
-/// esign_geometry_body_bytes` row, which asks the vault owner past it and
-/// never refuses the PDF. The PDF's bytes are leased from this machine's
-/// memory before it is read into memory (FIX 7649), and the lease grows for
-/// its parse's own memory as the parse proceeds (FIX 8065, `parse_lease`).
+/// the PDF under the route's 16 MiB body limit and `EditorBudget`'s window,
+/// inspected as an admitted editor's is (FIX 12230). An admitted editor's
+/// PDF (FIX 5618) spools whole and is inspected on the worker that holds its
+/// slot; its size is the `[limits] esign_geometry_body_bytes` row, which asks
+/// the vault owner past it and never refuses the PDF. The PDF's bytes are
+/// leased from this machine's memory before it is read into memory (FIX
+/// 7649), and the lease grows for its parse's own memory as the parse
+/// proceeds (FIX 8065, `parse_lease`).
 pub(super) async fn upload_geometry(
     State(server): State<Arc<SyncServer>>,
     ingress: EditorIngress,
@@ -190,12 +201,13 @@ pub(super) async fn upload_geometry(
             };
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                render::inspect_pdf_pages_within(&body, stream_decode_bytes)
+                parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes)
             })
             .await
             {
                 Ok(Ok(pages)) => Json(serde_json::json!({"pages":pages})).into_response(),
-                _ => refused(),
+                Ok(Err(response)) => response,
+                Err(_) => refused(),
             };
         }
         EditorIngress::Admitted(slot) => slot,
@@ -221,13 +233,9 @@ pub(super) async fn upload_geometry(
             // The read bytes are held now, so the live reading is not
             // charged them twice while the lease lives (FIX 9345).
             lease.materialized(bytes, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
-            let parse = Arc::new(ParseLease::new(lease, deadline));
-            match render::inspect_pdf_pages_admitted(&pdf, stream_decode_bytes, parse.clone()) {
+            match parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
-                Err(_) => match parse.refused() {
-                    Some(refusal) => super::ingress::memory_refused(refusal),
-                    None => refused(),
-                },
+                Err(response) => response,
             }
         },
     )

@@ -202,7 +202,7 @@ pub(super) fn in_place(
     let bytes = if changes.is_empty() {
         None
     } else {
-        let projected = project_xlsx(&source, &changes, limits, &resources)
+        let projected = project_xlsx(&source, &changes, limits, &resources, None)
             .map_err(projection)?
             .bytes;
         let formulas = book
@@ -267,9 +267,11 @@ struct HeldRefs {
     size: Option<Held>,
 }
 
-/// A held series' references, read without expanding any cache's points.
+/// A held series' references, read without expanding any cache's points:
+/// a square multi-level block's levels run the way its values do (FIX
+/// 9167).
 fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
-    let slot = |names: &[&str]| -> Result<Option<Held>, RebuildReason> {
+    let slot = |names: &[&str], along: Option<bool>| -> Result<Option<Held>, RebuildReason> {
         let Some(at) = names.iter().find_map(|name| xml::child(tree, ser, C, name)) else {
             return Ok(None);
         };
@@ -282,7 +284,9 @@ fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
                     Line::parse(&text)
                 }
                 .ok_or(RebuildReason::Unreadable)?;
-                let (levels, down) = line.levels(read.levels).ok_or(RebuildReason::Unreadable)?;
+                let (levels, down) = line
+                    .levels(read.levels, along)
+                    .ok_or(RebuildReason::Unreadable)?;
                 Ok(Held {
                     line,
                     text,
@@ -292,11 +296,13 @@ fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
             })
             .transpose()
     };
+    let values = slot(&["val", "yVal"], None)?;
+    let along = values.as_ref().and_then(|values| values.line.down());
     Ok(HeldRefs {
-        name: slot(&["tx"])?,
-        first: slot(&["cat", "xVal"])?,
-        values: slot(&["val", "yVal"])?,
-        size: slot(&["bubbleSize"])?,
+        name: slot(&["tx"], None)?,
+        first: slot(&["cat", "xVal"], along)?,
+        values,
+        size: slot(&["bubbleSize"], None)?,
     })
 }
 

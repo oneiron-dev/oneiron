@@ -327,11 +327,12 @@ pub(crate) fn evaluate_external_effect_policy(
     // own typed facts from the claim substrate on THIS txn and answers with a
     // pure verdict; the mapping to a decision stays here, where decisions are
     // constructed. It runs BEFORE the connector-key and budget stages — both
-    // guarded on would-be-Allow — so a legal-row refusal never consumes budget,
-    // exactly like the counterparty-opt-out wall. It converts a would-be Allow
-    // AND a Pending: an owner approval must not be able to unlock a dispatch
-    // the governing row forbids. It is enforcement, not a new approval step;
-    // effects outside a campaign never reach the evaluator at all.
+    // guarded on would-be-Allow — so a legal-row hold never consumes budget,
+    // exactly like the counterparty-opt-out wall. A Block holds a would-be
+    // Allow AND a Pending for an owner answer rather than replacing either
+    // with Deny. An existing approval or its retained press retry restores
+    // the PRE-CA-06 decision; every later gate still applies. Effects outside
+    // a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
         && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
             crate::campaign::compliance::campaign_compliance_gate(
@@ -340,8 +341,11 @@ pub(crate) fn evaluate_external_effect_policy(
                 &hydrated_effect,
                 created_at,
             )?
+        && approve_once.is_none()
+        && !press_retry_authorized
+        && !mail_retry_authorized
     {
-        decision = GateDecision::deny(GateReasonCode::DenyCampaignCompliance)
+        decision = GateDecision::pending(vec![GateReasonCode::PendingCampaignCompliance])
             .with_receipt_reasons([reason.receipt_reason()])
             .with_receipt_reasons(external_effect_receipt_reasons(
                 input

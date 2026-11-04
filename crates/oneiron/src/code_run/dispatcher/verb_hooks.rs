@@ -67,31 +67,44 @@ const VERB_HOOK_COMPLETED: &str = "verb_hook_completed";
 /// A call by its replay row, less the bridge's own stamps.
 pub(crate) type ParkedCall = (SelfEffect, rmpv::Value);
 
-/// A call past its pre chain, as its post chain picks it up. `None` when no
-/// hook runs for the call.
-pub(crate) struct HookedCall(Option<VerbHookPre>);
+/// A call past its pre chain, as its post chain picks it up. The first
+/// `None` when no hook runs for the call; the second carries the dispatched
+/// rewritten call (FIX 1442), `None` when no hook rewrote it.
+pub(crate) struct HookedCall(pub(crate) Option<VerbHookPre>, pub(crate) Option<SelfCall>);
 
 impl HostSelfDispatcher<'_> {
-    /// `dispatch_effect` inside the call's verb hooks. A stop is the guest's
-    /// typed answer, from either attach point: a verb-table call's door
-    /// raises its own.
+    /// `dispatch_effect` inside the call's verb hooks, and the dispatched
+    /// rewritten call (FIX 1442): `Some` when a hook rewrote it, `None`
+    /// otherwise. A stop is the guest's typed answer, from either attach
+    /// point: a verb-table call's door raises its own.
     pub(super) fn dispatch_hooked(
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
         read_as: Option<ScopedReadActorKey>,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         let effect = call.effect();
         let (call, hooked) = match self.enter_verb_hooks(call, site, read_as.clone())? {
             Ok(entered) => entered,
-            Err(stopped) => return Ok(stopped),
+            Err(stopped) => return Ok((stopped, None)),
         };
+        let rewritten = hooked.1.clone();
         match self.dispatch_effect(call, site, read_as) {
-            Ok(outcome) => self.leave_verb_hooks(hooked, outcome),
+            Ok(outcome) => Ok((self.leave_verb_hooks(hooked, outcome)?, rewritten)),
             Err(error) => {
+                // A room call's pre carries no keep key (FIX 1431): had it a
+                // vault it would fall into the canonical branch and no-op,
+                // so only canonical storage compensates here.
+                if crate::runtime_hooks::verb::error_failed_storage(&error) {
+                    if let (ExecutorStorage::Canonical(vault), Some(pre)) =
+                        (&self.storage, hooked.0.as_ref())
+                    {
+                        vault.reopen_resumed_ask(pre);
+                    }
+                }
                 self.keep_room_verb_hooks(hooked);
                 match error {
-                    Error::VerbHook(stop) => Ok(stopped(effect, *stop)),
+                    Error::VerbHook(stop) => Ok((stopped(effect, *stop), rewritten)),
                     error => Err(error),
                 }
             }
@@ -120,14 +133,14 @@ impl HostSelfDispatcher<'_> {
             ExecutorStorage::Session(_) => return self.enter_room_verb_hooks(call, site, read_as),
         };
         if matches!(call, SelfCall::AgentVerb(_)) {
-            return Ok(Ok((call, HookedCall(None))));
+            return Ok(Ok((call, HookedCall(None, None))));
         }
         let effect = call.effect();
         let invocation = self.verb_invocation(&call, site)?;
         if !vault.verb_hooks_may_run(effect.as_str())
             && !vault.verb_hook_invocation_saved(invocation)?
         {
-            return Ok(Ok((call, HookedCall(None))));
+            return Ok(Ok((call, HookedCall(None, None))));
         }
         let args = hook_args(&call)?;
         let scope = read_as
@@ -154,12 +167,15 @@ impl HostSelfDispatcher<'_> {
             Err(stop) => return Ok(Err(stopped(effect, stop))),
         };
         if pre.args == args {
-            return Ok(Ok((call, HookedCall(Some(pre)))));
+            return Ok(Ok((call, HookedCall(Some(pre), None))));
         }
         let rewritten = rewrite(&call, &pre.args).map_err(|reason| {
             Error::InvalidConfig(format!("{} rewrite: {reason}", effect.as_str()))
         })?;
-        Ok(Ok((rewritten, HookedCall(Some(pre)))))
+        Ok(Ok((
+            rewritten.clone(),
+            HookedCall(Some(pre), Some(rewritten)),
+        )))
     }
 
     /// Admits the entities a rewrite of `call` newly names, as the facade

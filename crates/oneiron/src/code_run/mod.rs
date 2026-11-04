@@ -103,7 +103,6 @@ pub use self::dispatcher::{
 };
 pub(crate) use self::model_call::erase_model_call_actor_in_txn;
 pub(crate) use self::payload::agent_verb_observations_of;
-pub(crate) use self::result_read::unmarked_secret;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
@@ -122,6 +121,7 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
@@ -143,9 +143,13 @@ pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
     bind_wait_trap, park_and_bind_wait_trap,
 };
+pub use self::storage::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 pub(crate) use self::storage::{
-    CodeRunResultBodyReader, OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding,
-    ReceiptPartial, ReceiptSource, ReceiptTree,
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
@@ -157,8 +161,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
-    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -173,6 +177,9 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+pub(crate) use self::storage::{
+    drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
+};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{
@@ -186,10 +193,7 @@ pub(crate) use self::storage::{
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
-pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
+pub(crate) use self::storage::wait_delivery_owners;
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub use self::type_diagnostics::{
@@ -293,7 +297,6 @@ pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
-pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
 
 pub use self::dispatcher::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,

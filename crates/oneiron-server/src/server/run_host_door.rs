@@ -60,7 +60,7 @@ use oneiron::receipt::{
     QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
+use oneiron::skill_attribution::{run_write_token_of_origin, with_run_write_token};
 use oneiron::task_verb::sdk::{
     self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
     BoardSubscriptionRequest, ConnectorAnswerRequest, DescribeRequest, TaskWaveRequest,
@@ -211,7 +211,7 @@ impl RunHostDoor {
         let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
         // FIX 10723: the capture writes for the run whose lease the origin
         // seals, as the run's own rows do (FIX 3103).
-        let run_writes = RunWriteToken::of_origin(origin);
+        let run_writes = run_write_token_of_origin(origin);
         with_run_write_token(run_writes.as_ref(), || {
             self.guests
                 .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
@@ -275,7 +275,7 @@ impl AgentVerbDoor for RunHostDoor {
         let verb = call.verb;
         let input = call.input.clone();
         // FIX 3103: the row writes for the run whose lease the origin seals.
-        let run_writes = RunWriteToken::of_origin(&origin);
+        let run_writes = run_write_token_of_origin(&origin);
         let work = move || {
             // The run's speech is admitted after its lease's look, as the
             // entry's own model calls are (FIX 11747).

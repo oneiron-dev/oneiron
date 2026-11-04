@@ -30,10 +30,11 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::file_secret_marks::KeySpan;
 use crate::secret_custody::KeptValues;
-use crate::secret_custody::{
-    KnownValues, MASKED_FILE_BAND, MaskedFile, masked_file_in_txn, put_masked_file_in_txn,
-};
 use crate::store::Store;
+use crate::store::file_key_masks::{
+    MASKED_FILE_BAND, MaskedFile, masked_file_in_txn, put_masked_file_in_txn,
+};
+use crate::store::known_value_index::KnownValues;
 
 /// How a streamed ASSET body meets a value custody holds (CALLS
 /// KNOWN_VALUE_STREAM_FINDER).

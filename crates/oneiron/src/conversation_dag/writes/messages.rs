@@ -5,7 +5,7 @@
 //! its metadata's door-owned pointer keeps. It never enters HEAD or the
 //! canonical line, and the TURN's own append and HEAD stay as they were.
 //!
-//! A MESSAGE row is the witness door's six-axis envelope, put only through
+//! A MESSAGE row is the witness door's seven-axis envelope, put only through
 //! the witness ceiling: the append's body names the axes, the ceiling
 //! authorizes the writer for them in this write, and the authorized bytes
 //! are what lands.
@@ -25,11 +25,12 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
-/// The six axes a MESSAGE body holds, each once.
-const MESSAGE_AXES: [&str; 6] = [
+/// The seven axes a MESSAGE body holds, each once.
+const MESSAGE_AXES: [&str; 7] = [
     "author",
     "type",
     "content",
+    "parts",
     "metadata",
     "is_visible",
     "order",
@@ -280,7 +281,7 @@ fn envelope_of(
         let key = key
             .as_str()
             .filter(|key| MESSAGE_AXES.contains(key))
-            .ok_or_else(|| invalid("a MESSAGE body holds its six axes alone"))?;
+            .ok_or_else(|| invalid("a MESSAGE body holds its seven axes alone"))?;
         if !seen.insert(key) {
             return Err(invalid("duplicate record body key"));
         }
@@ -303,6 +304,17 @@ fn envelope_of(
         .and_then(Value::as_u64)
         .and_then(|order| u32::try_from(order).ok())
         .ok_or_else(|| invalid("a MESSAGE body names its order"))?;
+    // The optional ordered parts axis, kept verbatim: no drop, no reorder,
+    // no join into the indexed text. Absent on a text-only append.
+    let parts = get("parts")
+        .map(|value| {
+            let mut encoded = Vec::new();
+            rmpv::encode::write_value(&mut encoded, value)
+                .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))?;
+            rmp_serde::from_slice::<Vec<crate::ContentPart>>(&encoded)
+                .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))
+        })
+        .transpose()?;
     let mut metadata = get("metadata").cloned();
     if let Some(Value::Map(entries)) = &metadata
         && entries
@@ -326,6 +338,7 @@ fn envelope_of(
         author: text("author")?,
         message_type: text("type")?,
         content: text("content")?,
+        parts,
         metadata,
         is_visible,
         order,

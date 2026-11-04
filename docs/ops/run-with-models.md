@@ -366,19 +366,38 @@ and `/config/mesh-relays` on its config drive.
 pack organ build this server runs as first party, by its 64-hex blake3 as the
 pack's `ORGAN.json` names it. Listing one is the operator's statement that the
 build is reviewed first-party code. Every other pack organ build, the seal's
-among them, installs as third party, and the organ host refuses to start a
-third-party organ on any platform until filesystem confinement for organs
-lands. The log names the pack, organ, build and platform once per install, and
-e-sign seals wait, said once, until the seal build is listed or a seal organ
-program is named (`--seal-organ`, `ONEIRON_SEAL_ORGAN`), which stays first
-party. No config file, settings file or environment sets the list: a settings
-file that names it is refused as an unknown field. A vault VM takes the list
-from its config drive's `/config/trusted-organ-builds`, one blake3 per line:
-its init passes each line on as its own `--trusted-organ-build`, so the drive
-carries the flag and is not another source (FIX 7889). Only an image whose
-manifest names `vm_trusted_organ_builds_revision: 1` reads that file. An engine
-from before this flag refuses it, so a supervisor passes it only to engines at
-or after the merge that added it.
+among them, installs as third party, and the organ host starts a third-party
+organ only inside a filesystem fence (FIX 7885): Landlock (ABI 3, Linux 6.2 or
+later) on Linux, Seatbelt's `/usr/bin/sandbox-exec` on macOS. Each third-party
+organ process gets a scratch dir of its own, made mode 0700 under the engine's
+temp dir as `oneiron-organ-scratch-<engine-pid>-<n>` before it starts. It is
+the organ's `TMPDIR` and the one dir it may write, and the host removes it,
+with all in it, when the process ends. On Linux the organ reads and runs
+`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc` and its own program, reads
+`/dev/zero`, `/dev/urandom` and `/dev/random`, and reads and writes
+`/dev/null` and its scratch dir. It cannot read `/proc` (so not the engine's
+environment), `/sys`, `/tmp`, `/dev/shm`, `/srv` or `/mnt`. On macOS the
+profile denies every operation by default and imports Apple's `system.sb`, the
+base a program loads with: `/System`, `/usr/lib` and `/usr/share`, the
+standard devices, the user and service tables, sysctls, and the logging and
+directory services. Beside it the organ reads and maps its own program, reads
+and writes its scratch dir, makes and maps its regions (POSIX shared memory
+under the protocol's `/onr.` names), and forks; it has no network and cannot
+read another process's arguments or environment. A fence that does not apply
+fails the start. A host with no fence (an older kernel, a container whose
+seccomp profile blocks Landlock, another platform) refuses third-party organs,
+and there the log names the pack, organ, build and platform once per install.
+On a host with no fence, e-sign seals wait, said once, until the seal build is
+listed or a seal organ program is named (`--seal-organ`,
+`ONEIRON_SEAL_ORGAN`), which stays first party. No config file, settings file
+or environment sets the list: a settings file that names it is refused as an
+unknown field. A vault VM takes the list from its config drive's
+`/config/trusted-organ-builds`, one blake3 per line: its init passes each line
+on as its own `--trusted-organ-build`, so the drive carries the flag and is
+not another source (FIX 7889). Only an image whose manifest names
+`vm_trusted_organ_builds_revision: 1` reads that file. An engine from before
+this flag refuses it, so a supervisor passes it only to engines at or after
+the merge that added it.
 
 A `local` embedder names its files with `model_dir` or `models_dir`, because
 the XDG data root is never read. A keystore lives in the supervisor's
@@ -1819,7 +1838,10 @@ weights, builds the worker's environment from the row's `env_lock`, starts
 it on the provider's `base_url`, counts it ready after one real render,
 restarts it after a crash and, when `idle_stop_secs` asks, stops it when
 idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
-same for the local Whisper worker, from an operator's weights manifest. A
+same for the local Whisper worker, from the house `whisper-large-v3` pin or
+an operator's weights manifest; its `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12 on x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified). A
 call to a managed worker's rung waits while it starts and holds it through
 its renders or its transcription; the worker runs one inference at a time.
 `deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
@@ -2697,6 +2719,8 @@ of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 `human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
+
+A yes on an open pack setup allow ask at the role door returns the still-open ask, records nothing and wakes no waiter (positive input only: a no and every other ask behave exactly as before); the allow lands only on the owner's proof at `/v1/owner/decisions/asks/answer`.
 
 - **What the ladder reads.** The unit's body and the bodies of its outgoing
   neighbours go into the call's state, as the JSON a reader is served. A

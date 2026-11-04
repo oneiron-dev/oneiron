@@ -24,28 +24,28 @@ use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispat
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::code_run::ReadWorldUnknown;
 use oneiron::code_run::model_call::{
-    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
-    record_model_call_in_txn,
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
 };
-use oneiron::compaction::output::restore_output;
+use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
     WorkClass,
-    run_admission::{RunAdmission, WorkPhysical},
+    run_admission::{RunAdmission, WorkPhysical, forget_work_parent, take_work_parent},
 };
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
-use crate::models::{ModelRuntime, OfferLadder};
+use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
 mod secret_use;
@@ -231,6 +231,10 @@ impl StepRunner {
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
+        // Nothing can parent on this try's ticket anymore (FIX 11960).
+        if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
+            forget_work_parent(&entity);
+        }
     }
 
     /// Runs on the pump thread, which owns `runtime`: blocking on the model
@@ -284,7 +288,7 @@ impl StepRunner {
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
-            let bytes = restore_output(vault, output.source)?;
+            let bytes = restore_output_window(vault, output.source, OUTPUT_WINDOW_BYTES)?;
             earlier.push(message(
                 LlmMessageRole::User,
                 String::from_utf8_lossy(&bytes).into_owned(),
@@ -651,6 +655,22 @@ impl StepRunner {
             } else {
                 WorkPhysical::Paid
             };
+            // This try runs as its attempt: its admission records the ticket
+            // under it, and a retry parents on the ticket its source took
+            // (FIX 11960). Either conversion failing parents nothing.
+            context.entity = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()).ok();
+            // A parent resolves only against the admission its ticket was
+            // taken on (FIX 11960): the pair travels together, and the
+            // admit filters a stale admission's number out. The take
+            // consumes the source mapping: the retry's takeover supersedes
+            // it, and the source leaks no entry.
+            let (admission, parent) = attempt
+                .retry_of
+                .and_then(|retry| oneiron::EntityId::from_bytes(*retry.as_bytes()).ok())
+                .and_then(|entity| take_work_parent(&entity))
+                .unzip();
+            context.parent_admission = admission;
+            context.parent = parent;
             context
         });
         // The admitted request is the step's replay capsule (FIX 3028),
@@ -671,39 +691,39 @@ impl StepRunner {
         let generated = match &uses {
             Some(uses) => uses
                 .converse(runtime, &call.ladder, &run, &live, request)
-                .map(|(response, served, rounds, final_request)| {
-                    ((response, served, final_request), rounds)
+                .map(|(response, binding, rounds, final_request)| {
+                    ((response, binding, final_request), rounds)
                 }),
             None => {
                 let final_request = request.clone();
                 runtime
                     .block_on(
                         call.ladder
-                            .generate_served_while(&run, request, None, &may_send),
+                            .generate_recorded_while(&run, request, None, &may_send),
                     )
-                    .map(|(response, served)| ((response, served, final_request), false))
+                    .map(|(response, binding)| ((response, binding, final_request), false))
             }
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let (response, served, final_request, tool_rounds) = match generated {
+        let (response, binding, final_request, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok(((response, served, final_request), rounds)) => {
+            Ok(((response, binding, final_request), rounds)) => {
                 if let Some(owner) = attempt.lease_owner.as_deref()
                     && let Err(error) = AttemptQueue::new(vault).set_executor_model(
                         attempt.id,
                         owner,
                         attempt.attempt_count,
-                        served.as_str(),
+                        binding.rung.model.as_str(),
                     )
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                (response, served, final_request, rounds)
+                (response, binding, final_request, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -729,11 +749,10 @@ impl StepRunner {
             || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         record_workflow_response(
             vault,
-            &call.ladder,
             &run,
             &final_request,
             &response,
-            served,
+            &binding,
             attempt,
             actor,
             tool_rounds,
@@ -761,11 +780,10 @@ impl StepRunner {
 #[allow(clippy::too_many_arguments)]
 fn record_workflow_response(
     vault: &Vault,
-    ladder: &OfferLadder,
     run: &RunAdmission,
     request: &LlmRequest,
     response: &LlmResponse,
-    served: ModelId,
+    binding: &ModelCallBinding,
     attempt: &AttemptRecord,
     actor: WriteActor,
     tool_rounds: bool,
@@ -786,9 +804,10 @@ fn record_workflow_response(
         tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
         return;
     };
-    let (mut rung, route) = ladder.model_call_binding(Some(&served));
-    // The record stamps the rung that answered, not the one requested.
-    rung.model = served;
+    // The record stamps the exact rung that answered, threaded with the
+    // final answer (FIX 12743), not the one requested.
+    let rung = binding.rung.clone();
+    let route = binding.route.clone();
     // The parent try's own fence, read from its row and never guessed: a
     // retry's attempt_count does not count logical retries.
     let replay_of = attempt.retry_of.and_then(|parent| {
@@ -804,27 +823,32 @@ fn record_workflow_response(
     } else {
         Vec::new()
     };
+    let call_metadata = response.usage.call_metadata.as_ref();
     let record = ModelCallRecord {
-        schema: 1,
+        schema: MODEL_CALL_SCHEMA,
         attempt: attempt_entity,
         lease_generation: u64::from(attempt.attempt_count),
         // Index 1 is the try's first call; a tool-rounds step's final answer
         // follows its truncated rounds and takes index 2.
         call_index: u64::from(tool_rounds) + 1,
-        digests,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
         route,
         rung,
         issuing_login: None,
         organization: None,
         project: None,
         credential_id: None,
-        response_id: None,
+        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
         thread_id: None,
-        previous_response_id: None,
-        store: None,
+        previous_response_id: call_metadata
+            .and_then(|metadata| metadata.previous_response_id.clone()),
+        store: call_metadata.and_then(|metadata| metadata.store),
+        endpoint: call_metadata.map(|metadata| metadata.endpoint),
         captured_at: vault.now_recorded_at(),
-        usage: response.usage.clone(),
-        finish_reason: response.finish_reason.clone(),
         receipt_ref: None,
         actor: Some(actor.entity_ref()),
         produced_pending: response.reply_assertions.created.is_empty(),

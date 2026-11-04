@@ -18,8 +18,8 @@ use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    LoadedWindow, WindowExport, apply_pending_window_updates, load_window_from_state,
-    persisted_window_pads,
+    LoadedWindow, ReplacementByteBound, WindowExport, apply_pending_window_updates,
+    load_window_from_state, persisted_window_pads,
 };
 
 impl SyncClient {
@@ -236,13 +236,23 @@ impl SyncClient {
                 // within the floor and checked whole against the header's digest
                 // (FIX 8247); the replacement's admission bounds it.
                 let evidence = self.staged_entity_evidence()?;
+                // The home this connection proved, if it proved one, sent the
+                // snapshot: its MESSAGE rows take the own-device lane (FIX 12111).
+                let own_device = self.own_device_import(self.home_peer);
                 // Judged again once no demotion holds the window closed.
                 let (window, conflicts) = self
                     .manager
-                    .replace_window_admitted(&key, payload, &evidence, || {
-                        self.full_window_exchange_allowed(window_key)
-                            .unwrap_or(false)
-                    })
+                    .replace_window_bounded(
+                        &key,
+                        payload,
+                        &evidence,
+                        || {
+                            self.full_window_exchange_allowed(window_key)
+                                .unwrap_or(false)
+                        },
+                        ReplacementByteBound::NetworkFrame,
+                        own_device.as_ref(),
+                    )
                     .map_err(|error| match error {
                         Error::Sync(SyncError::SyncProtocolError {
                             context: SyncProtocolValidation::ReplacementBusy,

@@ -6,7 +6,7 @@
 
 mod codec;
 mod dispatch;
-pub mod email_headers;
+pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
 mod resolution;

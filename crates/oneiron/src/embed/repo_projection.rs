@@ -43,7 +43,7 @@ use crate::origin::secret_projection::index::{
     RepoIndexMarks, masked_repo_index_input_in_txn, opaque_index_text,
 };
 use crate::ports::{EntityStoreRead, RetrievalIndexInventory};
-use crate::registry::ENTITY_TYPE_ASSET;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::store::ManifestDbs;
 
 /// The payload an ASSET record embeds as: its text item's copy, read under
@@ -254,7 +254,8 @@ fn kept<T>(result: Result<T>) -> Result<Option<T>> {
 
 /// Every ASSET whose media bytes, the blob it holds read in `txn`, are by
 /// their own whole BLAKE3 a blob in `sources`: the envelope copies a mask
-/// change reaches.
+/// change reaches. In the same walk, every derived text whose own words
+/// are such a blob's whole bytes, which no edge links to it (FIX 10406).
 ///
 /// # Errors
 /// A store failure.
@@ -269,15 +270,18 @@ pub(crate) fn repo_envelope_copies_in_txn(
     }
     for row in vault.store.port_entity_records(txn)? {
         let (id, row) = row?;
-        if row.entity_type != ENTITY_TYPE_ASSET {
-            continue;
-        }
-        let bytes = repo_media_bytes(&row.body, |blob| {
-            Ok(vault
-                .store
-                .port_entity_record(txn, blob)?
-                .map(|blob| blob.body))
-        })?;
+        let bytes = match row.entity_type {
+            ENTITY_TYPE_ASSET => repo_media_bytes(&row.body, |blob| {
+                Ok(vault
+                    .store
+                    .port_entity_record(txn, blob)?
+                    .map(|blob| blob.body))
+            })?,
+            ENTITY_TYPE_ASSET_TEXT => {
+                derived::derived_text_words(&row.body).map(String::into_bytes)
+            }
+            _ => continue,
+        };
         if bytes.is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes())) {
             copies.push(id);
         }

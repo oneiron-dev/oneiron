@@ -39,13 +39,14 @@ pub(super) use session_ops::{export as session_export, import as session_import}
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
-    WorkerBuildEvidence, WorkerFailure,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
+    SegmentManifest, WorkerBuildEvidence, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
@@ -127,7 +128,12 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
-        Box::pin(execute(route, body, segments, context))
+        let engine_model = body
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.http.engine_models.get(wire))
+            .cloned();
+        Box::pin(execute(route, body, segments, context, lease, engine_model))
     }
 
     fn stream<'a>(
@@ -141,12 +147,19 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
+        let engine_model = body
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .and_then(|wire| self.http.engine_models.get(wire))
+            .cloned();
         Ok(Box::pin(futures_util::stream::unfold(
             Streaming::Start {
                 route,
                 body,
                 segments,
                 context,
+                lease: lease.clone(),
+                engine_model,
             },
             Streaming::step,
         )))
@@ -310,6 +323,7 @@ async fn begin(
         Some(lease),
         session,
         Some(&schedule),
+        Some(route.worker.spec().worker_id.as_str()),
     )
     .await;
     let refused = matches!(
@@ -331,6 +345,7 @@ async fn begin(
             Some(lease),
             None,
             Some(&schedule),
+            Some(route.worker.spec().worker_id.as_str()),
         )
         .await;
     }
@@ -388,30 +403,76 @@ async fn execute(
     body: JsonValue,
     segments: Option<Arc<SegmentManifest>>,
     context: WorkContext,
+    lease: &BudgetLease,
+    engine_model: Option<ModelId>,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
+    // FIX 11961: the child's stop may land while its call runs. The
+    // context's cancellation is retained beside the call: a raised flag
+    // aborts the wait, and the dropped call sends the worker-side cancel
+    // and releases the grant's custody. A trip between the flag check and
+    // the wait below surfaces at the next wire event.
+    let device_cancel = context.cancel.shared();
+    let device_cancel_wake = context.cancel.shared_notify();
     let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
+    // One physical request, observed from its send (FIX 9297, FIX 9417 pattern).
+    let publisher = InferencePublisher::begin(lease);
     let mut last = loop {
-        match sent.call.next().await {
-            Ok(Event::Final(last)) => break last,
-            Ok(Event::Admitted(mark)) => report(&route, &mark),
-            Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
-            Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut(error)) => {
-                refresh_after_cut(&route);
-                return Err(error);
+        // Arm the wait before reading the flag (FIX 11961): a stop landing
+        // between the two still trips the flag read, so no trip waits on
+        // the next wire event to be seen.
+        let wake = device_cancel_wake.notified();
+        tokio::pin!(wake);
+        if device_cancel.load(Ordering::Acquire) {
+            // The pre-grant cancel maps here too (FIX 11961): a stop is a
+            // cut stream for the caller's own retry authority, never a
+            // contradiction of a pin.
+            return Err(OpenAiCompatTransportError::Connection);
+        }
+        tokio::select! {
+            () = &mut wake => {
+                return Err(OpenAiCompatTransportError::Connection);
             }
+            next = sent.call.next() => match next {
+                Ok(Event::Final(last)) => {
+                    // A stop that landed with the last frame aborts the
+                    // answer instead of returning success after stop.
+                    if device_cancel.load(Ordering::Acquire) {
+                        return Err(OpenAiCompatTransportError::Connection);
+                    }
+                    break last;
+                }
+                Ok(Event::Admitted(mark)) => report(&route, &mark),
+                Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
+                Ok(Event::FirstToken | Event::Token { .. }) => {}
+                Err(Cut(error)) => {
+                    refresh_after_cut(&route);
+                    return Err(error);
+                }
+            },
         }
     };
     report(&route, &last);
-    record_receipt(&route, &sent, &last);
     stamp_physical(&mut last, sent.physical);
+    stamp_scheduling(&mut last);
+    // The tie downgrade lands before the receipt is parsed and published:
+    // otherwise the ledger and settlement keep VerifiedArtifacts while the
+    // reply carries Unknown, and settlement retains the call twice (FIX 9297).
+    sent.tie.apply(&mut last);
+    // The final's receipt, done or error, is this call's final one; the
+    // Failed settlement records what its lease observed (FIX 9297).
+    if let Some(mut receipt) = record_receipt(&route, &sent, &last) {
+        if let Some(model) = &engine_model {
+            receipt.model = Some(model.clone());
+        }
+        publisher.finish(receipt);
+    }
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
 
@@ -510,7 +571,13 @@ fn activity_of(stats: &JsonValue) -> Option<WorkerActivity> {
 }
 
 /// Retains the physical receipt a terminal carried, with its launch epoch.
-fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
+/// Parses the `final`'s first inference-call receipt for the device
+/// ledger, and returns it stamped for the settlement sink (FIX 9297).
+fn record_receipt(
+    route: &NativeRoute,
+    sent: &Sent,
+    last: &JsonValue,
+) -> Option<InferenceCallReceipt> {
     let scheduling = last
         .get("scheduling")
         .and_then(|value| serde_json::from_value::<SchedulingReceipt>(value.clone()).ok());
@@ -531,7 +598,37 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
         receipt.physical = Some(sent.physical);
-        worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
+        worker_host::report_receipt(
+            &route.worker.spec().worker_id,
+            &sent.tie.epoch,
+            receipt.clone(),
+        );
+        Some(receipt)
+    } else {
+        None
+    }
+}
+
+/// Stamps the final's top-level scheduling into every receipt the reply
+/// carries, beside [`stamp_physical`]: the published receipt carries the
+/// scheduling [`record_receipt`] parsed, and settlement's `stands_for`
+/// compares every other field, so an unstamped carried receipt is retained
+/// twice (FIX 9297).
+fn stamp_scheduling(last: &mut JsonValue) {
+    let Some(scheduling) = last.get("scheduling").cloned() else {
+        return;
+    };
+    let Some(calls) = last
+        .get_mut("usage")
+        .and_then(|usage| usage.get_mut(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array_mut)
+    else {
+        return;
+    };
+    for call in calls {
+        if let Some(call) = call.as_object_mut() {
+            call.insert("scheduling".to_owned(), scheduling.clone());
+        }
     }
 }
 
@@ -642,6 +739,7 @@ pub(super) async fn qualify(
         None,
         None,
         None,
+        None,
     )
     .await
     .map_err(|start| match start {
@@ -674,6 +772,8 @@ enum Streaming {
         body: JsonValue,
         segments: Option<Arc<SegmentManifest>>,
         context: WorkContext,
+        lease: BudgetLease,
+        engine_model: Option<ModelId>,
     },
     Live(Box<Live>),
     Done,
@@ -683,6 +783,8 @@ enum Streaming {
 struct Live {
     route: NativeRoute,
     sent: Sent,
+    publisher: InferencePublisher,
+    engine_model: Option<ModelId>,
     target: Option<String>,
     id: String,
     created: u64,
@@ -701,13 +803,21 @@ impl Streaming {
                 body,
                 segments,
                 context,
+                lease,
+                engine_model,
             } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
                 match begin(&route, &body, true, segments.as_deref(), context).await {
-                    Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
+                    Ok(Begun::Sent(sent)) => {
+                        // One physical request, observed from its send (FIX 9297).
+                        let publisher = InferencePublisher::begin(&lease);
+                        Box::new(Live::over(route, sent, target, publisher, engine_model))
+                            .next()
+                            .await
+                    }
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))
                     }
@@ -721,10 +831,18 @@ impl Streaming {
 }
 
 impl Live {
-    fn over(route: NativeRoute, sent: Sent, target: Option<String>) -> Self {
+    fn over(
+        route: NativeRoute,
+        sent: Sent,
+        target: Option<String>,
+        publisher: InferencePublisher,
+        engine_model: Option<ModelId>,
+    ) -> Self {
         Self {
             route,
             sent,
+            publisher,
+            engine_model,
             model: target.clone().map_or(JsonValue::Null, JsonValue::String),
             target,
             id: format!("chatcmpl-native-{}", transport::next_request_id()),
@@ -780,8 +898,18 @@ impl Live {
                 Ok(Event::Final(mut last)) => {
                     self.finished = true;
                     report(&self.route, &last);
-                    record_receipt(&self.route, &self.sent, &last);
                     stamp_physical(&mut last, self.sent.physical);
+                    stamp_scheduling(&mut last);
+                    // Same tie-before-publish as the buffered path (FIX 9297).
+                    self.sent.tie.apply(&mut last);
+                    // The final's receipt, done or error, is this call's
+                    // final one; a cut stream keeps its progress (FIX 9297).
+                    if let Some(mut receipt) = record_receipt(&self.route, &self.sent, &last) {
+                        if let Some(model) = &self.engine_model {
+                            receipt.model = Some(model.clone());
+                        }
+                        self.publisher.finish(receipt);
+                    }
                     self.finish(last);
                 }
                 Err(Cut(error)) => {

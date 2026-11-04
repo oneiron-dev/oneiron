@@ -13,7 +13,7 @@ use axum::routing::{get, post};
 use oneiron::connector_key::ChannelMessageSubscription;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -28,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/connectors/subscriptions",
                 summary: "The agent's connector event subscriptions, standing and revoked.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -37,6 +38,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/connectors/subscriptions",
                 summary: "Subscribes the agent to the messages the channel's built-in pack routes to it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    subscribe_request_body_schema,
+                    channel_subscription_schema,
+                )),
             },
             post(subscribe),
         ),
@@ -46,6 +51,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/connectors/subscriptions/revoke",
                 summary: "The subscription wakes nothing more; its key stays.",
                 row: None,
+                shape: Some(RestShape::json(
+                    revoke_subscription_body_schema,
+                    subscription_revoked_schema,
+                )),
             },
             post(revoke),
         ),

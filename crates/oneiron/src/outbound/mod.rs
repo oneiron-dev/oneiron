@@ -15,7 +15,7 @@ mod dispatch_types;
 mod executor;
 mod fair_line;
 mod intent;
-pub mod linkedin_policy;
+pub use oneiron_linkedin_policy as linkedin_policy;
 mod manifests;
 mod receipt_fields;
 mod recovery_suggestions;
@@ -96,7 +96,9 @@ pub(crate) use self::connector_task::{
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::reply_job::{
-    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+    connector_event_participant_ids, erase_connector_reply_bodies_by_authors_in_txn,
+    erase_connector_reply_bodies_for_events_in_txn, erase_connector_reply_job_payload,
+    erase_connector_reply_results_in_txn,
 };
 pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
 pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};

@@ -17971,6 +17971,40 @@ async fn vault_settings_learning_clear(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_secrets_code_run_lifts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.code_run_lifts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.code_run_lifts", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.code_run_lifts", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_code_run_lifts(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_secrets_lift_history(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -23830,6 +23864,7 @@ async fn vault_connectors_read_grants_grant(
         let (output, listed) = super::host_doors::vault_connectors_read_grants_grant(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -23865,6 +23900,7 @@ async fn vault_connectors_read_grants_revoke(
         let (output, listed) = super::host_doors::vault_connectors_read_grants_revoke(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -25354,7 +25390,7 @@ async fn vault_artifacts_proposals(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -27182,6 +27218,28 @@ async fn self_skills_callables(
         actor,
         class,
         "self.skills.callables",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_skills_callable_amend(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.skills.callable.amend",
         value,
         &producers,
     )?;
@@ -40089,6 +40147,9 @@ async fn call_verb_row(
         "vault.settings.learning.clear" => {
             Box::pin(vault_settings_learning_clear(server, call, input)).await
         }
+        "vault.secrets.code_run_lifts" => {
+            Box::pin(vault_secrets_code_run_lifts(server, call, input)).await
+        }
         "vault.secrets.lift_history" => {
             Box::pin(vault_secrets_lift_history(server, call, input)).await
         }
@@ -40695,6 +40756,9 @@ async fn call_verb_row(
         "self.skills.save" => Box::pin(self_skills_save(server, call, input)).await,
         "self.skills.fork" => Box::pin(self_skills_fork(server, call, input)).await,
         "self.skills.callables" => Box::pin(self_skills_callables(server, call, input)).await,
+        "vault.skills.callable.amend" => {
+            Box::pin(vault_skills_callable_amend(server, call, input)).await
+        }
         "vault.skills.pack_receipt" => {
             Box::pin(vault_skills_pack_receipt(server, call, input)).await
         }

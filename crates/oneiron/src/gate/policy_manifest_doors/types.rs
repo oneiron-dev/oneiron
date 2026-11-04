@@ -137,6 +137,10 @@ pub struct PolicyManifest {
     /// The host checker reference, as the existing manifest decoder stores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_checker: Option<String>,
+    /// The slide review's pacing and route rows (FIX 9336); absent, the
+    /// shipped rows hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]

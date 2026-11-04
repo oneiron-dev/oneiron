@@ -256,11 +256,13 @@ fn erased_facts(erased: &CodeRunBridgeCall) -> Result<Vec<u8>> {
 /// recomposes it in.
 fn spawn_fields_extent(call: &CodeRunBridgeCall) -> Result<(u64, u64)> {
     let mut extent = (0, 0);
-    for value in [
-        &call.request,
-        &call.outcome,
-        &spawn_targets_value(&call.spawn_targets),
-    ] {
+    // Part-fit checks must not undercount a rewritten row (FIX 1442).
+    let targets = spawn_targets_value(&call.spawn_targets);
+    let mut fields = vec![&call.request, &call.outcome, &targets];
+    if let Some(rewritten) = &call.rewritten_request {
+        fields.push(rewritten);
+    }
+    for value in fields {
         let bytes = encode_code_run_replay_value(value, "spawn field MessagePack encode failed")?;
         let (len, high) = bytes_extent(&bytes);
         extent = (extent.0 + len, extent.1 + high);

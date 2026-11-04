@@ -42,8 +42,9 @@ pub struct GateDecisionReadContext {
     pub position: Option<GateReadPosition>,
     /// Writer anchors (FIX 11000 PARTLY): subject-ancestry thread turns and
     /// reached roots/rooms plus body and prompt-source worlds, content-free
-    /// ids only. `None` when the writer attached none (rows written before
-    /// anchors, or writers outside the anchor scheme): today's verdicts
+    /// ids and the candidate header's own occurred range. `None` when the
+    /// writer attached none (rows written before anchors, or writers outside
+    /// the anchor scheme): today's verdicts
     /// stand. `Some(incomplete())` when the writer attempted the capture
     /// and proved nothing: denies. Only `Some(complete)` with nonempty
     /// worlds is later readable. Never a Grant, facets, or the writer's
@@ -67,8 +68,8 @@ pub struct GateThreadAnchor {
 /// Fields are private so only [`Self::complete`] and [`Self::incomplete`]
 /// ever build one: `complete` carries the full Engine-required set
 /// (subject-ancestry placed turns + reached roots/rooms + body and
-/// prompt-source worlds, base explicit, sorted and deduped), while
-/// `incomplete` is the single empty value for every unknown, ambiguous,
+/// prompt-source worlds, base explicit, sorted and deduped, and the candidate
+/// header's own occurred range), while `incomplete` is the single empty value for every unknown, ambiguous,
 /// cyclic, malformed, unsupported, or errored capture. A later kept path
 /// must deny unless `is_complete` holds and `worlds` is nonempty; it must
 /// never treat a partial set as complete, nor read an empty `worlds` as a
@@ -91,6 +92,10 @@ pub struct GateReadAnchors {
     /// empty when complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     worlds: Vec<EntityId>,
+    /// The candidate header's own occurred start and end, never a put clock
+    /// or a subject's time. Absent only in the incomplete empty value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    occurred: Option<[u64; 2]>,
 }
 
 impl GateReadAnchors {
@@ -102,6 +107,7 @@ impl GateReadAnchors {
         reached: Vec<EntityId>,
         rooms: Vec<EntityId>,
         worlds: Vec<EntityId>,
+        occurred: crate::TimeRange,
     ) -> Self {
         debug_assert!(
             !worlds.is_empty(),
@@ -113,6 +119,7 @@ impl GateReadAnchors {
             reached,
             rooms,
             worlds,
+            occurred: Some([occurred.start, occurred.end]),
         }
     }
 
@@ -127,6 +134,7 @@ impl GateReadAnchors {
             reached: Vec::new(),
             rooms: Vec::new(),
             worlds: Vec::new(),
+            occurred: None,
         }
     }
 
@@ -139,13 +147,14 @@ impl GateReadAnchors {
             && self.reached.is_empty()
             && self.rooms.is_empty()
             && self.worlds.is_empty()
+            && self.occurred.is_none()
     }
 
     /// Whether the Engine-required set is fully captured. A kept path must
     /// still require nonempty `worlds`.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.complete
+        self.complete && self.occurred.is_some()
     }
 
     /// Placed (root, turn) pairs under CONTENT.
@@ -170,6 +179,13 @@ impl GateReadAnchors {
     #[must_use]
     pub fn worlds(&self) -> &[EntityId] {
         &self.worlds
+    }
+
+    /// The candidate header's own occurred range, kept verbatim.
+    #[must_use]
+    pub fn occurred(&self) -> Option<crate::TimeRange> {
+        self.occurred
+            .map(|[start, end]| crate::TimeRange { start, end })
     }
 
     /// Whether any anchor names `id`.

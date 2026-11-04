@@ -55,7 +55,7 @@ mod rows;
 use calibration::{Reference, Timing, measure, prefers};
 use rows::{RowKey, WindowRules, build_id, os_build, read_rows, rows_path, write_rows};
 
-pub(crate) use admission::Admission;
+pub(crate) use admission::{Admission, COREML_ABSENT, MLX_ABSENT, PlatformAbsent};
 pub(crate) use baseline::BaselineCalibration;
 pub(crate) use rows::Row;
 

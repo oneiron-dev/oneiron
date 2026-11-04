@@ -194,6 +194,7 @@ pub(super) fn imported_message(
         },
         message_type: format!("import.{}", source.source_id()),
         content: message.text.clone(),
+        parts: None,
         metadata: Some(provenance(source, conversation, message, previous)),
         is_visible: true,
         order,

@@ -16,7 +16,7 @@ use axum::response::Json;
 use axum::routing::post;
 use serde::Deserialize;
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::export_supplement::{self, SupplementImported};
@@ -29,6 +29,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/secrets/export-supplements/import",
             summary: "With {\"request\", \"sealed\"} as the supplement read returns them: opens the holder's sealed copy on this install, the recipient the owner chose, and restores its secret; returns what the import did. It also marks the export request imported.",
             row: None,
+            shape: Some(RestShape::json(
+                import_body_schema,
+                supplement_imported_schema,
+            )),
         },
         post(import),
     )]

@@ -1,5 +1,7 @@
 //! Reviewed file-operation identity and received bundle input vocabulary.
 
+use std::collections::BTreeMap;
+
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitOid;
@@ -50,6 +52,12 @@ pub struct RepoProposedFile {
     pub content: Option<Vec<u8>>,
     pub source_operation: Option<EntityId>,
     pub metadata_edit: Option<crate::store::code_document_values::CodeFileMetadataEdit>,
+    /// A secret remediation's file its base withholds: the BLAKE3 of the
+    /// bytes the remediation read at the pinned commit, which the merge
+    /// queue checks the tested tree against, so no old byte is stored
+    /// (FIX 10974).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withheld_base_blake3: Option<[u8; 32]>,
 }
 
 impl RepoProposedFile {
@@ -61,6 +69,7 @@ impl RepoProposedFile {
             content: Some(content),
             source_operation: None,
             metadata_edit: None,
+            withheld_base_blake3: None,
         }
     }
 }
@@ -79,6 +88,10 @@ pub(crate) struct ReceivedFilesProposalInput {
     pub(crate) message: String,
     pub(crate) files: Vec<RepoProposedFile>,
     pub(crate) created_at: u64,
+    /// Each file translated from a masked copy, by path, with its canonical
+    /// ORIGINAL's own key bytes (FIX 10276): the only secret its custody
+    /// check admits. Empty for every ordinary push.
+    pub(crate) original_spans: BTreeMap<String, Vec<Vec<u8>>>,
 }
 
 /// The deterministic id of a received bundle's proposal.

@@ -15,7 +15,8 @@
 //! placeholder edited in any way is a sealed-file edit. Containers are
 //! mapped member by member through the retained rebuild
 //! ([`crate::batch::secret_scan::apply_retained_repo_projection_diff`]). No
-//! count, byte, depth or time bound is added.
+//! count, byte, depth or time bound is added, and an alignment holds memory
+//! linear in its inputs, whatever their edit distance (FIX 9234).
 
 #![allow(
     dead_code,
@@ -278,67 +279,148 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 /// The pairs of equal tokens a shortest edit script keeps, in order (Myers'
-/// greedy alignment, a deletion taken before an insertion).
+/// alignment, a deletion taken before an insertion), in space linear in
+/// the inputs (FIX 9234): each run's common prefix and suffix are kept,
+/// and what lies between is split at its middle snake, met from both ends,
+/// the halves aligned in turn from a heap stack. No step's frontier is
+/// kept past the step after it.
 fn aligned<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let width = a.len() + b.len() + 4;
+    let mut forward = vec![0_isize; width];
+    let mut backward = vec![0_isize; width];
+    let mut pending = vec![Alignment::Run {
+        a: (0, a.len()),
+        b: (0, b.len()),
+    }];
+    while let Some(next) = pending.pop() {
+        let (a_run, b_run) = match next {
+            Alignment::Kept {
+                a: a_at,
+                b: b_at,
+                len,
+            } => {
+                pairs.extend((0..len).map(|step| (a_at + step, b_at + step)));
+                continue;
+            }
+            Alignment::Run { a, b } => (a, b),
+        };
+        let prefix = a[a_run.0..a_run.1]
+            .iter()
+            .zip(&b[b_run.0..b_run.1])
+            .take_while(|(left, right)| left == right)
+            .count();
+        pairs.extend((0..prefix).map(|step| (a_run.0 + step, b_run.0 + step)));
+        let (a_start, b_start) = (a_run.0 + prefix, b_run.0 + prefix);
+        let suffix = a[a_start..a_run.1]
+            .iter()
+            .rev()
+            .zip(b[b_start..b_run.1].iter().rev())
+            .take_while(|(left, right)| left == right)
+            .count();
+        let (a_end, b_end) = (a_run.1 - suffix, b_run.1 - suffix);
+        if suffix > 0 {
+            pending.push(Alignment::Kept {
+                a: a_end,
+                b: b_end,
+                len: suffix,
+            });
+        }
+        if a_start == a_end || b_start == b_end {
+            continue;
+        }
+        let Some((x, y)) = middle_snake(
+            &a[a_start..a_end],
+            &b[b_start..b_end],
+            &mut forward,
+            &mut backward,
+        ) else {
+            continue;
+        };
+        pending.push(Alignment::Run {
+            a: (a_start + x, a_end),
+            b: (b_start + y, b_end),
+        });
+        pending.push(Alignment::Run {
+            a: (a_start, a_start + x),
+            b: (b_start, b_start + y),
+        });
+    }
+    pairs
+}
+
+/// One pending piece of an alignment, taken in order from a heap stack.
+enum Alignment {
+    /// Token ranges of both inputs still to align.
+    Run {
+        a: (usize, usize),
+        b: (usize, usize),
+    },
+    /// Equal runs of `len` tokens already found, kept in place.
+    Kept { a: usize, b: usize, len: usize },
+}
+
+/// The start of the middle snake of a shortest edit script of `a` into
+/// `b`, both non-empty and differing at their first and last token: the
+/// point a script's first half ends at, found by walking forward from the
+/// start and backward from the end, one edit a step each, until they meet
+/// (Myers 1986, 4b). `forward` and `backward` hold at least
+/// `a.len() + b.len() + 4` entries; nothing they held before is read.
+fn middle_snake<T: PartialEq>(
+    a: &[T],
+    b: &[T],
+    forward: &mut [isize],
+    backward: &mut [isize],
+) -> Option<(usize, usize)> {
     let (n, m) = (a.len() as isize, b.len() as isize);
-    let max = n + m;
-    let at = |k: isize| (k + max) as usize;
-    let mut v = vec![0_isize; 2 * (max as usize) + 2];
-    let mut trace: Vec<Vec<isize>> = Vec::new();
-    'search: for d in 0..=max {
-        trace.push(v[at(-d)..=at(d)].to_vec());
+    let delta = n - m;
+    let odd = delta.rem_euclid(2) == 1;
+    let max = (n + m + 1) / 2;
+    let at = |k: isize| (k + max + 1) as usize;
+    forward[at(1)] = 0;
+    backward[at(1)] = 0;
+    for d in 0..=max {
         let mut k = -d;
         while k <= d {
-            let mut x = if k == -d || (k != d && v[at(k - 1)] < v[at(k + 1)]) {
-                v[at(k + 1)]
+            let mut x = if k == -d || (k != d && forward[at(k - 1)] < forward[at(k + 1)]) {
+                forward[at(k + 1)]
             } else {
-                v[at(k - 1)] + 1
+                forward[at(k - 1)] + 1
             };
             let mut y = x - k;
+            let start = (x, y);
             while x < n && y < m && a[x as usize] == b[y as usize] {
                 x += 1;
                 y += 1;
             }
-            v[at(k)] = x;
-            if x >= n && y >= m {
-                break 'search;
+            forward[at(k)] = x;
+            let reverse = delta - k;
+            if odd && reverse.abs() < d && x + backward[at(reverse)] >= n {
+                return Some((start.0 as usize, start.1 as usize));
+            }
+            k += 2;
+        }
+        let mut k = -d;
+        while k <= d {
+            let mut x = if k == -d || (k != d && backward[at(k - 1)] < backward[at(k + 1)]) {
+                backward[at(k + 1)]
+            } else {
+                backward[at(k - 1)] + 1
+            };
+            let mut y = x - k;
+            while x < n && y < m && a[(n - 1 - x) as usize] == b[(m - 1 - y) as usize] {
+                x += 1;
+                y += 1;
+            }
+            backward[at(k)] = x;
+            let ahead = delta - k;
+            if !odd && ahead.abs() <= d && forward[at(ahead)] + x >= n {
+                return Some(((n - x) as usize, (m - y) as usize));
             }
             k += 2;
         }
     }
-    let mut pairs = Vec::new();
-    let (mut x, mut y) = (n, m);
-    for d in (1..trace.len() as isize).rev() {
-        let before = &trace[d as usize];
-        let get = |k: isize| before[(k + d) as usize];
-        let k = x - y;
-        let from = if k == -d || (k != d && get(k - 1) < get(k + 1)) {
-            k + 1
-        } else {
-            k - 1
-        };
-        let from_x = get(from);
-        let from_y = from_x - from;
-        let (snake_x, snake_y) = if from == k + 1 {
-            (from_x, from_y + 1)
-        } else {
-            (from_x + 1, from_y)
-        };
-        while x > snake_x && y > snake_y {
-            x -= 1;
-            y -= 1;
-            pairs.push((x as usize, y as usize));
-        }
-        x = from_x;
-        y = from_y;
-    }
-    while x > 0 && y > 0 {
-        x -= 1;
-        y -= 1;
-        pairs.push((x as usize, y as usize));
-    }
-    pairs.reverse();
-    pairs
+    None
 }
 
 /// [`aligned`] taken from the end: the other extreme of the equally short

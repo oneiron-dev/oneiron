@@ -1,7 +1,8 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
 use super::{
-    McpCodeModeProvider, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter, RunCompactionSeat,
+    McpCodeModeProvider, ModelCallBackend, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter,
+    RunCompactionSeat,
 };
 use crate::ai_host::live_lease::LiveLeaseState;
 use oneiron::agent_dispatch::SpendScopeId;
@@ -72,6 +73,7 @@ fn carrier_lease() -> Result<BudgetLease, oneiron::llm::BudgetDenied> {
 pub struct McpQuickJsProvider {
     runtime: Arc<QuickJsRuntimeFactory>,
     backend: Arc<dyn LlmBackend>,
+    model_call_backend: Option<ModelCallBackend>,
     lease: BudgetLease,
     config: EngineExecutorConfig,
     /// Builds each run's compaction seat; none keeps every window raw.
@@ -205,6 +207,7 @@ impl McpQuickJsProvider {
         Ok(Self {
             runtime,
             backend,
+            model_call_backend: None,
             lease,
             config,
             compaction: None,
@@ -237,6 +240,13 @@ impl McpQuickJsProvider {
                 receipts,
             ));
         }
+        self
+    }
+
+    /// The ordinary backend copied with one authenticated execution caller.
+    #[must_use]
+    pub(crate) fn with_model_call_backend(mut self, backend: ModelCallBackend) -> Self {
+        self.model_call_backend = Some(backend);
         self
     }
 
@@ -405,6 +415,15 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()
+    }
+    fn backend_with_model_call_context(
+        &self,
+        principal: EntityId,
+        session: Option<String>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        self.model_call_backend
+            .as_ref()
+            .map(|build| build(principal, session))
     }
     fn compaction(
         &self,

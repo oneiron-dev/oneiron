@@ -366,6 +366,17 @@ impl WindowManager {
         self.track_issued_handle(key, &window);
         drop(opening);
         drop(registry);
+        // FIX 12129: a window closed while a NOTE was deleted keeps that
+        // NOTE's review-bundle attachments; scrub what this vault deleted.
+        if let Err(error) =
+            super::note::scrub_missed_note_deletes(&self.vault, &self.materializer, &window.doc)
+        {
+            tracing::warn!(
+                window = %key,
+                kind = ?error.kind(),
+                "a deleted NOTE's bundle attachments stay in this window until its next export"
+            );
+        }
         Ok((window, true))
     }
 

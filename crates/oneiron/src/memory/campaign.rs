@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 impl Memory<'_> {
     // ── campaign + saved query `self.*` surface (CA-07) ──────────────────
     //
-    // Ten verbs, one rule: the BOUND actor is the authenticated principal, and
+    // Eleven verbs, one rule: the BOUND actor is the authenticated principal, and
     // it is the only owner any of these writes can name. None of the domain
     // request types carries an owner field, so there is no payload key to
     // spoof — the owner is an argument this facade supplies, not data a caller
@@ -31,6 +31,25 @@ impl Memory<'_> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::create_campaign(
             self.vault, self.actor, request, now,
+        )?)
+    }
+
+    /// `self.campaign.launch` — launches a Draft or resumes a Paused campaign.
+    /// A person who owns it always can; an agent needs the campaign-launch Grant.
+    pub fn campaign_launch(
+        &self,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        Ok(crate::campaign::surface::launch_campaign(
+            self.vault,
+            self.actor,
+            self.actor_class,
+            campaign_ref,
+            expected_definition_version,
+            now,
         )?)
     }
 

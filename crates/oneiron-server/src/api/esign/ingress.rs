@@ -13,6 +13,7 @@ use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
+use axum::http::HeaderMap;
 use oneiron::blob_artifact::esign::{EsignCapability, EsignIngress, SigningAction};
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;

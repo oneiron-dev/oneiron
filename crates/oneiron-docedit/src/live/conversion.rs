@@ -151,8 +151,9 @@ pub enum Conversion {
     LabelRangesUnlinked { labels: u32 },
     /// The chart's embedded workbook could not be edited in place, so the
     /// chart's data was rebuilt from the live chart data: on `sheet`, a new
-    /// sheet of the original workbook, which shows it first and keeps every
-    /// other sheet, name and table it held (FIX 6714); or, `None`, in a new
+    /// sheet of the original workbook (FIX 6714) or the sheet that held only
+    /// the chart's data, rewritten (FIX 9169), which it shows first, keeping
+    /// every other sheet, name and table it held; or, `None`, in a new
     /// workbook, when the original could not be read.
     WorkbookRebuilt {
         part: String,
@@ -164,6 +165,9 @@ pub enum Conversion {
     /// wrote: they keep their expressions and their stale results, and the
     /// opening application recalculates them.
     WorkbookRecalcDeferred { part: String },
+    /// A table-cell write cut these `a:fld` fields whole (FIX 12227): each
+    /// named dynamic field, by its `type` attribute, became static text.
+    TableFieldsCut { fields: Vec<String> },
 }
 
 /// Why a rewritten chart's embedded workbook was rebuilt rather than
@@ -397,7 +401,7 @@ impl Conversion {
                 reason,
                 sheet: Some(sheet),
             } => format!(
-                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its new sheet {sheet}, shown first; its other sheets, names and tables kept",
+                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its sheet {sheet}, shown first; its other sheets, names and tables kept",
                 reason.describe()
             ),
             Self::WorkbookRebuilt {
@@ -410,6 +414,10 @@ impl Conversion {
             ),
             Self::WorkbookRecalcDeferred { part } => format!(
                 "chart workbook {part} keeps its formulas; the opening application recalculates them"
+            ),
+            Self::TableFieldsCut { fields } => format!(
+                "table field(s) {} cut whole: each became static text",
+                fields.join(", ")
             ),
         }
     }

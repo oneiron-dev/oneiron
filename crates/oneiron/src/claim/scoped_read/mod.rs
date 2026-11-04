@@ -60,7 +60,7 @@ pub(crate) use weave_lens::{
 mod weave_report;
 mod weave_serve;
 mod weave_trigger;
-pub(crate) use claim_admission::ClaimReadStatus;
+pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};

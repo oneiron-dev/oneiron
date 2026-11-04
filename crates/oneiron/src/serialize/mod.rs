@@ -42,7 +42,8 @@ pub use pack_entry::{
     CODE_RUN_OUTPUT_PREVIEW_CODEC, CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, SerializeConfig,
     WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION,
     compressed_code_run_output_preview, project_pack_for_json_response,
-    serialize_assembled_context, serialize_pack,
+    project_pack_for_json_response_with_tokenizer, serialize_assembled_context, serialize_pack,
+    serialize_pack_with_tokenizer,
 };
 // Reached only from `commitment`'s tests today; the re-export keeps the historical
 // `crate::serialize::` path resolvable for production callers.

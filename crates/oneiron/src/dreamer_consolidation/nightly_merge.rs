@@ -77,6 +77,7 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
         return Err(invalid());
     }
     vault.with_write_txn_grouped(|txn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly outputs");
         let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
         outputs.extend(ids);
         outputs.sort_unstable();
@@ -457,6 +458,7 @@ impl ConsolidationExecutor<'_> {
         };
         let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly merge");
             recheck_in_txn(&read, txn, &read_back)?;
             let outputs = writer.claims_in_txn(txn, drafts)?;
             writer.result_in_txn(

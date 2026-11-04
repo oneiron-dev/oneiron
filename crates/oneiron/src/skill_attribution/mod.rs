@@ -40,7 +40,7 @@ pub use self::calibration::{
 };
 mod causes;
 pub use self::causes::AttributionCauseRecord;
-pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
+pub(crate) use self::causes::attempt_attribution_causes;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
@@ -68,6 +68,7 @@ mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub(crate) use credit_join::standing_credit_observation_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
@@ -83,7 +84,6 @@ pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
 mod positive;
-pub(crate) use self::positive::erase_positive_proposals_in_txn;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
@@ -93,19 +93,17 @@ pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
     withdraw_edit_proposal_in_txn,
 };
-mod row_ids;
-pub(crate) use self::row_ids::{attribution_judgment_row_ids, edit_proposal_row_ids};
-mod skill_erase;
-pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
-    erase_scan_in_txn,
+pub(crate) use oneiron_skill_attribution::row_ids::{
+    attribution_judgment_row_ids, edit_proposal_row_ids,
 };
+mod skill_erase;
+pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;
 pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
     unclear_floor_sourced,
 };
-mod types;
+use oneiron_skill_attribution::types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
 pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
@@ -160,15 +158,14 @@ pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
 mod site_exposure;
-pub(crate) use site_exposure::erase_site_exposure_in_txn;
 pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
 pub(crate) use run_writes::{
     RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
-    run_derivations,
+    run_derivations, run_write_token_from_lease,
 };
-pub use run_writes::{RunWriteToken, with_run_write_token};
+pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

@@ -30,6 +30,7 @@
 //! erases its office rows ([`erase_in_txn`]).
 
 mod actor_erase;
+mod annotation_units;
 mod author_token;
 pub(crate) mod checkpoint;
 mod consent;
@@ -39,6 +40,7 @@ mod fork;
 mod holder_ask;
 mod live_recalc;
 mod live_units;
+mod masked_view;
 mod pptx;
 mod records;
 mod resources;
@@ -51,6 +53,7 @@ pub(crate) use actor_erase::{
     erase_export_actor_in_txn, erase_export_author_actor_in_txn, erase_fork_actor_in_txn,
     erase_live_edit_ask_group_actor_in_txn, erase_oracle_actor_in_txn, erase_proposal_actor_in_txn,
 };
+pub(crate) use annotation_units::{DeckUnits, OfficeBodyUnits};
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
     OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
@@ -86,7 +89,9 @@ pub use verbs::{
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
-pub use xlsx::{BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
+pub use xlsx::{
+    BodyCell, BodyConditionalFormat, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp,
+};
 
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
@@ -128,9 +133,9 @@ pub use resources::{
 };
 pub(crate) use resources::{document_error, document_refused, docx_error, machine_memory_refused};
 use support::{
-    apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, loro_kind,
-    open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate, version_key,
-    writer,
+    apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, land_moved_xlsx,
+    loro_kind, open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate,
+    version_key, writer,
 };
 pub(crate) use support::{
     erase_in_txn, fork_waits, live_edit_granted, live_edit_refused, live_edit_waits,

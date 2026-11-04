@@ -268,6 +268,31 @@ static PARTS: [&[&SideTableDecl]; 8] = [
 // A declaration list with an overlap does not compile.
 const _: () = assert_disjoint(&PARTS);
 
+// The session overlay keeps these tables' rows outside a room's byte budget by
+// the prefixes in `oneiron_store::overlay_bookkeeping`. A lower prefix that
+// differs from its declaration does not compile.
+const _: () = {
+    use oneiron_store::overlay_bookkeeping as bookkeeping;
+    assert!(
+        same_bytes(SCOPE_RECORD.prefix, bookkeeping::SCOPE_RECORD_PREFIX),
+        "overlay bookkeeping prefix differs from SCOPE_RECORD"
+    );
+    assert!(
+        same_bytes(
+            PROVENANCE_ROW_BIRTH.prefix,
+            bookkeeping::PROVENANCE_ROW_BIRTH_PREFIX
+        ),
+        "overlay bookkeeping prefix differs from PROVENANCE_ROW_BIRTH"
+    );
+    assert!(
+        same_bytes(
+            PROVENANCE_BIRTH_BY_TRIGGER.prefix,
+            bookkeeping::PROVENANCE_BIRTH_BY_TRIGGER_PREFIX
+        ),
+        "overlay bookkeeping prefix differs from PROVENANCE_BIRTH_BY_TRIGGER"
+    );
+};
+
 /// Within one database, the declared prefixes in list order must be strictly ascending and no
 /// prefix may be a byte prefix of its successor. In a sorted list a prefix of any later entry is
 /// a prefix of its immediate successor, so the adjacent check covers every pair.
@@ -310,6 +335,10 @@ const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+const fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len() && starts_with(left, right)
 }
 
 const fn ascending(before: &[u8], after: &[u8]) -> bool {

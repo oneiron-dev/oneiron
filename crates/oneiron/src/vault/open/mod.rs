@@ -24,6 +24,12 @@ use self::config_validation::validate_open_config;
 /// profile reads at every profile level.
 const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
+/// The hooks every open door below passes to its store: the one place the
+/// vault names the engine's implementation.
+fn engine_store_hooks() -> crate::store::StoreHooks {
+    crate::engine_store_hooks::ENGINE_STORE_HOOKS
+}
+
 /// The pinned id of the embedded default owner actor (ONE-1441 WIRE-P1).
 ///
 /// Minted ids are opaque ULIDs; this one comes from the one derived-id rule
@@ -33,6 +39,24 @@ const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 /// which would strand every claim that names the old one.
 pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     EntityId::derive(EMBEDDED_OWNER_ACTOR, &[])
+}
+
+/// The directory's identity from its path while it is fresh: following
+/// links, as the vault root is canonical by the time it is retained. Only
+/// the fallback where the open kept no bound descriptor; None where the
+/// host cannot name it (REVIEW-4381 P1).
+#[cfg(unix)]
+fn directory_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
+}
+
+/// No directory identity off unix: path-string checks apply alone.
+#[cfg(not(unix))]
+fn directory_identity(_path: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// Encodes the minimal PERSON body the bootstrap writes.
@@ -109,6 +133,21 @@ impl Vault {
         Self::open_leased(&canonical, config, lease)
     }
 
+    /// This vault's own directory on this host, as it was opened
+    /// (canonical). A folder read uses it to pass over the vault itself
+    /// (FIX 10249).
+    pub fn path(&self) -> &Path {
+        self.store.env.path()
+    }
+
+    /// This vault's own directory identity, retained at open while its path
+    /// was fresh: a folder read excludes the vault by identity, so a rename
+    /// after open cannot defeat the exclusion (REVIEW-4381 P1). None where
+    /// the host cannot name it; path-string checks still apply there.
+    pub fn dir_identity(&self) -> Option<(u64, u64)> {
+        self.dir_identity
+    }
+
     /// [`Self::open_owned`] on `directory`, a vault root the caller already
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a
@@ -129,7 +168,8 @@ impl Vault {
     }
 
     fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
-        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
+        let store =
+            Store::open_with_writer_lease(canonical, &config, &lease, engine_store_hooks())?;
         // Only the lease holder writes bodies, so what a writer left half
         // done is debris now: unfinished temp files and the bodies of
         // off-record sessions, none of which outlived its process.
@@ -175,7 +215,7 @@ impl Vault {
         // the vault's own bytes, and passed into the store open so the exact
         // analyzer comparison happens before any write transaction exists.
         let analyzer = discover_analyzer(&config)?;
-        let store = Store::open_existing(path, &config, &analyzer)?;
+        let store = Store::open_existing(path, &config, &analyzer, engine_store_hooks())?;
         Self::assemble_open(
             store,
             config,
@@ -219,8 +259,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -333,8 +373,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -458,9 +498,11 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let store = match seed_mode {
-            DefaultPolicySeedMode::Required => Store::open(path, &config)?,
+            DefaultPolicySeedMode::Required => Store::open(path, &config, engine_store_hooks())?,
             #[cfg(feature = "test-support")]
-            DefaultPolicySeedMode::TestUnseeded => Store::open_unseeded_for_test(path, &config)?,
+            DefaultPolicySeedMode::TestUnseeded => {
+                Store::open_unseeded_for_test(path, &config, engine_store_hooks())?
+            }
         };
         Self::finish_open(store, config, seed_mode)
     }
@@ -535,6 +577,13 @@ impl Vault {
         // One spent set per environment in this process (FIX 12023 W0, P2),
         // taken before `store` moves into the handle.
         let spent_nonces = crate::authority::SpentNonces::shared_for(store.canonical_root());
+        // The vault directory's identity from the descriptor the open
+        // bound, never a fresh pathname lookup: a rename after open (even
+        // during the open itself) cannot redirect it. Falls back to the
+        // path only where the open retained no descriptor (REVIEW-4381 P1).
+        let dir_identity = store
+            .bound_root_identity()
+            .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(
@@ -542,11 +591,12 @@ impl Vault {
                 config
                     .page_seal
                     .as_ref()
-                    .map(crate::world_keys::VaultPageSeal::vault_id),
+                    .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
             )?,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
+            dir_identity,
             store,
             vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
                 config.vector_evidence,
@@ -663,9 +713,9 @@ impl Vault {
             }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
-            crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
             crate::comm::seed_claim_class_descriptors(&vault)?;
-            crate::workspace_roster::seed_root_project(&vault)?;
+            vault.store.project_writes.seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
@@ -843,7 +893,7 @@ impl Vault {
                 Ok(false)
             }
             None => {
-                crate::sync::documents::compact(self, id, erased)?;
+                self.store.sync_hooks.compact_document(self, id, erased)?;
                 Ok(true)
             }
         }

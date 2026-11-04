@@ -29,23 +29,27 @@ use oneiron::llm::{
     SegmentLocator, SegmentManifest, SessionInvalidation, TrustFence, VaultRef,
 };
 use oneiron::memory::StreamFinality;
-use oneiron::prompt::{PromptLayout, session_prompt_layout};
+use oneiron::prompt::PromptLayout;
 use oneiron::{EdgeActorClass, EntityId, LlmMessage, LlmMessageRole, Vault};
 
 use super::compaction::SelfChat;
+
+mod actions;
 use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
-use crate::auth::CoreAuth;
 use crate::models::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
     reply_committed, turn_admitted,
 };
+pub(crate) use actions::ActionSession;
 
 /// Where the turn's messages lay as it assembled them, before its craft and
 /// its board went in.
 #[derive(Clone, Copy)]
 pub(super) struct Layout {
+    /// The same effective layout the producer placed its craft under.
+    pub(super) prompt: PromptLayout,
     /// The leading System messages: the agent's instructions.
     pub(super) system_end: usize,
     /// Where the log ended: the newest user message's place.
@@ -56,7 +60,7 @@ pub(super) struct Layout {
 #[derive(Clone)]
 pub(super) struct Reader {
     pub(super) vault: Arc<Vault>,
-    pub(super) auth: CoreAuth,
+    pub(super) credential: TurnCredential,
     pub(super) actor: EntityId,
     pub(super) class: EdgeActorClass,
     pub(super) locality: CallerLocality,
@@ -65,12 +69,43 @@ pub(super) struct Reader {
 impl Reader {
     /// The read key the turn's log is read under now, as the turn reads it.
     fn read_key(&self) -> Option<ScopedReadActorKey> {
-        let memory = match self.auth.principal_ref() {
-            Some(_) => credential_memory(&self.vault, Some(&self.auth), self.actor, self.class)
-                .at(self.locality),
-            None => self.vault.memory(self.actor, self.class),
-        };
-        memory.read_key().ok()
+        match &self.credential {
+            TurnCredential::Request { auth, .. } => {
+                let memory = match auth.principal_ref() {
+                    Some(_) => credential_memory(&self.vault, Some(auth), self.actor, self.class)
+                        .at(self.locality),
+                    None => self.vault.memory(self.actor, self.class),
+                };
+                memory.read_key().ok()
+            }
+            TurnCredential::Action { action, .. } => {
+                crate::ai_host::action_reader(&self.vault, action)?
+                    .read_key()
+                    .ok()
+            }
+        }
+    }
+
+    /// The reply's current full lane-admitted MESSAGE text while `expected`
+    /// is its latest terminal receipt; `None` when missing, hidden, active,
+    /// changed or differently projected. No raw-store fallback.
+    fn committed_text(&self, expected: &oneiron::memory::MessageStreamReceipt) -> Option<String> {
+        match &self.credential {
+            TurnCredential::Request { auth, .. } => {
+                let memory = match auth.principal_ref() {
+                    Some(_) => credential_memory(&self.vault, Some(auth), self.actor, self.class)
+                        .at(self.locality),
+                    None => self.vault.memory(self.actor, self.class),
+                };
+                memory.message_stream_committed_text(expected).ok()?.value
+            }
+            TurnCredential::Action { action, .. } => {
+                crate::ai_host::action_reader(&self.vault, action)?
+                    .message_stream_committed_text(expected)
+                    .ok()?
+                    .value
+            }
+        }
     }
 }
 
@@ -111,7 +146,18 @@ pub(super) fn admitted(
     assembled: Assembled<'_>,
     admitted: &[LlmMessage],
 ) -> Option<TurnSegments> {
+    admitted_with_sources(reader, assembled, admitted, &[], None)
+}
+
+fn admitted_with_sources(
+    reader: &Reader,
+    assembled: Assembled<'_>,
+    admitted: &[LlmMessage],
+    borrowed: &[EntityId],
+    continuation: Option<EntityId>,
+) -> Option<TurnSegments> {
     let Layout {
+        prompt,
         system_end,
         log_end,
     } = assembled.layout;
@@ -123,7 +169,7 @@ pub(super) fn admitted(
     // instructions in today's layout, inside the prefix; as the turn's
     // data-only context right before the newest user message in the stable
     // one, outside it.
-    let early = session_prompt_layout() == PromptLayout::EarlySystem;
+    let early = prompt == PromptLayout::EarlySystem;
     let craft = match messages.len().checked_sub(log_end + 1) {
         Some(0) => false,
         Some(1) if assembled.craft.is_some() => true,
@@ -187,7 +233,10 @@ pub(super) fn admitted(
         let revocation = reader.vault.authority_generation().ok();
         (revocation, reader.read_key())
     });
-    let sources = canonical_sources(&assembled);
+    let sources = canonical_sources(&assembled).map(|mut sources| {
+        sources.extend_from_slice(borrowed);
+        sources
+    });
     let anchor = match (log, &read_key, &sources) {
         (Some(log), Some(key), Some(_)) => Some(ConversationAnchor {
             vault: VaultRef(reader.vault.vault_key_vault_id()),
@@ -207,6 +256,10 @@ pub(super) fn admitted(
         _ => None,
     };
     let manifest = SegmentManifest::new(segments, anchor, &messages);
+    let manifest = match continuation {
+        Some(message) => manifest.continued(message, admitted)?,
+        None => manifest,
+    };
     if !manifest.describes(admitted) {
         return None;
     }
@@ -216,10 +269,7 @@ pub(super) fn admitted(
         (Some(anchor), Some(key), Some(rows)) => {
             let turn: Arc<dyn CheckpointAuthority> = Arc::new(ChatAuthority {
                 reader: reader.clone(),
-                credential: TurnCredential::Request {
-                    auth: reader.auth.clone(),
-                    vault: Arc::clone(&reader.vault),
-                },
+                credential: reader.credential.clone(),
                 read_key: key.clone(),
                 sources: rows.clone(),
                 at: Some((anchor.head, anchor.fold_epoch)),
@@ -315,20 +365,24 @@ impl PathDependencies {
 
     /// Adds to `set` the worlds and authors of the notes and summaries and
     /// of what each summary folds, and the summaries and what they fold as
-    /// derived; `None` at the first of them that does not read.
+    /// derived; `None` at the first of them that does not read. The whole
+    /// walk reads on one snapshot: two transactions per row and one per
+    /// summary do not scale to long folded logs (FIX 11338).
     fn read_quoted(&self, vault: &Vault, set: &mut SnapshotDependencies) -> Option<()> {
+        let txn = vault.dependency_read_txn().ok()?;
         let mut folded = Vec::new();
         for summary in &self.summaries {
             folded.push(*summary);
-            for span in vault.summary_folded_spans(summary).ok()?? {
+            for span in vault.summary_folded_spans_in_txn(&txn, summary).ok()?? {
                 folded.push(span.turn);
                 folded.extend(span.messages);
             }
         }
         for id in self.notes.iter().chain(&folded) {
-            let world = vault.record_world(id).ok()??;
+            let world = vault.record_world_in_txn(&txn, id).ok()??;
             set.worlds.push(world.unwrap_or_else(base_world_id));
-            set.authors.push(vault.record_author(id).ok()??);
+            set.authors
+                .push(vault.record_author_in_txn(&txn, id).ok()??);
         }
         set.derived.extend(folded);
         Some(())
@@ -536,9 +590,10 @@ pub(super) fn commit_on_answer(
         subscription,
         outcome,
     } = answering;
-    // The vault the reply lands in, for the FIX 10367 HEAD read below.
-    // `reader` itself does not enter the spawned task.
+    // The vault the reply lands in, for the FIX 10367 HEAD read below, and
+    // the reader the committed text is reread under once the outcome ends.
     let vault = reader.vault.clone();
+    let reader = reader.clone();
     // The turn authority the task retains: the task only reads `manifest`,
     // so edition-2024 disjoint capture would otherwise drop `_turn` when
     // this returns and the restore would run cold (FIX 11287).
@@ -555,7 +610,17 @@ pub(super) fn commit_on_answer(
             && ended.saved.as_ref().is_some_and(|saved| {
                 saved.message_id == message && saved.finality == StreamFinality::Final
             });
-        let commit = whole.then(|| {
+        let saved = ended.saved.clone().filter(|_| whole);
+        // The outcome goes on as it ended; nothing waits for the session.
+        let _ = finished.send(ended);
+        if let (Some(saved), Some(authority)) = (saved, commit_authority) {
+            // The committed successor carries the current full lane-admitted
+            // MESSAGE text, not the raw accepted stream text; a reread that
+            // does not resolve stays cold (FIX 13020).
+            let text = crate::server::blocking(|| reader.committed_text(&saved));
+            let Some(text) = text else {
+                return;
+            };
             // The HEAD the reply lands at, read once it has landed (FIX
             // 10367): HEAD does not always move to this reply's TURN, and
             // naming the TURN anyway drops the session at the next fork.
@@ -568,16 +633,15 @@ pub(super) fn commit_on_answer(
                     crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
                 })
                 .unwrap_or(turn);
-            ReplyCommit {
-                head,
-                message,
-                text: ended.text.clone(),
-            }
-        });
-        // The outcome goes on as it ended; nothing waits for the session.
-        let _ = finished.send(ended);
-        if let (Some(commit), Some(authority)) = (commit, commit_authority) {
-            reply_committed(&segments.manifest, commit, Arc::new(authority));
+            reply_committed(
+                &segments.manifest,
+                ReplyCommit {
+                    head,
+                    message,
+                    text,
+                },
+                Arc::new(authority),
+            );
         }
     });
     Answering {

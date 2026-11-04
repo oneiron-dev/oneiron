@@ -19,13 +19,17 @@
 //! imports into a vault of their own when they choose
 //! ([`Vault::import_whole_vault_archive`]). Each delivery taken in is
 //! recorded, so none is taken in twice; the person hears of each archive
-//! once.
+//! once. The vault's owner lists the archives taken in here by id, source
+//! vault and term, imported or lapsed, never a byte of one (FIX 11797).
 
 use super::removal_archive::{FrozenPosition, StoredRemovalExport};
 use super::{REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key};
+use std::collections::BTreeMap;
+
 use crate::batch::export::{
     ArchiveRecordKind, ExportAuthorityManifest, VAULT_ARCHIVE_FORMAT, read_vault_archive_indexed,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
@@ -52,6 +56,39 @@ struct ImportedRemovalArchive {
     files: u64,
     /// When this vault took it in, on its store clock.
     imported_at: u64,
+    /// The shared vault it came from.
+    vault_id: u64,
+}
+
+/// One removal archive this vault took in for its owner, as the owner's
+/// listing answers it (FIX 11797): never a byte of the archive.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ReceivedRemovalArchive {
+    /// The removal receipt that keys it.
+    pub receipt_id: String,
+    /// The shared vault it came from.
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    pub vault_id: u64,
+    /// The latest delivery taken in: when its home delivered it.
+    pub delivered_at: u64,
+    /// The end of that delivery's term: it stays readable here until then.
+    pub expires_at: u64,
+    /// Whether it is still kept here within that term.
+    pub state: ReceivedRemovalArchiveState,
+    /// When this vault took in its latest delivery, on its store clock.
+    pub imported_at: u64,
+}
+
+/// Where a listed removal archive stands in this vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceivedRemovalArchiveState {
+    /// Kept here and readable within its term
+    /// ([`Vault::removed_owner_exports`]).
+    Imported,
+    /// Its term has ended: the copy is gone, or goes at the next pass, and
+    /// only this record of it stays.
+    Lapsed,
 }
 
 /// What an archive holds, as its manifest lists it.
@@ -134,6 +171,7 @@ impl Vault {
                 records: held.records,
                 files: held.files,
                 imported_at: now,
+                vault_id: copy.vault_id,
             };
             REMOVAL_IMPORT.put(&self.store, txn, &row, &imported)?;
             self.notify_removal_archive_in_txn(txn, person, receipt, copy, held, now)?;
@@ -156,6 +194,62 @@ impl Vault {
     ) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         REMOVAL_IMPORT.contains(&self.store, &txn, &import_key(person, receipt_id, version))
+    }
+
+    /// The removal archives this vault took in for `owner`, its owner
+    /// (FIX 11797): each archive's latest delivery taken in, by receipt id,
+    /// with the shared vault it came from, its term, and whether it is still
+    /// kept here within that term (Imported) or past it (Lapsed). Never a
+    /// byte of an archive.
+    ///
+    /// # Errors
+    ///
+    /// An owner proof that no longer holds; storage errors.
+    pub fn received_removal_archives(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Vec<ReceivedRemovalArchive>> {
+        let txn = self.store.env.read_txn()?;
+        let person = owner.revalidate_in_txn(self, &txn)?;
+        let now = self.store.clock.now_recorded_at();
+        let prefix = format!("{}:", person.to_hex());
+        let mut latest: BTreeMap<String, (u64, ImportedRemovalArchive)> = BTreeMap::new();
+        for (row_key, imported) in REMOVAL_IMPORT.scan_from(&self.store, &txn, prefix.as_bytes())? {
+            // A key not of `import_key`'s shape names no delivery.
+            let Some((receipt, version)) = row_key
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.split_once(':'))
+                .and_then(|(receipt, version)| Some((receipt, version.parse::<u64>().ok()?)))
+            else {
+                continue;
+            };
+            if latest.get(receipt).is_none_or(|(held, _)| *held < version) {
+                latest.insert(receipt.to_owned(), (version, imported));
+            }
+        }
+        let mut listed = Vec::with_capacity(latest.len());
+        for (receipt_id, (version, imported)) in latest {
+            let expires_at = version.saturating_add(REMOVAL_EXPORT_RETAIN_SECS);
+            let kept = REMOVAL_EXPORT.contains(
+                &self.store,
+                &txn,
+                &removal_export_key(&person.to_hex(), &receipt_id),
+            )?;
+            let state = if kept && now < expires_at {
+                ReceivedRemovalArchiveState::Imported
+            } else {
+                ReceivedRemovalArchiveState::Lapsed
+            };
+            listed.push(ReceivedRemovalArchive {
+                receipt_id,
+                vault_id: imported.vault_id,
+                delivered_at: version,
+                expires_at,
+                state,
+                imported_at: imported.imported_at,
+            });
+        }
+        Ok(listed)
     }
 
     /// What `archive` holds, read through the whole-vault archive's own

@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 use heed::RwTxn;
 
 use crate::claim::ScopedRead;
+use crate::core_write::{CoreBatchCommit, CoreWriteLane};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
 
@@ -36,7 +37,7 @@ impl BatchBuilder<'_> {
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
     pub fn commit(self) -> Result<()> {
-        self.commit_inner(None, None, |_| Ok(()), |_| Ok(()))
+        self.commit_inner(None, None, |_| Ok(()), |_| Ok(()), None)
     }
 
     /// [`Self::commit`] for a writer its host bound to `reader` (OF-063, FIX
@@ -46,7 +47,7 @@ impl BatchBuilder<'_> {
     /// must resolve under `reader` once the batch's own rows are staged; one
     /// that does not is the claim gate's hard deny, receipted once.
     pub(crate) fn commit_read_by(self, reader: &ScopedRead<'_>) -> Result<()> {
-        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()))
+        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()), None)
     }
 
     /// [`Self::commit`] for a writer below owner grade. A put that turns an
@@ -83,6 +84,54 @@ impl BatchBuilder<'_> {
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         self.commit_below_owner_inner(Some(reader), guard)
+    }
+
+    /// [`Self::commit`] / [`Self::commit_below_owner`] held to `lane`
+    /// (OF-063, FIX 1216): the batch door's lane rule
+    /// ([`Vault::write_core_batch_in_lane`](crate::Vault::write_core_batch_in_lane))
+    /// for an already-staged batch. A read lane takes a stored row a put
+    /// names only when it reads that row, judged against the row in the
+    /// batch's own writer before any put lands, and each CLAIM's typed
+    /// record refs must resolve under it. A target lane takes a stored row
+    /// only inside the bounds of what its credential may write to, judged
+    /// over the same put ids in that same writer snapshot; its CLAIMs
+    /// commit as an unbound writer's do. An unbound lane commits as the
+    /// grade's plain terminal does. `commit` selects the grade, as the
+    /// batch door's does.
+    pub fn commit_in_core_lane(
+        self,
+        lane: &CoreWriteLane<'_>,
+        commit: CoreBatchCommit,
+    ) -> Result<()> {
+        match (lane, commit) {
+            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => self.commit_read_by(reader),
+            (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
+                self.commit_below_owner_read_by(reader, |_| Ok(()))
+            }
+            (CoreWriteLane::Target(_), commit) => {
+                let ids: Vec<crate::entity_id::EntityId> = self
+                    .ops
+                    .iter()
+                    .filter_map(|op| match op {
+                        BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
+                        _ => None,
+                    })
+                    .collect();
+                let guard = |txn: &heed::RoTxn<'_>| -> Result<()> {
+                    if lane.admits_puts_in(txn, &ids)? {
+                        return Ok(());
+                    }
+                    // As missing: the row's kind, body and scope stay unsaid.
+                    Err(Error::EntityNotFound)
+                };
+                match commit {
+                    CoreBatchCommit::Owner => self.commit_with_target_guard(guard),
+                    CoreBatchCommit::BelowOwner => self.commit_below_owner_with_guard(guard),
+                }
+            }
+            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => self.commit(),
+            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => self.commit_below_owner(),
+        }
     }
 
     fn commit_below_owner_inner(
@@ -124,7 +173,7 @@ impl BatchBuilder<'_> {
             }
             Ok(())
         };
-        self.commit_inner(None, reader, guard, |_| Ok(()))
+        self.commit_inner(None, reader, guard, |_| Ok(()), None)
     }
 
     /// Runs an app-door target guard in the same writer snapshot as admission.
@@ -134,7 +183,7 @@ impl BatchBuilder<'_> {
         self,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(None, None, guard, |_| Ok(()))
+        self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
@@ -152,8 +201,15 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         before_apply: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), None, before_apply, after_apply)
+        self.commit_inner(
+            Some(checker),
+            None,
+            before_apply,
+            after_apply,
+            writer_hold_site,
+        )
     }
 
     /// [`Self::commit_with_checker_guard_and_then`] with nothing read first.
@@ -163,7 +219,7 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), None, |_| Ok(()), after_apply)
+        self.commit_inner(Some(checker), None, |_| Ok(()), after_apply, None)
     }
 
     fn commit_inner(
@@ -172,6 +228,7 @@ impl BatchBuilder<'_> {
         reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
         let vault = self.vault;
         // The group holds its transaction open for this write while it does
@@ -207,6 +264,9 @@ impl BatchBuilder<'_> {
         let removed_edges = super::super::vad_postcommit::ops_removed_edges(&ops);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
+            // The caller's writer-hold site, when it named one: started
+            // here so the span is this closure's hold only (FIX 12511).
+            let _hold = writer_hold_site.map(crate::store::writer_hold::WriterHold::start);
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
             }
@@ -254,6 +314,7 @@ impl BatchBuilder<'_> {
                 checker,
                 origin,
                 &caller_envelopes,
+                &births,
             ) {
                 // A gate rejection is itself an intentional ledger event. Keep
                 // that denial receipt, matching the historical gate semantics;
@@ -269,11 +330,13 @@ impl BatchBuilder<'_> {
             // The routed puts' events project here, before the gate, VAD and
             // lexical staging of the ops that remain. From here an unbound
             // writer's batch commits or is discarded whole.
+            let mut routed_changes_claims = false;
             if let Some(routed) = routed {
                 let written = match routed.record_in_txn(vault, wtxn) {
                     Ok(written) => written,
                     Err(err) => return Rows::Discard(Err(err.into())),
                 };
+                routed_changes_claims = !written.is_empty();
                 // The rows the live mirror takes: the ops that remain, the
                 // routed source events and the heads they wrote.
                 #[cfg(feature = "sync")]
@@ -338,7 +401,7 @@ impl BatchBuilder<'_> {
                         return Rows::Discard(Err(Refused::from(err)));
                     }
                     Rows::Commit(Committed {
-                        changes_claims,
+                        changes_claims: changes_claims || routed_changes_claims,
                         tasks,
                         staged_gate_decisions,
                         approved_vad_ids,

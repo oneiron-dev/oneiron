@@ -63,6 +63,14 @@ pub struct AuditCase {
     /// `model@version` of the one provider that gave every answer; `None`
     /// when they differ or none was asked.
     pub revision: Option<String>,
+    /// The answering model's identity behind `judge`, kept as the judge
+    /// trace gave it (FIX 11515).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The receipt of each decision that gave `answers`, in order; empty
+    /// when no ladder was asked (FIX 11515).
+    #[serde(default)]
+    pub receipts: Vec<crate::llm::decision::DecisionReceipt>,
 }
 
 impl AuditCase {
@@ -77,6 +85,8 @@ impl AuditCase {
             source: trace.source,
             answers: trace.answers,
             revision: trace.revision,
+            model: trace.model,
+            receipts: trace.receipts,
         }
     }
 }

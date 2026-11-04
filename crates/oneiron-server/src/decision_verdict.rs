@@ -55,6 +55,15 @@ use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
 
 pub(crate) mod hook;
+mod model_calls;
+
+/// This thread's caller for the model-call capture in `BigModel::decide`
+/// (FIX 12516/12742), bound while a verdict, graph or artifact decision
+/// answers. Outside a capture scope it is `None`, never guessed.
+pub(crate) use model_calls::caller as model_call_context;
+/// Binds the capture caller [`model_call_context`] reads back (FIX
+/// 12516/12742), on the decision's blocking thread.
+pub(crate) use model_calls::scoped as with_model_call_context;
 
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
@@ -219,6 +228,9 @@ impl HeldImage {
 /// run line bills when a room's root spend scope funds the run (FIX 3574),
 /// as the host bound it; `None` bills the vault owner. `evidence_read`
 /// holds the rows the evidence refs and images resolved to, once read.
+/// `session_ref` is the bound session the model-call capture attributes
+/// (FIX 12516/12742), `None` only at unbound sources; the scope binds it
+/// with `principal` for [`model_call_context`] on this blocking thread.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the caller's verdict"
@@ -233,6 +245,7 @@ pub(crate) fn run_verdict(
     request: &AiVerdictRequest,
     payer: Option<&PayerPerson>,
     evidence_read: &mut Vec<EntityId>,
+    session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
@@ -246,18 +259,20 @@ pub(crate) fn run_verdict(
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
         WriteActor::new(principal, class),
     );
-    let answered = on_caller_meter(&meter, || {
-        on_caller_payer(payer, || {
-            answer_verdict(
-                server,
-                principal,
-                class,
-                reader,
-                lane,
-                held,
-                request,
-                evidence_read,
-            )
+    let answered = model_calls::scoped(principal, session_ref, || {
+        on_caller_meter(&meter, || {
+            on_caller_payer(payer, || {
+                answer_verdict(
+                    server,
+                    principal,
+                    class,
+                    reader,
+                    lane,
+                    held,
+                    request,
+                    evidence_read,
+                )
+            })
         })
     });
     let now = vault.now_recorded_at();

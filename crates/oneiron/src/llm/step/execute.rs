@@ -365,7 +365,20 @@ async fn durable_step(
                     {
                         settle_failed_usage(guard, &admission.lease, &failed_usage);
                         ctx.vault.count_failed_step(ctx, step_hash, None);
-                        return Err(error);
+                        // A refused fallback reply keeps its attempt count and
+                        // errors, and carries the corrective spend (FIX 12490).
+                        return Err(match error {
+                            DurableStepError::SchemaValidation { attempts, errors }
+                                if usage_spent(&failed_usage) =>
+                            {
+                                DurableStepError::SpentSchemaValidation {
+                                    attempts,
+                                    errors,
+                                    usage: Box::new(failed_usage),
+                                }
+                            }
+                            error => error,
+                        });
                     }
                     response.usage = failed_usage;
                     response
@@ -373,7 +386,16 @@ async fn durable_step(
                 Err(error) => {
                     settle_failed_usage(guard, &admission.lease, &failed_usage);
                     ctx.vault.count_failed_step(ctx, step_hash, None);
-                    return Err(error.into());
+                    // A failed fallback run carries the corrective spend
+                    // (FIX 12490); unspent keeps today's Fallback.
+                    return Err(if usage_spent(&failed_usage) {
+                        DurableStepError::SpentFallback {
+                            source: error,
+                            usage: Box::new(failed_usage),
+                        }
+                    } else {
+                        error.into()
+                    });
                 }
             }
         }

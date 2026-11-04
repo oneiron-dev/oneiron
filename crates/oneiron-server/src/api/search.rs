@@ -982,6 +982,8 @@ fn embed_query_error(refusal: EmbedQueryRefusal) -> ApiError {
         EmbedQueryRefusal::NotConfigured | EmbedQueryRefusal::NotReady => {
             ApiError::embedder_unavailable()
         }
-        EmbedQueryRefusal::Failed => ApiError::internal_server_error("query embedding failed"),
+        EmbedQueryRefusal::Failed | EmbedQueryRefusal::BudgetDenied => {
+            ApiError::internal_server_error("query embedding failed")
+        }
     }
 }

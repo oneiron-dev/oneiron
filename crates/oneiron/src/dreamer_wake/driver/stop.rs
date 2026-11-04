@@ -10,6 +10,9 @@ pub(super) fn boundary_stop(
     driver: &mut DreamerWakeDriver<'_>,
     cancel: &WakeCancellation,
 ) -> Option<WakePassStop> {
+    // The wake flag trips the pass's device work beside it (FIX 11963):
+    // attempts admitted under its clones stop admitting with the pass.
+    sync_wake_cancel(cancel, &driver.device_cancel);
     if cancel.is_cancelled() {
         // Cooperative-preemption boundary (H-S5/R2): between attempts
         // the driver holds no admitted attempt and no in-flight gated

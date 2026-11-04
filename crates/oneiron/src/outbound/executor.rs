@@ -274,6 +274,9 @@ impl Vault {
                     // it (an idempotent resume completes; non-idempotent
                     // uncertainty abandons) instead of projecting a terminal
                     // Failed with no receipt over a possibly-delivered send.
+                    // FIX 10955: dispatch ran the transport above, so refresh
+                    // the drain's `now` before computing this retry's edge.
+                    let now = self.now_recorded_at();
                     retry_connector_task_attempt(
                         &queue,
                         &attempt,

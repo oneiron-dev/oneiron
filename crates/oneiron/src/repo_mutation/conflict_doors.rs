@@ -1,9 +1,9 @@
 //! Owner-bound admission of real overlaps, retaining both proposed changes.
+use super::bundle::tree::{bundle_tree_edits, prepare_bundle_files_commit};
 use super::git::{
     admitted_repo_ref, git_common_dir, require_pinned_head, resolve_mutable_repo_root,
 };
 use super::proposal::{RepoProposalOperation, RepoProposalStatus, invalid};
-use super::received_file::tree::{prepare_received_files_commit, received_tree_edits};
 use super::snapshot::capture_repo_snapshot;
 use super::worktree::{prepare_commit_file_through_queue_worktree, remove_queue_worktree};
 use crate::codebase::RepoRef;
@@ -172,7 +172,7 @@ impl Vault {
             ours: tree(&sides[0])?,
             theirs: tree(&sides[1])?,
         };
-        super::conflict::record_queue_conflict_claim(
+        let recorded = super::conflict::record_queue_conflict_claim(
             self,
             repo.repo_ref(),
             overlap,
@@ -183,7 +183,16 @@ impl Vault {
                 crate::merge_queue::MergeQueue::of_repo(self, repo.clone())
                     .attach_queue_conflict_in_txn(txn, link)
             },
-        )
+        );
+        // A refused claim keeps none of the side commits it made: the next
+        // try makes its own, so a retried handoff never grows the pins (FIX
+        // 7305). The shared base stays pinned.
+        if recorded.is_err() {
+            for side in &sides {
+                let _released = wire.delete_keep_ref(repo, side, 0);
+            }
+        }
+        recorded
     }
 }
 
@@ -197,8 +206,8 @@ fn queue_conflict_sides(
     let mut sides = Vec::new();
     for row in rows {
         let prepared = if row.is_source_bound_received() {
-            let edits = received_tree_edits(&row.files)?;
-            prepare_received_files_commit(root, &edits, &row.message)?
+            let edits = bundle_tree_edits(&row.files)?;
+            prepare_bundle_files_commit(root, &edits, &row.message)?
         } else {
             let message = super::trailer::commit_message_with_provenance_trailer(
                 &row.message,

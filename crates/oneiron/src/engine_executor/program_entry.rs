@@ -585,13 +585,30 @@ impl<'a> EngineNativeExecutor<'a> {
             at: entry.at,
             preparation,
         };
-        self.storage.put_program_entry_replay_record(
+        // A flaky commit converts to success on one identical retry (FIX
+        // 1443); a first commit that actually landed fails the retry closed
+        // on its generation mismatch instead.
+        let _ = match self.storage.put_program_entry_replay_record(
             &record,
             expected,
             &host.receipts,
             parked.as_ref(),
             &resume,
-        )?;
+        ) {
+            Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                tracing::warn!(
+                    "{error:?}: program entry commit hit a storage error; retrying once"
+                );
+                self.storage.put_program_entry_replay_record(
+                    &record,
+                    expected,
+                    &host.receipts,
+                    parked.as_ref(),
+                    &resume,
+                )?
+            }
+            result => result?,
+        };
         if let Some(wait) = &wait {
             // Registered as parked, so the reply that settles the wait finds
             // the run; its resume is the program's resumer's.

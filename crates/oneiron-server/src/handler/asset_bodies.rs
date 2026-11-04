@@ -1,16 +1,29 @@
 //! A socket's by-reference ASSET body transfers on the home (FIX 5489): the
 //! engine's session over the windows this socket moves bodies for. An owner
 //! lane moves them for each window it is pushed, a residence lane for each
-//! window it promoted, and no other lane for any: a body frame on one is
-//! answered with incomplete Ends, and it is asked for none.
+//! window it promoted, and a federation lane serves, and never asks for, the
+//! bodies of the rows its selector admitted, from the copy it was sent, while
+//! its credential and that selector stand (FIX 12118). An unbound lane moves
+//! none: a body frame on one is answered with incomplete Ends, and it is
+//! asked for none. A body frame's
+//! landing runs on a blocking thread, off the socket's loop, which waits for
+//! it before it reads the socket's next frame: one landing at a time per
+//! socket, in frame order (FIX 12119).
 
+use std::cell::RefCell;
+use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
+use oneiron::authority::PeerMachine;
 use oneiron::sync::{
-    ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, AssetBodySession, TransportError, WindowKey,
+    ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, TransportError, WindowKey,
+    WindowManager, authorize_sync_selector,
 };
 
+use super::admitted_windows::{AdmittedCopy, rebuild};
+use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+use super::window_sync::selector_grant_scope;
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
 
@@ -18,31 +31,54 @@ use crate::server::SyncServer;
 /// is empty (a call, FIX 5489): a send's pace, never a body bound.
 pub(super) const ASSET_BODY_POLL: Duration = Duration::from_millis(50);
 
-/// One body frame from the device, `tag` and the bytes after it: answered on
-/// `direct_tx`, the session's next frames with it.
+/// One body frame from the socket's peer, `tag` and the bytes after it:
+/// answered on `direct_tx`, the session's next frames with it.
 ///
 /// # Errors
 ///
 /// [`ProtocolError::UnknownTag`] while the file plane is off, as before it;
 /// a frame that does not decode.
-pub(super) fn handle(
+pub(super) async fn handle(
     server: &SyncServer,
     state: &mut ConnState,
     tag: u8,
-    payload: &[u8],
+    payload: Vec<u8>,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
-    let frames = with_peer(server, state, |peer, bodies| {
-        let mut out = bodies.handle_frame(peer, tag, payload)?;
-        out.extend(bodies.poll(
-            peer,
-            Instant::now(),
-            ASSET_BODY_FRAMES_PER_POLL,
-            server.config.max_frame_size,
-        )?);
-        Ok::<_, TransportError>(out)
+    let followed = followed_windows(server, state);
+    // The session goes to the blocking thread and comes back with its frames.
+    // A landing that panicked leaves the socket a fresh session: its transfers
+    // start again from their first byte, as on a new connection.
+    let mut bodies = std::mem::take(
+        state
+            .asset_bodies
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+    let vault = Arc::clone(server.vault());
+    let manager = Arc::clone(&server.reassert_manager);
+    let socket_max = server.config.max_frame_size;
+    let (bodies, frames, followed) = tokio::task::spawn_blocking(move || {
+        let frames = with_peer(&vault, &manager, &followed, |peer| {
+            let mut out = bodies.handle_frame(peer, tag, &payload)?;
+            out.extend(bodies.poll(
+                peer,
+                Instant::now(),
+                ASSET_BODY_FRAMES_PER_POLL,
+                socket_max,
+            )?);
+            Ok::<_, TransportError>(out)
+        });
+        (bodies, frames, followed)
     })
-    .map_err(|error| match error {
+    .await
+    .map_err(|error| ProtocolError::Persistence(format!("asset body landing stopped: {error}")))?;
+    *state
+        .asset_bodies
+        .get_mut()
+        .unwrap_or_else(PoisonError::into_inner) = bodies;
+    hold_used(state, followed);
+    let frames = frames.map_err(|error| match error {
         TransportError::UnknownTag(tag) => ProtocolError::UnknownTag(tag),
         error => ProtocolError::InvalidPayload(protocol::transport_err_msg(error)),
     })?;
@@ -56,14 +92,25 @@ pub(super) fn poll(
     state: &mut ConnState,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) {
-    let polled = with_peer(server, state, |peer, bodies| {
-        bodies.poll(
-            peer,
-            Instant::now(),
-            ASSET_BODY_FRAMES_PER_POLL,
-            server.config.max_frame_size,
-        )
-    });
+    let followed = followed_windows(server, state);
+    let bodies = state
+        .asset_bodies
+        .get_mut()
+        .unwrap_or_else(PoisonError::into_inner);
+    let polled = with_peer(
+        server.vault(),
+        &server.reassert_manager,
+        &followed,
+        |peer| {
+            bodies.poll(
+                peer,
+                Instant::now(),
+                ASSET_BODY_FRAMES_PER_POLL,
+                server.config.max_frame_size,
+            )
+        },
+    );
+    hold_used(state, followed);
     match polled {
         Ok(frames) => {
             let _ = queue(direct_tx, frames);
@@ -72,47 +119,188 @@ pub(super) fn poll(
     }
 }
 
-/// Runs `f` over this socket's session and the peer it reads through: the
-/// home's live documents of the windows the socket moves bodies for.
+/// The windows a socket moves bodies for now, and where their documents
+/// come from.
+enum Followed {
+    /// The home's live windows, under its manager: an own lane's.
+    Live(Vec<WindowKey>),
+    /// The windows a federation socket's selector admitted (FIX 12118).
+    Admitted(AdmittedFollow),
+}
+
+/// A federation socket's admitted windows, as one body frame or poll reads
+/// them.
+struct AdmittedFollow {
+    /// Each window whose selector still authorizes, with its held copy or
+    /// the selector a dropped one is filtered again by.
+    windows: Vec<(WindowKey, AdmittedCopy)>,
+    /// The peer a dropped copy is filtered for; read only when one is.
+    peer: Option<PeerMachine>,
+    /// Each copy a use read, held or rebuilt, in use order: the socket holds
+    /// them again as its latest uses once the read is done.
+    used: RefCell<Vec<(WindowKey, loro::LoroDoc)>>,
+}
+
+impl AdmittedFollow {
+    /// `key`'s copy for one use: the one this read already used, the held
+    /// one, or a dropped one filtered again by its selector.
+    fn copy(
+        &self,
+        vault: &oneiron::Vault,
+        manager: &Arc<WindowManager>,
+        key: &WindowKey,
+    ) -> Option<loro::LoroDoc> {
+        let (_, admitted) = self.windows.iter().find(|(admitted, _)| admitted == key)?;
+        let mut used = self.used.borrow_mut();
+        let copy = match (used.iter().rev().find(|(read, _)| read == key), admitted) {
+            (Some((_, copy)), _) | (None, AdmittedCopy::Held { copy, .. }) => copy.clone(),
+            (None, AdmittedCopy::Dropped(selector)) => {
+                rebuild(vault, manager, key, selector, self.peer?)?
+            }
+        };
+        used.push((key.clone(), copy.clone()));
+        Some(copy)
+    }
+}
+
+/// Holds again each copy a federation socket's read used, as its latest use.
+fn hold_used(state: &mut ConnState, followed: Followed) {
+    if let Followed::Admitted(admitted) = followed {
+        for (key, copy) in admitted.used.into_inner() {
+            state.admitted_windows.used(&key, copy);
+        }
+    }
+}
+
+/// Runs `f` over the peer this socket's session reads through: the
+/// documents, the home's live ones under `manager` or a federation socket's
+/// admitted copies, of the windows `followed` the socket moves bodies for.
 fn with_peer<T>(
-    server: &SyncServer,
-    state: &mut ConnState,
-    f: impl FnOnce(&AssetBodyPeer<'_>, &mut AssetBodySession) -> T,
+    vault: &oneiron::Vault,
+    manager: &Arc<WindowManager>,
+    followed: &Followed,
+    f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
-    let followed = followed_windows(server, state);
-    let manager = &server.reassert_manager;
-    let window = |key: &WindowKey| {
-        followed
+    let (lane, keys) = match followed {
+        Followed::Live(keys) => (AssetBodyLane::OwnDevice, keys.clone()),
+        Followed::Admitted(admitted) => (
+            AssetBodyLane::FederationGrant,
+            admitted
+                .windows
+                .iter()
+                .map(|(key, _)| key.clone())
+                .collect(),
+        ),
+    };
+    let window = |key: &WindowKey| match followed {
+        Followed::Live(keys) => keys
             .contains(key)
             .then(|| manager.window(key))
             .flatten()
-            .map(|loaded| loaded.doc.clone())
+            .map(|loaded| loaded.doc.clone()),
+        Followed::Admitted(admitted) => admitted.copy(vault, manager, key),
     };
-    let windows = || followed.clone();
-    let peer = AssetBodyPeer {
-        vault: server.vault(),
+    let windows = || keys.clone();
+    f(&AssetBodyPeer {
+        lane,
+        vault,
         materializer: manager.materializer(),
         window: &window,
         windows: &windows,
-    };
-    let bodies = state
-        .asset_bodies
-        .get_mut()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    f(&peer, bodies)
+    })
 }
 
 /// The windows this socket moves bodies for now.
-fn followed_windows(server: &SyncServer, state: &ConnState) -> Vec<WindowKey> {
+fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
     match state.window_sync_mode {
-        WindowSyncMode::FullWindow => server
-            .reassert_manager
-            .loaded_keys()
-            .into_iter()
-            .filter(|key| state.receives_window(key))
-            .collect(),
-        WindowSyncMode::Residence => state.promoted_windows.keys().cloned().collect(),
-        WindowSyncMode::Selector | WindowSyncMode::Unbound => Vec::new(),
+        WindowSyncMode::FullWindow => Followed::Live(
+            server
+                .reassert_manager
+                .loaded_keys()
+                .into_iter()
+                .filter(|key| state.receives_window(key))
+                .collect(),
+        ),
+        // A residence socket's promoted windows, each only while its
+        // promotion still authorizes under the socket's live bound
+        // credential: a denied window moves no bodies, and its transfer
+        // ends, as if the socket followed it no longer.
+        WindowSyncMode::Residence => {
+            let Ok(auth) = require_bound_app_auth(server, state) else {
+                return Followed::Live(Vec::new());
+            };
+            let peer = state.peer_machine(server.vault());
+            let keys = state
+                .promoted_windows
+                .iter()
+                .filter(|(key, selector)| {
+                    server.reassert_manager.window(key).is_some_and(|window| {
+                        super::window_sync::authorize_promoted_window(
+                            server,
+                            auth,
+                            peer,
+                            key,
+                            selector,
+                            &window.doc,
+                        )
+                        .is_ok()
+                    })
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            Followed::Live(keys)
+        }
+        // A federation socket's copies, each while its selector still
+        // authorizes and the peer's world read settings still admit it, and
+        // only while the socket's credential is live.
+        WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
+            let windows = state.admitted_windows.read(|selector| {
+                authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
+                    .is_ok()
+            });
+            // Rebuild held copies under today's grant, pact ceiling and
+            // peer world settings. Reauthorizing a selector alone does not
+            // update the scope baked into its old copy. Dropped copies stay
+            // lazy, so this read still holds at most the cache's copy bound.
+            let peer = state.peer_machine(server.vault());
+            let windows = windows
+                .into_iter()
+                .filter_map(|(key, admitted)| match admitted {
+                    AdmittedCopy::Held { selector, .. } => {
+                        let copy = rebuild(
+                            server.vault.as_ref(),
+                            &server.reassert_manager,
+                            &key,
+                            &selector,
+                            peer,
+                        )?;
+                        if oneiron::sync::window::export_withheld_for(
+                            server.vault.as_ref(),
+                            &key,
+                            &copy,
+                            &loro::VersionVector::default(),
+                            oneiron::sync::window::Withhold::Peer(peer),
+                        )
+                        .unwrap_or(true)
+                        {
+                            return None;
+                        }
+                        Some((key, AdmittedCopy::Held { copy, selector }))
+                    }
+                    admitted @ AdmittedCopy::Dropped(_) => Some((key, admitted)),
+                })
+                .collect::<Vec<_>>();
+            let peer = windows
+                .iter()
+                .any(|(_, copy)| matches!(copy, AdmittedCopy::Dropped(_)))
+                .then_some(peer);
+            Followed::Admitted(AdmittedFollow {
+                windows,
+                peer,
+                used: RefCell::default(),
+            })
+        }
+        WindowSyncMode::Selector | WindowSyncMode::Unbound => Followed::Live(Vec::new()),
     }
 }
 

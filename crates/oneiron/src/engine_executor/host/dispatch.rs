@@ -5,10 +5,10 @@
 use super::*;
 
 impl RecordingJsHost<'_, '_> {
-    /// A verb's or a callable skill's answer too large for one reply, stored
-    /// whole as a body of the run as it is encoded. The guest and the replay
-    /// row get its handle (`result_handle_json`), never the answer; nothing is
-    /// refused for size.
+    /// A verb's, a callable skill's, a fold's or the leader's answer too
+    /// large for one reply, stored whole as a body of the run as it is
+    /// encoded. The guest and the replay row get its handle
+    /// (`result_handle_json`), never the answer; nothing is refused for size.
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
@@ -17,6 +17,16 @@ impl RecordingJsHost<'_, '_> {
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
+            // Kept as its JSON text, framed under `output` as the others are
+            // (FIX 1190): the row keeps the card's text in its place.
+            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+                if json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let card = self.store_answer(seq, |sink| sink.write(json.as_bytes()))?;
+                *json = card.to_string();
+                return Ok(outcome);
+            }
             _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();
@@ -113,12 +123,15 @@ impl RecordingJsHost<'_, '_> {
         skill: SelfSkillCall,
         runtime: &mut dyn JsCodeModeRuntime,
         parent: &StepCancellation,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         let failed = |error: String| {
-            SelfDispatchOutcome::Failed(SelfFailedResult {
-                effect: SelfEffect::SkillsCall,
-                error,
-            })
+            (
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::SkillsCall,
+                    error,
+                }),
+                None,
+            )
         };
         // Each nested level keeps its host loop's frames on this thread.
         if below_stack_floor() {
@@ -135,7 +148,7 @@ impl RecordingJsHost<'_, '_> {
             .admit_skill_call_for_executor_run(site, call)?
         {
             Ok(lease) => lease,
-            Err(refused) => return Ok(refused),
+            Err(refused) => return Ok((refused, None)),
         };
         // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
         // names the skill and the args it runs with.
@@ -153,7 +166,7 @@ impl RecordingJsHost<'_, '_> {
                         "a skill call's hooks rewrote it into another call",
                     ));
                 }
-                Err(stopped) => return Ok(stopped),
+                Err(stopped) => return Ok((stopped, None)),
             }
         };
         let Some(executor) = self.skill_executor.clone() else {
@@ -212,16 +225,20 @@ impl RecordingJsHost<'_, '_> {
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
             Err(Error::Code(CodeError::CodeStepCancelled)) => {
-                failed(CodeError::CodeStepCancelled.to_string())
+                failed(CodeError::CodeStepCancelled.to_string()).0
             }
-            Err(error) => failed(error.to_string()),
+            Err(error) => failed(error.to_string()).0,
         };
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
+        let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
-            Some(hooked) => self.gated_write.leave_verb_hooks(hooked, outcome),
-            None => Ok(outcome),
+            Some(hooked) => Ok((
+                self.gated_write.leave_verb_hooks(hooked, outcome)?,
+                rewritten,
+            )),
+            None => Ok((outcome, None)),
         }
     }
 
@@ -376,8 +393,11 @@ impl RecordingJsHost<'_, '_> {
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
-        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
-            Ok(outcome) => outcome,
+        let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
+            self.store_large_answer(seq, outcome)
+                .map(|outcome| (outcome, rewritten))
+        }) {
+            Ok(answered) => answered,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
                     // Infrastructure failure: no guest-visible response
@@ -403,7 +423,8 @@ impl RecordingJsHost<'_, '_> {
         let mut row =
             CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?
                 .with_inputs(inputs.as_ref())
-                .with_spawn_seats(seats);
+                .with_spawn_seats(seats)
+                .with_rewritten_request(rewritten.as_ref())?;
         row.hook_view_served = view.is_some();
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome

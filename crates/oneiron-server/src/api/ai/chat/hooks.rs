@@ -119,6 +119,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },
+        &oneiron::runtime_hooks::verb::run_failed_transient,
     )?;
     // A turn that resumes a settled ask never runs the witness closure above:
     // its sources come from the stored receipt instead.

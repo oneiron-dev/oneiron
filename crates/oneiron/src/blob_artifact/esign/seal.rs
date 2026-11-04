@@ -10,11 +10,12 @@ use super::{
         SealProfile, SealVerdict,
     },
 };
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::SetAttemptResult;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -207,21 +208,31 @@ impl Vault {
                 document.to_hex(),
                 crate::entity_id::bytes_to_hex_lower(&fingerprint)
             );
-            let (input, stream_bytes) = EsignSealInput::measured(
-                prepared.bytes,
-                &operation_id,
-                self.now_recorded_at().saturating_mul(1000),
-                self.limit_watch()
-                    .bound(EngineLimit::EsignSealStreamCodecBytes),
-            )?;
+            let now_ms = self.now_recorded_at().saturating_mul(1000);
+            let codec_bytes = self
+                .limit_watch()
+                .bound(EngineLimit::EsignSealStreamCodecBytes);
+            let (mut input, stream_bytes) =
+                EsignSealInput::measured(prepared.bytes, &operation_id, now_ms, codec_bytes)?;
             self.measure_limit(EngineLimit::SealPreparedStreamBytes, stream_bytes);
-            let sealed = sealer.seal(
-                &input,
-                &EsignSealRequest {
-                    operation_id,
-                    profile,
-                },
-            )?;
+            let request = EsignSealRequest {
+                operation_id,
+                profile,
+            };
+            let sealed = loop {
+                match sealer.seal(&input, &request) {
+                    // The CMS needed more than the largest revision held: a
+                    // fresh, larger one is written and sealed, and its
+                    // signature issued once (FIX 6270).
+                    Err(EsignSealerError::ContentsShort { needed }) => {
+                        let operation_id = &request.operation_id;
+                        if !input.rewrite_larger(operation_id, now_ms, codec_bytes, needed)? {
+                            return Err(EsignSealerError::ContentsShort { needed }.into());
+                        }
+                    }
+                    sealed => break sealed?,
+                }
+            };
             let checked = sealer.verify(&sealed.bytes)?;
             if !sealed.self_verify.self_verify_ok
                 || !checked.self_verify_ok
@@ -261,12 +272,9 @@ impl Vault {
                     )
                     .apply(txn)?;
                 if let Some(project) = state.document.project {
-                    crate::federation::record_scope::stamp_blob_project(
-                        &self.store,
-                        txn,
-                        id,
-                        project,
-                    )?;
+                    self.store
+                        .scope_stamps
+                        .stamp_blob_project(&self.store, txn, id, project)?;
                 }
                 let version = self.append_blob_artifact_version_in_txn(
                     txn,

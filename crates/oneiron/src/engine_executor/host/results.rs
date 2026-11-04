@@ -622,9 +622,9 @@ impl RecordingJsHost<'_, '_> {
             // secret no mark names: a chunk showing one is withheld like a
             // card or answer showing one is.
             if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
-                return Err(Error::InvalidConfig(
-                    format!("stored result read refused: {reason}"),
-                ));
+                return Err(Error::InvalidConfig(format!(
+                    "stored result read refused: {reason}"
+                )));
             }
             return Ok(Some(bytes));
         }

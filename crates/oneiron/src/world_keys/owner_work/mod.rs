@@ -53,6 +53,7 @@
 mod diagnostics;
 mod pickup;
 mod record;
+mod relay_start;
 mod result;
 
 use serde::{Deserialize, Serialize};
@@ -71,6 +72,7 @@ pub use self::diagnostics::{
     RelayObservation,
 };
 pub use self::pickup::OwnerWorkDrain;
+pub use self::relay_start::DeviceSyncStart;
 
 /// Why an act's work names no executor (CALLS OWNER_WORK_NO_EXECUTOR,
 /// ROOT_WORK_EXECUTOR).

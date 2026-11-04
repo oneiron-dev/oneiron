@@ -64,8 +64,8 @@ class UnitGate:
 
     `run` names a unit to the host, waits for its answer, runs the call once
     admitted and reports its end with what it counted. Without an answer
-    stream (a nested process port, whose whole call its parent admitted as
-    one unit) a unit runs unasked and only its progress is written.
+    stream (standalone use, with no host to admit units) a unit runs unasked
+    and only its progress is written.
     """
 
     def __init__(self, request_id, output_stream, answers=None):
@@ -113,7 +113,7 @@ def audio_milliseconds(samples):
     return (samples + 15) // 16
 
 
-def read_request(stream):
+def read_request(stream, exact_body=False):
     line = stream.readline()
     if not line.endswith(b"\n"):
         raise Refusal("InvalidHeader")
@@ -133,7 +133,9 @@ def read_request(stream):
             or not isinstance(header["operation"], str)
             or not isinstance(header["options"], dict)):
         raise Refusal("InvalidHeader")
-    body = stream.read(size + 1)
+    # A persistent stdin (the worker's answers share the stream) reads exactly
+    # its body; an EOF-terminated input also probes one byte past its end.
+    body = stream.read(size if exact_body else size + 1)
     if len(body) != size:
         raise Refusal("InputLengthMismatch")
     if sha256(body) != header["input_sha256"]:
@@ -446,11 +448,17 @@ class NativeHost:
         raise Refusal("UnknownOperation")
 
 
-def serve(host, input_stream, output_stream, answers=None):
+def serve(host, input_stream, output_stream, answers=None, exact_body=None):
     request_id = None
     started = time.monotonic()
+    if exact_body is None:
+        exact_body = answers is input_stream
+    if exact_body:
+        # FIX 11501 C8: an exact body is only sound when the answers share
+        # the request's own stdin object (no second wrapper on fd 0).
+        assert answers is input_stream
     try:
-        header, body = read_request(input_stream)
+        header, body = read_request(input_stream, exact_body)
         request_id = header["request_id"]
         host.units = UnitGate(request_id, output_stream, answers)
         # Third-party Python progress output must not corrupt the frame.

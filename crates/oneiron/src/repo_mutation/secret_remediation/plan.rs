@@ -277,10 +277,12 @@ impl Plan {
                 }
                 let mut blanked = content.to_vec();
                 let mut moved = Vec::new();
+                let mut names = Vec::new();
                 for entry in entries.iter().rev() {
                     if let Some(id) = held(entry) {
                         blanked.drain(entry.value.clone());
                         moved.push(id);
+                        names.push((id, entry.name.clone()));
                     }
                 }
                 if moved.is_empty() {
@@ -291,6 +293,14 @@ impl Plan {
                         self.unresolved(path, RepoSecretUnresolvedReason::StillSecret, Some(id));
                     }
                     return Ok(());
+                }
+                // Each blanked value's key is declared as a lifted one is
+                // (FIX 10977), under its example name.
+                for (id, name) in names {
+                    if let Some((record, class)) = self.record(vault, txn, path, id)? {
+                        let env_name = self.names.name(id, &record, &name);
+                        self.declare(id, record, class, &env_name);
+                    }
                 }
                 self.files.insert(
                     path.to_owned(),
@@ -354,7 +364,7 @@ impl Plan {
                 .unwrap_or_else(|| fallback_name(handles.get(&id).map(String::as_str)));
             let env_name = self.names.name(id, &record, &wanted);
             let Some(reference) =
-                RepoSecretReferenceRenderer::reference(path, content, before, &env_name)
+                RepoSecretReferenceRenderer::reference(path, content, literal.start, &env_name)
             else {
                 self.unresolved(path, RepoSecretUnresolvedReason::NoReference, Some(id));
                 continue;

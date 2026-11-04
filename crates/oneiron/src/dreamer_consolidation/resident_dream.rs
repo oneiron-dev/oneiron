@@ -670,7 +670,9 @@ pub async fn run_resident_dream(
         // it with the tally (FIX 11554). A tally park, not a handover, as at
         // the commit below: free-time runs meter their line.
         Err(other) => {
-            if let DurableStepError::SpentLlm { usage, .. } = &other {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = &other
+            {
                 charges.record_usage(usage);
             }
             return Ok(charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)));

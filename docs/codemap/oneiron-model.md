@@ -14,8 +14,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval.rs` | src | m | 9 fn · 6 const · 2 re-export | — | Extraction-quality evaluation facade |
 | `src/extraction_eval/qa.rs` | src | s | 2 struct · 1 crate-vis | Of360GoldQa, Of360QaAnswer | Gold-anchored QA lane with exact normalized-answer scoring |
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
-| `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
-| `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |
+| `src/lib.rs` | src | s | 4 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
+| `src/llm/assembly.rs` | src | m | 1 struct · 8 fn | StreamAssembly | Shared typed stream assembly |
 | `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 10 fn · 4 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 12 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
@@ -55,14 +55,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 32 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
-| `src/llm/protocol.rs` | src | m | 7 struct · 6 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage +5 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
+| `src/llm/protocol.rs` | src | m | 8 struct · 8 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +8 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
-| `src/llm/scheduling.rs` | src | m | 9 struct · 5 enum · 9 fn · 1 type · 3 const | AdmissionGrant, CallSchedule, ResourceClass, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate, SchedulingCapability +6 | The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its… |
+| `src/llm/scheduling.rs` | src | m | 9 struct · 5 enum · 13 fn · 1 type · 3 const | AdmissionGrant, CallSchedule, ResourceClass, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate, SchedulingCapability +6 | The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its… |
 | `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
-| `src/llm/segments.rs` | src | m | 5 struct · 6 enum · 17 fn · 2 crate-vis | ByteSpan, DisclosureLabel, MessageStamp, Segment, SegmentClass, SegmentClock, SegmentKind, SegmentLocator +2 | The typed segment manifest of one model call (DESIGN-V2 §3.1, R2): which bytes of which `LlmRequest` message… |
+| `src/llm/segments.rs` | src | m | 5 struct · 6 enum · 18 fn · 2 crate-vis | ByteSpan, DisclosureLabel, MessageStamp, Segment, SegmentClass, SegmentClock, SegmentKind, SegmentLocator +2 | The typed segment manifest of one model call (DESIGN-V2 §3.1, R2): which bytes of which `LlmRequest` message… |
 | `src/llm/session.rs` | src | m | 28 struct · 3 enum · 8 fn · 8 const | CanonicalCheckpointRef, ConversationAnchor, RegionDescriptor, SessionAppend, SessionAppended, SessionCapability, SessionCheckpoint, SessionCheckpointed +23 | Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the… |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
+| `src/model_binding.rs` | src | s | 3 struct · 4 enum · 5 fn · 1 const | CalibratedVerdict, ModelBinding, ModelDisposition, ModelRole, ModelSlot, VerdictBinding, VerdictMode | Model-role bindings and calibrated verdict values |
+| `src/teacher_probe_policy.rs` | src | s | 1 struct · 5 fn · 1 const | TeacherProbePolicy | Resolved extraction-teacher probe policy values |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |

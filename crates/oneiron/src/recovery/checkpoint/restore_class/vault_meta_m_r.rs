@@ -14,9 +14,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // image holds it, as the wakes its landing did record do.
     (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
+    // Derived beside each batch, restored with it (FIX 7067).
+    (&t::MERGE_QUEUE_BATCH_INDEX, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
     (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
+    // Derived beside each work row's receipts, restored with it (FIX 7349).
+    (&t::MERGE_QUEUE_RECEIPT_INDEX, CONTENT),
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
@@ -69,6 +73,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_CAS_INTENT, CONTENT),
     (&t::ORIGIN_CHANGE_RECEIPT, CONTENT),
     (&t::ORIGIN_CODE_OPERATIONS, CONTENT),
+    (&t::ORIGIN_CODE_PENDING, CONTENT),
+    (&t::ORIGIN_CODE_RESOLVED_TIP, CONTENT),
     (&t::ORIGIN_ENGINE_EXPORT, CONTENT),
     (&t::ORIGIN_KEEP_OWNER, CONTENT),
     (&t::ORIGIN_LFS_CDC_SEED, CONTENT),
@@ -88,6 +94,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_RECEIVE_PACK_EVIDENCE, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_INTENT, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_PROGRESS, CONTENT),
+    (&t::ORIGIN_RECEIVED_UPDATE, CONTENT),
     (&t::ORIGIN_SCAN_CHECK, LIVE),
     (&t::ORIGIN_SCAN_POLICY, LIVE),
     (&t::ORIGIN_VISIBLE_REF, CONTENT),
@@ -228,6 +235,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
+    (&t::REPO_DERIVED_SOURCE_BLOB, CONTENT),
     (&t::REPO_MANIFEST_BY_CODE, CONTENT),
     // A restore never makes this machine a repo's refs writer again (FIX 6870).
     (&t::REPO_MANIFEST_MINTED, LIVE),

@@ -10,8 +10,8 @@
 //! deletes that keep attribution (FIX 812, FIX 6640).
 use super::super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::{PREDICATE_SKILL_SECTION_FIT, map_entry};
-use crate::Vault;
 use crate::claim::ClaimBody;
+use crate::deletion::ActorErasureWriter;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -64,12 +64,14 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
 /// either order with the hook's whole-delete above: a receipt gone already
 /// reads back absent and is left alone.
 pub(crate) fn scrub_section_fit_receipt_actors_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
+    erase: &mut ActorErasureWriter<'_, '_>,
 ) -> Result<()> {
-    for receipt in actor_receipts_in_txn(&vault.store, wtxn, actor)? {
-        scrub_receipt_actor_in_txn(vault, wtxn, &receipt)?;
+    let receipts = {
+        let (vault, wtxn, actor) = erase.parts();
+        actor_receipts_in_txn(&vault.store, wtxn, &actor)?
+    };
+    for receipt in receipts {
+        scrub_receipt_actor_in_txn(erase, &receipt)?;
     }
     Ok(())
 }
@@ -210,46 +212,44 @@ fn actor_receipts_in_txn(
     Ok(receipts)
 }
 
-/// Rewrites `receipt` with only its actor leaf scrubbed to `""`, keeping its
-/// id, header, status and scope stamp (FIX 11060). The leaf sits outside
-/// `fields()`, so the install still authorizes. The rewrite goes through the
-/// reserved claim door with the header times preserved (origin's actor-erase
-/// precedent), so the short-id hash, text index and pending-embedding token
-/// follow the scrubbed bytes. A receipt that does not decode, names no
-/// actor, or is no receipt stays as it is.
-fn scrub_receipt_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    receipt: &EntityId,
-) -> Result<()> {
-    let Some(stored) =
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
-    else {
-        return Ok(());
-    };
-    if stored.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(());
+/// The complete stored receipt with only this erased actor's leaf cleared.
+/// The receipt's binding fields and permissions do not include `actor`.
+/// Unsupported receipts and leaves naming anyone else are not projections.
+pub(crate) fn stored_section_fit_actor_erasure_body(
+    body: &ClaimBody,
+    actor: &EntityId,
+) -> Option<ClaimBody> {
+    if body.predicate != PREDICATE_SKILL_SECTION_FIT
+        || super::SectionFitReceipt::from_value(&body.value).is_none()
+    {
+        return None;
     }
-    let Ok(mut body) = crate::claim::decode_claim_body(&stored.body, true) else {
-        return Ok(());
+    let wanted = actor.to_hex();
+    let mut next = body.clone();
+    let rmpv::Value::Map(entries) = &mut next.value else {
+        return None;
     };
-    if body.predicate != PREDICATE_SKILL_SECTION_FIT {
-        return Ok(());
-    }
-    let rmpv::Value::Map(entries) = &mut body.value else {
-        return Ok(());
-    };
-    let mut scrubbed = false;
-    for (key, value) in entries.iter_mut() {
-        if key.as_str() == Some("actor") {
+    let mut changed = false;
+    for (key, value) in entries {
+        if key.as_str() == Some("actor") && value.as_str() == Some(wanted.as_str()) {
             *value = rmpv::Value::from("");
-            scrubbed = true;
+            changed = true;
         }
     }
-    if !scrubbed {
+    changed.then_some(next)
+}
+
+/// Applies the actor-only projection in its authorized erase writer, through
+/// the normal indexed claim path. The revision tail removes the old actor
+/// bytes and captures the row that materialization actually stored.
+fn scrub_receipt_actor_in_txn(
+    erase: &mut ActorErasureWriter<'_, '_>,
+    receipt: &EntityId,
+) -> Result<()> {
+    if !crate::batch::materialize_stored_section_fit_actor_erasure_in_txn(erase, receipt)? {
         return Ok(());
     }
-    vault.put_reserved_claim_in_txn(wtxn, receipt, &body, stored.occurred, stored.learned_at)?;
+    let (vault, wtxn, _) = erase.parts();
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, receipt)?;
     let staged = crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
         .ok_or(crate::error::Error::EntityNotFound)?;

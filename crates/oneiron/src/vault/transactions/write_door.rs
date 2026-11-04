@@ -4,12 +4,22 @@
 use crate::Vault;
 use crate::error::Error;
 use crate::store::{BackupWriteClass, Callback, Rows};
-#[cfg(feature = "sync")]
-use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
 
 /// How many owed claim VADs one write door pass pays after its commit
 /// (FIX 11923, L01 12:1x).
 const WRITE_DOOR_OWED_VAD_DRAIN: u64 = 16;
+
+/// The engine's federation import recheck for a write in a build with sync.
+#[cfg(feature = "sync")]
+fn check_federation_imports_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<()> {
+    vault
+        .store
+        .sync_hooks
+        .check_federation_imports_in_txn(vault, txn)
+}
 
 /// A build without sync runs no federation import, so a write has no
 /// import authority to recheck (FIX 4248).
@@ -247,7 +257,7 @@ impl Vault {
                 .federation_stale_sweep_owed
                 .load(std::sync::atomic::Ordering::Acquire),
             // raise_found_key_notices_in_txn
-            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?,
+            crate::store::found_key_notice_queue::found_key_notices_due_in_txn(self, &txn)?,
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,

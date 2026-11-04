@@ -5,66 +5,17 @@
 //! is refused in the write transaction
 //! ([`crate::BatchBuilder::commit_below_owner`]).
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 use super::shape::{
-    AnnouncementAuthority, CoreWriteTextField, core_write_times, entity_id, stage_core_put,
+    ActorAnnouncementAuthority, AnnouncementAuthority, core_write_times, stage_core_put,
     text_pairs, write_id,
 };
+use super::{CoreBatchCommit, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt};
 use crate::Vault;
 use crate::batch::BatchBuilder;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
-
-/// One entity put in a batch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchEntityInput {
-    /// The entity's id; a fresh one when omitted.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// The entity type byte.
-    #[serde(alias = "entityType")]
-    pub entity_type: u8,
-    #[serde(default, alias = "occurredStart")]
-    pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
-    pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
-    pub learned_at: Option<u64>,
-    pub body: Value,
-    #[serde(default)]
-    pub text: Option<Vec<CoreWriteTextField>>,
-}
-
-/// The puts to commit atomically, as many as the caller names (Rule 5).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchWriteInput {
-    pub entities: Vec<CoreBatchEntityInput>,
-}
-
-/// One put a batch committed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchEntityReceipt {
-    pub id: String,
-    pub entity_type: u8,
-}
-
-/// The puts a batch committed, in input order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CoreBatchWriteReceipt {
-    pub count: usize,
-    pub entities: Vec<CoreBatchEntityReceipt>,
-}
-
-/// The grade a batch commits at, which its host selects from the
-/// credential that sent it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoreBatchCommit {
-    Owner,
-    BelowOwner,
-}
 
 /// The lane a core write's caller is held to (OF-063; FIX 1223, 6068,
 /// 10781), which its host selects from the credential that sent it.
@@ -152,31 +103,7 @@ impl Vault {
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let (batch, entities) = self.stage_core_batch(input, announcement)?;
-        match (lane, commit) {
-            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => batch.commit_read_by(reader),
-            (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
-                batch.commit_below_owner_read_by(reader, |_| Ok(()))
-            }
-            (CoreWriteLane::Target(_), commit) => {
-                let ids = entities
-                    .iter()
-                    .map(|entity| entity_id(&entity.id, "id"))
-                    .collect::<MemoryResult<Vec<_>>>()?;
-                let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-                    if lane.admits_puts_in(txn, &ids)? {
-                        return Ok(());
-                    }
-                    // As missing: the row's kind, body and scope stay unsaid.
-                    Err(crate::Error::EntityNotFound)
-                };
-                match commit {
-                    CoreBatchCommit::Owner => batch.commit_with_target_guard(guard),
-                    CoreBatchCommit::BelowOwner => batch.commit_below_owner_with_guard(guard),
-                }
-            }
-            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => batch.commit(),
-            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => batch.commit_below_owner(),
-        }?;
+        batch.commit_in_core_lane(lane, commit)?;
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
             entities,

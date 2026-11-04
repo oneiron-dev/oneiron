@@ -251,6 +251,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
         if let PreparedAuthorization::PublisherSignature(signature) = &prepared.authorization {
             validate_publisher_signature_in_txn(vault, &wtxn, signature, prepared)?;
         }
+        // P1-2 #4499: a campaign live retry re-proves its lifecycle under
+        // this writer before its gate is re-evaluated; other effects pass through.
+        crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
         let invite = super::admission::calendar_admission_in_txn(vault, &wtxn, prepared)?;
         let required_grant_id = invite
             .as_ref()

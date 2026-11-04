@@ -62,7 +62,7 @@ pub(super) const KEY_USAGE_IN: &str = "usage_in";
 
 pub(super) const KEY_USAGE_OUT: &str = "usage_out";
 
-pub(super) const KEY_RESPONSE: &str = "response";
+pub(super) use crate::store::model_step_response_carriage::KEY_RESPONSE;
 
 pub(super) const KEY_RESPONSE_REF: &str = "response_ref";
 

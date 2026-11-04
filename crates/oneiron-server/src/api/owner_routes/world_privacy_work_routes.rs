@@ -23,7 +23,7 @@ use oneiron::policy_model::{WorldPrivacyReceipt, WorldPrivacySetInput};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, revision_hex};
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -38,6 +38,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/settings",
                 summary: "A world's settings as this install folds them, and the revision a change names as its seen.",
                 row: None,
+                shape: None,
             },
             get(settings),
         ),
@@ -47,6 +48,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/settings",
                 summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
                 row: None,
+                shape: Some(RestShape::json(
+                    world_privacy_set_body_schema,
+                    world_privacy_work_schema,
+                )),
             },
             post(set),
         ),
@@ -56,6 +61,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/reassert",
                 summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
                 row: None,
+                shape: Some(RestShape::json(
+                    world_privacy_set_body_schema,
+                    world_privacy_work_schema,
+                )),
             },
             post(reassert),
         ),

@@ -686,6 +686,12 @@ pub(super) fn prepared_step_state_hash(
             encode_code_run_replay_value(&call.outcome, "executor bridge call outcome hash")?;
         hash_bytes(&mut hasher, &request);
         hash_bytes(&mut hasher, &outcome);
+        // Rewritten rows are pinned; legacy rows hash identically (FIX 1442).
+        if let Some(rewritten) = &call.rewritten_request {
+            let rewritten =
+                encode_code_run_replay_value(rewritten, "executor bridge call rewritten hash")?;
+            hash_bytes(&mut hasher, &rewritten);
+        }
     }
     Ok(*hasher.finalize().as_bytes())
 }

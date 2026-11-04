@@ -21,10 +21,11 @@ use super::paths::{
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
-use crate::credential_door::{CredentialDoorService, DoorScanVerdict};
+use crate::credential_door::CredentialDoorService;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsPushedPointer;
+use crate::origin::receive_scan_verdict::DoorScanVerdict;
 use crate::receive_scan::PushedBlob;
 use crate::store::code_snapshot::RepoRef;
 
@@ -286,14 +287,15 @@ fn scan_window(
         true,
         context.scan,
         &mut |at, blob| {
-            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&blob.path, &blob.content)
-            {
+            let path = decode_tip_path(&blob.path)?;
+            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&path, &blob.content) {
                 lfs_pointers.push(pointer);
                 pointer_moves.push(at.cloned());
             }
             if let Some(scan) = scan.as_mut() {
                 scan.blob(&blob, Framed::Tip(at));
             }
+            Ok(())
         },
     )?;
     let ref_lfs_pointers = request
@@ -378,7 +380,10 @@ pub(super) fn for_each_framed_blob(
     scan: ScanBounds,
     each: &mut dyn FnMut(PushedBlob),
 ) -> std::result::Result<(), InputRefused> {
-    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| each(blob))
+    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| {
+        each(blob);
+        Ok(())
+    })
 }
 
 /// The entries of `items`, one per pointer of a push, that one ref is held
@@ -417,7 +422,7 @@ fn read_framed_stream(
     terminated: bool,
     moves: bool,
     scan: ScanBounds,
-    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob),
+    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob) -> std::result::Result<(), InputRefused>,
 ) -> std::result::Result<(), InputRefused> {
     let mut header = Vec::new();
     let mut at = None;
@@ -454,7 +459,7 @@ fn read_framed_stream(
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }
-        each(at.as_ref(), PushedBlob { path, oid, content });
+        each(at.as_ref(), PushedBlob { path, oid, content })?;
     }
 }
 
@@ -569,7 +574,14 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
         }
         DoorWindowVerdict::NotInvoked => "oneiron door: no request".to_owned(),
         DoorWindowVerdict::Rejected { reasons } => {
-            bounded_verdict_line("oneiron door refused this push: ", reasons)
+            // Printable emission guard (FIX20 PART): a decoded tip control
+            // path must not inject raw lines/control bytes here; escape the
+            // displayed reasons before the existing bound/truncate.
+            let escaped: Vec<String> = reasons
+                .iter()
+                .map(|reason| reason.escape_default().to_string())
+                .collect();
+            bounded_verdict_line("oneiron door refused this push: ", &escaped)
         }
     }
 }
@@ -723,4 +735,44 @@ fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
         .parse::<u64>()
         .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
     Ok((oid.to_owned(), len, path.to_owned()))
+}
+
+/// Decode a TIP-stream path (FIX20 PART, tip-only).
+///
+/// The tip producer frames `git diff-tree --raw` text, so a tip path that
+/// starts with `"` is git's C-quoted form; plain tip paths pass through
+/// byte-identical. History labels are cat-file `%(rest)` and never reach
+/// here. A malformed actual tip quote is the existing generic refusal, never
+/// an echoed input; undecodable UTF-8 keeps the original quoted string (the
+/// admitted call is preserved; the LFS match residual stays unresolved).
+fn decode_tip_path(path: &str) -> Result<String> {
+    if !path.starts_with('"') {
+        return Ok(path.to_owned());
+    }
+    let input = gix::bstr::BStr::new(path);
+    let (decoded, consumed) = gix_quote::ansi_c::undo(input)
+        .map_err(|_| serve_failed("door tip path quoting is malformed"))?;
+    if consumed != input.len() {
+        return Err(serve_failed("door tip path quoting is malformed"));
+    }
+    // `undo` also accepts an unterminated quote, so require a genuine
+    // unescaped closing quote: the last byte is `"` preceded by an even run
+    // of backslashes (an odd run escapes the quote itself).
+    let bytes = path.as_bytes();
+    let mut backslashes = 0;
+    for &byte in bytes[..bytes.len().saturating_sub(1)].iter().rev() {
+        if byte == b'\\' {
+            backslashes += 1;
+        } else {
+            break;
+        }
+    }
+    if bytes.last() != Some(&b'"') || backslashes % 2 == 1 {
+        return Err(serve_failed("door tip path quoting is malformed"));
+    }
+    let decoded_bstr: &gix::bstr::BStr = &decoded;
+    match std::str::from_utf8(decoded_bstr) {
+        Ok(valid) => Ok(valid.to_owned()),
+        Err(_) => Ok(path.to_owned()),
+    }
 }

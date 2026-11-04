@@ -304,7 +304,7 @@ impl oneiron::off_record::RetainedCharge for RoomCharge {
 /// by its words.
 ///
 /// The text is the canonical projection — the visible, non-empty message
-/// contents in request order, one per line, the same text the engine joins
+/// contents in message order, one per line, the same text the engine joins
 /// (`tagging::shown_message_text` + `embed::joined_turn_text`) — with no new
 /// filtering rule.
 ///
@@ -320,10 +320,14 @@ pub(crate) fn pre_embed_turn(
     let Some(slot) = slot else {
         return None;
     };
-    let text = turn
+    let mut messages = turn
         .messages
         .iter()
         .filter(|message| message.is_visible && !message.content.is_empty())
+        .collect::<Vec<_>>();
+    messages.sort_by_key(|message| message.order);
+    let text = messages
+        .into_iter()
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");

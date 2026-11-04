@@ -105,6 +105,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             author,
             message_type: message.message_type.clone(),
             content: message.content.clone(),
+            parts: None,
             metadata: message.metadata.clone().map(super::js_json::js_json),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,

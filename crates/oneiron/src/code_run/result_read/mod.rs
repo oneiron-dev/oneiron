@@ -414,9 +414,7 @@ impl ResultRead {
         let reply = match facet {
             ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
             ResultFacet::Search => search::search(body, &reference, input, &bounds),
-            ResultFacet::Query => {
-                query::query(body, &reference, &parent, input, &bounds, spill)
-            }
+            ResultFacet::Query => query::query(body, &reference, &parent, input, &bounds, spill),
             ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
         }?;
         // A spilled selection is a new body, which its own sink's scan marks.

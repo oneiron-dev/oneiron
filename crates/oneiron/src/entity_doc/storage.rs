@@ -237,7 +237,7 @@ pub(super) fn persist_scanned(
         txn,
         &std::collections::BTreeSet::from([*entity]),
     )?;
-    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+    if crate::store::decision_question_watches::unit_watched_in_txn(store, txn, entity)? {
         crate::batch::queue_proactivity_change(vault, txn);
     }
     Ok(())
@@ -366,7 +366,7 @@ impl Vault {
                 if *field != TextField::MapField("content".to_owned()) {
                     return Err(invalid("MESSAGE document edits only content"));
                 }
-                crate::gate::validate_canonical_witness_message_body(body)?;
+                crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
                 let original = crate::note::decode_note_body(body)?;
@@ -390,7 +390,7 @@ impl Vault {
             )?;
             // A row its writing door already stamped keeps that birth on its
             // document's birth commit (FIX 10929).
-            let born = crate::provenance::birth::row_birth_in_txn(&self.store, txn, entity)?;
+            let born = crate::store::birth_record::row_birth_in_txn(&self.store, txn, entity)?;
             // The birth commit names the birth actor's stamp token (FIX 10930).
             let stamp = crate::provenance::actor_stamp_in_txn(self, txn, birth_actor)?;
             let doc = EntityDoc::open_with_metadata(
@@ -406,7 +406,7 @@ impl Vault {
             // not change. The only replaced bytes are text -> head pointer.
             self.store
                 .port_entity_document_pointer_put(txn, entity, &pointer)?;
-            crate::federation::record_scope::restamp_document_pointer(
+            self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
                 *entity,
@@ -467,7 +467,7 @@ pub(super) fn stamp_document_birth(
     let class = MadeByClass::of_writer(actor.actor_class());
     match RowBirth::written(actor, class, door, &[], &[], at) {
         Some(birth) => {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
+            crate::store::birth_record::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
         }
         None => Ok(()),
     }
@@ -624,7 +624,7 @@ pub(super) fn move_pointer(
     rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::federation::record_scope::restamp_document_pointer(
+    store.scope_stamps.restamp_document_pointer(
         store,
         txn,
         *entity,
