@@ -77,6 +77,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::calendar::inbox_card::erase_inbox_cards_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     crate::skill_hub::pack_catalog::erase_hook_proposal_in_txn,
+    // FIX 11965: the stamp tokens the record's document names.
+    crate::provenance::erase_actor_stamp_uses_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

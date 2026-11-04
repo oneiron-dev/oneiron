@@ -14,19 +14,23 @@
 //! vault's `erase` veto window first (ARCH-0043, FIX 9781): each record
 //! starts its own `erase` act, and its erase runs from the legal-hold pass
 //! once that act completes and nothing holds the record.
+//!
+//! The owner withdraws an erase that still waits through its own door, under
+//! the confirm's owner authority (FIX 10401).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ErasePendingReason, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget, LiftAndEraseOutcome, LiftAndEraseStatus,
-    erase_status, kept_status,
+    ErasePendingReason, EraseWithdrawal, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
+    LegalHoldEventKind, LegalHoldKind, LegalHoldReason, LegalHoldTarget, LiftAndEraseOutcome,
+    LiftAndEraseStatus, erase_status, kept_status,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteReason;
+use crate::deletion::topology_delete_intent::TopologyDeletePhase;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -415,6 +419,7 @@ impl Vault {
                 reason: DeleteReason::UserHardDelete,
                 generation: self.store.clock.entity_id()?,
                 veto_act: None,
+                withdrawn: None,
             };
             let stored = hold_store::put_pending_erase_in_txn(&self.store, txn, record, request)?;
             waiting.insert(*record, stored);
@@ -430,6 +435,113 @@ impl Vault {
             veto_vault,
             waiting,
         })
+    }
+
+    /// The owner withdraws the erase that waits on each of `records` (FIX
+    /// 10401): an explicit lift-and-erase a host order or the shared vault's
+    /// veto window holds back, or the owner's plain delete only secret
+    /// orders keep. It is the owner's own act, under the owner authority the
+    /// confirm takes, and only the Owner whose confirm made the request, its
+    /// `erase` act's starter, withdraws it: another Owner's objection to
+    /// that act is their veto ([`EraseWithdrawal::ConfirmedByAnotherOwner`]).
+    /// In one writer, the request is marked withdrawn, by whom and when, and
+    /// stays as that record while no legal-hold pass runs it; the record's
+    /// links to the holds its confirm met go, each hold logging the
+    /// withdrawal as it logged the confirm; and the record's own `erase` act
+    /// goes, with its started events and matured notices. A hold the confirm
+    /// lifted stays lifted, and a privacy erasure's use limit stands while a
+    /// hold keeps the record (C6). A record whose delete has begun, or whose
+    /// act a request has claimed, reads [`EraseWithdrawal::UnderWay`]: it
+    /// runs to its end.
+    ///
+    /// # Errors
+    /// The owner proof no longer holds.
+    pub fn withdraw_waiting_erases(
+        &self,
+        owner: &AuthenticatedOwner,
+        records: &[EntityId],
+    ) -> Result<Vec<(EntityId, EraseWithdrawal)>> {
+        let records: BTreeSet<EntityId> = records.iter().copied().collect();
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let now = self.store.clock.now_recorded_at();
+            let mut withdrawn = Vec::with_capacity(records.len());
+            for record in &records {
+                let status = self.withdraw_waiting_erase_in_txn(txn, actor, record, now)?;
+                withdrawn.push((*record, status));
+            }
+            Ok(withdrawn)
+        })
+    }
+
+    /// [`Self::withdraw_waiting_erases`] for one record, by the owner
+    /// `actor` the writer re-proved.
+    fn withdraw_waiting_erase_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        record: &EntityId,
+        now: u64,
+    ) -> Result<EraseWithdrawal> {
+        let Some(pending) = hold_store::pending_erase_in_txn(&self.store, txn, record)? else {
+            return Ok(EraseWithdrawal::NotWaiting);
+        };
+        let act = match &pending.veto_act {
+            Some(act_id) => self.pending_authority_act_in_txn(txn, act_id)?,
+            None => None,
+        };
+        // The act's starter is the Owner whose confirm made the request; with
+        // no act, the row names them.
+        let confirmer = act
+            .as_ref()
+            .map(|act| act.starter.as_str())
+            .or(pending.confirmed_by.as_deref());
+        if confirmer.is_some_and(|confirmer| confirmer != actor.to_hex()) {
+            return Ok(EraseWithdrawal::ConfirmedByAnotherOwner);
+        }
+        if act.as_ref().is_some_and(|act| act.execution.is_some())
+            || self.delete_under_way_in_txn(txn, record)?
+        {
+            return Ok(EraseWithdrawal::UnderWay);
+        }
+        hold_store::withdraw_pending_erase_in_txn(
+            &self.store,
+            txn,
+            record,
+            &pending.generation,
+            actor.to_hex(),
+            now,
+        )?;
+        let who = HoldActor::owner(actor).privacy(pending.reason == DeleteReason::GdprDelete);
+        for hold in hold_store::unlink_erase_in_txn(&self.store, txn, record)? {
+            hold_store::log_in_txn(
+                &self.store,
+                txn,
+                &hold,
+                LegalHoldEventKind::EraseWithdrawn,
+                LegalHoldReason::OwnerWithdrew,
+                vec![LegalHoldTarget::Record(*record)],
+                &who,
+                now,
+                None,
+            )?;
+        }
+        // Its trail records the withdrawal first; then its act goes.
+        if let Some(act) = act {
+            self.withdraw_authority_act_in_txn(txn, &act.id, actor)?;
+        }
+        Ok(EraseWithdrawal::Withdrawn)
+    }
+
+    /// Whether a delete of `record` has committed its first destructive
+    /// write or published its tombstone (its reservation is past
+    /// `Prepared`), or purged it: a withdrawal no longer stops it, and the
+    /// delete rail finishes it.
+    fn delete_under_way_in_txn(&self, txn: &heed::RoTxn<'_>, record: &EntityId) -> Result<bool> {
+        let reserved =
+            crate::deletion::topology_delete_reservation_in_txn(&self.store, txn, record)?
+                .is_some_and(|intent| intent.phase != TopologyDeletePhase::Prepared);
+        Ok(reserved || self.local_hard_delete_marker_exists_in_txn(txn, record)?)
     }
 
     /// A record whose erase waits out shared vault `vault_id`'s veto window
@@ -455,18 +567,7 @@ impl Vault {
             Some(_) => Ok(()),
             None => self
                 .start_record_erase_act(owner, vault_id, record)
-                .and_then(|act| {
-                    self.with_write_txn_grouped(|txn| {
-                        hold_store::set_pending_veto_act_in_txn(
-                            &self.store,
-                            txn,
-                            &record,
-                            &pending.generation,
-                            act.clone(),
-                        )
-                    })
-                })
-                .map(drop),
+                .and_then(|act| self.name_erase_act(&record, &pending.generation, &act)),
         };
         if let Err(error) = started {
             let generation = pending.generation;
@@ -528,5 +629,72 @@ impl Vault {
             )?;
             Ok(true)
         })
+    }
+
+    /// Names `act`, just started for the waiting erase of `record` at
+    /// request `generation`, on its row (FIX 9781). When the row no longer
+    /// waits as that request, or already names another act, as when the
+    /// owner withdrew it meanwhile or a legal-hold pass started one first,
+    /// the act holds back no erase and is withdrawn (FIX 10401).
+    fn name_erase_act(&self, record: &EntityId, generation: &EntityId, act: &str) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            if hold_store::set_pending_veto_act_in_txn(
+                &self.store,
+                txn,
+                record,
+                generation,
+                act.to_owned(),
+            )? {
+                return Ok(());
+            }
+            if let Some(started) = self.pending_authority_act_in_txn(txn, act)? {
+                let starter = EntityId::from_hex(&started.starter)?;
+                self.withdraw_authority_act_in_txn(txn, act, starter)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Starts the `erase` act of each explicit lift-and-erase that waits
+    /// with none in a vault that erases through its veto window (FIX 10401):
+    /// a confirm whose writer committed and whose act start did not follow,
+    /// as on a crash between the two. The legal-hold pass runs it, once per
+    /// row and pass, as the owner the row records as confirming it, whose
+    /// act the confirm recorded; the act's own start re-proves that owner a
+    /// live holder who may start it. A row that already names an act keeps
+    /// it. A start that fails leaves the row for the next pass, logged.
+    pub(super) fn start_missing_erase_acts(&self) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let Some(vault_id) = self.owner_erase_veto_vault_in_txn(&txn)? else {
+            return Ok(());
+        };
+        let missing = hold_store::erases_without_act_in_txn(&self.store, &txn)?;
+        // The read ends before an act's start opens its writer.
+        drop(txn);
+        for (record, pending) in missing {
+            let Some(confirmer) = pending
+                .confirmed_by
+                .as_deref()
+                .and_then(|by| EntityId::from_hex(by).ok())
+            else {
+                continue;
+            };
+            let started = self
+                .authenticate_owner(
+                    confirmer,
+                    &confirmer.to_hex(),
+                    true,
+                    crate::store::GateDecisionId::now(),
+                )
+                .and_then(|proof| self.start_record_erase_act(&proof, vault_id, record))
+                .and_then(|act| self.name_erase_act(&record, &pending.generation, &act));
+            if let Err(error) = started {
+                tracing::warn!(
+                    error = %error,
+                    "a confirmed erase's veto act did not start; the next legal hold pass starts it"
+                );
+            }
+        }
+        Ok(())
     }
 }
