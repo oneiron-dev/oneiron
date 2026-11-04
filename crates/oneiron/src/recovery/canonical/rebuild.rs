@@ -134,11 +134,23 @@ fn insert_row(
         }
         6 => {
             let row = &snapshot.room_turns[at];
-            insert(doc, "room_turns", &id(row.id)?.to_hex(), &row.row)
+            rebuild_room_row(
+                doc,
+                "room_turns",
+                &id(row.id)?.to_hex(),
+                &row.row,
+                crate::room_codec::room_parts::ROOM_TURN_MAX_ROW_BYTES,
+            )
         }
         7 => {
             let row = &snapshot.room_facts[at];
-            insert(doc, "room_facts", &row.key, &row.row)
+            rebuild_room_row(
+                doc,
+                "room_facts",
+                &row.key,
+                &row.row,
+                crate::room_codec::room_parts::ROOM_FACT_MAX_ROW_BYTES,
+            )
         }
         8 => {
             let row = &snapshot.document_pins[at];
@@ -189,5 +201,17 @@ fn insert_row(
             insert(doc, "note_proposals", &row.id.to_hex(), &pack(row)?)
         }
         _ => asset_body_refs::rebuild_row(doc, &snapshot.asset_body_refs[at]),
+    }
+}
+
+/// Existing parts and waiting manifests keep their bytes; joined rows use the
+/// same whole-or-parts encoding as an ordinary window write.
+fn rebuild_room_row(doc: &LoroDoc, map: &str, key: &str, row: &[u8], max: usize) -> Result<()> {
+    use crate::room_codec::{carrier_parts::is_part_key, room_parts};
+
+    if is_part_key(key) || room_parts::manifest(row).is_some() {
+        insert(doc, map, key, row)
+    } else {
+        room_parts::write_row(&doc.get_map(map), key, row, max)
     }
 }

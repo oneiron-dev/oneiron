@@ -56,13 +56,20 @@ impl SyncClient {
             .unwrap_or_else(PoisonError::into_inner);
         let (out, births) = with_manager_peer(&self.manager, lane, |peer| {
             let mut out = bodies.handle_frame(peer, tag, payload)?;
-            out.extend(bodies.poll(
-                peer,
-                Instant::now(),
-                ASSET_BODY_FRAMES_PER_POLL,
-                MAX_DECODED_PAYLOAD_BYTES,
-            )?);
-            Ok::<_, TransportError>((out, bodies.take_federated_births()))
+            let births = bodies.take_federated_births();
+            let polled = bodies
+                .poll(
+                    peer,
+                    Instant::now(),
+                    ASSET_BODY_FRAMES_PER_POLL,
+                    MAX_DECODED_PAYLOAD_BYTES,
+                )
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "asset body poll failed");
+                    Vec::new()
+                });
+            out.extend(polled);
+            Ok::<_, TransportError>((out, births))
         })?;
         if !births.is_empty() {
             self.release_body_births(births);

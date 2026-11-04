@@ -349,6 +349,7 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
         apply_ops(
             &self.store,
             &self.config,

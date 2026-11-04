@@ -134,6 +134,12 @@ pub mod code_tree_blob;
 pub mod conversation_body;
 pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub use scope_stamps::StoreScopeStamps;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;

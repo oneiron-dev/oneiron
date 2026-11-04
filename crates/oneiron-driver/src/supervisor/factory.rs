@@ -11,10 +11,13 @@ use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, Connector
 use oneiron::dreamer_runner::maintenance::{
     CoachLiveSlice, CoachSkillOptimizer, ContributionReplayHost,
 };
-use oneiron::dreamer_wake::{ClaimAuthoringSelection, WeaveRecipeExecutor, WeaveRecipeRuntime};
+use oneiron::dreamer_wake::{
+    ClaimAuthoringSelection, WakePassDeadline, WeaveRecipeExecutor, WeaveRecipeRuntime,
+};
 use oneiron::edge::EdgeActorClass;
 use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::run_admission::WorkCancel;
 use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
@@ -63,6 +66,17 @@ pub trait PassExecutorFactory {
     /// counter — the same counter the driver reads for legibility, never a
     /// second one.
     fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>>;
+
+    /// The pass's wake deadline, lent after this pass's meter exists (FIX
+    /// 11962): Dreamer role runs convert what is left into their
+    /// device-work deadlines. The default keeps none, as before.
+    fn set_pass_deadline(&mut self, _deadline: &WakePassDeadline) {}
+
+    /// The pass's device-work cancellation, lent after this pass's meter
+    /// exists (FIX 11963): Dreamer role runs admit under a clone, so the
+    /// pass tripping it beside the wake flag aborts their in-flight device
+    /// work. The default keeps an unlinked cancellation, as before.
+    fn set_device_cancel(&mut self, _cancel: &WorkCancel) {}
 
     /// Independent executors for disjoint home-owned MACRO buckets, all on
     /// this pass's meter. A host with a non-shareable sink lends one executor.

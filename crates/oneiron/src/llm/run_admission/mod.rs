@@ -59,7 +59,10 @@ pub use receipt::{
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
 pub use settle::CallOutcome;
 pub use wire::{WireCallError, WireSeat};
-pub use work_context::{WorkCancel, WorkContext, WorkId, WorkPhysical};
+pub use work_context::{
+    WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,
+    record_work_parent, take_work_parent,
+};
 
 #[cfg(test)]
 mod tests;

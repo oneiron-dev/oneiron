@@ -182,7 +182,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             )?;
         }
         if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
-            crate::federation::record_scope::backfill_task_base(
+            store.scope_stamps.backfill_task_base(
                 store,
                 &mut txn,
                 id,
@@ -206,9 +206,8 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             let old = &raw[ENTITY_METADATA_HEADER_LEN..];
             let bytes = match header.entity_type {
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
-                    crate::access_grant::encode_access_grant_body(
-                        &crate::access_grant::decode_access_grant_body(old)?,
-                    )?
+                    crate::access_grant::decode_access_grant_body(old)?;
+                    old.to_vec()
                 }
                 crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
                     crate::outbound_grant::encode_standing_outbound_grant_body(

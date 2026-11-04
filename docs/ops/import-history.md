@@ -252,7 +252,10 @@ row asks whether everything is okay, and stdout names it in `warnings`
 (`"warning": "limit_crossed"`).
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
-A folder that is missing retracts nothing. A folder whose last file you
+A folder that is missing retracts nothing. If a subfolder cannot be opened
+or listed during a rescan, its earlier notes stay and the rescan reports that
+folder as failed. Other folders are still read; a later rescan tries it again.
+A folder whose last file you
 deleted retracts that file's note too; if a mount point reads empty, the notes
 come back at the rescan after it is mounted again. With `serve` stopped, the CLI opens the vault
 itself. When `serve` holds the writer lease, `attach`, `rescan`, `detach` and `list` instead call

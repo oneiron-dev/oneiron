@@ -531,17 +531,23 @@ impl Vault {
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| {
-                    crate::workspace_roster::precheck_goal_delete(
+                    self.store.delete_guards.precheck_goal_delete(
                         &self.store,
                         &wtxn,
                         *id,
                         gate.is_some(),
                     )
                 })
-                .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    self.store
+                        .delete_guards
+                        .reject_ruling_delete(&self.store, &wtxn, id)
+                })
                 .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
-                    crate::workspace_roster::reject_audience_edit_delete(&self.store, &wtxn, id)
+                    self.store
+                        .delete_guards
+                        .reject_audience_edit_delete(&self.store, &wtxn, id)
                 })
                 .and_then(|()| {
                     if value.reason.is_hard() {
@@ -773,8 +779,12 @@ impl Vault {
             // SAME txn that stages it — a revocation landing since the gate ran
             // stops the deletion before it becomes remote truth.
             reverify_deletion_authority_before_publication(gate, wtxn)?;
-            crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
-            crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+            self.store
+                .delete_guards
+                .reject_ruling_delete(&self.store, wtxn, id)?;
+            self.store
+                .delete_guards
+                .reject_audience_edit_delete(&self.store, wtxn, id)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,

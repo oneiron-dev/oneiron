@@ -364,7 +364,11 @@ impl<'a> Census<'a> {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
             KeepReason::Pending
-        } else if crate::workspace_roster::reject_audience_edit_delete(self.store, txn, id).is_err()
+        } else if self
+            .store
+            .delete_guards
+            .reject_audience_edit_delete(self.store, txn, id)
+            .is_err()
         {
             // A kept audience edit stays whatever the caller keeps (FIX 5639).
             KeepReason::Guarded
@@ -509,12 +513,24 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
     crate::task_authority::reject_fact_delete(store, txn, id).is_err()
-        || crate::workspace_roster::refuse_revision_delete(store, txn, id).is_err()
-        || crate::workspace_roster::guard_goal_delete(store, txn, *id).is_err()
-        || crate::federation::reject_ruling_delete(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .refuse_revision_delete(store, txn, id)
+            .is_err()
+        || store
+            .delete_guards
+            .guard_goal_delete(store, txn, *id)
+            .is_err()
+        || store
+            .delete_guards
+            .reject_ruling_delete(store, txn, id)
+            .is_err()
         || crate::claim::history_store::reject_machine_history_delete(store, txn, id).is_err()
         || store.guard_pack_map_carrier_delete_in_txn(txn, id).is_err()
-        || crate::identity_topology::guard_batch_identity_delete_in_txn(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .guard_batch_identity_delete_in_txn(store, txn, id)
+            .is_err()
 }
 
 /// Tears one member's local rows. Every step is a local index or projection
