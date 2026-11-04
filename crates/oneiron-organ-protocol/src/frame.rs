@@ -559,16 +559,22 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     while more {
         let (len, next) = recv_header(stream, wait, &mut fds)?;
         bound.check(len, body.len() as u64)?;
-        // The old buffer can outlive the realloc; the budget release is
-        // exact via shrink, and the floor hold stays conservative until the lease drops.
+        // Scratch covers the old buffer outliving its realloc,
+        // budget-exact via shrink, the floor untouched; skipped for
+        // descriptor-only (len 0) and fitting frames.
         let existing = body.len() as u64;
-        if existing > 0 {
-            booking.value(&mut held, existing)?;
+        let scratch = if (body.capacity() as u64) < existing.saturating_add(u64::from(len)) {
+            body.capacity() as u64
+        } else {
+            0
+        };
+        if scratch > 0 {
+            booking.scratch(&mut held, scratch)?;
         }
         booking.more(&mut held, u64::from(len))?;
         recv_body(stream, wait, &mut body, len)?;
-        if existing > 0 {
-            booking.body_gone(&mut held, existing);
+        if scratch > 0 {
+            booking.body_gone(&mut held, scratch);
         }
         more = next;
     }

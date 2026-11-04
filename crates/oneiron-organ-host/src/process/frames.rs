@@ -66,6 +66,14 @@ impl FrameBooking for Reading<'_> {
             .map_err(unroomed)
     }
 
+    fn scratch(&mut self, held: &mut Lease, len: u64) -> Result<(), FrameError> {
+        let stopped = || self.stopped();
+        self.inbox
+            .room
+            .timing(|| self.room.grow_transient(held, len, &stopped))
+            .map_err(unroomed)
+    }
+
     fn body_gone(&mut self, held: &mut Lease, len: u64) {
         held.shrink(len);
     }

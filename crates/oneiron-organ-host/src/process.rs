@@ -588,19 +588,22 @@ impl OrganProcess {
     }
 
     /// Room for a call or an answer this process is about to be sent, made
-    /// before it takes the writer (FIX 6195): the organ's own read of it
-    /// first, held in `room` until the call ends ([`reserve_read`]), then
-    /// the encoding the host makes, counted with nothing allocated. Waits on
-    /// the call's clock until `deadline`; [`FrameError::Withdrawn`] once
-    /// `stopped` says the frame is not wanted.
+    /// before it takes the writer (FIX 6195): the encoding the host makes
+    /// first, counted with nothing allocated, then the organ's own read of
+    /// it, held in `room` until the call ends ([`reserve_read`]). The
+    /// deadline-bound read comes last, so a pair that does not jointly fit
+    /// ends instead of stalling past `deadline`. Waits on the call's clock
+    /// until `deadline`; [`FrameError::Withdrawn`] once `stopped` says the
+    /// frame is not wanted.
     fn book(
         &self,
         msg: &ToOrgan,
         (room, deadline): (&CallRoom, Instant),
         stopped: &dyn Fn() -> bool,
     ) -> Result<Lease, FrameError> {
+        let frame = book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)?;
         reserve_read(room, msg, deadline, stopped)?;
-        book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)
+        Ok(frame)
     }
 
     /// Sends the answer to call `id`'s ask; `false` when it is dropped

@@ -42,6 +42,17 @@ pub trait FrameBooking {
     /// As [`Self::body`].
     fn value(&mut self, held: &mut Self::Held, bytes: u64) -> Result<(), FrameError>;
 
+    /// Room for `len` transient bytes: the realloc scratch an old buffer
+    /// holds while the next frame lands. By default it grows as
+    /// [`Self::value`] grows it; a booking whose floor has no release for
+    /// scratch overrides it with a budget-only growth.
+    ///
+    /// # Errors
+    /// As [`Self::body`].
+    fn scratch(&mut self, held: &mut Self::Held, len: u64) -> Result<(), FrameError> {
+        self.value(held, len)
+    }
+
     /// The message's `len` encoded bytes are gone; the value stays.
     fn body_gone(&mut self, held: &mut Self::Held, len: u64);
 }

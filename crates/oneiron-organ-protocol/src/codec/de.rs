@@ -106,7 +106,12 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     ) -> Result<V::Value, CodecError> {
         // As a sequence: a fixed array reads bytes element by element.
         match self.reader.token()? {
-            Token::Bin(bytes) => visitor.visit_seq(SeqDeserializer::new(bytes.iter().copied())),
+            Token::Bin(bytes) => {
+                let mut seq = SeqDeserializer::new(bytes.iter().copied());
+                let value = visitor.visit_seq(&mut seq)?;
+                seq.end()?;
+                Ok(value)
+            }
             token => self.any(token, visitor),
         }
     }
