@@ -8710,6 +8710,7 @@ dependencies = [
  "heed",
  "oneiron-base",
  "oneiron-contracts",
+ "oneiron-crypto",
  "oneiron-model",
  "rmpv",
  "schemars 0.8.22",
