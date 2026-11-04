@@ -416,6 +416,13 @@ pub(crate) fn trap_consume_precheck_in_txn(
     require_attempt_scoped_signal_in_txn(vault, txn, &trap.trap_claim_id)?;
     require_lineage_chains_to_anchor_in_txn(vault, txn, &head_id, &trap.trap_claim_id)?;
     let _ = peer_wait_task_for_trap_in_txn(vault, txn, &trap.trap_claim_id)?;
+    let head_body = vault
+        .get_claim_in_txn(txn, &head_id)?
+        .ok_or(invalid_trap("dreamer trap record missing"))?;
+    envelope_from_claim_body(&head_body)?;
+    if !matches!(head_body.subject, ClaimSubject::Entity(_)) {
+        return Err(invalid_trap("dreamer trap subject must be an entity"));
+    }
 
     let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
     let Some(parked) = store.parked_attempt_in_txn(txn, binding.attempt_id)? else {
