@@ -20,9 +20,10 @@ use crate::Vault;
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
-use crate::edit_distance::miner::CompilationTarget;
+use crate::edit_distance::miner::CompilationTargetValidation;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::inbox::compilation_target::CompilationTarget;
 use crate::vault_shape::{ShapeApplyReceipt, ShapeInboxGroup};
 use crate::write_envelope::WriteActor;
 

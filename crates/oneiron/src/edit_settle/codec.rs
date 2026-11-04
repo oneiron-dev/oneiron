@@ -75,11 +75,6 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         })
         .transpose()?
         .unwrap_or(Value::Nil);
-    if record.docx_judgments.len()
-        > crate::edit_roundtrip::paragraph_review::MAX_PARAGRAPH_JUDGMENTS
-    {
-        return Err(Error::InvariantViolation("too many paragraph judgments"));
-    }
     let docx_judgments = rmp_serde::to_vec_named(&record.docx_judgments)
         .map(Value::Binary)
         .map_err(|_| Error::InvariantViolation("paragraph judgment encode failed"))?;
@@ -256,9 +251,6 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
             Some(Value::Binary(bytes)) => {
                 let rows: Vec<crate::edit_roundtrip::ParagraphJudgment> =
                     rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
-                if rows.len() > crate::edit_roundtrip::paragraph_review::MAX_PARAGRAPH_JUDGMENTS {
-                    return Err(corrupt());
-                }
                 rows
             }
             _ => return Err(corrupt()),

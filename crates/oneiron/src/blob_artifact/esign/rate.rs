@@ -224,8 +224,10 @@ pub(super) fn observe(
     verified_actor: Option<EntityId>,
 ) -> Result<()> {
     let window = now / WINDOW_SECS * WINDOW_SECS;
-    let thresholds =
-        crate::gate::esign_rate_policy::esign_rate_thresholds_in_txn(&vault.store, txn);
+    let thresholds = vault
+        .store
+        .gate_hooks
+        .esign_rate_thresholds_in_txn(&vault.store, txn);
     for (scope, threshold) in [
         (Some(recipient), thresholds.recipient),
         (None, thresholds.document),

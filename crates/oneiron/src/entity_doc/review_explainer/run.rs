@@ -9,13 +9,13 @@ use super::{
 use crate::attempt_queue::AttemptRecord;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_read_producer::ReadSetProducer;
-use crate::inference_context::HostInferenceContext;
 use crate::{EntityId, Error, Vault};
 use oneiron_model::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     FinishReason, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ReasoningEffort, ResponseFormat, Scope, TierPrecedence,
 };
+use oneiron_store::inference_context::HostInferenceContext;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReviewExplainerError {

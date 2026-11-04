@@ -10,7 +10,6 @@ use super::{
     CleanupRunReport, fresh_row_id, live_slots, put_digest_in_txn, put_proposal_in_txn,
 };
 use crate::Vault;
-use crate::store::attempt_id::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
@@ -21,6 +20,7 @@ use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
 };
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::attempt_id::AttemptId;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::claim::ClaimSource;
 
@@ -346,19 +346,14 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 candidates: live_slots(candidates),
             };
             put_proposal_in_txn(vault, wtxn, &proposal)?;
-            crate::failure_ladder::oversight::proposed_in_txn(
+            crate::store::healer_oversight::proposed_in_txn(
                 vault,
                 wtxn,
                 &proposal.id.to_hex(),
                 now,
             )?;
             // A ProposeFirst proposal waits in the owner's tray (FIX 9853).
-            crate::failure_ladder::oversight::routed_in_txn(
-                vault,
-                wtxn,
-                &proposal.id.to_hex(),
-                now,
-            )?;
+            crate::store::healer_oversight::routed_in_txn(vault, wtxn, &proposal.id.to_hex(), now)?;
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,
