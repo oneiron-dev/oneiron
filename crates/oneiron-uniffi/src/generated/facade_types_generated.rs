@@ -13254,7 +13254,7 @@ pub struct CampaignUnsubscribeReceipt {
     pub receipt_ref: String,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramOutboundSpec`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramOutboundSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignProgramOutboundSpec {
@@ -13270,7 +13270,7 @@ pub struct CampaignProgramOutboundSpec {
     pub subject: Option<String>,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramStepSpec`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramStepSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignProgramStepSpec {
@@ -13286,7 +13286,7 @@ pub struct CampaignProgramStepSpec {
     pub outbound: Option<CampaignProgramOutboundSpec>,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramAudienceSpec`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramAudienceSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignProgramAudienceSpec {
@@ -13296,7 +13296,7 @@ pub struct CampaignProgramAudienceSpec {
     pub entry_step_ref: String,
 }
 
-/// `oneiron::campaign::surface::program::CreateCampaignProgramRequest`.
+/// `oneiron::memory::campaign_records::program::CreateCampaignProgramRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCampaignProgramRequest {
@@ -13316,7 +13316,7 @@ pub struct CreateCampaignProgramRequest {
     pub audience: Option<CampaignProgramAudienceSpec>,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramLifecycle`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramLifecycle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CampaignProgramLifecycle {
     #[serde(rename = "draft")]
@@ -13329,7 +13329,7 @@ pub enum CampaignProgramLifecycle {
     Archived,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramDefinitionView`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramDefinitionView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CampaignProgramDefinitionView {
     #[serde(rename = "schema_version")]
@@ -13350,7 +13350,7 @@ pub struct CampaignProgramDefinitionView {
     pub audience: Option<CampaignProgramAudienceSpec>,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramRecord`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CampaignProgramRecord {
     #[serde(rename = "program_ref")]
@@ -13365,7 +13365,7 @@ pub struct CampaignProgramRecord {
     pub updated_at: u64,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramReadRequest`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignProgramReadRequest {
@@ -13375,7 +13375,7 @@ pub struct CampaignProgramReadRequest {
     pub program_ref: String,
 }
 
-/// `oneiron::campaign::surface::program::CampaignProgramReadResult`.
+/// `oneiron::memory::campaign_records::program::CampaignProgramReadResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CampaignProgramReadResult {
     #[serde(rename = "found")]
@@ -13384,7 +13384,7 @@ pub struct CampaignProgramReadResult {
     pub record: Option<CampaignProgramRecord>,
 }
 
-/// `oneiron::campaign::surface::program::UpdateCampaignProgramRequest`.
+/// `oneiron::memory::campaign_records::program::UpdateCampaignProgramRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateCampaignProgramRequest {
@@ -13402,7 +13402,7 @@ pub struct UpdateCampaignProgramRequest {
     pub audience: Option<CampaignProgramAudienceSpec>,
 }
 
-/// `oneiron::campaign::surface::program::ArchiveCampaignProgramRequest`.
+/// `oneiron::memory::campaign_records::program::ArchiveCampaignProgramRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveCampaignProgramRequest {
@@ -51322,6 +51322,8 @@ pub enum RetryableLlmError {
     StreamCut,
     #[serde(rename = "TransportFault")]
     TransportFault(TransportFault),
+    #[serde(rename = "DeviceAdmissionStopped")]
+    DeviceAdmissionStopped,
 }
 
 /// `oneiron_model::llm::error::BudgetDenied`.
@@ -61911,6 +61913,8 @@ pub struct OwedWakeHoldView {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(rename = "expired", default, skip_serializing_if = "Option::is_none")]
+    pub expired: Option<bool>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::TurnProgramOwedWakeItem`.

@@ -1644,27 +1644,27 @@ export type CampaignStageEvidenceReceipt = { person_ref: string; campaign_ref: s
 export type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string }
 /** `oneiron::memory::campaign_records::actions::CampaignUnsubscribeReceipt` */
 export type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string }
-/** `oneiron::campaign::surface::program::CampaignProgramOutboundSpec` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramOutboundSpec` */
 export type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean; subject?: string | null }
-/** `oneiron::campaign::surface::program::CampaignProgramStepSpec` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramStepSpec` */
 export type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null }
-/** `oneiron::campaign::surface::program::CampaignProgramAudienceSpec` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramAudienceSpec` */
 export type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: string }
-/** `oneiron::campaign::surface::program::CreateCampaignProgramRequest` */
+/** `oneiron::memory::campaign_records::program::CreateCampaignProgramRequest` */
 export type CreateCampaignProgramRequest = { schema_version?: number; campaign_ref: string; name: string; steps?: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null }
-/** `oneiron::campaign::surface::program::CampaignProgramLifecycle` */
-export type CampaignProgramLifecycle = "draft" | "active" | "paused" | "archived"
-/** `oneiron::campaign::surface::program::CampaignProgramDefinitionView` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramLifecycle` */
+export type CampaignProgramLifecycle = "active" | "archived"
+/** `oneiron::memory::campaign_records::program::CampaignProgramDefinitionView` */
 export type CampaignProgramDefinitionView = { schema_version: number; owner_actor: string; campaign_ref: string; name: string; definition_version: number; lifecycle: CampaignProgramLifecycle; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null }
-/** `oneiron::campaign::surface::program::CampaignProgramRecord` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramRecord` */
 export type CampaignProgramRecord = { program_ref: string; definition: CampaignProgramDefinitionView; automatic_intake: boolean; created_at: number; updated_at: number }
-/** `oneiron::campaign::surface::program::CampaignProgramReadRequest` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramReadRequest` */
 export type CampaignProgramReadRequest = { campaign_ref: string; program_ref: string }
-/** `oneiron::campaign::surface::program::CampaignProgramReadResult` */
+/** `oneiron::memory::campaign_records::program::CampaignProgramReadResult` */
 export type CampaignProgramReadResult = { found: boolean; record?: CampaignProgramRecord | null }
-/** `oneiron::campaign::surface::program::UpdateCampaignProgramRequest` */
+/** `oneiron::memory::campaign_records::program::UpdateCampaignProgramRequest` */
 export type UpdateCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number; name: string; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null }
-/** `oneiron::campaign::surface::program::ArchiveCampaignProgramRequest` */
+/** `oneiron::memory::campaign_records::program::ArchiveCampaignProgramRequest` */
 export type ArchiveCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number }
 /** `oneiron::dreamer_runner::program::types::ArmTurnProgram` */
 export type ArmTurnProgram = { skill: EntityId; executor: string; args: unknown; conversation?: EntityId | null }
@@ -6473,7 +6473,7 @@ export type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "une
 /** `oneiron_model::llm::error::TransportFault` */
 export type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string }
 /** `oneiron_model::llm::error::RetryableLlmError` */
-export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault }
+export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault } | "DeviceAdmissionStopped"
 /** `oneiron_model::llm::error::BudgetDenied` */
 export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
@@ -7749,7 +7749,7 @@ export type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_r
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionItem` */
 export type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::OwedWakeHoldView` */
-export type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null }
+export type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null; expired?: boolean | null }
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramOwedWakeItem` */
 export type TurnProgramOwedWakeItem = { registration: EntityId; actor: EntityId; actor_class: string; revision: string; sealed_scope?: string | null; held?: OwedWakeHoldView | null; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionView` */
