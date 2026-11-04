@@ -8,6 +8,10 @@
 //!   confession (OF-544). The engine still lists the objectives first and
 //!   parses the answer; a wording that asks for no `oneiron-confession` block
 //!   is answered with none, and none is recorded.
+//! * `attribution_classify_prompt` / `attribution_classify_prompt_file`: the
+//!   Coach's skill-attribution classifier instruction.
+//! * `attribution_note_prompt` / `attribution_note_prompt_file`: the Coach's
+//!   instruction for a doubtful attribution's note.
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +27,19 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
      objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
      confession never costs the score. Nothing follows the closing fence.";
 
+const DEFAULT_ATTRIBUTION_CLASSIFY: &str = include_str!("../../../prompts/attribution-classify.md");
+const DEFAULT_ATTRIBUTION_NOTE: &str = include_str!("../../../prompts/attribution-note.md");
+
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DreamerWordingFile {
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    attribution_classify_prompt: Option<String>,
+    attribution_classify_prompt_file: Option<PathBuf>,
+    attribution_note_prompt: Option<String>,
+    attribution_note_prompt_file: Option<PathBuf>,
 }
 
 impl DreamerWordingFile {
@@ -43,7 +54,25 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_CONFESSION_INSTRUCTION.to_owned());
-        Ok(DreamerWording { confession })
+        let attribution_classify = super::levels::prompt_text(
+            "models.dreamer.wording.attribution_classify_prompt",
+            self.attribution_classify_prompt,
+            self.attribution_classify_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_ATTRIBUTION_CLASSIFY.to_owned());
+        let attribution_note = super::levels::prompt_text(
+            "models.dreamer.wording.attribution_note_prompt",
+            self.attribution_note_prompt,
+            self.attribution_note_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_ATTRIBUTION_NOTE.to_owned());
+        Ok(DreamerWording {
+            confession,
+            attribution_classify,
+            attribution_note,
+        })
     }
 }
 
@@ -51,6 +80,8 @@ impl DreamerWordingFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerWording {
     confession: String,
+    attribution_classify: String,
+    attribution_note: String,
 }
 
 impl DreamerWording {
@@ -60,6 +91,18 @@ impl DreamerWording {
     pub fn confession(&self) -> &str {
         &self.confession
     }
+
+    /// The Coach's skill-attribution classifier instruction.
+    #[must_use]
+    pub fn attribution_classify(&self) -> &str {
+        &self.attribution_classify
+    }
+
+    /// The Coach's instruction for a doubtful attribution's note.
+    #[must_use]
+    pub fn attribution_note(&self) -> &str {
+        &self.attribution_note
+    }
 }
 
 impl Default for DreamerWording {
@@ -67,6 +110,8 @@ impl Default for DreamerWording {
     fn default() -> Self {
         Self {
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            attribution_classify: DEFAULT_ATTRIBUTION_CLASSIFY.to_owned(),
+            attribution_note: DEFAULT_ATTRIBUTION_NOTE.to_owned(),
         }
     }
 }

@@ -620,6 +620,25 @@ standard cached-read count only; the records ride the receipt.
 
 ## 3. Let the Dreamer work
 
+The host can replace the Coach's attribution classifier instruction and its
+instruction for notes on doubtful attributions in `[models.dreamer.wording]`:
+
+```toml
+[models.dreamer.wording]
+attribution_classify_prompt_file = "prompts/attribution-classify.md"
+attribution_note_prompt_file = "prompts/attribution-note.md"
+```
+
+`attribution_classify_prompt` and `attribution_note_prompt` supply the same
+instructions inline instead. For each instruction, choose inline text or a
+file, never both. A relative file path resolves beside the server's config
+file on self-hosted serve; managed settings retain section 2's path rules.
+An absent or blank instruction uses the shipped wording, unchanged from the
+original classifier and note writer. Nonblank text is sent verbatim. An
+unreadable file is a config error. These settings replace only the System
+instruction: attempt evidence, source attribution and answer parsing stay the
+same. They need no code-mode prompt package.
+
 The Dreamer consolidates witnessed turns into claims in the background. It
 starts when all of these hold, and `GET /v1/ai/status` names the one that is
 missing:
