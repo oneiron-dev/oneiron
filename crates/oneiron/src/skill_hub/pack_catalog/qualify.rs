@@ -469,9 +469,7 @@ impl Vault {
                 )
             });
             let (golden, listed) = self.pack_hook_golden_runs(runtime, id, &row, hook)?;
-            if let Some(rows) = rows.as_mut() {
-                rows.extend(listed);
-            }
+            rows.extend(listed);
             passed &= golden.iter().all(|run| run.passed);
             replays.push(PackHookReplay::new(hook, entries, golden));
         }
