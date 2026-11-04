@@ -18441,7 +18441,10 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_grant(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 ),
             )
             .await;
@@ -18461,7 +18464,10 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_revoke(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 ),
             )
             .await;

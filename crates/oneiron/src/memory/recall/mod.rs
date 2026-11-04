@@ -224,12 +224,9 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
     let Some(kinds) = &scope.kinds else {
         return Ok(None);
     };
-    if kinds.is_empty() || kinds.len() > crate::registry::ENTITY_TYPE_REGISTRY.len() {
+    if kinds.is_empty() {
         return Err(MemoryError::bad_request_with(
-            format!(
-                "scope.kinds must name between 1 and {} registry kinds",
-                crate::registry::ENTITY_TYPE_REGISTRY.len()
-            ),
+            "scope.kinds must name at least one registry kind",
             &["Name each kind once, or omit kinds for the default kinds."],
         ));
     }
