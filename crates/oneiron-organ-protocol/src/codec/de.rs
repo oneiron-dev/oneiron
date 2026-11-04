@@ -13,12 +13,19 @@ use crate::value::VALUE_TOKEN;
 
 pub(crate) struct Deserializer<'de> {
     reader: Reader<'de>,
+    depth: u32,
 }
+
+/// How deep a typed decode may nest compounds: past this, even a type that
+/// buffers its input (an internally tagged or untagged enum) is refused
+/// instead of growing the call stack with the input's depth (FIX 12433).
+const MAX_DECODE_DEPTH: u32 = 128;
 
 impl<'de> Deserializer<'de> {
     pub(crate) fn new(bytes: &'de [u8]) -> Self {
         Self {
             reader: Reader::new(bytes),
+            depth: 0,
         }
     }
 
@@ -52,11 +59,19 @@ impl<'de> Deserializer<'de> {
     }
 
     fn seq<V: Visitor<'de>>(&mut self, visitor: V, len: u64) -> Result<V::Value, CodecError> {
+        if self.depth == MAX_DECODE_DEPTH {
+            return Err(CodecError::Invalid(
+                "a value nested past the decoder's depth bound",
+            ));
+        }
+        self.depth += 1;
         let mut access = Access {
             de: &mut *self,
             left: len,
         };
-        let value = visitor.visit_seq(&mut access)?;
+        let value = visitor.visit_seq(&mut access);
+        access.de.depth -= 1;
+        let value = value?;
         if access.left == 0 {
             Ok(value)
         } else {
@@ -65,11 +80,19 @@ impl<'de> Deserializer<'de> {
     }
 
     fn map<V: Visitor<'de>>(&mut self, visitor: V, len: u64) -> Result<V::Value, CodecError> {
+        if self.depth == MAX_DECODE_DEPTH {
+            return Err(CodecError::Invalid(
+                "a value nested past the decoder's depth bound",
+            ));
+        }
+        self.depth += 1;
         let mut access = Access {
             de: &mut *self,
             left: len,
         };
-        let value = visitor.visit_map(&mut access)?;
+        let value = visitor.visit_map(&mut access);
+        access.de.depth -= 1;
+        let value = value?;
         if access.left == 0 {
             Ok(value)
         } else {
