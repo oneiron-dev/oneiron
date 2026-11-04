@@ -153,7 +153,14 @@ impl Vault {
     /// The owner's reminder route, when one is set.
     pub fn commitment_reminder_route(&self) -> Result<Option<CommitmentReminderRoute>> {
         let txn = self.store.env.read_txn()?;
-        REMINDER_ROUTE.get(&self.store, &txn, &())
+        self.commitment_reminder_route_in_txn(&txn)
+    }
+
+    pub(crate) fn commitment_reminder_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<CommitmentReminderRoute>> {
+        REMINDER_ROUTE.get(&self.store, txn, &())
     }
 
     /// Sets (or, with `None`, clears) where the owner's reminders go. Only the

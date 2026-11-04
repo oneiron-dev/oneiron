@@ -13,6 +13,11 @@
 //! version of the same artifact under its own run prefix, and never sent
 //! (FIX 12167).
 
+mod attempt;
+mod source;
+
+pub use source::{CommitmentReminderWordingRead, CommitmentReminderWordingSource};
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
