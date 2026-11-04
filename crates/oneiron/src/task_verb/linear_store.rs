@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::linear_sync::*;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::store::linear_task_revision::{DIRTY, REVISIONS, WRITER, revision};
+use crate::store::linear_task_revision::{DIRTY, WRITER, revision};
 use crate::{EntityId, Vault};
 
 const ISSUE_REVERSE: SideTable<String, EntityId, Raw> =
