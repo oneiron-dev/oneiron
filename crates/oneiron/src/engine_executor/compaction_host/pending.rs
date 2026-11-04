@@ -187,6 +187,7 @@ impl EngineNativeExecutor<'_> {
         // pre-chain records in the room (REVIEW-4357 P1): without a flight
         // the hooks never reach a post chain, and no post hooks run here.
         let build = |window, pins, note| {
+            let captured = newest.map_or(0, |row| row.calls());
             let calls = usize::try_from(captured)
                 .ok()
                 .and_then(|from| record.bridge_calls.get(from..))
