@@ -3,7 +3,6 @@
 //! the validators every predicate string passes through.
 
 use super::*;
-use crate::error::{ClaimError, Error, Result};
 
 /// Predicate namespace for productizable memory-API records.
 pub const PREDICATE_NAMESPACE_CORE: &str = "core";
@@ -102,26 +101,15 @@ pub const CLAIM_PREDICATE_REGISTRY: [&str; 11] = [
     crate::commitment::PREDICATE_COMMITMENT_RECORD,
 ];
 
-/// Maximum predicate length in bytes (D17).
-pub const MAX_PREDICATE_BYTES: usize = 128;
-
-/// Reserved predicate namespace prefix (D17): `edge.*` predicates may only
-/// be written through the `pub(crate)` provenance door.
-pub const RESERVED_PREDICATE_NAMESPACE: &str = "edge";
-
-/// Reserved skill predicate namespace: `skill.*` claims are authored only by
-/// the crate-private skill-hub doors, never by the generic public Claim API.
-const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
-
-/// Reserved actor predicate namespace (ARCH-0053 §9, ONE-1739): `actor.*`
-/// claims are STATES with meaning-by-projection (doc-13 r1/r3) — the
-/// attribution projector, the Dreamer distill and the provider-confidence door
-/// author them, and nobody else may. Reserving the namespace closes the hole
-/// [`crate::provider_confidence`] documented on `actor.confidence_prior`: a
-/// policy-authorized generic `put_claim` could plant a trust-bearing head that
-/// the read path then honored. Engine doors keep writing through
-/// `put_reserved_claim_in_txn`, the same exemption `skill.*` uses.
-const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
+pub use crate::write_envelope::claim_predicate::{
+    MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
+};
+pub(super) use crate::write_envelope::claim_predicate::{
+    is_edge_reserved_predicate, is_engine_owned_reserved_predicate,
+};
+pub(crate) use crate::write_envelope::claim_predicate::{
+    is_predicate_prefix, is_reserved_predicate, validate_predicate, validate_session_tag,
+};
 
 /// Claim predicate binding a Loro peer id (the device CRDT client id) to the
 /// [`crate::write_envelope::WriteActor`] behind it (ED-00, ONE-1756).
@@ -137,7 +125,8 @@ pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 
 /// Claim predicate resolving an opaque actor stamp token (FIX 10930): the
 /// claim's id IS the token a commit message and its receipt name in place of
-/// the actor, its subject the actor, its value the actor's class.
+/// the actor, as do a document's birth and authorship entries (FIX 11964),
+/// its subject the actor, its value the actor's class.
 ///
 /// Engine-reserved by its `actor.*` namespace, exactly like
 /// [`PREDICATE_ACTOR_PEER_BINDING`], and written only by the engine's
@@ -210,113 +199,4 @@ pub fn predicate_root(predicate: &str) -> &str {
         Some(index) if index > 0 => &predicate[..index],
         _ => predicate,
     }
-}
-
-/// Validates a predicate against the pinned D17 grammar: ≥2 segments, each
-/// matching `[a-z][a-z0-9_]*`, joined by `.`, total ≤128 bytes.
-///
-/// When `allow_reserved` is `false` (every public write path), well-formed
-/// predicates in the reserved `edge.*` namespace are rejected with
-/// [`ClaimError::ReservedPredicate`](crate::error::ClaimError::ReservedPredicate). The provenance unit writes through the
-/// `pub(crate)` door which sets `allow_reserved` to `true`, as does the
-/// sync-replay door (`put_replicated`) so replicated provenance Claims
-/// rematerialize; reads always allow reserved predicates so stored
-/// provenance Claims stay decodable. `allow_reserved` skips ONLY this
-/// reserved-namespace arm — the grammar checks above run unconditionally.
-pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
-    if predicate.len() > MAX_PREDICATE_BYTES {
-        return Err(Error::Claim(ClaimError::InvalidPredicate {
-            predicate: predicate.to_owned(),
-            reason: "exceeds 128 bytes",
-        }));
-    }
-
-    let mut segments = 0_usize;
-    for segment in predicate.split('.') {
-        if !valid_predicate_segment(segment) {
-            return Err(Error::Claim(ClaimError::InvalidPredicate {
-                predicate: predicate.to_owned(),
-                reason: "segments must match [a-z][a-z0-9_]*",
-            }));
-        }
-        segments += 1;
-    }
-    if segments < 2 {
-        return Err(Error::Claim(ClaimError::InvalidPredicate {
-            predicate: predicate.to_owned(),
-            reason: "requires at least 2 dot-joined segments",
-        }));
-    }
-
-    if !allow_reserved && is_reserved_predicate(predicate) {
-        return Err(Error::Claim(ClaimError::ReservedPredicate {
-            predicate: predicate.to_owned(),
-        }));
-    }
-
-    Ok(())
-}
-
-/// Returns `true` when `predicate`'s first dot-separated segment is one of the
-/// reserved `edge`, `skill` or `actor` namespaces (D17, ARCH-0053 §9). Their
-/// writes and lifecycle transitions are owned by dedicated crate-private doors,
-/// so the generic Claim API rejects them.
-pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
-    is_edge_reserved_predicate(predicate) || is_engine_owned_reserved_predicate(predicate)
-}
-
-pub(super) fn is_edge_reserved_predicate(predicate: &str) -> bool {
-    predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
-}
-
-/// The predicates whose lifecycle the ENGINE drives (`skill.*`, `actor.*`,
-/// `repo.*`, the projector-only `learning.*`, and exactly `person.substrate`), unlike `edge.*`, whose
-/// transitions re-stamp provenance-derived edge state and therefore stay
-/// exclusively edge-owned. `repo.*` is the origin's own record of what it
-/// published and admitted: a generic door that could write it could stand in
-/// for a publication's intent or a push's evidence.
-pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
-    let namespace = predicate.split('.').next();
-    namespace == Some("machine")
-        || namespace == Some("world_access")
-        || namespace == Some("activated")
-        || namespace == Some("esign")
-        || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
-        || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
-        || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
-        || predicate == super::PREDICATE_VAULT_DEFAULT_FACET
-        || namespace == Some("repo")
-        || namespace == Some(crate::learning::LEARNING_NAMESPACE)
-}
-
-/// Whether `prefix` is a well-formed predicate prefix: one or more grammar
-/// segments, each followed by a dot (`host.persona.`), within the predicate
-/// byte bound. A host's protected namespace is declared in this shape.
-pub(crate) fn is_predicate_prefix(prefix: &str) -> bool {
-    prefix.len() <= MAX_PREDICATE_BYTES
-        && prefix
-            .strip_suffix('.')
-            .is_some_and(|stem| stem.split('.').all(valid_predicate_segment))
-}
-
-fn valid_predicate_segment(segment: &str) -> bool {
-    let bytes = segment.as_bytes();
-    let Some(first) = bytes.first() else {
-        return false;
-    };
-    if !first.is_ascii_lowercase() {
-        return false;
-    }
-    bytes[1..]
-        .iter()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
-}
-
-pub(crate) fn validate_session_tag(session_tag: &str) -> Result<()> {
-    if session_tag.trim().is_empty() {
-        return Err(Error::InvalidClaimBody(
-            "sess must be a non-empty, non-whitespace string",
-        ));
-    }
-    Ok(())
 }

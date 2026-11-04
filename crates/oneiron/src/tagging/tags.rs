@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 
 use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
 use super::provisional;
-use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::memory::extraction::{ExtractionWork, MoodPart, SpeakerTarget};
@@ -29,6 +28,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_contracts::affect::Vad;
 
 /// A turn's tag set. Key: the turn id.
 const TAG_SET: SideTable<EntityId, TurnTags, Named> = SideTable::new(&side_table::TAGGING_TAG_SET);

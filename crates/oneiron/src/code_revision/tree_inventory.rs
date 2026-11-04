@@ -17,42 +17,51 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::origin::tree::{OriginTreeFile, read_tree_files, start_tree_count};
 
-/// Git's mode of a submodule link. Kept visible, never exported.
-pub(crate) const MODE_GITLINK: u32 = 0o160_000;
+pub(crate) use crate::store::code_tree_blob::MODE_GITLINK;
 const MODE_TREE: u32 = 0o040_000;
 
-/// One untouched path of a tested tree: the Git object the checked tree
-/// names, the BLAKE3 hash and size of its exact bytes, and its mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CodeTreeBlob {
-    pub git_oid: String,
-    pub content_hash: [u8; 32],
-    pub size_bytes: u64,
-    pub mode: u32,
+pub use crate::store::code_tree_blob::CodeTreeBlob;
+
+pub use crate::store::code_revision_record::CodeTreeInventory;
+pub(crate) use crate::store::code_revision_record::tree_inventory::document_mode;
+use crate::store::code_revision_record::tree_inventory::invalid;
+
+/// Complete-tree operations that read code documents and Git objects.
+pub trait CodeTreeInventoryRuntime: Sized {
+    fn capture_pinned(
+        vault: &Vault,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        commit: &GitOid,
+        expected_tree: &GitOid,
+    ) -> Result<Self>;
+    fn render_captured(
+        &self,
+        vault: &Vault,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+    ) -> Result<BTreeMap<String, OriginTreeFile>>;
+    fn entries(
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        tree: &GitOid,
+    ) -> Result<BTreeMap<String, (String, u32)>>;
+    fn capture(
+        vault: &Vault,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        tree: &GitOid,
+        documents: &BTreeMap<String, (CodeDocumentFrontier, u32)>,
+    ) -> Result<std::result::Result<Self, String>>;
+    fn render(
+        vault: &Vault,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        revision: &CodeRevision,
+    ) -> Result<BTreeMap<String, OriginTreeFile>>;
 }
 
-/// A captured complete tree: documents by id with their modes, and blobs
-/// by path. A read-only value: it issues, reviews and promotes nothing
-/// (G4 PR1 makes it public so a checker reads the same body).
-#[derive(Debug, Default)]
-pub struct CodeTreeInventory {
-    pub(crate) documents: BTreeMap<[u8; 32], CodeDocumentFrontier>,
-    pub(crate) modes: BTreeMap<[u8; 32], u32>,
-    pub(crate) blobs: BTreeMap<String, CodeTreeBlob>,
-}
-
-fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
-}
-
-impl CodeTreeInventory {
-    /// The untouched paths, by path.
-    #[must_use]
-    pub fn blobs(&self) -> &BTreeMap<String, CodeTreeBlob> {
-        &self.blobs
-    }
-
+impl CodeTreeInventoryRuntime for CodeTreeInventory {
     /// The complete tree `commit` names, captured with no documents: every
     /// path a blob (G4 PR1). The commit must name `expected_tree` in this
     /// object store before anything is enumerated.
@@ -60,7 +69,7 @@ impl CodeTreeInventory {
     /// # Errors
     /// A commit naming another tree, an object that cannot be read or a
     /// file past the reader's byte floors.
-    pub fn capture_pinned(
+    fn capture_pinned(
         vault: &Vault,
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -83,7 +92,7 @@ impl CodeTreeInventory {
     ///
     /// # Errors
     /// A missing or changed object, a duplicate path or a submodule link.
-    pub fn render_captured(
+    fn render_captured(
         &self,
         vault: &Vault,
         git: &GitWire<'_>,
@@ -110,7 +119,7 @@ impl CodeTreeInventory {
     ///
     /// # Errors
     /// A missing object or an unsafe path.
-    pub(crate) fn entries(
+    fn entries(
         git: &GitWire<'_>,
         repo: &GitWireRepo,
         tree: &GitOid,
@@ -149,7 +158,7 @@ impl CodeTreeInventory {
     ///
     /// # Errors
     /// An object that cannot be read or a file past the reader's byte floors.
-    pub(crate) fn capture(
+    fn capture(
         vault: &Vault,
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -206,75 +215,6 @@ impl CodeTreeInventory {
         Ok(Ok(inventory))
     }
 
-    /// The disjoint, well-formed partition `revision` keeps. Blobs belong
-    /// to a tested queue revision alone.
-    ///
-    /// # Errors
-    /// Overlapping paths, an unsafe path or mode, or blobs on an ordinary
-    /// revision.
-    pub(crate) fn validate_partition(revision: &CodeRevision) -> Result<()> {
-        if revision.tested_queue.is_none() && !revision.blob_frontiers.is_empty() {
-            return Err(invalid("blob frontiers belong to a tested queue revision"));
-        }
-        let documents: BTreeSet<&str> = revision
-            .file_frontiers
-            .values()
-            .map(|frontier| frontier.path.as_str())
-            .collect();
-        for (path, blob) in &revision.blob_frontiers {
-            if documents.contains(path.as_str())
-                || path.is_empty()
-                || path.split('/').any(|part| {
-                    part.is_empty() || matches!(part, "." | ".." | ".git") || part.contains('\0')
-                })
-                || GitOid::parse_hex(blob.git_oid.clone()).is_err()
-                || !matches!(blob.mode, 0o100_644 | 0o100_755 | 0o120_000 | MODE_GITLINK)
-            {
-                return Err(invalid("invalid tested tree blob"));
-            }
-        }
-        validate_import_fields(revision, &documents)
-    }
-
-    /// The one digest of `revision`'s complete inventory: every document's
-    /// path, id, frontier and mode, and every blob's path, object, hash,
-    /// size and mode.
-    ///
-    /// # Errors
-    /// An encoding failure.
-    pub(crate) fn digest(revision: &CodeRevision) -> Result<[u8; 32]> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:code-tree-inventory:v1");
-        let documents: BTreeMap<&str, &CodeDocumentFrontier> = revision
-            .file_frontiers
-            .values()
-            .map(|frontier| (frontier.path.as_str(), frontier))
-            .collect();
-        hasher.update(&(documents.len() as u64).to_be_bytes());
-        for (path, frontier) in documents {
-            let encoded = rmp_serde::to_vec_named(frontier)
-                .map_err(|_| invalid("tested tree document encode"))?;
-            for part in [path.as_bytes(), encoded.as_slice()] {
-                hasher.update(&(part.len() as u64).to_be_bytes());
-                hasher.update(part);
-            }
-            hasher.update(&document_mode(revision, &frontier.document_id).to_be_bytes());
-        }
-        hash_blobs(&mut hasher, &revision.blob_frontiers);
-        Ok(*hasher.finalize().as_bytes())
-    }
-
-    /// [`Self::digest`] of a tree with no documents and exactly `blobs`:
-    /// the same bytes, so an import manifest and the checked baseline it
-    /// matches name one digest (G4 PR1).
-    pub(crate) fn blob_digest(blobs: &BTreeMap<String, CodeTreeBlob>) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:code-tree-inventory:v1");
-        hasher.update(&0_u64.to_be_bytes());
-        hash_blobs(&mut hasher, blobs);
-        *hasher.finalize().as_bytes()
-    }
-
     /// The exact files `revision`'s complete tree holds, for the origin
     /// export: documents regenerated from their authenticated folds, blobs
     /// read at their recorded object and checked against their size, hash
@@ -282,7 +222,7 @@ impl CodeTreeInventory {
     ///
     /// # Errors
     /// A missing or changed object, a duplicate path or a submodule link.
-    pub(crate) fn render(
+    fn render(
         vault: &Vault,
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -345,61 +285,4 @@ fn render_files(
         }
     }
     Ok(files)
-}
-
-/// Folds every blob's path, object, hash, size and mode, in path order.
-fn hash_blobs(hasher: &mut blake3::Hasher, blobs: &BTreeMap<String, CodeTreeBlob>) {
-    hasher.update(&(blobs.len() as u64).to_be_bytes());
-    for (path, blob) in blobs {
-        for part in [path.as_bytes(), blob.git_oid.as_bytes()] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part);
-        }
-        hasher.update(&blob.content_hash);
-        hasher.update(&blob.size_bytes.to_be_bytes());
-        hasher.update(&blob.mode.to_be_bytes());
-    }
-}
-
-/// The import binding and retired paths belong to a tested queue revision
-/// alone, and a retired path is gone from its final tree: a well-formed
-/// predecessor at a supported mode, its document (if any) at that path
-/// (G4 PR1). Their producers and verifier are G4 PR2's.
-fn validate_import_fields(revision: &CodeRevision, documents: &BTreeSet<&str>) -> Result<()> {
-    if revision.tested_queue.is_none()
-        && (revision.snapshot_anchor.is_some() || !revision.retired_paths.is_empty())
-    {
-        return Err(invalid(
-            "an import binding or retired path belongs to a tested queue revision",
-        ));
-    }
-    for (path, retirement) in &revision.retired_paths {
-        let previous = &retirement.previous;
-        if documents.contains(path.as_str())
-            || revision.blob_frontiers.contains_key(path)
-            || path.is_empty()
-            || path.split('/').any(|part| {
-                part.is_empty() || matches!(part, "." | ".." | ".git") || part.contains('\0')
-            })
-            || GitOid::parse_hex(previous.git_oid.clone()).is_err()
-            || crate::codebase::validate_code_file_mode(previous.mode).is_err()
-            || retirement
-                .document
-                .as_ref()
-                .is_some_and(|document| document.path != *path)
-        {
-            return Err(invalid("invalid retired tested tree path"));
-        }
-    }
-    Ok(())
-}
-
-/// A document's recorded mode; an unlisted one is an ordinary file.
-pub(crate) fn document_mode(revision: &CodeRevision, document: &[u8; 32]) -> u32 {
-    revision
-        .commit_metadata
-        .as_ref()
-        .and_then(|metadata| metadata.file_modes.get(document))
-        .copied()
-        .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE)
 }

@@ -12,8 +12,8 @@ use super::{
 use crate::lens::atom::{LensAtom, LensNode, LensText};
 use crate::lens::validate::{fallback_text_atom, validate_required_lens_text};
 use crate::lens::wire_ids::{LensAtomId, LensRenderId};
-use crate::llm::ContentPart;
 use crate::{Error, Result};
+use oneiron_model::llm::ContentPart;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::HashSet;
 

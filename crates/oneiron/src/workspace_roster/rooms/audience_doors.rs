@@ -130,15 +130,7 @@ pub(super) fn vault_owner_or_admin_in(
     Ok(vault_standing_in(vault, txn, actor)?.is_some())
 }
 
-/// What `actor` is to the vault, through the PERSON a pen is anchored to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VaultStanding {
-    /// A live PERSON among the vault's owners.
-    Owner,
-    /// A live PERSON holding an Admin grant over the shared vault, and no
-    /// owner.
-    Admin,
-}
+pub(crate) use crate::memory::vault_standing::VaultStanding;
 
 /// `actor`'s [`VaultStanding`] in `txn`, a pen through its PERSON; `None`
 /// for anyone neither the vault's Owner nor an Admin.

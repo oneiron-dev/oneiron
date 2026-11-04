@@ -32,13 +32,13 @@ use super::coop_request::{
     peek_cooperative_deletion_pact, uint,
 };
 use crate::Vault;
-use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId,
-    DeviceAuthority, FederationPactState, ROLE_OWNER, authority_entry_hash,
-    decode_authority_log_entry_body,
-};
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+use oneiron_authority::authority::{
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityVaultId, DeviceAuthority,
+    FederationPactState, ROLE_OWNER, authority_entry_hash, decode_authority_log_entry_body,
+};
+use oneiron_contracts::authority::AuthorityEntryHash;
 
 /// The peer route a succession page is POSTed to, ahead of each try of an
 /// ask or an answer (FIX 3014, a call: the rows travel on their own route,

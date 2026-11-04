@@ -3,13 +3,13 @@ use std::str;
 use heed::RwTxn;
 use rmpv::Value;
 
-use crate::affect::Vad;
-use crate::claim::ClaimSubject;
 use crate::edge::{DecodedEdgeValue, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::claim_body::ClaimSubject;
+use oneiron_contracts::affect::Vad;
 
 pub(crate) use oneiron_contracts::record_layout::{
     ENTITY_BODY_OFFSET, ENTITY_LEARNED_AT_OFFSET, ENTITY_METADATA_HEADER_LEN,

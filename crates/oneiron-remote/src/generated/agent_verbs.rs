@@ -207,6 +207,12 @@ impl OneironClient {
                 "self.memory.diary.query" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryQueryOutcome,
                 >(client, verb, &input),
+                "self.memory.pads.read" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DiaryQueryOutcome,
+                >(client, verb, &input),
+                "self.memory.pads.admin_reads" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AdminPadReadsView,
+                >(client, verb, &input),
                 "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                     client, verb, &input,
                 ),
@@ -1167,6 +1173,16 @@ impl OneironClient {
                 "vault.federation.connect.rejoin" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectRejoined,
                 >(client, verb, &input),
+                "vault.federation.connect.world_privacy.export" => {
+                    remote_agent_verb_output::<oneiron::policy_model::ForeignWorldPrivacyDelivery>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.federation.connect.world_privacy.receive" => {
+                    remote_agent_verb_output::<oneiron::policy_model::WorldPrivacyRequest>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.trusted_contacts.name" => remote_agent_verb_output::<
                     oneiron::counterparty_contact::TrustedContact,
                 >(client, verb, &input),
@@ -1549,6 +1565,9 @@ impl OneironClient {
                 "vault.legal_holds.lift_and_erase" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LegalHoldLiftAndErased,
                 >(client, verb, &input),
+                "vault.legal_holds.withdraw_erase" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LegalHoldErasesWithdrawn,
+                >(client, verb, &input),
                 "vault.courtesy_delete.send" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CourtesyDeleteSent,
                 >(client, verb, &input),
@@ -1625,6 +1644,9 @@ impl OneironClient {
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
                 "vault.consent.create_standing_grant" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.consent.create_auto_weave_grant" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
                 "vault.consent.registry" => remote_agent_verb_output::<
@@ -4476,6 +4498,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary.query", value)
+    }
+    pub fn self_memory_pads_read(
+        &self,
+        input: &oneiron::task_verb::sdk::DiaryQueryRequest,
+    ) -> Result<oneiron::task_verb::sdk::DiaryQueryOutcome, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.pads.read", value)
+    }
+    pub fn self_memory_pads_admin_reads(
+        &self,
+        input: &oneiron::task_verb::sdk::AdminPadReadsRequest,
+    ) -> Result<oneiron::task_verb::sdk::AdminPadReadsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.pads.admin_reads", value)
     }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.
@@ -8382,6 +8429,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.federation.connect.rejoin", value)
     }
+    pub fn vault_federation_connect_world_privacy_export(
+        &self,
+        input: &oneiron::policy_model::ForeignWorldPrivacyExportRequest,
+    ) -> Result<oneiron::policy_model::ForeignWorldPrivacyDelivery, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.connect.world_privacy.export", value)
+    }
+    pub fn vault_federation_connect_world_privacy_receive(
+        &self,
+        input: &oneiron::policy_model::ForeignWorldPrivacyDelivery,
+    ) -> Result<oneiron::policy_model::WorldPrivacyRequest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.connect.world_privacy.receive", value)
+    }
     pub fn vault_trusted_contacts_name(
         &self,
         input: &oneiron::task_verb::sdk::TrustedContactNameRequest,
@@ -9874,6 +9945,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.legal_holds.lift_and_erase", value)
     }
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::LegalHoldErasesWithdrawn, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.withdraw_erase", value)
+    }
     pub fn vault_courtesy_delete_send(
         &self,
         input: &oneiron::task_verb::sdk::CourtesyDeleteSendRequest,
@@ -10185,6 +10268,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.create_standing_grant", value)
+    }
+    pub fn vault_consent_create_auto_weave_grant(
+        &self,
+        input: &oneiron::consent::lifecycle::AutoWeaveGrantRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.create_auto_weave_grant", value)
     }
     pub fn vault_consent_registry(
         &self,

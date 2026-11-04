@@ -62,6 +62,11 @@ pub use self::program::{
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub(crate) use self::projector::held_round_members_away_in_txn;
+pub(crate) use self::projector::round_id as projection_round_id;
+pub(crate) use self::projector::{
+    carrier_round_live_in_txn, note_assignment_in_txn, reading_current_in_txn, reading_of_text,
+    take_chunk_words_in_txn, take_reading_in_txn, take_returned_in_txn, words_taken_in_txn,
+};
 pub use self::recipe::*;
 pub use self::recipes::WakeRecipePolicy;
 pub use self::scheduling::*;
@@ -220,3 +225,7 @@ use rmpv::Value;
 
 #[cfg(test)]
 pub(crate) use tests::block_on_ready;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::follower::dreamer_follower_result_accepts_masked;

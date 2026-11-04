@@ -186,12 +186,14 @@ pub struct RecoveryKitIssueArgs {
 #[derive(Args, Clone, Debug)]
 pub struct KitPieceArgs {
     /// A piece file: a recovery code as text, or a piece export. Give two, or
-    /// one and the passphrase.
-    #[arg(long = "piece", value_name = "FILE", required = true)]
+    /// one and the passphrase. A plain-vault restore on an install that keeps
+    /// a piece may give none and use that piece; pre-open restores need them.
+    #[arg(long = "piece", value_name = "FILE")]
     pub pieces: Vec<PathBuf>,
 
-    /// Read the kit passphrase from this owner-only file. With one piece and
-    /// no file, it is read from stdin.
+    /// Read the kit passphrase from this owner-only file. With only one
+    /// available piece, including this install's kept piece, and no file, it
+    /// is read from stdin.
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
 }

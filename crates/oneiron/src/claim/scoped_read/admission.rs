@@ -96,7 +96,7 @@ impl<'a> ScopedRead<'a> {
     /// from it keeps it too, and it meets any ceiling the key already holds.
     /// A room assembly passes the room's world set (ARCH-0067 §8).
     #[must_use]
-    pub fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+    pub fn within_worlds(mut self, worlds: crate::claim::world_access::WorldAuthoritySet) -> Self {
         self.actor_key = self.actor_key.within_worlds(worlds);
         self
     }
@@ -172,7 +172,10 @@ impl<'a> ScopedRead<'a> {
     /// (FIX 8245 judges the two apart). Generic records have no proved
     /// channel context. Channel-bound credentials must use their typed
     /// adapter instead of losing a caveat.
-    pub(super) fn credential_channel_allows(&self, claims: &crate::authority::SlipClaims) -> bool {
+    pub(super) fn credential_channel_allows(
+        &self,
+        claims: &oneiron_authority::authority::SlipClaims,
+    ) -> bool {
         claims.channels.is_empty()
             || self
                 .actor_key
@@ -197,7 +200,7 @@ impl<'a> ScopedRead<'a> {
         if let Some(owner) = self.actor_key.owner_proof_guard() {
             return owner_proof_holds_in(self.vault, txn, owner).map_err(|error| {
                 Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::from(error),
+                    oneiron_contracts::memory::MemoryError::from(error),
                 )))
             });
         }
@@ -213,8 +216,8 @@ impl<'a> ScopedRead<'a> {
             }
             return Err(Error::Claim(
                 crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                    crate::memory::MemoryError::new(
-                        crate::memory::MEMORY_CODE_FORBIDDEN,
+                    oneiron_contracts::memory::MemoryError::new(
+                        oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                         "a due owner schedule's owner is no longer a live owner here",
                         &[],
                     ),
@@ -517,8 +520,8 @@ impl ScopedRead<'_> {
         id: &EntityId,
         kind: u8,
         data: &[u8],
-        ceiling: &crate::federation::Scope,
-    ) -> Result<Option<crate::federation::Scope>> {
+        ceiling: &oneiron_authority::federation::Scope,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
         use crate::federation::record_scope::note_world::world_record_held_at;
         match self.session_view {
             Some(view) => world_record_held_at(view, txn, *id, kind, data, ceiling),
@@ -540,7 +543,10 @@ impl ScopedRead<'_> {
         let Some(granted) = self.actor_key.authority_scope() else {
             return Ok(false);
         };
-        if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
+        if matches!(
+            granted.worlds,
+            oneiron_authority::federation::ScopeAxis::All
+        ) {
             return Ok(false);
         }
         // A TASK and its authority facts, and an epoch SUMMARY, sit at their

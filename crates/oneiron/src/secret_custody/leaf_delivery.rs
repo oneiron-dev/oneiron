@@ -102,13 +102,17 @@ pub enum LeafKeyFailureCause {
     /// The holder refused, with its reason code: never a key or a secret.
     /// The carrier waits [`LEAF_KEY_REFUSED_BACKOFF_MS`] before a new ask.
     HolderRefused(String),
+    /// The holder met a fault that is no refusal (its storage or keystore):
+    /// the ask stays pending and is sent again, as for an offline holder.
+    HolderFault,
 }
 
 impl LeafKeyFailureCause {
     /// The cause a holder's refusal of an ask travels as: an expired ask, a
     /// replayed one, or the refusal's own reason code. `None` for a fault
-    /// that is no refusal (storage, keystore): the asker keeps the ask
-    /// pending and sends it again.
+    /// that is no refusal (storage, keystore), which travels as
+    /// [`Self::HolderFault`]: the asker keeps the ask pending and sends it
+    /// again.
     #[must_use]
     pub fn of_refusal(error: &Error) -> Option<Self> {
         match error {

@@ -105,6 +105,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"outbound_grant/principal/v1\0",
                 b"counterparty_contact.index.v1:",
                 b"counterparty.contact.party_channel.v1:",
+                b"counterparty.contact.identity",
+                b"consent.widen.contact_verdict",
                 b"connector_key/connector/v1\0",
                 b"gate_pending:run_index:v1:",
                 b"gate_pending:group_index:v1:",

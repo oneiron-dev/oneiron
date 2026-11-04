@@ -5,28 +5,21 @@
 use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 
-use rmpv::Value;
-
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
-use super::event_body_codec::{id_value, map_field};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpWrite, is_effective_approval};
 use super::op_vocabulary::{IdentityTopologyOp, MergeOp};
-use super::wire_keys::{BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, PREDICATE_ENTITY_DISTINCT_FROM};
-
-/// Normalized symmetric key for a distinct pair: `(min(a, b), max(a, b))`
-/// (§9 G.1 `valueKeyFn`), so `assert_distinct(a, b)` and
-/// `assert_distinct(b, a)` key to the same claim.
-#[must_use]
-pub fn distinct_pair_key(a: EntityId, b: EntityId) -> (EntityId, EntityId) {
-    if a <= b { (a, b) } else { (b, a) }
-}
+use super::wire_keys::PREDICATE_ENTITY_DISTINCT_FROM;
+use crate::write_envelope::identity_pair::decode_distinct_claim_pair;
+pub(super) use crate::write_envelope::identity_pair::distinct_claim_value;
+pub use crate::write_envelope::identity_pair::distinct_pair_key;
+pub(crate) use crate::write_envelope::identity_pair::validate_distinct_from_claim_structure;
 
 /// One lifecycle-`Active` `entity.distinct_from` claim as the family's
 /// readers see it: the row, its consent axis, and the pair it covers.
@@ -35,60 +28,6 @@ pub(super) struct DistinctClaimRow {
     pub(super) claim: EntityId,
     approval: ClaimApprovalStatus,
     pub(super) pair: (EntityId, EntityId),
-}
-
-/// The `entity.distinct_from` claim VALUE for a pair: the normalized
-/// symmetric key, so (a, b) and (b, a) encode to identical bytes and the
-/// pair is readable without dereferencing the claim's subject.
-#[must_use]
-pub(super) fn distinct_claim_value(pair: (EntityId, EntityId)) -> Value {
-    Value::Map(vec![
-        (Value::from(BODY_KEY_PAIR_A), id_value(&pair.0)),
-        (Value::from(BODY_KEY_PAIR_B), id_value(&pair.1)),
-    ])
-}
-
-/// The [`distinct_claim_value`] inverse. Fail-closed: a value that is not a
-/// normalized two-id map is not a distinct assertion.
-fn decode_distinct_claim_pair(value: &Value) -> Result<(EntityId, EntityId)> {
-    const PAIR_CONTEXT: &str = "entity.distinct_from claim value must be a normalized id pair";
-    let map = value
-        .as_map()
-        .ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
-    let id = |key| {
-        let bytes: [u8; ENTITY_ID_LEN] = map_field(map, key)
-            .and_then(Value::as_slice)
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
-        EntityId::from_bytes(bytes).map_err(|_| Error::InvalidClaimBody(PAIR_CONTEXT))
-    };
-    let (a, b) = (id(BODY_KEY_PAIR_A)?, id(BODY_KEY_PAIR_B)?);
-    // Strictly ascending: `a == b` is the self-assertion the transition
-    // table already refuses, and a descending pair is the unnormalized
-    // encoding that would let one pair carry two distinct claims.
-    if a >= b {
-        return Err(Error::InvalidClaimBody(PAIR_CONTEXT));
-    }
-    Ok((a, b))
-}
-
-/// D18 structural validator for the `entity.distinct_from` predicate, run at
-/// the shared type-0 write chokepoint on every door that can admit it.
-///
-/// The symmetry law lives HERE rather than in the op door because the claim
-/// is public: an agent minting it directly must land the same single row the
-/// engine's `assert_distinct` does. Two bounds do that — the value is the
-/// NORMALIZED pair (so both directions encode identically), and the subject
-/// is the pair's lexicographically-first entity (so both directions anchor
-/// on the same subject and one `claims_for_subject` sweep finds them).
-pub(crate) fn validate_distinct_from_claim_structure(body: &ClaimBody) -> Result<()> {
-    let (a, _) = decode_distinct_claim_pair(&body.value)?;
-    if body.subject != ClaimSubject::Entity(a) {
-        return Err(Error::InvalidClaimBody(
-            "entity.distinct_from subject must be the pair's lexicographically-first entity",
-        ));
-    }
-    Ok(())
 }
 
 impl Vault {

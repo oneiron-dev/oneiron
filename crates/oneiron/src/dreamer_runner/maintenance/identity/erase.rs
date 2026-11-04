@@ -130,6 +130,10 @@ fn erase_from_ask(ask: &mut IdentityAsk, id: &EntityId) -> Option<bool> {
         ask.provisional = None;
         changed = true;
     }
+    if ask.surfaced_turn == Some(*id) {
+        ask.surfaced_turn = None;
+        changed = true;
+    }
     if ask.candidates.is_empty() && ask.provisional.is_none() {
         return None;
     }
@@ -185,6 +189,13 @@ fn erase_asks_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) ->
     Ok(())
 }
 
+fn erase_cursor_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if super::CURSOR.get(store, txn, &())? == Some(*id) {
+        super::CURSOR.delete(store, txn, &())?;
+    }
+    Ok(())
+}
+
 /// Drops every copy identity maintenance keeps of the erased `id`'s bytes,
 /// in the erase's own transaction: the open asks, the saved hints and the
 /// Dreamer's identity inverses, reverted ones too. A no-op for an id none
@@ -195,6 +206,7 @@ pub(crate) fn erase_sources_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     erase_asks_in_txn(store, txn, id)?;
+    erase_cursor_in_txn(store, txn, id)?;
     hints::erase_in_txn(store, txn, id)?;
     super::super::applied::erase_identity_inverses_in_txn(store, txn, id)
 }

@@ -319,6 +319,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.memory.pads.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::DiaryQueryRequest,
+                >(),
+            ),
+            (
+                "self.memory.pads.admin_reads",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AdminPadReadsRequest,
+                >(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
@@ -1916,6 +1928,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.federation.connect.world_privacy.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::ForeignWorldPrivacyExportRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.world_privacy.receive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::ForeignWorldPrivacyDelivery,
+                >(),
+            ),
+            (
                 "vault.trusted_contacts.name",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TrustedContactNameRequest,
@@ -2650,6 +2674,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.legal_holds.withdraw_erase",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+                >(),
+            ),
+            (
                 "vault.courtesy_delete.send",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CourtesyDeleteSendRequest,
@@ -2791,6 +2821,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.consent.create_standing_grant",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::CreateStandingGrantRequest,
+                >(),
+            ),
+            (
+                "vault.consent.create_auto_weave_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::lifecycle::AutoWeaveGrantRequest,
                 >(),
             ),
             (
@@ -7354,6 +7390,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.legal_holds.list",
     "vault.legal_holds.log",
     "vault.legal_holds.lift_and_erase",
+    "vault.legal_holds.withdraw_erase",
     "vault.embedding_spaces.list",
     "vault.embedding_spaces.declare",
     "vault.embedding_spaces.bind",
@@ -7374,6 +7411,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.calls.approve_once",
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
+    "vault.consent.create_auto_weave_grant",
     "vault.consent.registry",
     "vault.consent.failure_signals_held",
     "vault.consent.revoke",
@@ -7568,6 +7606,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.review_slides",
     "vault.artifacts.admit",
     "vault.artifacts.propose_outline",
     "vault.artifacts.outline",
@@ -8951,6 +8990,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.legal_holds.lift_and_erase" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LegalHoldLiftAndErased,
         >(),
+        "vault.legal_holds.withdraw_erase" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LegalHoldErasesWithdrawn,
+        >(),
         "vault.embedding_spaces.list" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::EmbeddingSpacesView,
         >(),
@@ -9009,6 +9051,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.create_standing_grant" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.consent.create_auto_weave_grant" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.registry" => {
@@ -9602,6 +9647,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
+        >(),
+        "vault.artifacts.review_slides" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>,
         >(),
         "vault.artifacts.admit" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::ArtifactAskOutcome,
@@ -10865,6 +10913,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.query" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.pads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.pads.admin_reads" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13103,6 +13165,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.connect.world_privacy.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.trusted_contacts.name" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13953,6 +14029,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.legal_holds.withdraw_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.courtesy_delete.send" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14105,6 +14188,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.create_standing_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.create_auto_weave_grant" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19181,6 +19271,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
         }
+        "self.memory.pads.read" => {
+            let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "self.memory.pads.admin_reads" => {
+            let _input: crate::task_verb::sdk::AdminPadReadsRequest = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
@@ -20197,6 +20294,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.federation.connect.rejoin" => {
             let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
         }
+        "vault.federation.connect.world_privacy.export" => {
+            let _input: crate::policy_model::ForeignWorldPrivacyExportRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.connect.world_privacy.receive" => {
+            let _input: crate::policy_model::ForeignWorldPrivacyDelivery = decode(value.clone())?;
+        }
         "vault.trusted_contacts.name" => {
             let _input: crate::task_verb::sdk::TrustedContactNameRequest = decode(value.clone())?;
         }
@@ -20599,6 +20703,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
         }
+        "vault.legal_holds.withdraw_erase" => {
+            let _input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest =
+                decode(value.clone())?;
+        }
         "vault.courtesy_delete.send" => {
             let _input: crate::task_verb::sdk::CourtesyDeleteSendRequest = decode(value.clone())?;
         }
@@ -20685,6 +20793,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.create_standing_grant" => {
             let _input: crate::consent::lifecycle::CreateStandingGrantRequest =
                 decode(value.clone())?;
+        }
+        "vault.consent.create_auto_weave_grant" => {
+            let _input: crate::consent::lifecycle::AutoWeaveGrantRequest = decode(value.clone())?;
         }
         "vault.consent.registry" => {
             let _input: crate::consent::ConsentRegistryQuery = decode(value.clone())?;
@@ -23339,6 +23450,10 @@ pub fn invoke(
         "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
         "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
+        "self.memory.pads.read" => encode(self_memory_pads_read(memory, decode(value)?)?),
+        "self.memory.pads.admin_reads" => {
+            encode(self_memory_pads_admin_reads(memory, decode(value)?)?)
+        }
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
@@ -23935,6 +24050,12 @@ pub fn invoke(
         "vault.federation.connect.rejoin" => {
             encode(vault_federation_connect_rejoin(memory, decode(value)?)?)
         }
+        "vault.federation.connect.world_privacy.export" => encode(
+            vault_federation_connect_world_privacy_export(memory, decode(value)?)?,
+        ),
+        "vault.federation.connect.world_privacy.receive" => encode(
+            vault_federation_connect_world_privacy_receive(memory, decode(value)?)?,
+        ),
         "vault.trusted_contacts.name" => {
             encode(vault_trusted_contacts_name(memory, decode(value)?)?)
         }
@@ -24199,6 +24320,9 @@ pub fn invoke(
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
         }
+        "vault.legal_holds.withdraw_erase" => {
+            encode(vault_legal_holds_withdraw_erase(memory, decode(value)?)?)
+        }
         "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
         "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
         "vault.courtesy_delete.incoming" => {
@@ -24266,6 +24390,10 @@ pub fn invoke(
         "vault.consent.create_standing_grant" => {
             encode(vault_consent_create_standing_grant(memory, decode(value)?)?)
         }
+        "vault.consent.create_auto_weave_grant" => encode(vault_consent_create_auto_weave_grant(
+            memory,
+            decode(value)?,
+        )?),
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
         "vault.consent.failure_signals_held" => {
             encode(vault_consent_failure_signals_held(memory, decode(value)?)?)
@@ -26229,6 +26357,19 @@ pub fn self_memory_diary_query(
 ) -> MemoryResult<crate::task_verb::sdk::DiaryQueryOutcome> {
     input.validate()?;
     crate::task_verb::sdk::self_memory_diary_query_embedded(memory, input)
+}
+pub fn self_memory_pads_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::DiaryQueryRequest,
+) -> MemoryResult<crate::task_verb::sdk::DiaryQueryOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::self_memory_pads_read_embedded(memory, input)
+}
+pub fn self_memory_pads_admin_reads(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AdminPadReadsRequest,
+) -> MemoryResult<crate::task_verb::sdk::AdminPadReadsView> {
+    crate::task_verb::sdk::self_memory_pads_admin_reads_embedded(memory, input)
 }
 pub fn cancel(
     memory: &Memory<'_>,
@@ -28894,6 +29035,26 @@ pub fn vault_federation_connect_rejoin(
 ) -> MemoryResult<crate::task_verb::sdk::ConnectRejoined> {
     crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.rejoin", &input)
 }
+pub fn vault_federation_connect_world_privacy_export(
+    memory: &Memory<'_>,
+    input: crate::policy_model::ForeignWorldPrivacyExportRequest,
+) -> MemoryResult<crate::policy_model::ForeignWorldPrivacyDelivery> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.world_privacy.export",
+        &input,
+    )
+}
+pub fn vault_federation_connect_world_privacy_receive(
+    memory: &Memory<'_>,
+    input: crate::policy_model::ForeignWorldPrivacyDelivery,
+) -> MemoryResult<crate::policy_model::WorldPrivacyRequest> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.world_privacy.receive",
+        &input,
+    )
+}
 pub fn vault_trusted_contacts_name(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TrustedContactNameRequest,
@@ -29880,6 +30041,16 @@ pub fn vault_legal_holds_lift_and_erase(
         input,
     )
 }
+pub fn vault_legal_holds_withdraw_erase(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::LegalHoldErasesWithdrawn> {
+    crate::task_verb::sdk::withdraw_legal_hold_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.withdraw_erase")?,
+        input,
+    )
+}
 pub fn vault_courtesy_delete_send(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::CourtesyDeleteSendRequest,
@@ -30115,6 +30286,16 @@ pub fn vault_consent_create_standing_grant(
     crate::consent::lifecycle::create_standing_grant(
         memory.vault(),
         &memory.embedded_owner("vault.consent.create_standing_grant")?,
+        input,
+    )
+}
+pub fn vault_consent_create_auto_weave_grant(
+    memory: &Memory<'_>,
+    input: crate::consent::lifecycle::AutoWeaveGrantRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::consent::lifecycle::mint_auto_weave_grant(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.create_auto_weave_grant")?,
         input,
     )
 }
@@ -34562,7 +34743,12 @@ pub fn vault_artifacts_body_proposal_settle(
         memory,
         "vault.artifacts.body.proposal.settle",
         &input,
-        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+        &[
+            "/artifact_ref",
+            "/proposal_ref",
+            "/reviewed/*/artifact_ref",
+            "/reviewed/*/fork_ref",
+        ],
     )?;
     memory.artifacts_body_proposal_settle(&input)
 }
@@ -36211,7 +36397,12 @@ pub fn receipt_declared_refs(
                 memory,
                 "vault.artifacts.body.proposal.settle",
                 &input,
-                &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+                &[
+                    "/artifact_ref",
+                    "/proposal_ref",
+                    "/reviewed/*/artifact_ref",
+                    "/reviewed/*/fork_ref",
+                ],
             )?;
         }
         "vault.artifacts.body.export" => {

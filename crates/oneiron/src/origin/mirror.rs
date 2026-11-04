@@ -51,11 +51,11 @@ use super::secret_publication::{
 };
 use super::smart_http::origin_repo_dir;
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::code_snapshot::RepoRef;
 
 /// The effector a mirror's push token is bound to in custody.
 pub const ORIGIN_MIRROR_PUSH_EFFECTOR: &str = "origin:mirror-push";

@@ -7,7 +7,7 @@ use crate::edit_roundtrip::deck_create::{
     ArtifactVersionRef, DeckCreationRecord, DesignSpec, EvidenceChange, KeptOutline,
     OutlineFreshness,
 };
-use crate::provenance::made_by::MadeByTrigger;
+use crate::write_envelope::provenance::made_by::MadeByTrigger;
 use outline::DeckOutline;
 use plan::DeckPlanView;
 use serde::{Deserialize, Serialize};

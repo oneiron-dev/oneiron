@@ -216,7 +216,9 @@ fn dependent_of(row: &RowKey) -> Result<EntityId> {
     )
 }
 
-fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
+/// The walk policy in force here: also the batch past which a withdrawal's
+/// source chain takes the stale mark alone (FIX 1494).
+pub(super) fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
     Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
 }
 
@@ -416,7 +418,9 @@ fn ask_in_txn(
 /// The worlds the pending walks withdraw `id` for before their batches reach
 /// it; `Some` where one does. A walk withdraws each dependent its range still
 /// covers, an EVENT that outlives its source excepted, and through each one
-/// every epoch summary written from it, as the batch itself will.
+/// every epoch summary written from it, as the batch itself will. The rest
+/// of each one's source chain is withdrawn when the batch reaches it (FIX
+/// 1494), not before.
 pub(super) fn pending_withdrawal_in(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -549,10 +553,11 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         }
     }
     // An epoch summary withdrawn only through one it was written from: marked
-    // once, as the batch that reaches that one marks it, and never again for
-    // a put that repeats (its regeneration's own revision would fence it).
+    // once, as the batch that reaches that one marks it, with its source
+    // chain, and never again for a put that repeats (its regeneration's own
+    // revision would fence it).
     if !direct {
-        integrity::withdraw_epochs_in_txn(store, txn, vec![*id], &worlds)?;
+        integrity::withdraw_source_chain_in_txn(store, txn, vec![*id], &worlds)?;
     }
     Ok(())
 }

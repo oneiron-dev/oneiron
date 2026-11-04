@@ -78,12 +78,14 @@ fn observe(
     home: Option<EntityId>,
     reach: PublishReach,
     latest: LatestRead,
+    incomplete_authority: Vec<EntityId>,
 ) {
     let observed = PublishObserved {
         at: vault.store.clock.now_recorded_at(),
         home,
         reach,
         latest,
+        incomplete_authority,
     };
     vault.observe_bundle_publication(request, observed);
 }
@@ -91,7 +93,14 @@ fn observe(
 /// Keeps `reach`, with no home and nothing read, for every request asked.
 fn observe_all(vault: &Vault, asked: &[(AuthorityEntryHash, EntityId)], reach: PublishReach) {
     for (request, _) in asked {
-        observe(vault, *request, None, reach, LatestRead::NotRead);
+        observe(
+            vault,
+            *request,
+            None,
+            reach,
+            LatestRead::NotRead,
+            Vec::new(),
+        );
     }
 }
 
@@ -141,6 +150,7 @@ async fn publish_all(
                 Some(home),
                 PublishReach::OtherHome,
                 LatestRead::NotRead,
+                Vec::new(),
             );
             continue;
         }
@@ -150,6 +160,7 @@ async fn publish_all(
             Some(home),
             PublishReach::Reached,
             LatestRead::NotRead,
+            Vec::new(),
         );
         publish_one(manager, &mut rpc, request, home, materialize).await?;
     }
@@ -205,7 +216,14 @@ async fn publish_one(
             read.map_err(storage)?
         }
     };
-    observe(vault, request, Some(home), PublishReach::Reached, read);
+    observe(
+        vault,
+        request,
+        Some(home),
+        PublishReach::Reached,
+        read.clone(),
+        Vec::new(),
+    );
     if named {
         return enact(manager, request).await;
     }
@@ -233,6 +251,15 @@ async fn publish_one(
             return Err(storage(error));
         }
     };
+    // The owner sees each world this upload could not seal fresh (FIX 12417).
+    observe(
+        vault,
+        request,
+        Some(home),
+        PublishReach::Reached,
+        read,
+        upload.incomplete_authority.clone(),
+    );
     let generation = upload.bundle.generation();
     let committed = if put_object(
         rpc,

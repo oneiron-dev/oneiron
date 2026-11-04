@@ -15,16 +15,16 @@ side_tables! {
     MEMORY_TURN_WAKE_UNPERSISTED: VaultMeta b"memory:turn_wake_unpersisted:v1:" Named Engine;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
-    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
+    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
-    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored;
+    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
-    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
+    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
     /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored;
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked];
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -41,10 +41,10 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored;
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored;
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
@@ -133,8 +133,8 @@ side_tables! {
     OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named
         => crate::office_body::erase_oracle_actor_in_txn;
     /// An office proposal: its header (opener, run root, opened at), member forks with each one's
-    /// verdict and answer, and its settlement. Key: id16 (artifact) + id16 (proposal).
-    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named
+    /// verdict and answer, and its settlement. Key: id16 (proposal); the header's artifact is its home.
+    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v2:" Named
         => crate::office_body::erase_proposal_actor_in_txn;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
@@ -380,7 +380,7 @@ side_tables! {
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
         => crate::llm::run_admission::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
-    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -508,6 +508,10 @@ side_tables! {
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
     PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
         => crate::provenance::erase_actor_stamp_cache_in_txn;
+    /// Which records' documents name a stamp token (FIX 11965), so an actor erase's hold check
+    /// finds a held record's tokens without a history walk; a record's erase drops its rows.
+    /// Key: id16 (record) + id16 (token); value: empty.
+    PROVENANCE_ACTOR_STAMP_TOKEN_USE: VaultMeta b"provenance:actor_stamp_token_use:v1:" Raw;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
@@ -596,6 +600,10 @@ side_tables! {
     /// whether the owner re-entered its pieces (OF-173). Never a piece, point, tag, passphrase
     /// or seed. Key: hex(kit id).
     RECOVERY_KIT: VaultMeta b"recovery_kit:v1:" Named;
+    /// One drawn world kit whose pending row never committed and whose pending piece a
+    /// best-effort delete could not remove, named until a settle sweeps the piece
+    /// (FIX 12202). Key: hex(kit id); the row holds the kit id.
+    RECOVERY_KIT_UNLISTED_SWEEP: VaultMeta b"recovery_kit_unlisted_sweep:v1:" Named;
     /// Rebuildable projection row: the head set a merged/split identity shell currently resolves to.
     /// Key: id16 (shell id).
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;

@@ -7,7 +7,9 @@
 
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
-pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+pub(crate) use fingerprint::{
+    invalidate_blob_fingerprint, prepare_binary_blob_artifact_birth, prepare_blob_artifact_birth,
+};
 mod docs;
 mod docs_deep;
 mod docs_import;
@@ -115,3 +117,7 @@ mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
 pub use pdf::{PdfText, PdfTextError, pdf_text};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::history::ingest_history_ledger_accepts_masked;
