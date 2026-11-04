@@ -216,8 +216,34 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                 .filter(|key| state.receives_window(key))
                 .collect(),
         ),
+        // A residence socket's promoted windows, each only while its
+        // promotion still authorizes under the socket's live bound
+        // credential: a denied window moves no bodies, and its transfer
+        // ends, as if the socket followed it no longer.
         WindowSyncMode::Residence => {
-            Followed::Live(state.promoted_windows.keys().cloned().collect())
+            let Ok(auth) = require_bound_app_auth(server, state) else {
+                return Followed::Live(Vec::new());
+            };
+            let peer = state.peer_machine(server.vault());
+            let keys = state
+                .promoted_windows
+                .iter()
+                .filter(|(key, selector)| {
+                    server.reassert_manager.window(key).is_some_and(|window| {
+                        super::window_sync::authorize_promoted_window(
+                            server,
+                            auth,
+                            peer,
+                            key,
+                            selector,
+                            &window.doc,
+                        )
+                        .is_ok()
+                    })
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            Followed::Live(keys)
         }
         // A federation socket's copies, each while its selector still
         // authorizes, and only while the socket's credential is live.

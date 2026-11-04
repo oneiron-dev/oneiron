@@ -17,6 +17,7 @@ use crate::server::HousekeepingAdmission;
 pub(super) struct ImportGate {
     pub(super) admit: HousekeepingAdmission,
     refused: Arc<AtomicBool>,
+    refused_wake: Arc<tokio::sync::Notify>,
     freeze: ReapFreeze,
 }
 
@@ -24,18 +25,22 @@ impl ImportGate {
     /// `freeze`'s admission, with each refusal noted.
     pub(super) fn new(freeze: ReapFreeze) -> Self {
         let refused = Arc::new(AtomicBool::new(false));
+        let refused_wake = Arc::new(tokio::sync::Notify::new());
         let noted = Arc::clone(&refused);
+        let woken = Arc::clone(&refused_wake);
         let inner = freeze.admission();
         let admit: HousekeepingAdmission = Arc::new(move || {
             let admission = inner();
             if admission.is_none() {
                 noted.store(true, Ordering::SeqCst);
+                woken.notify_one();
             }
             admission
         });
         Self {
             admit,
             refused,
+            refused_wake,
             freeze,
         }
     }
@@ -76,13 +81,16 @@ impl ImportGate {
     }
 
     /// Returns once an import the freeze refused may be tried again: the
-    /// freeze has lifted. Pending while none was refused. Cancel-safe: it
-    /// only reads the freeze.
+    /// freeze has lifted. Waits for a refusal while none was refused, then
+    /// for the thaw. Cancel-safe: it only reads the freeze and the refusal
+    /// signal.
     async fn thawed(&self) {
-        if self.refused.load(Ordering::SeqCst) {
-            self.freeze.clone().thawed().await;
-        } else {
-            std::future::pending::<()>().await;
+        loop {
+            if self.refused.load(Ordering::SeqCst) {
+                self.freeze.clone().thawed().await;
+                return;
+            }
+            self.refused_wake.notified().await;
         }
     }
 }

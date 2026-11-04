@@ -354,6 +354,12 @@ impl<'a> Census<'a> {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {
             KeepReason::Tombstoned
+        } else if crate::store::ASSET_FILE_PLANE
+            && crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?.is_some()
+        {
+            // A file-plane ASSET's body moves outside Loro; the home's
+            // window ack does not durably hold the body (FIX 5393).
+            KeepReason::NotCarried
         } else if !map_contains_binary(&self.entities, &id.to_hex()) {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {

@@ -143,14 +143,18 @@ pub(crate) fn capture_canonical_window_within(
         snapshot.base_edges.push(edge);
     }
     let turns = binary_rows_within(doc, "room_turns", budget)?;
-    for (key, row) in crate::sync::room_parts::capture_rows(&turns) {
+    for (key, row) in
+        crate::sync::room_parts::capture_rows(&turns, &mut |bytes| budget.take(bytes))?
+    {
         snapshot.room_turns.push(CanonicalRoomTurn {
             id: parse_id(&key)?,
             row,
         });
     }
     let facts = binary_rows_within(doc, "room_facts", budget)?;
-    for (key, row) in crate::sync::room_parts::capture_rows(&facts) {
+    for (key, row) in
+        crate::sync::room_parts::capture_rows(&facts, &mut |bytes| budget.take(bytes))?
+    {
         snapshot.room_facts.push(CanonicalRoomFact { key, row });
     }
     for (key, carrier) in binary_rows_within(doc, "custody", budget)? {

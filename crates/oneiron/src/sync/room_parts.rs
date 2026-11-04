@@ -13,11 +13,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::event::MapDelta;
-use loro::{LoroMap, LoroValue, ValueOrContainer};
+use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use super::carrier_parts::{
-    Parts, admit_part, is_part_key, join_parts, part_key, split_parts, unreferenced_parts,
-    write_parts,
+    Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts, write_parts,
 };
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use crate::error::{Error, Result};
@@ -125,8 +124,22 @@ pub(super) fn rows(map: &LoroMap, keep: impl Fn(&str) -> bool) -> Vec<(String, V
 /// Each row of a room map for a canonical capture, from its raw binary
 /// rows: a manifest with every part present as its one joined row, anything
 /// else as the window holds it, parts included, so nothing is lost
-/// (FIX 12126).
-pub(crate) fn capture_rows(raw: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {
+/// (FIX 12126). Each manifest's assembled length is charged through
+/// `charge` before any byte is copied: one part repeated names an assembly
+/// far past the raw rows the budget already held. The join itself runs
+/// through [`join_parts`], so its memory admission holds here as in the
+/// window (FIX 8880).
+pub(crate) fn capture_rows(
+    raw: &BTreeMap<String, Vec<u8>>,
+    charge: &mut impl FnMut(usize) -> Result<()>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let scratch = LoroDoc::new();
+    let map = scratch.get_map("parts");
+    for (key, value) in raw {
+        if is_part_key(key) {
+            map_insert_bytes(&map, key, value)?;
+        }
+    }
     let mut out = BTreeMap::new();
     let mut consumed = BTreeSet::new();
     for (key, value) in raw {
@@ -134,15 +147,18 @@ pub(crate) fn capture_rows(raw: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, 
             continue;
         }
         match manifest(value) {
-            Some(parts) => match join_raw(raw, &parts) {
-                Some(row) => {
-                    consumed.extend(parts.keys());
-                    out.insert(key.clone(), row);
+            Some(parts) => {
+                charge(usize::try_from(parts.len).map_err(|_| refused("too long"))?)?;
+                match join_parts(&map, &parts) {
+                    Some(row) => {
+                        consumed.extend(parts.keys());
+                        out.insert(key.clone(), row);
+                    }
+                    None => {
+                        out.insert(key.clone(), value.clone());
+                    }
                 }
-                None => {
-                    out.insert(key.clone(), value.clone());
-                }
-            },
+            }
             None => {
                 out.insert(key.clone(), value.clone());
             }
@@ -153,28 +169,7 @@ pub(crate) fn capture_rows(raw: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, 
             out.insert(key.clone(), value.clone());
         }
     }
-    out
-}
-
-/// The carrier `parts` lists, joined from the raw rows; `None` while a
-/// part is missing or digest-mismatched, or without memory for the join,
-/// as [`join_parts`] waits in the window.
-fn join_raw(raw: &BTreeMap<String, Vec<u8>>, parts: &Parts) -> Option<Vec<u8>> {
-    if !parts.well_formed() {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(usize::try_from(parts.len).ok()?)
-        .ok()?;
-    for digest in &parts.parts {
-        let part = raw.get(&part_key(digest))?;
-        if blake3::hash(part).as_bytes() != digest {
-            return None;
-        }
-        bytes.extend_from_slice(part);
-    }
-    (bytes.len() == usize::try_from(parts.len).ok()?).then_some(bytes)
+    Ok(out)
 }
 
 /// The rows of `map` an import changed, joined, and each row key it cleared
