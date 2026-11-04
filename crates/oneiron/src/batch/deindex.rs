@@ -306,7 +306,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.extend(related_neighbors);
 
     delete_short_id_rows_for_id(store, wtxn, id)?;
-    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
+    store.scope_stamps.retire_stamp(store, wtxn, *id)?;
 
     let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
     else {
@@ -400,7 +400,7 @@ pub(crate) fn drop_seeded_actor_row(
     delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
-    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
+    store.scope_stamps.retire_stamp(store, wtxn, *id)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
