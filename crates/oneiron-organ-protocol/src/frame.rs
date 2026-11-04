@@ -548,11 +548,11 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     wait: Wait,
     mut booking: B,
 ) -> Result<(T, Vec<OwnedFd>, u64, B::Held), FrameError> {
-    let mut fds = Vec::new();
     // The holder first, before the first header: descriptors are booked as
     // they arrive, and the first frame's length follows through `more`, so
     // the end state is the same lease `body(len)` would have made.
     let mut held = booking.body(0)?;
+    let mut fds = Vec::new();
     let (len, mut more) = recv_header(stream, wait, &mut fds, &mut booking, &mut held)?;
     bound.check(len, 0)?;
     // The room first, then the bytes: nothing is allocated for a frame its
