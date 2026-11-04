@@ -9,6 +9,8 @@ use super::SpaceMove;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::machine_destination::PeerMachine;
+use crate::settings::ReadDestination;
 
 impl Vault {
     /// A moving document the candidate of `moving` still lacks a vector of, read in the writer
@@ -29,8 +31,11 @@ impl Vault {
         let Some(space) = embedding_space_in_txn(&self.store, txn, &moving.candidate)? else {
             return Ok(None);
         };
+        // No model is called here: the gate judges a destination nobody proved, as the
+        // move's check reads it.
+        let unknown = ReadDestination::toward(PeerMachine::Unknown);
         let gate = egress
-            .map(|egress| MediaEgressGate::read(self, txn, egress))
+            .map(|egress| MediaEgressGate::read(self, txn, egress, &unknown))
             .transpose()?;
         let mut report = MediaEmbedReport::default();
         Ok(self
