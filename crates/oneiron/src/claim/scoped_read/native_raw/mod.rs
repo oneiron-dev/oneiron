@@ -23,7 +23,7 @@ impl<'a> NativeRawRead<'a> {
         }
     }
 
-    /// The admitted live body, with repo secrets projected in the same snapshot.
+    /// The admitted live body, with repo and file secrets projected in the same snapshot.
     pub fn entity_body(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         Ok(self
             .lane
@@ -48,6 +48,17 @@ impl<'a> NativeRawRead<'a> {
                             &body,
                         )?
                         .unwrap_or(body)
+                    } else {
+                        body
+                    };
+                    let body = if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+                        crate::store::file_key_masks::sighted_bytes_in_txn(
+                            &self.lane.vault.store,
+                            txn,
+                            body,
+                            None,
+                            self.lane.actor_key.secret_sight(),
+                        )?
                     } else {
                         body
                     };

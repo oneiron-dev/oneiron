@@ -14,6 +14,7 @@ impl<'a> ContextPackBuilder<'a> {
         self,
         lane: &crate::claim::ScopedRead<'_>,
     ) -> Result<crate::claim::ScopedReadResult<Vec<u8>>> {
+        let tokenizer = self.tokenizer;
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
@@ -53,7 +54,7 @@ impl<'a> ContextPackBuilder<'a> {
         pending.project_instruction_files_under(lane, disclosure.as_ref())?;
         // Counts exposed refer only to rows admitted by this read.
         pending.value.stats.candidates_considered = pending.value.results.len();
-        let (bytes, telemetry) = serialize_pack_with_telemetry(&pending.value, &config);
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&pending.value, &config, tokenizer);
         let run_id = pending.telemetry_run_id.take();
         let mut replay_config = pending.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
