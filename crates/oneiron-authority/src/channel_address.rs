@@ -174,7 +174,7 @@ pub struct ChannelKey(String);
 
 impl ChannelKey {
     /// Normalizes a raw channel key. Bounds are checked by
-    /// [`ChannelIdentity::validate`](super::ChannelIdentity::validate), so this
+    /// `ChannelIdentity::validate`, so this
     /// stays infallible and the record keeps ONE validation door.
     #[must_use]
     pub fn normalize(raw: &str) -> Self {
@@ -262,7 +262,7 @@ impl AssignmentAddress {
 /// The one channel whose address grammar the engine owns.
 ///
 /// Spelled here rather than imported from
-/// [`crate::channel_identity_provider::EMAIL_CHANNEL`] so the value layer does
+/// `channel_identity_provider::EMAIL_CHANNEL` so the value layer does
 /// not depend on the adapter layer; the two are pinned equal by test.
 const EMAIL_CHANNEL_KEY: &str = "email";
 
@@ -289,7 +289,7 @@ impl std::fmt::Display for AssignmentAddress {
 /// stored bytes and [`ChannelKey::from_stored`] are untouched, so the codec's
 /// `encode(decode(bytes)) == bytes` pin still holds. A record's key is DERIVED
 /// from its stored bytes on demand
-/// ([`ChannelIdentity::assignment_key`](super::ChannelIdentity::assignment_key)).
+/// (`ChannelIdentity::assignment_key`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssignmentKey {
     channel: ChannelKey,
