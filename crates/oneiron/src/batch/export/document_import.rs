@@ -654,6 +654,15 @@ fn put_run_results_in_txn<R: Read + Seek>(
             if fresh && listed != output.bytes {
                 return Err(invalid("run result body does not match its digest"));
             }
+            // The manifest path is validated with from_facts' own
+            // predicate before staging publishes the spill: from_facts
+            // rejects an empty/overlong path only after publication, when
+            // cleanup would know just the archive digest (FIX 588).
+            crate::store::result_manifest::validate_text(
+                &output.path,
+                crate::store::result_manifest::CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
+                "raw output path",
+            )?;
             // Masked at write as a run's reply body is (FIX 5718 part 3).
             let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
             let body = archive.files.read_file(blake3)?;
