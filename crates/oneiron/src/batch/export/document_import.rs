@@ -886,7 +886,11 @@ fn map_project_root<R: Read + Seek>(
     let Ok(kind) = vault.project_type_byte() else {
         return Ok(None);
     };
-    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+    let Some(target) = vault
+        .store
+        .project_writes
+        .root_project_in(&vault.store, txn)?
+    else {
         return Ok(None);
     };
     let mut source = None;
