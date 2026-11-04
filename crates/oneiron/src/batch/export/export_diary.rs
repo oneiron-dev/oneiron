@@ -14,7 +14,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{DiaryEntryAdmission, DiaryReadGate, DiaryReadHold};
-use crate::note::NoteActor;
+use crate::store::note_body::NoteActor;
 use crate::write_envelope::WriteActor;
 
 /// The reason every export's diary read states.
@@ -30,9 +30,9 @@ const ERASED_AUTHOR_HOLD: ExportDiaryHoldReason = ExportDiaryHoldReason::NotCove
 /// one once erased. `None` is a body that is no diary, never a diary whose
 /// author is unknown.
 pub(crate) fn diary_author(body: &[u8]) -> Option<NoteActor> {
-    crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)
+    crate::store::note_body::decode_note_body_using(body, crate::store::note_body::NoteKind::wire)
         .ok()
-        .filter(|note| note.kind == crate::note::NoteKind::Diary)
+        .filter(|note| note.kind == crate::store::note_body::NoteKind::Diary)
         .map(|note| note.author_ref)
 }
 
