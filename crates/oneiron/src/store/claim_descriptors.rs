@@ -1,6 +1,11 @@
 //! Claim-class descriptor values, schema checks and MessagePack codec.
 
+use std::sync::LazyLock;
+
+use jsonschema::Keyword;
+use jsonschema::paths::{LazyLocation, Location};
 use rmpv::Value;
+use serde_json::json;
 
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CLAIM_CLASS_DESCRIPTOR;
@@ -52,6 +57,120 @@ const SEMANTICS_HASH_DOMAIN: &str = "oneiron comm claim-class descriptor semanti
 
 /// Operation kind the owner's approve-once binds for one descriptor put.
 pub(crate) const DESCRIPTOR_PUT_OPERATION: &str = "comm.claim_class_descriptor.put";
+
+/// The engine keyword bounding a string's UTF-8 length.
+const KEYWORD_MAX_UTF8_BYTES: &str = "maxUtf8Bytes";
+
+/// A CRM-pack token's first and last character: no ASCII capital, no control
+/// character and no white space (what `trim` removes).
+const TOKEN_END_CHAR: &str =
+    r"[^A-Z\u0000-\u0020\u007F-\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]";
+
+/// A CRM-pack token's inner character: no ASCII capital and no control
+/// character.
+const TOKEN_INNER_CHAR: &str = r"[^A-Z\u0000-\u001F\u007F-\u009F]";
+
+/// A CRM-pack text field's bound, in UTF-8 bytes.
+const TOKEN_MAX_UTF8_BYTES: u64 = 512;
+
+/// One compiled `generic` claim class: the subject its claims may name, its
+/// value schema, and that schema compiled once.
+pub(crate) struct GenericClassSeed {
+    /// The subject its claims may name.
+    pub(crate) subject_kind: ClaimSubjectKind,
+    /// The value schema.
+    pub(crate) schema: serde_json::Value,
+    /// `schema` compiled; `None` when it does not compile.
+    validator: Option<jsonschema::Validator>,
+}
+
+impl GenericClassSeed {
+    fn new(subject_kind: ClaimSubjectKind, schema: serde_json::Value) -> Self {
+        let validator = compile_schema(&schema).ok();
+        Self {
+            subject_kind,
+            schema,
+            validator,
+        }
+    }
+
+    /// Whether `value` meets the class's schema.
+    ///
+    /// # Errors
+    /// The compiled schema does not compile: a build defect, refused rather
+    /// than passed.
+    pub(crate) fn admits_value(&self, value: &serde_json::Value) -> Result<bool> {
+        self.validator
+            .as_ref()
+            .map(|validator| validator.is_valid(value))
+            .ok_or(Error::InvariantViolation(
+                "a compiled claim-class schema does not compile",
+            ))
+    }
+}
+
+/// `comm.do_not_contact`: an entity subject, and exactly the value the CRM
+/// pack's codec admits. A map of a required `scope` and an optional
+/// `channel`, each a token of at most 512 UTF-8 bytes in the codec's
+/// normalized form: non-empty, no control character, no ASCII capital, and
+/// no white space at either end.
+static DO_NOT_CONTACT: LazyLock<GenericClassSeed> = LazyLock::new(|| {
+    let token_pattern = format!("^{TOKEN_END_CHAR}(?:{TOKEN_INNER_CHAR}*{TOKEN_END_CHAR})?$");
+    GenericClassSeed::new(
+        ClaimSubjectKind::Entity,
+        json!({
+            "type": "object",
+            "properties": {
+                "channel": {"$ref": "#/$defs/token"},
+                "scope": {"$ref": "#/$defs/token"}
+            },
+            "required": ["scope"],
+            "additionalProperties": false,
+            "$defs": {
+                "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    KEYWORD_MAX_UTF8_BYTES: TOKEN_MAX_UTF8_BYTES,
+                    "pattern": token_pattern
+                }
+            }
+        }),
+    )
+});
+
+/// The build's compiled `generic` class for `predicate`, when it has one.
+/// Every other compiled class is `builtin`.
+pub(crate) fn generic_class_seed(predicate: &str) -> Option<&'static GenericClassSeed> {
+    match predicate {
+        crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT => {
+            Some(&*DO_NOT_CONTACT)
+        }
+        _ => None,
+    }
+}
+
+/// Whether `value` meets `schema`, the schema of `predicate`'s class: through
+/// the compiled class's validator when `schema` is its schema, else compiled
+/// here.
+pub(crate) fn value_meets_schema(
+    predicate: &str,
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+) -> Result<bool> {
+    match generic_class_seed(predicate) {
+        Some(seed) if seed.schema == *schema => seed.admits_value(value),
+        _ => Ok(compile_schema(schema)?.is_valid(value)),
+    }
+}
+
+/// Checks `schema`, the schema of `predicate`'s class, compiles: known
+/// without compiling it again when it is the compiled class's schema.
+pub(crate) fn check_schema_compiles(predicate: &str, schema: &serde_json::Value) -> Result<()> {
+    match generic_class_seed(predicate) {
+        Some(seed) if seed.schema == *schema && seed.validator.is_some() => Ok(()),
+        _ => compile_schema(schema).map(drop),
+    }
+}
 
 /// ARCH-0057 §4 write class of a claim class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -161,6 +280,21 @@ impl ClaimSubjectKind {
         }
     }
 
+    /// Whether a claim of this class may name `subject`, read without a
+    /// store: an entity is admitted for a set type whatever type it is.
+    pub(crate) fn admits_without_store(
+        &self,
+        subject: &crate::write_envelope::claim_body::ClaimSubject,
+    ) -> bool {
+        use crate::write_envelope::claim_body::ClaimSubject;
+        matches!(
+            (self, subject),
+            (Self::Any, _)
+                | (Self::Entity | Self::EntityType(_), ClaimSubject::Entity(_))
+                | (Self::Edge, ClaimSubject::Edge { .. })
+        )
+    }
+
     /// Whether a claim of this class may name `subject`. An entity of a set
     /// type that is not in the store yet (sync can carry a claim before its
     /// subject) is admitted; one stored as another type is not.
@@ -223,10 +357,13 @@ pub struct ClaimClassDescriptor {
 }
 
 impl ClaimClassDescriptor {
-    /// The compiled row as an unstamped descriptor. A seed is `builtin`, of
-    /// any subject, with no schema: its family validator checks it as before.
+    /// The compiled row as an unstamped descriptor. A class the build
+    /// compiles as `generic` carries that class's subject kind and schema;
+    /// every other seed is `builtin`, of any subject, with no schema, and its
+    /// family validator checks it.
     #[must_use]
     pub fn from_compiled(row: &ClaimClassDescriptorRow) -> Self {
+        let generic = generic_class_seed(row.predicate);
         Self {
             predicate: row.predicate.to_owned(),
             write_class: ClaimWriteClass::parse(row.write_class)
@@ -235,9 +372,13 @@ impl ClaimClassDescriptor {
             restrictive: row.restrictive,
             projector_only: row.projector_only,
             enforcement_stamp: None,
-            validator_kind: ClaimValidatorKind::Builtin,
-            subject_kind: ClaimSubjectKind::Any,
-            schema: None,
+            validator_kind: if generic.is_some() {
+                ClaimValidatorKind::Generic
+            } else {
+                ClaimValidatorKind::Builtin
+            },
+            subject_kind: generic.map_or(ClaimSubjectKind::Any, |seed| seed.subject_kind.clone()),
+            schema: generic.map(|seed| seed.schema.clone()),
         }
     }
 
@@ -265,8 +406,8 @@ impl ClaimClassDescriptor {
             hasher.update(field);
         }
         hasher.update(&[u8::from(self.restrictive), u8::from(self.projector_only)]);
-        // A descriptor that declares no validation hashes as one did before
-        // the validation fields, so the seeds keep their hashes.
+        // A descriptor that declares no validation hashes without the
+        // validation fields, so a `builtin` seed's hash is its four fields'.
         if self.declares_validation() {
             let schema = self.schema.as_ref().map(schema_text).unwrap_or_default();
             for field in [
@@ -301,7 +442,9 @@ impl ClaimClassDescriptor {
     pub(crate) fn validate(&self) -> Result<()> {
         crate::write_envelope::claim_predicate::validate_predicate(&self.predicate, false)?;
         match (self.validator_kind, &self.schema) {
-            (ClaimValidatorKind::Generic, Some(schema)) => compile_schema(schema).map(drop),
+            (ClaimValidatorKind::Generic, Some(schema)) => {
+                check_schema_compiles(&self.predicate, schema)
+            }
             (ClaimValidatorKind::Generic, None) => {
                 Err(invalid("a generic claim class declares its schema"))
             }
@@ -318,11 +461,58 @@ fn schema_text(schema: &serde_json::Value) -> String {
     schema.to_string()
 }
 
-/// The schema compiled: Draft 2020-12 whatever it declares, local references
-/// only (the engine is built without remote resolution).
+/// The schema compiled: Draft 2020-12 whatever it declares, with the
+/// engine's `maxUtf8Bytes` keyword, local references only (the engine is
+/// built without remote resolution).
 pub(crate) fn compile_schema(schema: &serde_json::Value) -> Result<jsonschema::Validator> {
-    jsonschema::draft202012::new(schema)
-        .map_err(|_| invalid("a claim class's schema is not a valid JSON Schema"))
+    jsonschema::draft202012::options()
+        .with_keyword(KEYWORD_MAX_UTF8_BYTES, max_utf8_bytes_keyword)
+        .build(schema)
+        .map_err(|_| Error::InvalidClaimBody("a claim class's schema is not a valid JSON Schema"))
+}
+
+/// `maxUtf8Bytes` compiled: its bound is a non-negative integer.
+fn max_utf8_bytes_keyword<'a>(
+    _: &'a serde_json::Map<String, serde_json::Value>,
+    bound: &'a serde_json::Value,
+    path: Location,
+) -> std::result::Result<Box<dyn Keyword>, jsonschema::ValidationError<'a>> {
+    let Some(max) = bound.as_u64() else {
+        return Err(jsonschema::ValidationError::custom(
+            path,
+            Location::new(),
+            bound,
+            "maxUtf8Bytes is a non-negative integer",
+        ));
+    };
+    Ok(Box::new(MaxUtf8Bytes(max)))
+}
+
+/// A string's UTF-8 length is at most the bound; any other value passes.
+struct MaxUtf8Bytes(u64);
+
+impl Keyword for MaxUtf8Bytes {
+    fn validate<'i>(
+        &self,
+        instance: &'i serde_json::Value,
+        location: &LazyLocation<'_, '_>,
+    ) -> std::result::Result<(), jsonschema::ValidationError<'i>> {
+        if self.is_valid(instance) {
+            return Ok(());
+        }
+        Err(jsonschema::ValidationError::custom(
+            Location::new(),
+            location.into(),
+            instance,
+            "string is longer than maxUtf8Bytes",
+        ))
+    }
+
+    fn is_valid(&self, instance: &serde_json::Value) -> bool {
+        instance
+            .as_str()
+            .is_none_or(|text| u64::try_from(text.len()).is_ok_and(|len| len <= self.0))
+    }
 }
 
 /// A claim value as JSON, for a schema to check. `None` for what JSON cannot

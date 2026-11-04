@@ -43,7 +43,9 @@ use crate::error::Result;
 use crate::secret_custody::holder_export::{
     KeptExportOutput, kept_export_output_sealed_at_in_txn, witnessed_output,
 };
-use crate::sync::carrier_parts::{PART_BYTES, Parts, assembly_fits, join_parts, part_key, split_parts};
+use crate::sync::carrier_parts::{
+    PART_BYTES, Parts, assembly_fits, join_parts, part_key, split_parts,
+};
 use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
 
