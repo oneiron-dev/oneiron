@@ -169,7 +169,7 @@ side_tables! {
     /// keeps it whole when no replay capsule of the run holds it, and a step row keeps a durable
     /// step's request, masked, before its call. Key: b's', id16 of the attempt, the step's hash,
     /// be64 of the lease generation, be32 of the call.
-    COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
+    COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored [accepts: crate::self_heal::blocked_reports::coach_blocked_source_accepts_masked]
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
     /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
     /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
@@ -375,7 +375,7 @@ side_tables! {
     CODE_RUN_WAIT_HOLDER: VaultMeta b"code_run:wait_holder:v1:" Named Engine;
     /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
     /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
-    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw Authored;
+    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_index_accepts_masked];
     /// Node-local C9 trap a host bound to one parked code-run wait, woken in the commit that
     /// delivers it (fixed layout). Key: id16(run) + id16(wait) + be64(generation).
     CODE_RUN_WAIT_TRAP: VaultMeta b"code_run:wait_trap:v1:" Raw;
