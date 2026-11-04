@@ -363,6 +363,10 @@ async fn generate(
     let no_record_at_arrival = server
         .vault()
         .model_call_keeps_no_record_for(session.as_deref(), principal);
+    // The authenticated caller acted to start this call: the run names it
+    // as initiator (attribution only), so its evidence row carries an
+    // actor its erase can find. Owner-grade callers bind none, as before.
+    let run = run.initiated_by(principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
     // generate_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
@@ -415,6 +419,8 @@ async fn stream(
     let no_record_at_arrival = server
         .vault()
         .model_call_keeps_no_record_for(session.as_deref(), principal);
+    // Same initiator binding as the raw generate path above.
+    let run = run.initiated_by(principal);
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
@@ -439,6 +445,36 @@ async fn stream(
                 }
             };
             let done = matches!(event, LlmStreamEvent::Done { .. });
+            // A completed call's evidence lands before its terminal line
+            // goes out: a client gone at delivery still leaves its record.
+            if done
+                && let LlmStreamEvent::Done {
+                    message,
+                    usage,
+                    finish_reason,
+                    ..
+                } = &event
+            {
+                let response = LlmResponse {
+                    message: message.clone(),
+                    usage: usage.clone(),
+                    finish_reason: finish_reason.clone(),
+                    reply_assertions: Default::default(),
+                    token_scores: None,
+                };
+                let no_record = no_record_at_arrival
+                    || server
+                        .vault()
+                        .model_call_keeps_no_record_for(session.as_deref(), principal);
+                record_raw_response(
+                    server.vault(),
+                    &ladder,
+                    &run,
+                    &record_request,
+                    &response,
+                    no_record,
+                );
+            }
             match serde_json::to_vec(&event) {
                 Ok(mut bytes) => {
                     bytes.push(b'\n');
@@ -452,33 +488,6 @@ async fn stream(
                 }
             }
             if done {
-                if let LlmStreamEvent::Done {
-                    message,
-                    usage,
-                    finish_reason,
-                    ..
-                } = &event
-                {
-                    let response = LlmResponse {
-                        message: message.clone(),
-                        usage: usage.clone(),
-                        finish_reason: finish_reason.clone(),
-                        reply_assertions: Default::default(),
-                        token_scores: None,
-                    };
-                    let no_record = no_record_at_arrival
-                        || server
-                            .vault()
-                            .model_call_keeps_no_record_for(session.as_deref(), principal);
-                    record_raw_response(
-                        server.vault(),
-                        &ladder,
-                        &run,
-                        &record_request,
-                        &response,
-                        no_record,
-                    );
-                }
                 return;
             }
         }
@@ -518,18 +527,29 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
+            // The mesh peer is this call's authenticated principal: its
+            // off-record stretches gate the record at arrival and at Done.
+            // A mesh call binds no session or room, so only the session
+            // rule can fire, and only when the peer holds a live stretch.
+            let no_record_at_arrival = server
+                .vault()
+                .model_call_keeps_no_record_for(None, Some(peer));
             let record_request = request.clone();
             let answered = ladder
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
                 .await;
             if let Ok(response) = &answered {
+                let no_record = no_record_at_arrival
+                    || server
+                        .vault()
+                        .model_call_keeps_no_record_for(None, Some(peer));
                 record_raw_response(
                     server.vault(),
                     &ladder,
                     &run,
                     &record_request,
                     response,
-                    false,
+                    no_record,
                 );
             }
             answered
