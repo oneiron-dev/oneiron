@@ -97,7 +97,7 @@ pub(crate) fn birth_summary_in_txn(
         .map_err(|_| super::invalid("summary derivation encoding"))?;
     // A SUMMARY its writing door already stamped keeps that birth on its
     // document's birth commit (FIX 10929).
-    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &entity)?;
+    let born = crate::store::birth_record::row_birth_in_txn(&vault.store, txn, &entity)?;
     // The birth commit names the actor's stamp token (FIX 10930).
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let doc = EntityDoc::open_initialized_born(
@@ -120,7 +120,7 @@ pub(crate) fn birth_summary_in_txn(
         born.as_ref().map(|birth| &birth.made_by),
     )?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
-    crate::federation::record_scope::restamp_document_pointer(
+    vault.store.scope_stamps.restamp_document_pointer(
         &vault.store,
         txn,
         entity,
@@ -234,7 +234,7 @@ pub(crate) fn open_summary_proposal(
     use crate::side_table::HexId;
 
     let vault = memory.vault();
-    let reader = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+    let reader = memory.read_lane(crate::ports::ClaimReadStatus::Recorded)?;
     let sources = read_refs
         .iter()
         .map(|reference| crate::memory::resolve_entity_ref(vault, reference))
