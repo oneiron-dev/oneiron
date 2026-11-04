@@ -66989,8 +66989,8 @@
      "path": "src/skill_hub/index.rs",
      "purpose": "Skill provenance and capability indexes",
      "surface": {
-      "const": 1,
-      "crate-vis": 15
+      "crate-vis": 15,
+      "re-export": 1
      }
     },
     {
@@ -67939,10 +67939,10 @@
      "path": "src/skill_hub/verdict.rs",
      "purpose": "Skill scan verdict admission",
      "surface": {
-      "const": 1,
       "crate-vis": 9,
       "enum": 4,
       "fn": 6,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -71861,8 +71861,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 73,
-      "mod": 73,
+      "crate-vis": 74,
+      "mod": 74,
       "re-export": 29
      }
     },
@@ -72519,6 +72519,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/result_body_erasure.rs",
+     "purpose": "The typed unavailable a read of erased reply content answers with",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/result_body_pins.rs",
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
@@ -73006,6 +73016,16 @@
      "purpose": "Content-hash lookup rows for stored skills and their maintenance",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_hub_predicates.rs",
+     "purpose": "The claim predicates the skill hub attaches",
+     "surface": {
+      "const": 2
      }
     },
     {
@@ -89682,7 +89702,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 338,
+     "files": 340,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89922,7 +89942,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6227,
+   "source_files": 6229,
    "test_files": 898
   },
   "oneiron-android": {
