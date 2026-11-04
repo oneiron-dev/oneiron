@@ -36560,6 +36560,7 @@
      "kind": "src",
      "notable": [
       "FeedbackTriageNodeAnswer",
+      "FeedbackTriageParkOutcome",
       "FeedbackTriagePin",
       "FeedbackTriageSpan",
       "FeedbackTriageSplit",
@@ -36571,7 +36572,7 @@
      "purpose": "A long revision's durable work graph (FIX 7549)",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
+      "enum": 2,
       "fn": 4,
       "struct": 6
      }
