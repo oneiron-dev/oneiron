@@ -23,6 +23,8 @@
 //! outside its central directory's entries) are read by the scans alone
 //! (FIX 2470): a release door and a masked read of an unmarked file read
 //! them, and the rebuilt copy leaves them out, so no mark is placed there.
+//! An unmarked container whose only key sits in them at its root is served
+//! its copy rebuilt at the root without them (FIX 11553, 12268).
 //!
 //! A container is known by its leading bytes, never by its name, and text
 //! with a container's leading bytes is one only when it parses as one (FIX
@@ -46,11 +48,36 @@ use super::{
     Door, detect, framed_payload, release_hit, scan_payload, secret_scan_error, write_payload_hit,
 };
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
+use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
-/// The bytes all of a file's members may decode to over its whole tree: the
-/// floor of what one walk holds. A rebuilt copy is held to it too.
+/// The least bytes all of a file's members may decode to over its whole
+/// tree: the fixed minimum of what one walk holds, on any machine. A
+/// rebuilt copy is held to the walk's floor too. The floor a walk actually
+/// holds is [`expanded_floor`]: this minimum, raised by the memory the
+/// machine measures free (FIX 7943).
 const MAX_EXPANDED_BYTES: usize = 512 * 1024 * 1024;
+
+/// The free memory a walk leaves untouched: the larger of 256 MiB and a
+/// sixteenth of the machine's memory, as the carrier join leaves it.
+const EXPANDED_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
+
+/// The bytes all of a file's members may decode to over its whole tree on
+/// this machine now (FIX 7943): the fixed minimum, or the memory measured
+/// free past the reserve above when that is more. Raise-only, so a file a
+/// walk serves on the fixed floor is served on every machine; where no
+/// memory reads, the fixed minimum stands. Read at each walk's start, as
+/// the probes are read live.
+fn expanded_floor() -> usize {
+    use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
+    let reserve = machine_memory_bytes().map_or(EXPANDED_RESERVE_FLOOR_BYTES, |total| {
+        (total / 16).max(EXPANDED_RESERVE_FLOOR_BYTES)
+    });
+    let fixed = MAX_EXPANDED_BYTES as u64;
+    let floor =
+        available_memory_bytes().map_or(fixed, |room| room.saturating_sub(reserve).max(fixed));
+    usize::try_from(floor).unwrap_or(usize::MAX)
+}
+
 /// The keys one file may carry; the write door refuses a file with more.
 pub(super) const MAX_FILE_KEYS: usize = 10_000;
 
@@ -138,11 +165,17 @@ pub(crate) fn is_container(bytes: &[u8]) -> bool {
 /// malformed, in a method or filter no reader here decodes, met inside
 /// itself, or past the byte floor. Its members are not read, so no mark can
 /// place a key in it.
-pub(crate) fn is_sealed(bytes: &[u8]) -> bool {
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
+pub(crate) fn is_sealed(bytes: &[u8], digest: Option<&[u8; 32]>) -> bool {
     matches!(
-        walk_members(bytes, &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> {
-            Ok(())
-        }),
+        walk_members(
+            bytes,
+            &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> { Ok(()) },
+            digest,
+        ),
         Err(Stop::Refuse(_))
     )
 }
@@ -163,16 +196,16 @@ pub(super) fn holds_spans(bytes: &[u8]) -> bool {
 /// walk does not read is left to the scan of the file's own bytes: no reader
 /// shows it either.
 fn hidden_member(bytes: &[u8]) -> bool {
-    classify(bytes).is_none() || !is_sealed(bytes)
+    classify(bytes).is_none() || !is_sealed(bytes, None)
 }
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
 /// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
-/// payload, a tar entry, an xz payload (FIX 2471) or a PDF object's
-/// strings, each encoded again around its new length. The stored bytes' own
-/// spans, a binary member's, a PDF stream's (an object stream names its
-/// objects by offset) and a PDF's own bytes (its cross-reference does) keep
-/// the filler's width.
+/// payload, a tar entry, an xz payload (FIX 2471), a PDF content stream
+/// (FIX 11550) or a PDF object's strings, each encoded again around its new
+/// length. The stored bytes' own spans, a binary member's, a PDF object
+/// stream's (it names its objects by byte offset) and a PDF's own bytes
+/// (its cross-reference does) keep the filler's width.
 fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
     matches!(
         path.last(),
@@ -181,6 +214,7 @@ fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
                 | MemberStep::Gzip
                 | MemberStep::Tar { .. }
                 | MemberStep::Xz
+                | MemberStep::PdfStream { .. }
                 | MemberStep::PdfStrings { .. }
         )
     ) && std::str::from_utf8(bytes).is_ok()
@@ -257,6 +291,9 @@ enum ContainerReadMode {
 /// spends none of it. Every walk keeps the containers it is inside.
 struct Budget {
     mode: ContainerReadMode,
+    /// The walk's own byte floor ([`expanded_floor`] at its start): what
+    /// `expanded` counts down from, and what a rebuilt copy is held to.
+    floor: usize,
     expanded: usize,
     /// Whether the walk also reads the bytes no reader shows (FIX 2470): a
     /// PDF's superseded revisions and a ZIP's bytes outside its central
@@ -266,6 +303,10 @@ struct Budget {
     /// The BLAKE3 of each container the walk is inside, the file first: this
     /// walk's own, never kept or logged.
     ancestors: Vec<[u8; 32]>,
+    /// The walk's root file's checked BLAKE3, taken for the root
+    /// container's entry instead of hashing the file again (FIX 12270).
+    /// `None` hashes as before.
+    root_digest: Option<[u8; 32]>,
 }
 
 impl Budget {
@@ -274,17 +315,27 @@ impl Budget {
     }
 
     fn of(mode: ContainerReadMode) -> Self {
+        let floor = expanded_floor();
         Self {
             mode,
-            expanded: MAX_EXPANDED_BYTES,
+            floor,
+            expanded: floor,
             hidden: false,
             ancestors: Vec::new(),
+            root_digest: None,
         }
     }
 
     /// This budget, its walk reading the bytes no reader shows too.
     fn reading_hidden(mut self) -> Self {
         self.hidden = true;
+        self
+    }
+
+    /// This budget, its walk taking the root container's entry from
+    /// `digest`, the BLAKE3 the caller checked the file against (FIX 12270).
+    fn with_root_digest(mut self, digest: Option<&[u8; 32]>) -> Self {
+        self.root_digest = digest.copied();
         self
     }
 
@@ -311,7 +362,7 @@ impl Budget {
 
     /// Whether a rebuilt copy of `len` bytes is past the byte floor.
     fn copy_over(&self, len: usize) -> bool {
-        self.capped() && len > MAX_EXPANDED_BYTES
+        self.capped() && len > self.floor
     }
 
     /// Charges `len` decoded bytes.
@@ -328,7 +379,19 @@ impl Budget {
     /// is left once its members are read, so a container met again beside
     /// itself is read again.
     fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
-        let digest = *blake3::hash(bytes).as_bytes();
+        // The walk enters its root file first, so the first entry takes
+        // the caller's checked digest instead of hashing the file again;
+        // members hash as before (FIX 12270).
+        let digest = match self.root_digest.take() {
+            Some(digest) => {
+                debug_assert!(
+                    blake3::hash(bytes).as_bytes() == &digest,
+                    "a caller's root digest names other bytes"
+                );
+                digest
+            }
+            None => *blake3::hash(bytes).as_bytes(),
+        };
         if self.ancestors.contains(&digest) {
             return Err(Stop::Refuse(REASON_ARCHIVE_CYCLE));
         }
@@ -346,20 +409,32 @@ impl Budget {
 /// each container's order: a ZIP's entries, a gzip file's payload, a PDF's
 /// streams and each object's text strings. A member that is itself a
 /// container is handed whole, then walked. Plain bytes hold no members.
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
 pub(super) fn walk_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    digest: Option<&[u8; 32]>,
 ) -> Walked<()> {
-    retained_iterative::walk(bytes, &mut Budget::new(), visit)
+    retained_iterative::walk(bytes, &mut Budget::new().with_root_digest(digest), visit)
 }
 
 /// [`walk_members`], and the bytes no reader shows beside each container's
 /// members (FIX 2470), each handed as a member too: what a scan reads.
+/// `digest` is the root file's checked BLAKE3, taken for the root's entry
+/// (FIX 12270); `None` hashes as before.
 fn walk_members_with_hidden(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    digest: Option<&[u8; 32]>,
 ) -> Walked<()> {
-    retained_iterative::walk(bytes, &mut Budget::new().reading_hidden(), visit)
+    retained_iterative::walk(
+        bytes,
+        &mut Budget::new().reading_hidden().with_root_digest(digest),
+        visit,
+    )
 }
 
 /// [`walk_members`] over a retained repository blob (FIX 7608, rule 5):
@@ -382,7 +457,7 @@ pub(super) fn scan_readable_members(bytes: &[u8]) -> Result<()> {
         let _secrets_nulled = scan_payload(member)?;
         Ok(())
     };
-    match walk_members(bytes, &mut scan) {
+    match walk_members(bytes, &mut scan, None) {
         Ok(()) | Err(Stop::Refuse(_)) => Ok(()),
         Err(Stop::Fail(error)) => Err(error),
     }
@@ -390,11 +465,17 @@ pub(super) fn scan_readable_members(bytes: &[u8]) -> Result<()> {
 
 /// `rules` over each member under `bytes` and each run of bytes no reader
 /// shows: the first hit's reason, or why the walk read no further.
-fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option<&'static str> {
+/// `digest` is the root file's checked BLAKE3, taken for the root's entry
+/// (FIX 12270); `None` hashes as before.
+fn members_hit(
+    bytes: &[u8],
+    rules: fn(&[u8]) -> Option<&'static str>,
+    digest: Option<&[u8; 32]>,
+) -> Option<&'static str> {
     let mut scan = |_: &[MemberStep], member: &[u8]| -> Walked<()> {
         rules(member).map_or(Ok(()), |reason| Err(Stop::Refuse(reason)))
     };
-    match walk_members_with_hidden(bytes, &mut scan) {
+    match walk_members_with_hidden(bytes, &mut scan, digest) {
         Ok(()) => None,
         Err(Stop::Refuse(reason)) => Some(reason),
         Err(Stop::Fail(_)) => Some(REASON_UNREADABLE),
@@ -404,7 +485,7 @@ fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option
 /// The release doors' rules over each member under `bytes` and the bytes no
 /// reader shows.
 pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, release_hit)
+    members_hit(bytes, release_hit, None)
 }
 
 /// [`super::scan_file_content`] over text, which is valid UTF-8. Text with
@@ -424,8 +505,12 @@ pub(crate) fn scan_text_content(text: &str) -> Option<&'static str> {
 /// The write door's rules over each member under `bytes` and the bytes no
 /// reader shows: what a masked reader's copy, and an unmarked container, is
 /// read by before it is served (FIX 2470, 2480).
-pub(super) fn write_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, write_payload_hit)
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
+pub(super) fn write_members_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    members_hit(bytes, write_payload_hit, digest)
 }
 
 /// `bytes` with each key `places` names overwritten: the spans at a place
@@ -441,12 +526,74 @@ pub(crate) fn masked_copy(bytes: &[u8], places: &KeyPlaces) -> Result<Vec<u8>> {
 /// 2475).
 ///
 /// [`SecretError::MaskedCopyWithheld`]: crate::error::SecretError::MaskedCopyWithheld
+///
+/// `digest` is the BLAKE3 of `bytes` when the caller holds one it checked
+/// against these exact bytes: the root's entry takes it instead of hashing
+/// the file again (FIX 12270). `None` hashes as before.
 pub(crate) fn served_masked_copy(
     bytes: &[u8],
     places: &KeyPlaces,
     handles: &PlaceHandles,
+    digest: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>> {
-    masked_copy_in(bytes, places, Some(handles), Budget::new()).map_err(withheld)
+    masked_copy_in(
+        bytes,
+        places,
+        Some(handles),
+        Budget::new().with_root_digest(digest),
+    )
+    .map_err(withheld)
+}
+
+/// The copy a serving door's masked reader may be served of `bytes`, a
+/// container no mark covers whose write-door scan hits (FIX 11553, 12268,
+/// 12279): the whole tree encoded again by its readers, every container
+/// member rebuilt the same way, so the bytes no reader shows are left out
+/// at every level, each member's decoding against the one budget `digest`
+/// seeds at the root's entry (FIX 12270). `None` when the walk reads
+/// `bytes` as no container, or the rebuild stops anywhere in the tree:
+/// the file stays refused as its scan read it, and no partial copy is
+/// served. The copy is served only once the write door's scan reads it
+/// clean.
+pub(crate) fn tree_rebuilt_copy(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<Vec<u8>> {
+    classify(bytes)?;
+    retained_iterative::rebuild_tree(bytes, &mut Budget::new().with_root_digest(digest)).ok()
+}
+
+/// The first write-rule hit in what a reader shows of `bytes` (FIX 12280):
+/// a serving pre-walk that refuses a live-content key before the tree
+/// rebuild decodes, encodes and rescans to the same refusal. Only the
+/// refusal's timing may change: a hit under a PDF object stream never
+/// qualifies, as a rebuilt copy writes its objects whole and the rescan
+/// never hands those bytes as a member; a walk that stops (a stop this
+/// walk's caller has already read past once, at its seal read) records no
+/// hit and falls through to the rebuild, which keeps the raw root-byte
+/// hits this walk cannot see on their own path. A member that is itself a
+/// container never qualifies either: the tree rebuild re-encodes its whole
+/// bytes (its own comment and framing dropped), so only its members,
+/// visited below it, can carry a qualifying hit; a leaf member's bytes are
+/// re-handed byte for byte by the rebuild's readers, which is what makes
+/// its hit the rescan's hit too.
+pub(crate) fn live_content_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    let mut hit = None;
+    let mut scan = |path: &[MemberStep], member: &[u8]| -> Walked<()> {
+        if classify(member).is_some()
+            || path
+                .iter()
+                .any(|step| matches!(step, MemberStep::PdfObjectStream { .. }))
+        {
+            return Ok(());
+        }
+        match write_payload_hit(member) {
+            Some(reason) => {
+                hit = Some(reason);
+                Err(Stop::Refuse(reason))
+            }
+            None => Ok(()),
+        }
+    };
+    let _ = walk_members(bytes, &mut scan, digest);
+    hit
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read

@@ -131,48 +131,6 @@ impl AskRole {
     }
 }
 
-/// How far up a chain a role sits: an ask climbs from its role toward the owners.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RoleRank {
-    Responsible,
-    Board,
-    Owner,
-}
-
-/// What an answer to an ask authorises. An e-signature or a person-authorised payment
-/// resolves only to a natural person, whoever else holds the role.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AskAct {
-    #[default]
-    Judgment,
-    ESignature,
-    Payment,
-}
-
-impl AskAct {
-    /// Whether only a natural person may answer.
-    #[must_use]
-    pub fn person_only(self) -> bool {
-        matches!(self, Self::ESignature | Self::Payment)
-    }
-}
-
 /// Who a call's ask goes to: bound by the caller from trusted context, never from
 /// model-authored state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -205,14 +163,6 @@ impl AskTo {
     }
 }
 
-/// Whether a role holder is a natural person or a bound agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HolderKind {
-    Person,
-    Agent,
-}
-
 /// A live actor holding a role.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -239,3 +189,5 @@ pub trait AskRoleResolver: Send + Sync {
     /// to the ceiling has one: the ask stays unresolved, never with wider authority.
     fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> VaultResult<Option<ResolvedRole>>;
 }
+
+pub use crate::model_decision::{AskAct, HolderKind, RoleRank};

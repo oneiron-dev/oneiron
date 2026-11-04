@@ -17,9 +17,9 @@ use oneiron::{
 };
 use tokio::time::Instant;
 
-use super::super::media::{MediaAnswer, RungVoices};
+use super::super::media::{MediaAnswer, MediaDispatchRelease, RungVoices};
 use super::super::walk::Walk;
-use super::{Call, OfferLadder};
+use super::{Call, ModelCallBinding, OfferLadder};
 
 /// How long one call may take.
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +128,23 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<(LlmResponse, ModelId)> {
+        self.generate_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, binding)| (response, binding.rung.model))
+    }
+
+    /// [`Self::generate_served_by`], with the full binding of the rung that
+    /// answered for the model-call record (FIX 12743): the exact answering
+    /// rung's model, locality, prompt and route pin, the owner's fallback
+    /// included.
+    pub(crate) async fn generate_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.generate_from(run, request, selector, may_send, deadline, true, None)
             .await
     }
@@ -142,6 +159,19 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<(LlmResponse, ModelId)> {
         self.generate_served_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
+    /// [`Self::generate_recorded_by`], asking `may_send` as
+    /// [`Self::generate_while`] does, on the vault's longest wait (FIX 12743).
+    pub(crate) async fn generate_recorded_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_recorded_by(run, request, selector, may_send, self.host_wait())
             .await
     }
 
@@ -184,7 +214,20 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices)
+        self.media_from(run, request, selector, deadline, true, voices, None)
+            .await
+    }
+
+    pub(in crate::models) async fn media_by_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+        voices: Option<&RungVoices>,
+        deadline: CallDeadline,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaAnswer> {
+        self.media_from(run, request, selector, deadline, true, voices, release)
             .await
     }
 }

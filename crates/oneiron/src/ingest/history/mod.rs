@@ -30,6 +30,7 @@ mod tree;
 mod tests;
 
 pub use land::HistoryImportReport;
+pub(crate) use ledger::erase_message_in_txn;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
 pub use review::history_import_review_id;
 pub(crate) use review::imported_evidence_in_txn;
@@ -296,3 +297,7 @@ impl HistorySkips {
         self.unreadable += unreadable;
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::ledger::ingest_history_ledger_accepts_masked;

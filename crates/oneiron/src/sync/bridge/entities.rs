@@ -199,7 +199,8 @@ pub(super) fn materialize_entities_with_changes(
                     // A peer's consult or settlement reaches this
                     // vault's board subscribers only after commit.
                     Some(crate::registry::ENTITY_TYPE_TASK) => {
-                        crate::batch::queue_task_updates(vault, wtxn, [id]);
+                        let announce = crate::context_board::task_for_announcement(blob, id);
+                        crate::batch::queue_task_updates(vault, wtxn, [announce]);
                     }
                     _ => {}
                 }

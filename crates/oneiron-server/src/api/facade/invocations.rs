@@ -80,6 +80,22 @@ pub(super) async fn facade_invocation_claim(
                 return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
                     .into_response();
             }
+            // An account key carries no slip, token id or attested owner
+            // for the check above to judge, so it always reads live there.
+            // Judge it again after the wait instead (review-4320 P1): a
+            // live cached verdict answers from memory, while a cache miss
+            // (lease race, eviction, full cache) re-presents the waiter's
+            // own bearer to the verifier. Only revoked or expired keys,
+            // or an unreachable control plane, refuse here.
+            if auth.verified_slip().is_none()
+                && auth.jti().is_none()
+                && auth.managed_owner().is_none()
+                && auth.instrument().is_some()
+                && !auth.account_key_still_live(&server, &parts.headers).await
+            {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
             let verb = parts.uri.path().trim_start_matches('/');
             facade_replay(server.vault(), &auth, verb, outcome)
         }
@@ -341,11 +357,10 @@ pub(crate) async fn claim_door_invocation(
                     crate::invocation_claims::InvocationClaimLookup::Interrupted {
                         committed_writes,
                     } if waited => {
-                        return if committed_writes == 0 {
-                            DoorClaim::InFlight
-                        } else {
-                            DoorClaim::ReplyNotKept { committed_writes }
-                        };
+                        // No live runner exists here, so even zero counted
+                        // writes means the reply was not kept, not InFlight
+                        // for a same-id retry that cannot succeed (FIX 12350).
+                        return DoorClaim::ReplyNotKept { committed_writes };
                     }
                     crate::invocation_claims::InvocationClaimLookup::Interrupted { .. } => {
                         waited = true;

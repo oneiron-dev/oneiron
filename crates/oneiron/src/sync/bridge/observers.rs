@@ -31,10 +31,7 @@ thread_local! {
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
 
-/// Origin for a local deletion tombstone whose durable LMDB carrier is
-/// authored explicitly by the deletion TXN1, not Observer A. Observer B also
-/// skips it, preserving the tombstone-first → local-purge ordering.
-pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
+pub(crate) use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
 
 struct DeletionTombstoneObserverASuppression;
 
@@ -396,37 +393,7 @@ pub fn local_deletion_is_materialized(vault: &Vault, id: &EntityId) -> Result<bo
     vault.local_hard_delete_marker_exists_in_txn(&txn, id)
 }
 
-/// Post-commit notification consumer. Implementations must not write to the
-/// observed Loro document or re-enter materialization from this callback.
-pub trait LiveQueryTee: Send + Sync {
-    /// Called once per committed container batch, never for an aborted batch.
-    fn on_materialized(
-        &self,
-        container_path: &str,
-        diff: &MaterializedDiffSummary,
-        by: &OriginMark,
-    );
-}
-
-/// Coarse read dependencies invalidated by one committed container batch.
-#[derive(Clone, Debug)]
-pub struct MaterializedDiffSummary {
-    /// Changed paths (`w:<window>/<container>/<key>`), not entity bodies.
-    pub containers: Vec<String>,
-    /// Total changed key and binary-value bytes, for accounting only.
-    pub bytes: usize,
-    /// Revision identities captured at the transaction or bridge-commit door.
-    pub revision_events: Vec<super::RevisionEvent>,
-}
-
-/// Transport correlation only; never actor authority.
-#[derive(Clone, Debug, Default)]
-pub struct OriginMark {
-    /// Parsed only from the server's existing `conn:<id>` import marker.
-    pub conn_id: Option<u32>,
-    /// Exact Loro origin, when present.
-    pub origin: Option<String>,
-}
+pub use crate::store::materialization_event::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 
 /// Registers Observer B on a window Doc: materializes CRDT changes to LMDB.
 ///
@@ -601,6 +568,26 @@ pub(crate) fn register_message_docs_observer(
         window_key,
         crate::sync::message_docs::materialize_message_docs_from_delta,
         ("message_docs", None),
+    )
+}
+
+/// Observer B for the base window's repo manifest map (FIX 6870): each
+/// manifest an import brings is merged here.
+pub(crate) fn register_repo_manifests_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let repo_manifests_map = doc.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP);
+    subscribe_map_observer(
+        doc,
+        &repo_manifests_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::repo_manifests::materialize_repo_manifests_from_delta,
+        ("repo_manifests", None),
     )
 }
 

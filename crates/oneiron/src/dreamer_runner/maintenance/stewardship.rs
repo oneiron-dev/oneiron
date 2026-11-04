@@ -47,6 +47,12 @@ pub const STEWARDSHIP_FACET: &str = "dreamer.stewardship";
 pub const STEWARDSHIP_PREDICATE: &str = "dreamer.stewardship.reach_out";
 const RULES: SideTable<(), StewardshipRules, LegacyJson> =
     SideTable::new(&side_table::DREAMER_STEWARDSHIP_RULES);
+/// Whether a masked copy of a `DREAMER_STEWARDSHIP_RULES` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_stewardship_rules_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StewardshipRules, LegacyJson>(bytes)
+}
+
 /// Reach-outs a host draft was scheduled for, with when.
 const DRAFTED: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_STEWARDSHIP_DRAFTED);
@@ -557,7 +563,7 @@ fn last_contact(
                 continue;
             }
             let body = crate::claim::decode_claim_body(bytes, true)?;
-            if body.predicate != crate::comm::PREDICATE_COMM_LAST_TOUCH {
+            if body.predicate != crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH {
                 continue;
             }
             // A head that does not read as a contact record is none.

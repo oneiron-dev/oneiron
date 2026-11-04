@@ -25,6 +25,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_SUMMARY_RESULT, CONTENT),
     // An erased credential's fence stands with the custody it closes (KS-6 part 2).
     (&t::SECRET_CUSTODY_ERASE, LIVE),
+    // An export secret supplement's sealed copy stands as a custody input does (FIX 11843).
+    (&t::SECRET_CUSTODY_EXPORT_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
@@ -38,6 +40,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
+    (&t::SECRET_HANDLE_LABEL, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
@@ -357,6 +360,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // The owner's digest settings and their change history are his content,
     // as the digest schedule is (FIX 5495).
     (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
+    (&t::WEAVE_DIGEST_CHANNEL_OVERRIDE, CONTENT),
     (&t::WEAVE_DIGEST_SETTING_CHANGE, CONTENT),
     (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),

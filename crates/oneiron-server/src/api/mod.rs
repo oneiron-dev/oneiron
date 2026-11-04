@@ -98,16 +98,13 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
-pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
-pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
-#[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
-mod off_record_rooms;
+pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
 // FIX 922: the kit door to the sealed cloud bundle.
@@ -152,6 +149,7 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the

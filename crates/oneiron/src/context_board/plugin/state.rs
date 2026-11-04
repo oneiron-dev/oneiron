@@ -30,6 +30,11 @@ const BLOCK_PAGE_KIND: &str = "context_board.plugin_blocks";
 /// admitted section names sharing a prefix can never collide.
 const PLUGIN_BLOCK: SideTable<BlockKey, BoardBlockRecord, LegacyJson> =
     SideTable::new(&side_table::CONTEXT_BOARD_PLUGIN_BLOCK);
+/// Whether a masked copy of a `CONTEXT_BOARD_PLUGIN_BLOCK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn context_board_plugin_block_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BoardBlockRecord, LegacyJson>(bytes)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BlockKey {
@@ -241,7 +246,9 @@ fn require_live_section(
     if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
         return Err(refused_block());
     }
-    let skill = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let skill = crate::write_envelope::skill_record::decode_skill_record(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if !skill.lifecycle_status.loads_as_canon()
         || provenance_matches_record(manifest.provenance(), &skill).is_err()
     {

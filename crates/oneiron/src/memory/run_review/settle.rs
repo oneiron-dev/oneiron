@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::claim::ClaimApprovalStatus;
+use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::identity_topology::{IdentityOpWrite, ProposalRuling, TopologySeal};
-use crate::run_tree::GateConsentBundleAction;
 
 mod owner;

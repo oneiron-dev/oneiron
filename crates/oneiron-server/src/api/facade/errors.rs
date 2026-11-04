@@ -251,7 +251,7 @@ impl FacadeApiError {
     /// facade refusal, or carries a member this envelope does not, which
     /// then goes again as it was.
     pub(super) fn replayed(status: StatusCode, body: &serde_json::Value) -> Option<Self> {
-        if status.is_success()
+        if (status.is_success() && status != StatusCode::ACCEPTED)
             || !body.as_object()?.keys().all(|key| key == "error" || key == "narrowing")
         {
             return None;

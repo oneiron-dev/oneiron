@@ -6,6 +6,7 @@ mod session_write;
 use serde_json::Value;
 
 use crate::EntityId;
+use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{
@@ -21,7 +22,8 @@ use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
-use crate::task_verb::sdk::{AgentVerb, ConnectorCallReply, SecretUseAnswer};
+use crate::task_verb::sdk::AgentVerb;
+use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -237,6 +239,8 @@ impl HostSelfDispatcher<'_> {
             true,
             site.run_id,
         )?;
+        // The replay row is persisted; the door releases what the answer held (FIX 10633).
+        door.answer_recorded();
         Ok(outcome)
     }
 
@@ -316,7 +320,7 @@ impl HostSelfDispatcher<'_> {
     ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
         match answer {
             Ok(mut answer) if verb == AgentVerb::RevealWait => {
-                let kept = crate::task_verb::sdk::kept_reveal_answer(&answer.output);
+                let kept = crate::code_run::kept_reveal_answer(&answer.output);
                 if kept != answer.output {
                     let output = std::mem::replace(&mut answer.output, kept);
                     *self.hook_view.borrow_mut() = Some(serde_json::json!({ "output": output }));
@@ -344,7 +348,7 @@ impl HostSelfDispatcher<'_> {
         let (true, Some(door)) = (wait.verb == AgentVerb::RevealWait, &self.agent_verbs) else {
             return Ok(None);
         };
-        let Some(lease) = crate::task_verb::sdk::kept_reveal_lease(&answer.output) else {
+        let Some(lease) = crate::code_run::kept_reveal_lease(&answer.output) else {
             return Ok(None);
         };
         let origin = HostWriteOrigin::new(self.agent_verb_envelope(wait.verb, None)?)
@@ -784,4 +788,79 @@ pub(crate) fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
             .and_then(|(_, value)| value.as_str())
     };
     Some((field("verb")?, field("input")?))
+}
+
+/// How an operation's send went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretUseStatus {
+    /// The provider answered; `result` is its answer.
+    Answered,
+    /// The operation failed; `failure` says why.
+    Failed,
+    /// It ran, but its result could not be cleared of the value, so none
+    /// comes back.
+    Withheld,
+}
+
+/// `self.use`'s answer. It never holds the value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseAnswer {
+    pub status: SecretUseStatus,
+    /// The operation's answer, when it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    /// Why it failed, when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    pub receipt: SecretUseRecord,
+}
+
+/// One use's receipt: what was used, by what, and how it went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretUseRecord {
+    pub handle: String,
+    /// The secret's rotation generation when it was used.
+    pub generation: u32,
+    /// The custody record whose value the send actually presented, as its
+    /// door released it (FIX 8052); distinct from the admitted handle.
+    /// `None` when nothing was sent, or nothing said what was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_custody: Option<EntityId>,
+    /// The generation the send actually presented; distinct from the
+    /// admitted generation. `None` when nothing said what was presented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_generation: Option<u32>,
+    /// The effector the binding names, such as `connector:slack`.
+    pub effector: String,
+    pub operation: String,
+    /// The Gate record that keeps it, `gate:<hex>`.
+    pub decision: String,
+    pub used_at: u64,
+}
+
+/// The answer of a `reveal.wait` as a run's record keeps it: without the
+/// value. The guest reads the full answer; its step row and any receipt keep
+/// this one.
+#[must_use]
+pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
+    let mut kept = output.clone();
+    if let Some(fields) = kept.as_object_mut() {
+        fields.remove("value");
+        fields.remove("value_base64");
+    }
+    kept
+}
+
+/// The lease a kept `granted` answer of `reveal.wait` names: the lease a
+/// replay of its step reads the value again under (FIX 2360). `None` for any
+/// other answer.
+pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
+    if output.get("decision")?.as_str()? != "granted" {
+        return None;
+    }
+    let lease = output.get("receipt")?.get("lease")?.as_str()?;
+    EntityId::from_hex(lease).ok()
 }

@@ -12,7 +12,7 @@ use crate::claim::{ClaimSource, claim_evidence_taint};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 
@@ -24,57 +24,9 @@ pub(crate) use verified_citations::{decode_verified_citations, decode_verified_l
 // dreamer_promotion (ONE-1290) re-exports it.
 // ---------------------------------------------------------------------------
 
-/// One typed hop of a consolidation provenance chain (ONE-1710).
-///
-/// The kinds are ADDRESSING roles, not trust classes: a chain says which
-/// stored entities a candidate descends from, and `evidence_chain_source`
-/// separately folds those into the D10 meet. `EntityId` carries no
-/// `Serialize`/`Deserialize` (entity_id.rs), so the chain rides the crate's
-/// hand-rolled rmpv codec below rather than serde derives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConsolidationProvenanceHopKind {
-    /// The stored peer-answer TURN.
-    AnswerTurn,
-    /// The synced consult TASK that elicited the answer.
-    ConsultTask,
-    /// The answering peer CONNECTION actor (never the vendor/harness label).
-    PeerActor,
-    /// An optional durable result artifact carried by the answer.
-    ResultArtifact,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationProvenanceHopKind;
 
-impl ConsolidationProvenanceHopKind {
-    /// The pinned on-disk string for this hop kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AnswerTurn => "answer_turn",
-            Self::ConsultTask => "consult_task",
-            Self::PeerActor => "peer_actor",
-            Self::ResultArtifact => "result_artifact",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "answer_turn" => Some(Self::AnswerTurn),
-            "consult_task" => Some(Self::ConsultTask),
-            "peer_actor" => Some(Self::PeerActor),
-            "result_artifact" => Some(Self::ResultArtifact),
-            _ => None,
-        }
-    }
-}
-
-/// One hop: what it is, which entity it names, and (optionally) the actor
-/// behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConsolidationProvenanceHop {
-    pub kind: ConsolidationProvenanceHopKind,
-    pub entity_ref: EntityId,
-    pub actor_ref: Option<EntityId>,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationProvenanceHop;
 
 /// The refs a peer answer binds together, as the caller knows them BEFORE
 /// [`peer_answer_provenance_chain`] validates and orders them.
@@ -133,7 +85,7 @@ impl KeptDecision {
     /// The answer the Dreamer acts on: the holder's when the decision went up
     /// the role chain, the ladder's otherwise. None while the ask waits.
     #[must_use]
-    pub fn answer(&self) -> Option<&crate::llm::decision::DecisionAnswer> {
+    pub fn answer(&self) -> Option<&crate::model_decision::DecisionAnswer> {
         match &self.ask {
             Some(ask) => ask.answer.as_ref().map(|answer| &answer.answer),
             None => Some(&self.decision.answer),
@@ -173,15 +125,7 @@ pub(crate) fn kept_decisions_value(decisions: &[KeptDecision]) -> Result<Value> 
         .map_err(|_| invalid_consolidation("kept decisions do not decode"))
 }
 
-/// The structured evidence payload a promoted consolidation claim stores:
-/// the post-admission refs, the typed chain, and the computed meet — all
-/// machine-readable after promotion, never a display string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsolidationEvidenceEnvelope {
-    pub refs: Vec<EntityId>,
-    pub chain: Vec<ConsolidationProvenanceHop>,
-    pub source_meet: ClaimSource,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;
 
 const EVIDENCE_ENVELOPE_REFS_KEY: &str = "refs";
 const EVIDENCE_ENVELOPE_CHAIN_KEY: &str = "chain";
@@ -439,7 +383,7 @@ pub fn peer_answer_provenance_chain(
     let (disposition, result_ref) =
         crate::task_verb::settled_task_result_binding(vault, lineage.consult_task_ref)?
             .ok_or_else(|| invalid_consolidation("consult task carries no settled result"))?;
-    if disposition != crate::task_verb::TaskTerminalDisposition::Completed {
+    if disposition != crate::failure_ladder::task_terminal::TaskTerminalDisposition::Completed {
         return Err(invalid_consolidation("consult task did not complete"));
     }
     if result_ref != lineage.answer_turn_ref && Some(result_ref) != lineage.result_artifact_ref {
@@ -502,6 +446,29 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
         ClaimSource::Generated,
         evidence_source_from_claim(&body),
     ))
+}
+
+/// The one-row trust answer with NOTE import lookup: a folder-imported NOTE
+/// carries its import MACHINE's source; any other row falls back to
+/// [`evidence_source_from_row`].
+pub(crate) fn evidence_source_from_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_type: u8,
+    data: &[u8],
+) -> Result<ClaimSource> {
+    if entity_type == ENTITY_TYPE_NOTE {
+        if let Ok(body) = crate::note::decode_note_body_in_txn(&vault.store, txn, data) {
+            if let Some(author) = body.author_ref.id() {
+                if let Some(source) =
+                    crate::note::imported_note_source_in_txn(&vault.store, txn, &author)?
+                {
+                    return Ok(source);
+                }
+            }
+        }
+    }
+    evidence_source_from_row(entity_type, data)
 }
 
 pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {

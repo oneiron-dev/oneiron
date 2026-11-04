@@ -11,8 +11,8 @@ use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::lens::RecordRef;
-use crate::provenance::made_by::MadeBy;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::write_envelope::provenance::made_by::MadeBy;
 
 use super::born_from::BornFromSource;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -215,8 +215,9 @@ impl Vault {
 
     /// Exports one version as a file: `version` or the head when `None`. The
     /// record is bound to its ledger claim and the bytes to its content hash.
-    /// A DOCX copy shows its default author (FIX 4513); `content_hash` still
-    /// names the stored version.
+    /// A DOCX copy shows its default author (FIX 4513), so `content_hash`
+    /// names the copy, not the stored version (FIX 5491): a reader checking
+    /// the bytes it got against it finds them.
     pub fn export_blob_artifact(
         &self,
         id: &EntityId,
@@ -226,6 +227,7 @@ impl Vault {
             return Ok(None);
         };
         file.bytes = self.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
+        file.content_hash = *blake3::hash(&file.bytes).as_bytes();
         Ok(Some(file))
     }
 
@@ -286,6 +288,9 @@ impl Vault {
 
     /// Keeps the travel receipt `vault.artifacts.export` keeps (OF-491) for
     /// a copy a download door served: the copy, its digest and who took it.
+    /// The digest names the copy as served (FIX 5491): a sighted copy's
+    /// bytes may have been masked or had their DOCX author resolved after
+    /// the stored version's hash was taken.
     /// No born-with text leaves a download, so it is never gated on this.
     ///
     /// # Errors
@@ -298,9 +303,9 @@ impl Vault {
         self.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,
-            hash_hex(&file.content_hash),
+            hash_hex(blake3::hash(&file.bytes).as_bytes()),
             by,
-            &crate::share_travel::BornWith::new(),
+            &oneiron_authority::share_travel::BornWith::new(),
         )
     }
 }

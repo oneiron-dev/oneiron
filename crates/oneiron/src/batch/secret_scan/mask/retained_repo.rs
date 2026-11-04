@@ -39,15 +39,17 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
 use crate::origin::lfs::find_custody_credential;
 use crate::ports::ShortIdStoreRead;
-use crate::repo_mutation::{
+use crate::secret_custody::masked_file_in_txn;
+use crate::secret_custody::{KnownValues, MaskedFile};
+use crate::secret_record::CustodyWrite;
+use crate::store::Store;
+use crate::store::repo_environment::{
     REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
 };
-use crate::secret_custody::{
-    CustodyWrite, KeySpan, KnownValues, MaskedFile, MemberStep, masked_file_in_txn,
-};
-use crate::store::Store;
 
 pub(crate) mod read;
 
@@ -531,6 +533,12 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
+        // FIX 11550: a PDF object stream's decoded bytes.
+        MemberStep::PdfObjectStream { object, generation } => {
+            out.push(6);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
     }
 }
 
@@ -583,6 +591,11 @@ impl<'b> Spooled<'b> {
                 generation: self.u16()?,
             },
             3 => MemberStep::PdfStrings {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            // FIX 11550: a PDF object stream's decoded bytes.
+            6 => MemberStep::PdfObjectStream {
                 object: self.u32()?,
                 generation: self.u16()?,
             },

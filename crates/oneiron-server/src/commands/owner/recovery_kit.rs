@@ -105,23 +105,37 @@ fn read_passphrase(secret_file: Option<&Path>) -> anyhow::Result<KitPassphrase> 
     Ok(KitPassphrase::new(text)?)
 }
 
-/// The pieces in `files`, and the passphrase: from `secret_file` when one is
-/// named, else from stdin when only one piece is given, counting this
-/// machine's own when it keeps one (`kept`, FIX 2063).
+/// The pieces in `files`, with no passphrase read: an already-open vault's
+/// caller first learns their kind and whether this install keeps one.
+fn read_kit_pieces(files: &[PathBuf]) -> anyhow::Result<Vec<KitPiece>> {
+    files
+        .iter()
+        .map(|file| read_piece(file))
+        .collect::<anyhow::Result<Vec<_>>>()
+}
+
+/// The passphrase from `secret_file` when one is named, else from stdin when
+/// only one piece is available, counting this machine's own (`kept`, FIX 2063).
+fn read_kit_passphrase(
+    secret_file: Option<&Path>,
+    pieces: usize,
+    kept: bool,
+) -> anyhow::Result<Option<KitPassphrase>> {
+    if secret_file.is_some() || pieces + usize::from(kept) == 1 {
+        Ok(Some(read_passphrase(secret_file)?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// The pieces in `files`, and the passphrase the available piece count needs.
 fn read_kit(
     files: &[PathBuf],
     secret_file: Option<&Path>,
     kept: bool,
 ) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
-    let pieces = files
-        .iter()
-        .map(|file| read_piece(file))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let passphrase = if secret_file.is_some() || pieces.len() + usize::from(kept) == 1 {
-        Some(read_passphrase(secret_file)?)
-    } else {
-        None
-    };
+    let pieces = read_kit_pieces(files)?;
+    let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
     Ok((pieces, passphrase))
 }
 
@@ -209,6 +223,8 @@ struct Confirmed {
     /// The vault key's `world-kit` escrow wrap to this kit's root; none when
     /// the vault has no key yet.
     vault_key_wrap: Option<WrapView>,
+    /// The root committed but the sealed page-seal mirror still needs repair.
+    mirror_pending: bool,
 }
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
@@ -219,6 +235,10 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
         "the kit passphrase",
         "--secret-file",
     )?;
+    anyhow::ensure!(
+        !args.kit.pieces.is_empty(),
+        "confirm reads the kit's pieces: --piece"
+    );
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let carry = args
         .carry
@@ -251,6 +271,7 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
             .collect(),
         replaced: confirmed.replaced.iter().copied().map(kit_id).collect(),
         vault_key_wrap: confirmed.escrow.map(|info| WrapView::of(&vault_id, info)),
+        mirror_pending: confirmed.mirror_pending,
     })
 }
 
@@ -393,6 +414,8 @@ fn restore_from_bundle(
         }
         None => None,
     };
+    // A sealed-bundle/home restore rebuilds before the vault opens, on what
+    // may be a new install: no kept piece joins here (FIX 11973).
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let kit = pieces
@@ -618,6 +641,9 @@ pub(super) fn kit_unlock_with(
         !files.is_empty(),
         "--unlock kit reads the kit's pieces: --piece"
     );
+    // A world kit opened before the vault exists (a fresh restore or sealed
+    // pages) rebuilds from the pieces given alone (FIX 11973). An already-open
+    // plain vault uses kit_unlock_with_vault so its kept piece can join.
     let (pieces, passphrase) = read_kit(files, secret_file, false)?;
     if pieces
         .first()
@@ -642,5 +668,41 @@ pub(super) fn kit_unlock_with(
         label: WORLD_KIT_ESCROW.to_owned(),
         secret: seed.recovery_secret()?,
         kit_seed: Some(seed),
+    })
+}
+
+/// A kit unlock for a plain vault already open: its own kept piece counts
+/// toward the passphrase choice, and a world kit is carried to that vault so
+/// the engine can join its kept recovery-root piece (FIX 11974, FIX 12055).
+/// Pre-open callers use [`kit_unlock_with`] instead.
+pub(super) fn kit_unlock_with_vault(
+    vault_id: Option<&str>,
+    files: &[PathBuf],
+    secret_file: Option<&Path>,
+    vault: &oneiron::Vault,
+) -> anyhow::Result<HostUnlock> {
+    let vault_id = vault_id.ok_or_else(|| {
+        anyhow::anyhow!("--unlock kit names the vault the kit is bound to: --vault-id")
+    })?;
+    let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
+    anyhow::ensure!(
+        !files.is_empty(),
+        "--unlock kit reads the kit's pieces: --piece"
+    );
+    let pieces = read_kit_pieces(files)?;
+    let kind = pieces[0].kind();
+    let kept = vault.keeps_kit_piece_for(kind, pieces[0].kit_id());
+    let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
+    if kind == KitSecretKind::VaultKey {
+        return Ok(HostUnlock::VaultKeyKit {
+            vault_id: *vault_id,
+            pieces,
+            passphrase,
+        });
+    }
+    Ok(HostUnlock::WorldKit {
+        vault_id: *vault_id,
+        pieces,
+        passphrase,
     })
 }

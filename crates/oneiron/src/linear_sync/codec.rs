@@ -11,6 +11,11 @@ use super::model::{
 /// The durable TASK ↔ issue link row, keyed by the TASK.
 pub(crate) const LINEAR_LINKS: SideTable<EntityId, TaskIssueLink, LegacyJson> =
     SideTable::new(&side_table::LINEAR_SYNC_LINK);
+/// Whether a masked copy of a `LINEAR_SYNC_LINK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn linear_sync_link_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<TaskIssueLink, LegacyJson>(bytes)
+}
 
 /// The stable, domain-separated idempotency handle of one mirror operation.
 ///

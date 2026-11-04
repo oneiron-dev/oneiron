@@ -15,6 +15,7 @@
 //! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
 //! route here refuses on where the owner said yes.
 
+pub(crate) mod export_supplement;
 pub(crate) mod pending;
 mod sealed_spool;
 
@@ -29,7 +30,7 @@ use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
 use oneiron::secret_custody::{
-    SealedCustodyChange, SealedInput, SecretCustodyStatus, SecretCustodyView,
+    SealedCustodyChange, SealedInput, SecretCustodyFloor, SecretCustodyStatus, SecretCustodyView,
 };
 use serde::{Deserialize, Serialize};
 
@@ -128,6 +129,7 @@ pub(super) fn owner_table() -> OwnerTable {
         ),
     ];
     table.extend(pending::owner_table());
+    table.extend(export_supplement::owner_table());
     table
 }
 
@@ -275,6 +277,8 @@ struct ViewReply {
     live: Vec<OwnerWorkReceiptView>,
     candidates: Vec<CandidateReply>,
     delivery: &'static str,
+    /// The live floor a sealed custody change must satisfy.
+    floor: SecretCustodyFloor,
 }
 
 impl From<SecretCustodyView> for ViewReply {
@@ -308,6 +312,7 @@ impl From<SecretCustodyView> for ViewReply {
                 })
                 .collect(),
             delivery: view.delivery.as_str(),
+            floor: view.floor,
         }
     }
 }
@@ -353,8 +358,8 @@ struct PermitBody {
 /// then its index and the count, each a big-endian `u32`
 /// (`secret_custody::control::input::envelopes`). No member carries a
 /// carrier key (FIX 7402): while the carrier wire is on, this install seals
-/// an input that fits one row under one it mints, and the relayed input
-/// names its reference.
+/// the input under one it mints, whole when it fits one row and in numbered
+/// parts past it (FIX 12148), and the relayed input names its reference.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SealedHead {

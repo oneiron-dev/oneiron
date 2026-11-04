@@ -7,11 +7,11 @@ use std::collections::{HashMap, VecDeque};
 
 use heed::RwTxn;
 
-use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
 use crate::store::Store;
+use oneiron_contracts::claim::ClaimApprovalStatus;
 
 /// Evaluates local claim gates and appends their decisions to `wtxn`.
 ///
@@ -94,9 +94,12 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        // FIX 11000: stays None until #4344 threads births
+                        // through commit.rs/preflight; incomplete anchors.
+                        pending_prompt: None,
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,
@@ -145,9 +148,11 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                     defer_metrics_until_commit: true,
                                     transition: None,
                                     owner_authored: None,
+                                    // FIX 11000: stays None until #4344.
+                                    pending_prompt: None,
                                 },
                                 &policy,
-                                crate::gate::GateWriteMode {
+                                crate::store::GateWriteMode {
                                     record_decision: true,
                                     persist_pending_consent: false,
                                     resolve_pending: false,
@@ -185,9 +190,11 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        // FIX 11000: stays None until #4344.
+                        pending_prompt: None,
                     },
                     &policy,
-                    crate::gate::GateWriteMode {
+                    crate::store::GateWriteMode {
                         record_decision: true,
                         persist_pending_consent: false,
                         resolve_pending: false,

@@ -10,14 +10,15 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::ContextEntity;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
-use crate::pipeline::ScoredEntity;
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::serialize::context_entity::ContextEntity;
+use oneiron_contracts::gate::RetrievalFilter;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
@@ -78,6 +79,7 @@ pub use weave_serve::{
 };
 pub use weave_trigger::WeaveDigestRendered;
 
+mod access_class;
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;

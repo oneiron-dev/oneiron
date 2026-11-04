@@ -2,13 +2,18 @@
 mod auxiliary;
 mod query;
 use super::*;
-use crate::attempt_queue::*;
+use crate::attempt_queue::{
+    AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome,
+    EnqueueOutcome, FailAttempt, FailOutcome,
+};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::*;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange};
 use std::cell::RefCell;
@@ -130,7 +135,7 @@ impl EntityStore for Memory {
         }
         let row = txn.entities.get(id);
         if row.is_some_and(|r| r.entity_type == ENTITY_TYPE_SECRET_CUSTODY) {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         Ok(row
             .filter(|row| !super::safe_read::body_is_stale(&row.body))

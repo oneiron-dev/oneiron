@@ -22,11 +22,13 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::genui::{CONSENT_ACTION_APPROVE_ONCE, ConsentConfirmOutcome};
-use crate::llm::decision::{AnswerContract, DecisionAnswer};
+use crate::llm::decision::AskTo;
+use crate::model_decision::{AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion};
 
 use super::connector_call::PENDING_CALLS;
 use super::connector_elicitation_asks::{
-    ConnectorElicitationAnswer, ELICITATION_ASK_QUEUE, elicitation_ask_correlation,
+    ConnectorElicitationAnswer, ELICITATION_ASK_QUEUE, ELICITATION_ASK_VERSION,
+    elicitation_ask_correlation,
 };
 use super::execution::{ConnectorElicitationBinding, ElicitationAnswerVerdict};
 
@@ -337,6 +339,68 @@ impl Vault {
             .and_then(|input| input.owner_consent)
             .filter(|consent| consent.correlation == correlation)
             .and_then(|consent| consent.pressed))
+    }
+
+    /// Recovers the answered ask for this exact answer only while its
+    /// authenticated approving press still has an unspent once mark.
+    /// Reads only; the existing send path still checks the grant and spends.
+    pub(super) fn answered_elicitation_consent(
+        &self,
+        call_ref: &EntityId,
+        binding: &ConnectorElicitationBinding,
+        answer: &ConnectorElicitationAnswer<'_>,
+    ) -> crate::Result<Option<u64>> {
+        let correlation =
+            elicitation_ask_correlation(answer.handle, answer.generation, &answer.digest)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(consent) = PENDING_CALLS
+            .get(&self.store, &txn, call_ref)?
+            .and_then(|row| row.input)
+            .and_then(|input| input.owner_consent)
+            .filter(|consent| consent.correlation == correlation)
+        else {
+            return Ok(None);
+        };
+        let pressed = match consent.pressed {
+            Some(ConsentConfirmOutcome::Deny) | None => return Ok(None),
+            Some(pressed) => pressed,
+        };
+        drop(txn);
+
+        // The lookup matches the question's id and version, not its wording.
+        let question = DecisionQuestion {
+            id: correlation,
+            version: ELICITATION_ASK_VERSION,
+            text: String::new(),
+            class: DecisionClass::Judgment,
+            contract: consent_contract(),
+            accept_type: false,
+        };
+        let principal = EntityId::from_hex(&binding.principal_ref)?;
+        let Some(asked) = self.decision_ask_for(
+            &question,
+            principal,
+            &[correlation],
+            &AskTo::owner(),
+            Some(correlation),
+        )?
+        else {
+            return Ok(None);
+        };
+        if asked.withdrawn_at.is_some() {
+            return Ok(None);
+        }
+        let Some(DecisionAnswer::Choice(option)) =
+            asked.answer.as_ref().map(|answer| &answer.answer)
+        else {
+            return Ok(None);
+        };
+        if outcome_of(option) != Some(pressed) {
+            return Ok(None);
+        }
+        let once = EffectDigest::from_bytes(consent.once_digest);
+        let txn = self.store.env.read_txn()?;
+        Ok(approve_once_authorization_in_txn(&self.store, &txn, &once)?.map(|_| asked.seq))
     }
 
     /// Spends the once mark the owner's approving press left on the frozen

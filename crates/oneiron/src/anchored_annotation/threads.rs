@@ -20,11 +20,11 @@ use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::habit::TaskRole;
 use crate::registry::{
     ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
 /// Weight for the `AssignedTo` / `Mentions` edge a brief writes.

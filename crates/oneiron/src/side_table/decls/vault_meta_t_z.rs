@@ -111,7 +111,8 @@ side_tables! {
     TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named
         => crate::task_verb::erase_launch_actor_in_txn;
     /// Consult fan-out plan. Key: hex32.
-    TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
+    TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named
+        => crate::task_verb::erase_fanout_run_actor_in_txn;
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
@@ -306,6 +307,11 @@ side_tables! {
     /// rule (FIX 5495): when its due notice reached him and when he first opened it, no digest
     /// text. Key: id16 (owner) + u64be (scheduled_for).
     WEAVE_DIGEST_BEHAVIOUR: VaultMeta b"weave:digest_behaviour:v1:" Named;
+    /// The owner's override of where one reader's weave digest is sent (FIX 1262): off, or
+    /// another of the vault's channel identities the reader has a live contact on. Absent means
+    /// the send is on, to the reader's primary route. Key: id16 (reader).
+    WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
+        => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).

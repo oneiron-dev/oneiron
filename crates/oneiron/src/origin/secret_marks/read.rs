@@ -22,13 +22,14 @@ use rmpv::Value;
 
 use super::{REPO_SECRET_MARK_PREDICATE, RepoSecretMark, RepoSecretPlacement, RepoSecretSource};
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
-use crate::credential_door::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::{KeyPlaces, MemberStep};
 use crate::git_wire::GitOid;
-use crate::secret_custody::{KeyPlaces, MemberStep};
+use crate::receive_scan::ReceiveBlobKind;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 /// How a reader finds marks. The one way is the authoritative walk of every
 /// readable claim (CALL 8033 option d): O(claims) once per request, with no
@@ -535,6 +536,9 @@ fn source(value: &Value) -> Result<RepoSecretSource> {
             new_oid: oid(field(map, "new_oid")?)?,
         }),
         "quarantine" => Ok(RepoSecretSource::Quarantine),
+        "sync_landing" => Ok(RepoSecretSource::SyncLanding {
+            source: entity(field(map, "source")?)?,
+        }),
         _ => Err(corrupt()),
     }
 }
@@ -585,6 +589,13 @@ fn step(value: &Value) -> Result<MemberStep> {
         }
         [kind, object, generation] if kind.as_str() == Some("pdf_strings") => {
             Ok(MemberStep::PdfStrings {
+                object: small(object)?,
+                generation: small(generation)?,
+            })
+        }
+        // FIX 11550: a PDF object stream's decoded bytes.
+        [kind, object, generation] if kind.as_str() == Some("pdf_object_stream") => {
+            Ok(MemberStep::PdfObjectStream {
                 object: small(object)?,
                 generation: small(generation)?,
             })

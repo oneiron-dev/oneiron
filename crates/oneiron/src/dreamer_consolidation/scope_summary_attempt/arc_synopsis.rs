@@ -16,7 +16,7 @@ use super::arc_review::{CallBuilder, CallShape, Called, Observation, call_input}
 use super::window::framed_tokens;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::Result;
-use crate::llm::DurableStepContext;
+use crate::model_step_context::DurableStepContext;
 use crate::scope_summary::SummaryLineSources;
 
 /// Whether an Arc composed in parts asks one synopsis call over its

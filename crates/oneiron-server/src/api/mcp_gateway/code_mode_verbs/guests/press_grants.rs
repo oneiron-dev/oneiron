@@ -105,9 +105,10 @@ impl PressGrants for VaultPressGrants {
     }
 
     /// The same live read for a send that reports `audience` - the origin
-    /// of the page it acted on (FIX 11907): only a grant whose audience
-    /// names it covers the send. A send that reports none reads as
-    /// [`Self::current`], keeping today's cover on that axis.
+    /// of the page it acted on, or for a mailto:/tel: link its href's
+    /// protocol-level recipient (FIX 11907, 12395): only a grant whose
+    /// audience names it covers the send. A send that reports none reads
+    /// as [`Self::current`], keeping today's cover on that axis.
     fn current_for(&self, audience: Option<&str>) -> SendPolicy {
         let Some(audience) = audience else {
             return self.current();

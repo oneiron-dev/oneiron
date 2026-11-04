@@ -248,7 +248,10 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 owner_act,
                 ledger_identity_ref: self.ledger_identity.clone(),
             };
+            // FIX 9606: the exact approved send runs at its approval rung;
+            // only unapproved automation needs the autonomous-envelope grant.
             if self.automated
+                && recorded.owner_act.is_none()
                 && !super::principals::automated_outbound_allowed(
                     self.vault,
                     txn,
@@ -536,7 +539,8 @@ impl Vault {
         request: &OutboundDispatchRequest,
         command: &EsignOutboundCommand,
         reminder: Option<(&str, u32)>,
-    ) -> std::result::Result<Option<crate::consent::EffectDigest>, OutboundDispatchError> {
+    ) -> std::result::Result<Option<crate::write_envelope::EffectDigest>, OutboundDispatchError>
+    {
         let reminder = reminder.map(|(recipient, rung)| (recipient.to_owned(), rung));
         let mut request = request.clone();
         request.intent.content_ref =

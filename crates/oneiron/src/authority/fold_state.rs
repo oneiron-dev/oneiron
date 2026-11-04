@@ -110,8 +110,9 @@ pub struct AuthorityFold {
     pub slips: SlipAuthorityState,
     /// Derived vault id.
     pub vault_id: Option<AuthorityVaultId>,
-    /// Valid entry hashes.
-    pub valid_entries: BTreeSet<AuthorityEntryHash>,
+    /// Valid entry hashes: a persistent set, shared by a resumed fold's
+    /// view and its base (FIX 12330).
+    pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
     /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:

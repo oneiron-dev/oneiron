@@ -10,11 +10,12 @@ use super::super::document_candidate_types::{
 use super::super::tree::{OriginTreeFile, read_tree_files};
 use super::{Held, MODE_GITLINK};
 use crate::EntityId;
-use crate::code_document::{CodeFileMetadataEdit, CodeFilePresence};
-use crate::code_revision::{CodeRevision, CodeTreeBlob, CodeTreeInventory};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
-use crate::repo_mutation::received_file_operation;
+use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
+use crate::store::code_revision_record::{CodeRevision, CodeTreeInventory};
+use crate::store::code_tree_blob::CodeTreeBlob;
+use crate::store::repo_proposal_record::received_file_operation;
 
 fn presence(blob: Option<&CodeTreeBlob>) -> CodeFilePresence {
     blob.map_or_else(CodeFilePresence::absent, |blob| {
@@ -159,3 +160,5 @@ pub(super) fn validate_received_operation(
         && before.map_or(empty, |blob| blob.content_hash) == operation.before_hash
         && after.map_or(empty, |blob| blob.content_hash) == operation.after_hash
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

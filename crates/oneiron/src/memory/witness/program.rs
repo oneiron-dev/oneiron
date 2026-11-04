@@ -21,6 +21,7 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::compaction::TurnVector;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
@@ -64,6 +65,8 @@ pub(super) enum WitnessTarget<'a, 'v> {
         admit: Option<Admit<'a>>,
         /// The room whose roster admits speech into its overlay.
         rostered: Option<EntityId>,
+        /// The server's pre-embedded turn vector, staged once on mint/extend.
+        turn_vector: Option<TurnVector>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
@@ -117,6 +120,7 @@ enum Landing<'a, 'v> {
         session: &'a OffRecordSession<'v>,
         route: &'a SessionWriteRoute,
         summary: Option<&'a str>,
+        turn_vector: Option<TurnVector>,
     },
 }
 

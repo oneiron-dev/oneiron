@@ -21,12 +21,24 @@ use super::storage::{read_secret_lease_in_txn, read_value_for_ref_in_txn};
 use super::types::{SecretLeaseStatus, VaultInstant};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor, run_secret_effector};
+use crate::secret_custody::run_secret_effector;
+use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use crate::vault::Vault;
 
 /// Why a leased or local grant does not redeem at a door: its value went to
 /// its destination, never to a door's send.
 const DOOR_ONLY: &str = "only a door grant redeems at a door";
+
+/// What a connector grant's redemption at a door came to: the redemption,
+/// or the issuer hold that counted nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectorGrantRedemption {
+    /// The grant redeemed; the redemption counted one send.
+    Redeemed(SecretGrantRedemption),
+    /// The call's row meets an issuer change the owner has not accepted:
+    /// no send was counted and `apply` never ran.
+    Held { reason: &'static str },
+}
 
 impl Vault {
     /// Redeems the door grant `grant` for `target` and runs `apply` INSIDE
@@ -81,6 +93,58 @@ impl Vault {
             effector: row.effector,
             redeemed_at: now.secs(),
         })
+    }
+
+    /// Redeems the door grant `grant` for `target` on the connector call's
+    /// row (`key_ref`, `tool`), as [`Self::redeem_secret_grant_at_door`]
+    /// does, and runs `apply` INSIDE the door with the value. The row's
+    /// issuer binding is read in the same writer before the send is
+    /// counted: while an issuer change the owner has not accepted holds the
+    /// row, no send is counted, `apply` never runs, and the answer is
+    /// [`ConnectorGrantRedemption::Held`].
+    ///
+    /// # Errors
+    /// As [`Self::redeem_secret_grant_at_door`].
+    pub fn redeem_connector_grant_at_door(
+        &self,
+        grant: &SecretGrantRef,
+        target: &SecretGrantTarget,
+        key_ref: &EntityId,
+        tool: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<ConnectorGrantRedemption> {
+        if target.tier() != CustodyTier::T0Doored {
+            return Err(grant_mismatch(grant.grant(), DOOR_ONLY));
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let now = self.instant_in_write_txn(&mut wtxn)?;
+        if let Some(reason) = crate::connector_key::connector_issuer_hold_reason_in_txn(
+            &self.store,
+            &wtxn,
+            key_ref,
+            tool,
+        )? {
+            drop(wtxn);
+            return Ok(ConnectorGrantRedemption::Held { reason });
+        }
+        let (row, seat) = match self.admit_grant_in_txn(&mut wtxn, grant, target, now, true) {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                // A lazy expiry lands even though the redemption refuses.
+                wtxn.commit()?;
+                return Err(error);
+            }
+        };
+        let bound = seat.as_deref().unwrap_or(&row.effector);
+        let value = read_value_for_ref_in_txn(self, &wtxn, &row.custody, bound)?;
+        wtxn.commit()?;
+        apply(&value)?;
+        Ok(ConnectorGrantRedemption::Redeemed(SecretGrantRedemption {
+            grant_id: row.grant_id,
+            generation: row.generation,
+            effector: row.effector,
+            redeemed_at: now.secs(),
+        }))
     }
 
     /// Whether `grant` would redeem for `target` now, with no value read and

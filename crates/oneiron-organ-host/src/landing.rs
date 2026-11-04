@@ -9,6 +9,7 @@ use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 use oneiron::{EntityId, Vault, WriteActor};
+use oneiron_organ_protocol::{Value, to_value};
 
 use crate::outcome::OrganOutcome;
 
@@ -48,11 +49,14 @@ impl OrganOutcome {
     /// call that made several files names them `<run_ref>/<n>`.
     #[must_use]
     pub fn native_outputs(&self, run_ref: &str, made_by: Option<&MadeBy>) -> Vec<NativeOutput> {
-        let receipt = rmpv::ext::to_value(&self.receipt).unwrap_or(rmpv::Value::Nil);
-        let report = NativeOutput::report_from_msgpack(&rmpv::Value::Map(vec![
-            (rmpv::Value::from("report"), self.report.clone()),
-            (rmpv::Value::from("receipt"), receipt),
-        ]));
+        let receipt = to_value(&self.receipt).unwrap_or_default();
+        let both = Value::Map(vec![
+            (Value::from("report"), self.report.clone()),
+            (Value::from("receipt"), receipt),
+        ]);
+        let msgpack = rmpv_of(&both);
+        let report = NativeOutput::report_from_msgpack(&msgpack);
+        dismantle(msgpack);
         let several = self.outputs.len() > 1;
         self.outputs
             .iter()
@@ -70,6 +74,82 @@ impl OrganOutcome {
                 made_by: made_by.cloned(),
             })
             .collect()
+    }
+}
+
+/// `value` as the engine's report reader takes it, built bottom-up with a
+/// stack of its own, so a deep report costs no thread stack here.
+fn rmpv_of(value: &Value) -> rmpv::Value {
+    enum Step<'a> {
+        Enter(&'a Value),
+        Array(usize),
+        Map(usize),
+    }
+    let mut built: Vec<rmpv::Value> = Vec::new();
+    let mut steps = vec![Step::Enter(value)];
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(Value::Array(items)) => {
+                steps.push(Step::Array(items.len()));
+                steps.extend(items.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(Value::Map(entries)) => {
+                steps.push(Step::Map(entries.len()));
+                for (key, item) in entries.iter().rev() {
+                    steps.push(Step::Enter(item));
+                    steps.push(Step::Enter(key));
+                }
+            }
+            Step::Enter(leaf) => built.push(rmpv_leaf(leaf)),
+            Step::Array(len) => {
+                let items = built.split_off(built.len().saturating_sub(len));
+                built.push(rmpv::Value::Array(items));
+            }
+            Step::Map(len) => {
+                let flat = built.split_off(built.len().saturating_sub(len * 2));
+                let mut flat = flat.into_iter();
+                let mut entries = Vec::with_capacity(len);
+                while let (Some(key), Some(item)) = (flat.next(), flat.next()) {
+                    entries.push((key, item));
+                }
+                built.push(rmpv::Value::Map(entries));
+            }
+        }
+    }
+    built.pop().unwrap_or(rmpv::Value::Nil)
+}
+
+fn rmpv_leaf(value: &Value) -> rmpv::Value {
+    match value {
+        Value::Nil | Value::Array(_) | Value::Map(_) => rmpv::Value::Nil,
+        Value::Boolean(flag) => rmpv::Value::Boolean(*flag),
+        Value::Integer(integer) => match (integer.as_u64(), integer.as_i64()) {
+            (Some(unsigned), _) => rmpv::Value::from(unsigned),
+            (None, Some(signed)) => rmpv::Value::from(signed),
+            (None, None) => rmpv::Value::Nil,
+        },
+        Value::F32(float) => rmpv::Value::F32(*float),
+        Value::F64(float) => rmpv::Value::F64(*float),
+        Value::String(text) => rmpv::Value::from(text.as_str()),
+        Value::Binary(bytes) => rmpv::Value::Binary(bytes.clone()),
+        Value::Ext(kind, bytes) => rmpv::Value::Ext(*kind, bytes.clone()),
+    }
+}
+
+/// Drops an [`rmpv::Value`] child by child, as [`Value`] drops itself.
+fn dismantle(value: rmpv::Value) {
+    let mut stack = vec![value];
+    while let Some(mut value) = stack.pop() {
+        match &mut value {
+            rmpv::Value::Array(items) => stack.append(items),
+            rmpv::Value::Map(entries) => {
+                for (key, item) in std::mem::take(entries) {
+                    stack.push(key);
+                    stack.push(item);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

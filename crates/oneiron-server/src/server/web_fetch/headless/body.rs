@@ -5,36 +5,45 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, Write};
-use std::time::Duration;
 
-use oneiron::Vault;
 use oneiron_browser::BrowserBody;
-use oneiron_container::{HostNetPermit, saturated_floor};
+
+use crate::byte_line::{ByteLine, HeldBytes};
+use crate::wire_telemetry::LimitQuestions;
 
 /// The decoded bytes a body keeps in memory before it spills to disk.
 pub(super) const INLINE_BODY_BYTES: usize = 256 * 1024;
 
-/// How long the producer waits before it asks the floor's byte reserve
-/// again, once it was full: the same 50 ms poll as the paused-request
-/// driver's byte wait. Only paces; no wait ends a request.
-const BYTE_WAIT: Duration = Duration::from_millis(50);
-
 /// A complete response body that can be read back without first assembling
-/// its decoded bytes in memory again. `held` keeps the floor's room for the
-/// bytes it holds, released when the body drops.
+/// its decoded bytes in memory again. `held` keeps the retained line's room
+/// for the bytes it holds, released when the body drops.
 pub(super) enum SpooledBody {
     Inline {
         bytes: Cursor<Vec<u8>>,
-        held: Vec<HostNetPermit>,
+        held: Option<HeldBytes>,
     },
     Spilled {
         file: File,
         len: u64,
-        held: Vec<HostNetPermit>,
+        held: Option<HeldBytes>,
     },
 }
 
 impl SpooledBody {
+    /// The body's bytes without a second full copy: an inline body hands
+    /// over its buffer; a spilled body is read back once from its file.
+    pub(super) fn into_vec(self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Inline { bytes, .. } => Ok(bytes.into_inner()),
+            Self::Spilled { mut file, .. } => {
+                file.rewind()?;
+                let mut out = Vec::new();
+                file.read_to_end(&mut out)?;
+                Ok(out)
+            }
+        }
+    }
+
     pub(super) fn len(&self) -> u64 {
         match self {
             Self::Inline { bytes, .. } => bytes.get_ref().len() as u64,
@@ -65,9 +74,9 @@ impl SpooledBody {
         Ok(())
     }
 
-    fn push_permit(&mut self, permit: HostNetPermit) {
+    fn held_mut(&mut self) -> &mut Option<HeldBytes> {
         match self {
-            Self::Inline { held, .. } | Self::Spilled { held, .. } => held.push(permit),
+            Self::Inline { held, .. } | Self::Spilled { held, .. } => held,
         }
     }
 
@@ -102,7 +111,9 @@ pub(super) enum ProduceBodyError {
     Spool(io::Error),
     /// The decoded body ran past `limit` bytes (FIX 12222): a request
     /// failure, never a destination refusal. Names only the limit.
-    TooLarge { limit: u64 },
+    TooLarge {
+        limit: u64,
+    },
 }
 
 impl fmt::Display for ProduceBodyError {
@@ -122,9 +133,7 @@ impl fmt::Debug for ProduceBodyError {
         match self {
             Self::Request(error) => f.debug_tuple("Request").field(error).finish(),
             Self::Spool(error) => f.debug_tuple("Spool").field(error).finish(),
-            Self::TooLarge { limit } => {
-                f.debug_struct("TooLarge").field("limit", limit).finish()
-            }
+            Self::TooLarge { limit } => f.debug_struct("TooLarge").field("limit", limit).finish(),
         }
     }
 }
@@ -142,19 +151,21 @@ impl std::error::Error for ProduceBodyError {
 /// Reads a response's decoded chunks into a body that spills past the inline
 /// bound, refusing past `max_response_bytes` (FIX 12222): the count is taken
 /// before each chunk is spooled, so the temporary file never holds more than
-/// the cap, and each chunk's bytes are charged to the floor the vault's host
-/// lent ([`Vault::acquire_host_net_bytes`]) as they arrive, held with the
-/// body until it drops. Over-cap drops the response and the partial spool.
-/// Dropping this future drops the body and removes any temporary file.
+/// the cap, and the one cumulative reservation is charged through
+/// [`ByteLine::charge`] to the bytes retained as they arrive, never waited
+/// for, held with the body until it drops. `None` stays unmetered. Over-cap
+/// drops the response and the partial spool. Dropping this future drops the
+/// body and removes any temporary file.
 pub(super) async fn produce_body(
     mut response: reqwest::Response,
     max_response_bytes: usize,
-    vault: &Vault,
+    retained: Option<&ByteLine>,
+    questions: &LimitQuestions,
 ) -> Result<SpooledBody, ProduceBodyError> {
     let limit = max_response_bytes as u64;
     let mut body = SpooledBody::Inline {
         bytes: Cursor::new(Vec::new()),
-        held: Vec::new(),
+        held: retained.map(|line| line.empty()),
     };
     let mut total: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(ProduceBodyError::Request)? {
@@ -162,27 +173,29 @@ pub(super) async fn produce_body(
         if total.saturating_add(len) > limit {
             return Err(ProduceBodyError::TooLarge { limit });
         }
-        let permit = hold_bytes(vault, len).await?;
+        let target = usize::try_from(total.saturating_add(len)).unwrap_or(usize::MAX);
+        hold_bytes(retained, body.held_mut(), target, questions);
         body.write_chunk(&chunk).map_err(ProduceBodyError::Spool)?;
         total += len;
-        body.push_permit(permit);
     }
     body.finish().map_err(ProduceBodyError::Spool)?;
     Ok(body)
 }
 
-/// Room for `bytes` on the floor the vault's host lent, waited for at
-/// [`BYTE_WAIT`] while the reserve is full. A vault no host lent one charges
-/// nothing. Anything but back-pressure fails through the spool arm: a floor
-/// error names only the floor, no URL.
-async fn hold_bytes(vault: &Vault, bytes: u64) -> Result<HostNetPermit, ProduceBodyError> {
-    loop {
-        match vault.acquire_host_net_bytes(bytes) {
-            Ok(permit) => return Ok(permit),
-            Err(error) if saturated_floor(&error).is_some() => {
-                tokio::time::sleep(BYTE_WAIT).await;
-            }
-            Err(error) => return Err(ProduceBodyError::Spool(error)),
-        }
-    }
+/// Charges `bytes` on the retained line, never waited for: past the free
+/// bytes the line owes the rest, so growth never holds some bytes while it
+/// waits for more. `None` charges nothing.
+fn hold_bytes(
+    retained: Option<&ByteLine>,
+    held: &mut Option<HeldBytes>,
+    bytes: usize,
+    questions: &LimitQuestions,
+) {
+    let Some(line) = retained else {
+        return;
+    };
+    let Some(held) = held.as_mut() else {
+        return;
+    };
+    line.charge(held, bytes, questions);
 }

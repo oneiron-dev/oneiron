@@ -174,6 +174,8 @@ fn kept_on_claim(mut started: Started, claim: Option<DoorInvocationClaim>) -> St
     let message_id = started.answering.handle.message_id();
     let credential = started.credential.clone();
     let board_omitted = started.board_omitted;
+    let peer = started.peer;
+    let reply_rows = started.reply_rows.clone();
     let ended = std::mem::replace(
         &mut started.answering.outcome,
         tokio::sync::oneshot::channel().1,
@@ -186,6 +188,8 @@ fn kept_on_claim(mut started: Started, claim: Option<DoorInvocationClaim>) -> St
                 message_id,
                 &credential,
                 board_omitted,
+                peer,
+                &reply_rows,
                 outcome,
             )
         });
@@ -201,6 +205,8 @@ fn whole_reply(
     message_id: super::EntityId,
     credential: &super::TurnCredential,
     board_omitted: Option<super::recall::BoardOmission>,
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: &[super::EntityId],
     outcome: Option<&super::AnswerOutcome>,
 ) -> Response {
     if !credential.live() {
@@ -231,16 +237,24 @@ fn whole_reply(
             ),
         };
     };
-    Json(ChatReply {
-        conversation_ref: conversation_ref.to_owned(),
-        turn_id: turn.to_hex(),
-        message_id: message_id.to_hex(),
-        text: outcome.text.clone(),
-        incomplete: !receipt.complete(),
-        finish_reason: receipt.finish_reason.clone(),
-        board_omitted,
-    })
-    .into_response()
+    let mut rows = reply_rows.to_vec();
+    rows.push(receipt.message_id);
+    rows.sort_unstable();
+    rows.dedup();
+    let released = crate::api::facade::FacadeReleased::sent_with_rows(peer, rows);
+    (
+        axum::Extension(released),
+        Json(ChatReply {
+            conversation_ref: conversation_ref.to_owned(),
+            turn_id: turn.to_hex(),
+            message_id: message_id.to_hex(),
+            text: outcome.text.clone(),
+            incomplete: !receipt.complete(),
+            finish_reason: receipt.finish_reason.clone(),
+            board_omitted,
+        }),
+    )
+        .into_response()
 }
 
 /// Drives the model stream into the presence plane and the bus. The run

@@ -16,7 +16,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::secret_custody::FoundKeyAction;
+use crate::secret_record::FoundKeyAction;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
 /// The reasons the owner's close takes (CALLS, open): what the sweep found is
@@ -41,10 +41,11 @@ const AUTO_CLOSE: [LiftCloseReason; 3] = [
 
 /// The found-key answers that settle a key for good, part of the auto-close
 /// call: a grant leaves the value live where the record keeps it.
-const ANSWERS: [FoundKeyAction; 3] = [
+const ANSWERS: [FoundKeyAction; 4] = [
     FoundKeyAction::Rotate,
     FoundKeyAction::Delete,
     FoundKeyAction::NotASecret,
+    FoundKeyAction::KeptAsText,
 ];
 
 /// `closed_by` of a proposal that closed on its own.
