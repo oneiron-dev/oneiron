@@ -287,7 +287,7 @@ pub(super) fn dispatch_put_type(
         )?;
         dispatch.new_skill_record = Some(decoded);
     } else if fixed.entity_type == ENTITY_TYPE_AGENT_DEF {
-        let decoded = crate::agent_def::decode_agent_definition(data)?;
+        let decoded = crate::store::agent_definition_codec::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation and the H215 id pin, at the one arm
         // that holds both the decoded body and its destination row id — ALL
         // puts, mirroring SKILL's decode-site capture of `new_skill_record`.
