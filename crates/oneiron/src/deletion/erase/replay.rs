@@ -429,7 +429,7 @@ impl Vault {
                 return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
-                || crate::workspace_roster::is_project_revision_type(
+                || crate::store::project_kind::is_project_revision_type(
                     &self.store,
                     header.entity_type,
                 )

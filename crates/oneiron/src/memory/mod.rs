@@ -150,7 +150,7 @@ mod subscriptions;
 mod support;
 mod transcript;
 pub mod usage_repair;
-pub mod web_acquisition;
+pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
 mod witness;
 

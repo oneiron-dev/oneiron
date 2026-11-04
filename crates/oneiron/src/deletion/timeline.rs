@@ -439,7 +439,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_values_for_id;
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let window_label = WindowAddress::new(&pending_key.window);
             let Some(doc) =
                 self.store
@@ -495,7 +495,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_values_for_id;
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let label = WindowAddress::new(&pending_key.window);
             let Some(doc) = self
                 .store
@@ -627,7 +627,7 @@ impl Store {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_map_contains_id;
+            use crate::store::loro_tombstones::tombstone_map_contains_id;
             let window_label = WindowAddress::new(&pending_key.window);
 
             // The window doc is rebuilt from the rows THIS transaction sees

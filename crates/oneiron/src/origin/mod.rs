@@ -6,6 +6,7 @@
 //! additive `pub mod ...;` line when its file exists.
 
 pub(crate) mod actor_erase;
+pub(crate) mod git_ref_change;
 mod document_candidate_types;
 mod document_candidates;
 mod document_ingress;
