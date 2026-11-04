@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use lopdf::{DecodeAdmission, DecodeAdmissionError};
 
 use crate::api::{Counter, SealObservations, SealResourceLimits};
-pub use crate::buffers::{AdmittedBytes, AdmittedStr, SharedBytes, SharedStr};
+pub(crate) use crate::buffers::{AdmittedBytes, AdmittedStr, SharedBytes, SharedStr};
 pub(crate) use crate::buffers::{Lease, SHARED_CONTROL_BYTES};
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
 
