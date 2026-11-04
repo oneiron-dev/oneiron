@@ -261,7 +261,7 @@ pub mod code_revision;
 pub mod code_symbol;
 pub mod code_view;
 pub mod codebase;
-pub mod connector_key_status;
+pub use oneiron_store::connector_key_status;
 pub mod contract_oracle;
 pub mod conversation_dag;
 pub mod core_write;
