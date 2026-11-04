@@ -13,8 +13,8 @@
 //! Qualification: `/health` is liveness only, and `/ready` alone never
 //! qualifies. Each incarnation gets one actual inference: VoxCPM2 one render
 //! of [`MEDIA_PROBE_TEXT`] from a synthetic reference, ASR one transcription
-//! of the same clip ([`qualification_wav`], silence: never a person's
-//! voice). The answer must name the worker, its identity and its epoch
+//! of the same clip ([`qualification_wav`], a synthetic tone: never a
+//! person's voice). The answer must name the worker, its identity and its epoch
 //! (VoxCPM2's: the boot id its `/ready` named), the configured wire model
 //! and, for a managed launch, this launch's manifest by its digest; then
 //! [`judge_media`] needs the model and runtime pinned and observed, with no
@@ -51,8 +51,14 @@ const MEDIA_PROBE_TEXT: &str = "Ready.";
 /// What the qualification's reference clip is said to hold.
 const MEDIA_PROBE_TRANSCRIPT: &str = MEDIA_PROBE_TEXT;
 
-/// The qualification clip's length, in milliseconds of silence.
+/// The qualification clip's length, in milliseconds of synthetic tone.
 const MEDIA_PROBE_WAV_MS: u32 = 1_000;
+
+/// The qualification tone's pitch: a plain sine, no person's voice.
+const MEDIA_PROBE_TONE_HZ: f64 = 440.0;
+
+/// The qualification tone's peak, below full scale so no sample clips.
+const MEDIA_PROBE_TONE_PEAK: f64 = 0.5;
 
 /// The qualification clip's rate: Whisper's own, and one VoxCPM2 takes.
 const MEDIA_PROBE_SAMPLE_RATE: u32 = 16_000;
@@ -322,7 +328,10 @@ async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
         .await
         .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
     if !(200..300).contains(&ready.status) {
-        return Err(failed(WorkerFailure::InvalidReply, None));
+        // A status with no body contradicts nothing (FIX 11374): a worker
+        // still starting, or one shedding a one-off GPU fault, answers the
+        // next probe instead of parking until its config changes.
+        return Err(failed(WorkerFailure::Unreachable, None));
     }
     let warm = serde_json::from_slice::<WarmTarget>(&ready.body)
         .ok()
@@ -354,10 +363,12 @@ async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
         .await
         .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
     if !(200..300).contains(&reply.status) {
-        return Err(failed(WorkerFailure::InvalidReply, None));
+        // As above (FIX 11374): a failed render's status alone is transient,
+        // not a pin contradiction; only the body's shape below can be one.
+        return Err(failed(WorkerFailure::Unreachable, None));
     }
-    let (meta, pcm) =
-        render_parts(&reply.body).ok_or_else(|| failed(WorkerFailure::InvalidReply, None))?;
+    let (meta, pcm) = render_parts(&reply.body)
+        .ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
     if meta["target"] != target
         || meta["sample_rate"].as_u64() != Some(u64::from(warm.sample_rate))
         || meta["channels"].as_u64() != Some(1)
@@ -393,7 +404,9 @@ async fn asr_answer(http: &ProviderHttp, wire_model: &str) -> Result<Answered, W
         .await
         .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
     if !(200..300).contains(&reply.status) {
-        return Err(failed(WorkerFailure::InvalidReply, None));
+        // As in `vox_answer` (FIX 11374): a status with no body is
+        // transient, not a pin contradiction.
+        return Err(failed(WorkerFailure::Unreachable, None));
     }
     let body: JsonValue = serde_json::from_slice(&reply.body)
         .map_err(|_| failed(WorkerFailure::InvalidReply, None))?;
@@ -423,11 +436,21 @@ fn render_parts(body: &[u8]) -> Option<(JsonValue, &[u8])> {
     Some((meta, body.get(end..)?))
 }
 
-/// The qualification clip: [`MEDIA_PROBE_WAV_MS`] of silence, mono PCM16 at
-/// [`MEDIA_PROBE_SAMPLE_RATE`]. Synthetic: no person's voice.
+/// The qualification clip: [`MEDIA_PROBE_WAV_MS`] of synthetic tone, mono
+/// PCM16 at [`MEDIA_PROBE_SAMPLE_RATE`]. A tone, not silence (FIX 11374):
+/// a silent clip cannot tell a rendered answer from a dropped one.
+/// Synthetic: no person's voice.
 fn qualification_wav() -> Vec<u8> {
+    let rate = f64::from(MEDIA_PROBE_SAMPLE_RATE);
     let samples = u64::from(MEDIA_PROBE_SAMPLE_RATE) * u64::from(MEDIA_PROBE_WAV_MS) / 1_000;
-    let pcm = vec![0_u8; usize::try_from(samples * 2).unwrap_or(0)];
+    let pcm: Vec<u8> = (0..samples)
+        .flat_map(|index| {
+            let wave = (2.0 * std::f64::consts::PI * MEDIA_PROBE_TONE_HZ * index as f64 / rate)
+                .sin()
+                * MEDIA_PROBE_TONE_PEAK;
+            ((wave.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()
+        })
+        .collect();
     pcm16_wav(MEDIA_PROBE_SAMPLE_RATE, 1, &pcm).unwrap_or_default()
 }
 
