@@ -170,6 +170,7 @@ pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub mod person_billing_account;
+pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
