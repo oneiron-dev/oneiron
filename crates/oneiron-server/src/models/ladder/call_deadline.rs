@@ -185,12 +185,27 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<LlmResponse> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_by`], with the actual answering binding for
+    /// the model-call record. The picked-model guard and no-fallback walk
+    /// are the same call's, not a lookup after it answered (FIX 12742).
+    pub(crate) async fn generate_exact_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
         self.generate_from(run, request, selector, may_send, deadline, false, None)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::stream`] on `deadline` (FIX 8213).

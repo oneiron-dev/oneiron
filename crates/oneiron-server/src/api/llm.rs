@@ -256,7 +256,7 @@ fn admit_owner(
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }
-/// Best-effort record of one completed raw call, off the reply path. Missing
+/// Best-effort record of one completed model call, off the reply path. Missing
 /// provider fields stay unknown; no receipt, route or read-world is invented.
 pub(crate) fn record_raw_response(
     vault: &oneiron::Vault,
@@ -297,7 +297,7 @@ pub(crate) fn record_raw_response(
     source_rows.dedup();
     let input_parts = if source_rows.is_empty() {
         vec![ModelCallInputPart::Unknown {
-            reason: "raw API request sources were not captured".to_owned(),
+            reason: "model-call request sources were not captured".to_owned(),
         }]
     } else {
         Vec::new()
