@@ -166,4 +166,5 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) identity_excerpt_bytes: Option<u64>,
     pub(in crate::config) community_cache_bytes: Option<u64>,
     pub(in crate::config) connector_manifest_entries: Option<u64>,
+    pub(in crate::config) codebase_manifest_files: Option<u64>,
 }

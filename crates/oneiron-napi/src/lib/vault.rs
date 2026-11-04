@@ -478,7 +478,7 @@ impl NapiVault {
     pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
         self.refuse_bound_host_write()?;
         let eid = parse_entity_id(&id)?;
-        let snapshot = read_codebase_snapshot(snapshot)?;
+        let snapshot = read_codebase_snapshot(&self.vault, snapshot)?;
         // Take the bodies before conversion consumes the boundary struct, so
         // custody filtering can hash-check each declared entry.
         let file_count = snapshot.files.len();

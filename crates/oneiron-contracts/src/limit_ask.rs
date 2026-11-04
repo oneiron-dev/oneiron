@@ -522,6 +522,10 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Files one legacy codebase snapshot manifest names (FIX 74). Past
+    /// it the row asks whether everything is okay and the manifest is
+    /// kept whole.
+    CodebaseManifestFiles,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
