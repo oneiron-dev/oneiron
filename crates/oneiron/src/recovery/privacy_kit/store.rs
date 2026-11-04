@@ -78,7 +78,7 @@ impl KitPieceStore {
             let _ = self.delete(pair);
             return Err(error);
         }
-        self.name_install(pair);
+        self.name_install(pair)?;
         Ok(())
     }
 
@@ -124,12 +124,13 @@ impl KitPieceStore {
     /// holds it (FIX 12054, FIX 12055): a sealed vault's pages unlock before its
     /// machine id can be read, and the owner may have removed the device wrap
     /// that names this install. The name replaces another install's: the
-    /// latest kept piece is the one named. Best-effort: a name that does not
-    /// write is logged, and the piece stays kept, found through a carried
-    /// device wrap as before.
-    fn name_install(&self, pair: KitPiecePair) {
+    /// latest kept piece is the one named. A name that does not write is
+    /// logged and returned: the piece stays kept in its slots, but the keep
+    /// reports failed, so the caller keeps the pair it moved from (settle
+    /// retains the pending pair) instead of dropping it.
+    fn name_install(&self, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
         let Some((slot, kit_kind)) = install_name(pair) else {
-            return;
+            return Ok(());
         };
         let mut bytes = [0u8; SLOT];
         bytes[..INSTALL].copy_from_slice(&self.install);
@@ -139,7 +140,9 @@ impl KitPieceStore {
                 kit_kind,
                 "the vault id does not name the install that keeps the kit piece"
             );
+            return Err(error);
         }
+        Ok(())
     }
 
     /// Clears [`Self::name_install`]'s name once `pair`, a current or pending
