@@ -121,8 +121,12 @@ pub mod ports {
 
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
+pub(crate) mod agent_definition;
+pub(crate) mod agent_memory_profile;
 pub(crate) mod agent_model;
+pub(crate) mod agent_optional_memory;
 pub mod agent_record;
+pub(crate) mod agent_refusal;
 pub(crate) mod agent_scope;
 pub(crate) mod attempt_archive_mark;
 pub mod attempt_cancel;
@@ -167,6 +171,7 @@ pub(crate) use attempt_operations::StoreAttemptOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 pub(crate) mod gate_hooks;
+pub(crate) mod critical_confirm_record;
 pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
@@ -565,6 +570,7 @@ pub mod repo_import_predicate;
 
 pub(crate) mod authority_rows;
 pub(crate) mod consent_bound;
+pub(crate) mod gate_metrics;
 pub(crate) mod gate_reason;
 pub(crate) mod policy_record;
 pub(crate) mod record_links;
