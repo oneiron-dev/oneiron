@@ -161,26 +161,29 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     Ok(identity.expect("closure ran on Ok"))
 }
 
-/// A machine identity row: a checkpoint image restored directly, which may
-/// land on any install, leaves these behind. The device and machine keys'
+/// An install identity row: a checkpoint image restored directly, which may
+/// land on any install, leaves these behind, including its client/peer id.
+/// The device and machine keys'
 /// public caches go with them, since the new machine's slot holds another
 /// seed. The pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
 /// host made never arrives pinned to the host's.
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
-    key == side_table::IDENTITY_MACHINE_ID.prefix
+    key == side_table::IDENTITY_CLIENT_ID.prefix
+        || key == side_table::IDENTITY_MACHINE_ID.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
         || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
 }
 
-/// Forgets this install's machine and its pin, so the vault joins as a new
+/// Forgets this install's client id, machine and pin, so the vault joins as a new
 /// one: another live vault keeps the machine it was.
 pub(crate) fn drop_machine_identity_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
+    crate::store::install_identity::drop_client_id_in_txn(store, wtxn)?;
     MACHINE_ID.delete(store, wtxn, &())?;
     DEVICE_PK.delete(store, wtxn, &())?;
     MACHINE_PK.delete(store, wtxn, &())?;
