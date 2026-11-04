@@ -6319,6 +6319,7 @@
       "output": "crate::task_verb::sdk::FilesSourceExcludeAnswer",
       "call": "crate::task_verb::sdk::exclude_files_source_embedded(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {

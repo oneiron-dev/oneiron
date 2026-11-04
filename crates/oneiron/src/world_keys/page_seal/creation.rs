@@ -56,8 +56,8 @@ impl CreationRecord {
         Self {
             version: RECORD_VERSION,
             vault_path: root.as_os_str().as_encoded_bytes().to_vec(),
-            vault_id: seal.vault_id,
-            incarnation: seal.incarnation,
+            vault_id: seal.vault_id(),
+            incarnation: seal.incarnation(),
         }
     }
 
@@ -77,7 +77,7 @@ impl CreationRecord {
 /// where none was, under a new or a delivered data key.
 fn records_creation(seal: &VaultPageSeal) -> bool {
     matches!(
-        seal.origin,
+        seal.origin(),
         SealOrigin::New | SealOrigin::Delivered { new: true }
     )
 }
@@ -153,7 +153,7 @@ pub(super) fn finish_creation(root: &Path, seal: &VaultPageSeal) -> Result<()> {
         return Ok(());
     }
     match read_record(root)? {
-        Some(record) if record.names(root, seal.vault_id, seal.incarnation) => {
+        Some(record) if record.names(root, seal.vault_id(), seal.incarnation()) => {
             remove_synced(&record_beside(root)?)
         }
         _ => Ok(()),
@@ -272,7 +272,7 @@ impl Vault {
             .page_seal
             .as_ref()
             .filter(|seal| records_creation(seal))
-            .map(|seal| (seal.vault_id, seal.incarnation));
+            .map(|seal| (seal.vault_id(), seal.incarnation()));
         let root = self.store.env.path().to_path_buf();
         drop(self);
         let Some((vault_id, incarnation)) = creation else {

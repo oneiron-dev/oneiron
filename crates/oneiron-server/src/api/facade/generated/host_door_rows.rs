@@ -39,6 +39,7 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.files.sources.exclude`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
@@ -437,7 +438,6 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultFilesSourcesDetach,
     VaultFilesSourcesList,
     VaultFilesSourcesFiles,
-    VaultFilesSourcesExclude,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -1159,7 +1159,6 @@ impl HostDoorRow {
             "vault.files.sources.detach" => Self::VaultFilesSourcesDetach,
             "vault.files.sources.list" => Self::VaultFilesSourcesList,
             "vault.files.sources.files" => Self::VaultFilesSourcesFiles,
-            "vault.files.sources.exclude" => Self::VaultFilesSourcesExclude,
             "vault.residence.mode" => Self::VaultResidenceMode,
             "vault.residence.open" => Self::VaultResidenceOpen,
             "vault.residence.index" => Self::VaultResidenceIndex,
