@@ -97,7 +97,7 @@ pub(crate) use oneiron_skill_attribution::row_ids::{
 };
 mod skill_erase;
 pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
+    erase_attribution_evidence_skill_in_txn,
     erase_scan_in_txn,
 };
 mod split;
