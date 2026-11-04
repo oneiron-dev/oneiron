@@ -80,6 +80,11 @@ use crate::write_envelope::WriteActor;
 /// Finalized proposal-text artifact and its retained document, keyed by artifact ref.
 const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
+/// Whether a masked copy of a `EDIT_DISTANCE_PROPOSAL_ARTIFACT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn edit_distance_proposal_artifact_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredProposal, Raw>(bytes)
+}
 
 /// Schema version of the persisted proposal-artifact record.
 pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;
@@ -409,6 +414,19 @@ pub fn peer_actor_stamp_is_honored(
         .any(|binding| binding.claims_second(at) && binding.actor == *actor))
 }
 
+/// [`peer_actor_stamp_is_honored`] under the caller's transaction (FIX 11172).
+pub(crate) fn peer_actor_stamp_is_honored_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer_id: u64,
+    at: u64,
+    actor: &WriteActor,
+) -> Result<bool> {
+    Ok(eligible_peer_bindings_in_txn(vault, txn, peer_id)?
+        .into_iter()
+        .any(|binding| binding.claims_second(at) && binding.actor == *actor))
+}
+
 /// The peer's bindings an attribution may rest on: one awaiting its owner's
 /// answer vouches for no actor yet. Registration's closure scan reads them all.
 fn eligible_peer_bindings_in_txn(
@@ -541,30 +559,7 @@ fn peer_binding_field<'a>(body: &'a ClaimBody, key: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
-/// The pinned wire token for an actor class.
-///
-/// Deliberately NOT `EdgeActorClass::gate_actor_class`: that key belongs to
-/// Gate's `actor_ceilings` policy rows and is free to change with policy. This
-/// mapping is a storage ABI. The exhaustive match makes a new class a compile
-/// error here, which is the point.
-pub(crate) const fn actor_class_token(class: EdgeActorClass) -> &'static str {
-    match class {
-        EdgeActorClass::Human => "human",
-        EdgeActorClass::Agent => "agent",
-        EdgeActorClass::System => "system",
-    }
-}
-
-/// Inverse of [`actor_class_token`]; `None` for an unknown token.
-pub(crate) fn actor_class_from_token(token: &str) -> Option<EdgeActorClass> {
-    [
-        EdgeActorClass::Human,
-        EdgeActorClass::Agent,
-        EdgeActorClass::System,
-    ]
-    .into_iter()
-    .find(|class| actor_class_token(*class) == token)
-}
+pub(crate) use crate::write_envelope::actor_tokens::{actor_class_from_token, actor_class_token};
 
 // ---------------------------------------------------------------------------
 // Record codec

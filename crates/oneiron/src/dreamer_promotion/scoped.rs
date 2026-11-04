@@ -399,7 +399,7 @@ fn attach_ref(
     (head, source): (EntityId, EntityId),
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
-    auto_write_rate: crate::own_rate::OwnRate,
+    auto_write_rate: crate::store::own_rate_record::OwnRate,
 ) -> Result<Vec<ResolvedConflictOutput>> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
@@ -574,7 +574,7 @@ fn attach_ref(
     crate::own_rate::count_in_txn(
         &vault.store,
         txn,
-        crate::own_rate::OwnRateKind::AutoWrite,
+        crate::store::own_rate_record::OwnRateKind::AutoWrite,
         run.agent_actor.entity_ref(),
         vault.store.clock.now_recorded_at(),
         auto_write_rate,

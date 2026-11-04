@@ -13,23 +13,7 @@ const MISSING_PERSON: &str = "person.substrate subject PERSON has not arrived";
 const MISSING_ACTOR: &str = "actor.subject_ref actor has not arrived";
 const MISSING_ANCHOR: &str = "actor.subject_ref subject PERSON or ORG has not arrived";
 
-pub(crate) fn validate_actor_subject_claim_structure(
-    body: &ClaimBody,
-) -> Result<(EntityId, EntityId)> {
-    let ClaimSubject::Entity(actor) = body.subject else {
-        return Err(Error::InvalidClaimBody(
-            "actor.subject_ref subject must name an actor entity",
-        ));
-    };
-    let subject = body
-        .value
-        .as_str()
-        .and_then(|hex| EntityId::from_hex(hex).ok())
-        .ok_or(Error::InvalidClaimBody(
-            "actor.subject_ref value must be an entity ID string",
-        ))?;
-    Ok((actor, subject))
-}
+pub(crate) use crate::write_envelope::subject_record::validate_actor_subject_claim_structure;
 
 pub(super) fn require_anchor_entities_in_txn(
     store: &Store,
@@ -77,24 +61,7 @@ fn require_anchor_headers(actor_raw: Option<&[u8]>, subject_raw: Option<&[u8]>) 
     Ok(())
 }
 
-pub(crate) fn validate_person_substrate_claim_structure(body: &ClaimBody) -> Result<EntityId> {
-    let ClaimSubject::Entity(person) = body.subject else {
-        return Err(Error::InvalidClaimBody(
-            "person.substrate subject must name a PERSON entity",
-        ));
-    };
-    if body
-        .value
-        .as_str()
-        .and_then(PersonSubstrate::parse)
-        .is_none()
-    {
-        return Err(Error::InvalidClaimBody(
-            "person.substrate value must be exactly meat or model",
-        ));
-    }
-    Ok(person)
-}
+pub(crate) use crate::write_envelope::subject_record::validate_person_substrate_claim_structure;
 
 pub(super) fn require_person_in_txn(
     store: &Store,

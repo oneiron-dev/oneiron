@@ -12,7 +12,7 @@ impl ScopedRead<'_> {
     pub(crate) fn retrieval_loop_search(
         &self,
         plan: PipelineBuilder<'_>,
-        host_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        host_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<LoopSearch> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;

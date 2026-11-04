@@ -11,11 +11,13 @@ use heed::{RoTxn, RwTxn};
 
 use super::BatchOp;
 use crate::Vault;
-use crate::claim::{ClaimBody, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{GateReasonCode, GateRetentionContext, RecordedClaimGateDecision};
+use crate::gate::{GateReasonCode, RecordedClaimGateDecision};
+use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
 pub(super) struct GatedClaim {
@@ -160,7 +162,7 @@ pub(super) fn staged_reference_denial(
     let mut found = None;
     for claim in claims {
         if let Some(envelope) = &claim.envelope {
-            crate::gate::validate_write_envelope(envelope)?;
+            crate::write_envelope::validate_write_envelope(envelope)?;
         }
         if let Some(field) = crate::gate::unresolved_claim_reference(reader, &*txn, &claim.body)? {
             found = Some((claim, field));
@@ -188,7 +190,7 @@ pub(super) fn staged_reference_denial(
             owner_authored: None,
         },
         &policy,
-        crate::gate::GateWriteMode {
+        crate::store::GateWriteMode {
             record_decision: true,
             persist_pending_consent: false,
             resolve_pending: false,
@@ -211,7 +213,12 @@ pub(super) fn staged_reference_denial(
         decision,
         claim: claim.id,
         retention: GateRetentionContext {
-            world: Some(claim.body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(
+                claim
+                    .body
+                    .world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(claim.body.scope_project),
             sub_project: None,
             thread: None,

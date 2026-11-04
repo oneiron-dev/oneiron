@@ -7,12 +7,12 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
+use crate::store::row_birth::RowBirth;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -185,12 +185,12 @@ pub(super) fn persist_scanned(
     };
     let text = doc.text();
     let remark = scan(vault, txn, entity, h, &text)?;
-    // A NOTE written on this plane keeps the NOTE door's body bound and its
-    // seal (OF-073 stage 1).
+    // A NOTE written on this plane keeps the NOTE door's seal (OF-073 stage
+    // 1); no body length refuses it (rule 5, FIX 10345).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
         let read: &RoTxn<'_> = txn;
         let moved = before.is_some_and(|before| before.encode() != doc.doc.oplog_vv().encode());
-        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, &doc.text(), || {
+        crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, || {
             Ok(moved || text_changed(store, read, entity, doc)?)
         })?;
     }
@@ -219,6 +219,8 @@ pub(super) fn persist_scanned(
     }
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
+    // The stamp tokens its new changes name, for the hold check (FIX 11965).
+    super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -255,10 +257,11 @@ fn index_document(
         entity,
         document_text_fields(doc, &head.field)?,
     )?;
-    match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, entity, &fields) {
+    match crate::store::text_index::index_text(&vault.store, txn, &vault.analyzer, entity, &fields)
+    {
         // A large document remains authoritative even when it is not searchable.
         Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
-            crate::bm25::deindex_text(&vault.store, txn, entity)?;
+            crate::store::text_index::deindex_text(&vault.store, txn, entity)?;
         }
         Ok(()) => {}
         Err(error) => return Err(error),

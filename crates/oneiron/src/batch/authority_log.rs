@@ -33,10 +33,10 @@ pub(super) fn check_authority_log_store_key(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    entry_hash: &crate::authority::AuthorityEntryHash,
+    entry_hash: &oneiron_contracts::authority::AuthorityEntryHash,
     data: &[u8],
 ) -> Result<AuthorityLogKeyOccupant> {
-    if crate::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
+    if oneiron_authority::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
         return Err(Error::Record(RecordError::AuthorityLogStoreKeyMismatch {
             id: *id,
         }));
@@ -151,10 +151,10 @@ pub(super) fn evict_authority_log_store_key_squatter(
     let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(induced_shell_sources)
 }
@@ -190,9 +190,9 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     posture: crate::HostingPrivacyPosture,
     beside: crate::authority::RowsBeside<'_>,
 ) -> Result<()> {
-    crate::authority::validate_authority_log_entry_body_bytes(data)?;
-    let entry = crate::authority::decode_authority_log_entry_body(data)?;
-    let entry_hash = crate::authority::authority_entry_hash(&entry)?;
+    oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
+    let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
+    let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
     // origin-sig + vault_id (ONE-1604-D2). Ingest observation happens only
@@ -202,8 +202,8 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     // the row, so this validator stays a pure check.
     let _ = check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
     let entry_vault_id = match &entry.op {
-        crate::authority::AuthorityOp::Genesis { .. } => {
-            crate::authority::genesis_vault_id(&entry)?
+        oneiron_authority::authority::AuthorityOp::Genesis { .. } => {
+            oneiron_authority::authority::genesis_vault_id(&entry)?
         }
         _ => entry
             .vault_id

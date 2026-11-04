@@ -15,31 +15,8 @@ use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageEvidenceClass};
 use crate::claim::claim_surfaceable;
 use crate::{EntityId, Result, Vault};
 
-/// One leg of the ratified no-show recovery order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NoShowRecoveryStep {
-    /// Offer a same-day reschedule.
-    SameDayReschedule,
-    /// Bump after a delay.
-    BumpAfter {
-        /// The configured delay.
-        delay_secs: u64,
-    },
-    /// Snooze the membership.
-    Snooze,
-}
-
-/// The recovery plan a `no_show` or `cancelled_pre_start` outcome produces.
-/// It never writes `call_held`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoShowRecoveryPlan {
-    /// The EVENT that did not happen.
-    pub event_ref: EntityId,
-    /// The `calendar.event_outcome` claim that says so.
-    pub outcome_claim_ref: EntityId,
-    /// Recovery legs, in the ratified order.
-    pub steps: Vec<NoShowRecoveryStep>,
-}
+pub use crate::memory::campaign_records::stage_results::NoShowRecoveryPlan;
+pub use crate::memory::campaign_records::stage_results::NoShowRecoveryStep;
 
 // ---------------------------------------------------------------------------
 // Calendar outcomes - read side only

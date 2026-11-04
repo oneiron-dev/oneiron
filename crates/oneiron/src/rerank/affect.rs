@@ -2,8 +2,8 @@
 //! These compose with the ordinary post-blend ladder, including PPR VAD.
 
 use super::{RerankCandidate, Reranker};
-use crate::affect::Vad;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::affect::Vad;
 use std::collections::BTreeMap;
 
 /// A loop-owned sensitivity setting. No hand-tuned nonzero default is hidden

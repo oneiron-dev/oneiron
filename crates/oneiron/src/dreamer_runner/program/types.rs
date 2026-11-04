@@ -158,11 +158,13 @@ pub struct TurnProgramAdmissionReceipt {
 }
 
 /// One drain of owed wakes: how many were admitted (or found already
-/// admitted) and refused, and whether more wait.
+/// admitted), refused, and held owed on a lapsed slip (FIX 12058), and
+/// whether more wait.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TurnProgramDrain {
     pub admitted: usize,
     pub refused: usize,
+    pub held: usize,
     pub more: bool,
 }
 
@@ -215,6 +217,26 @@ pub(super) struct TurnProgramWake {
     pub(super) revision: [u8; 32],
     pub(super) authority: TurnProgramAuthority,
     pub(super) turn: LandedTurnRef,
+    /// The owed row's status once an admission found its sealed slip
+    /// lapsed and kept it owed (FIX 12058); none until then. It is never
+    /// part of the wake an admission records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) held: Option<OwedWakeHold>,
+}
+
+/// Why an owed wake waits (FIX 12058): an admission found its sealed slip
+/// lapsed and kept it owed for a rebind instead of refusing it. The drain
+/// passes it by until `expires_at`, the wake's own expiry; an admission
+/// after that judges it finally, as any wake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OwedWakeHold {
+    /// The refusal the lapse would have been.
+    pub(super) reason: String,
+    /// When the first admission found the lapse.
+    pub(super) held_at: u64,
+    /// The wake's own expiry: a fixed time after its turn landed.
+    pub(super) expires_at: u64,
 }
 
 impl TurnProgramWake {

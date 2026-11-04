@@ -16,7 +16,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::secret_custody::FoundKeyAction;
+use crate::secret_record::FoundKeyAction;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
 /// The reasons the owner's close takes (CALLS, open): what the sweep found is

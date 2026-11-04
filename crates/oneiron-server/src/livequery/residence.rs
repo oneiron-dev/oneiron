@@ -211,7 +211,7 @@ impl ForwardedSearchCaller {
             self.caller.caller(),
             carrier,
             self.locality,
-            crate::handler::selector_grant_scope(),
+            crate::handler::selector_scope::selector_grant_scope(),
             selector,
         )
         .map_err(|_| AppError::not_found("item", None))
@@ -448,6 +448,9 @@ pub(super) fn run(
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
             }
+            "residence.machine-history.freshness" => {
+                machine_history::freshness(server, auth, peer, request.params)
+            }
             method if method.starts_with("residence.home_handoff.") => {
                 home_handoff::run(server, auth, peer, method, request.params)
             }
@@ -497,7 +500,7 @@ fn bound_selector(
     }
     oneiron::sync::authorize_sync_selector(
         &server.vault,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         &selector,
     )
     .map_err(|_| AppError::not_found("item", None))?;
@@ -517,7 +520,7 @@ fn admitted<'v>(
         &server.vault,
         proof,
         peer,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         selector,
     )
     .map_err(|_| AppError::not_found("item", None))

@@ -22,7 +22,7 @@ side_tables! {
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
     /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
-    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored [accepts: crate::dreamer_runner::call_receipt_accepts_masked]
         => crate::Vault::erase_call_receipt_actor_in_txn;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
@@ -37,7 +37,8 @@ side_tables! {
     /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
     /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw;
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+        => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;
@@ -72,7 +73,7 @@ side_tables! {
     /// the retained turns and summaries it was read from, by revision. Host-only; read only to
     /// reuse the prefix for the reply's Continue and Retry. Key: id16(conversation) +
     /// id16(message) + id16(stream generation).
-    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored;
+    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored [accepts: crate::conversation::chat_breakpoint_accepts_masked];
     /// Per-repository environment blueprint. Key: bytes32.
     CHECKOUT_ENV_BLUEPRINT: VaultMeta b"checkout:env_blueprint:v1:" VersionedNamed;
     /// Checkout lease act. Key: hex32.
@@ -106,6 +107,9 @@ side_tables! {
     /// The pinned signed handoff (encoded `ClaimHistoryHandoff`) that roots one MACHINE claim's
     /// signed birth and transition history. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_PIN: VaultMeta b"claim:machine-history-pin:v1:" Raw;
+    /// The running seal over every control put one MACHINE claim's history index took (FIX
+    /// 4296): the put count (u64 BE), then a chained digest (32 bytes). Key: id16 (target claim).
+    CLAIM_MACHINE_HISTORY_SEAL: VaultMeta b"claim:machine-history-seal:v1:" Raw;
     /// Empty marker indexing one MACHINE claim's signed history control rows under their target.
     /// Key: id16 (target claim) + id16 (control).
     CLAIM_MACHINE_HISTORY_TARGET: VaultMeta b"claim:machine-history-target:v1:" Raw;
@@ -192,7 +196,8 @@ side_tables! {
     COACH_ISSUES_REDRIVE: VaultMeta b"coach:issues_redrive:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
-    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
+    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
@@ -205,7 +210,8 @@ side_tables! {
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
-    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named;
+    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named
+        => crate::dreamer_runner::maintenance::coach::erase_person_changed_principal_in_txn;
     /// When the Coach's think-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
@@ -270,7 +276,7 @@ side_tables! {
     /// predecessor, its run, the step the child starts at, the owner's approval, the approved
     /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
     /// id16(successor attempt).
-    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
+    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored [accepts: crate::code_run::code_run_continuation_accepts_masked];
     /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
     /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
     /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
@@ -317,19 +323,19 @@ side_tables! {
     CODE_RUN_READER_INDEX: VaultMeta b"code_run:reader_index:v1:" Raw;
     /// One reader child of a code run: its binding, state, generation and latest finding (JSON).
     /// Key: id16(task).
-    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw Authored;
+    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_job_accepts_masked];
     /// A code run's reader row: its children's clock, fixed at its first spawn, their spend scope
     /// and its counts (JSON). Key: id16(run).
     CODE_RUN_READER_PARENT: VaultMeta b"code_run:reader_parent:v1:" Raw;
     /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
     /// id16(set).
-    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
+    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
     /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
     /// id16(attempt) + be64(lease generation) + be64(step).
-    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored
+    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored [accepts: crate::code_run::code_run_replay_capsule_accepts_masked]
         => crate::code_run::erase_capsule_actor_in_txn;
     /// Whose reply content one code-run replay record holds (FIX 5718): the run it is (its own,
     /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
@@ -342,11 +348,11 @@ side_tables! {
     /// or the run's body holding them, the preparation note, the actor the run ran as and the
     /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +
     /// be64(invocation).
-    CODE_RUN_TYPE_DIAGNOSTICS: VaultMeta b"code_run:type_diagnostics:v1:" Named Authored
+    CODE_RUN_TYPE_DIAGNOSTICS: VaultMeta b"code_run:type_diagnostics:v1:" Named Authored [accepts: crate::code_run::code_run_type_diagnostics_accepts_masked]
         => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::code_run::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
     /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
     /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
@@ -454,6 +460,10 @@ side_tables! {
     /// Owner-reason rule behind a derived standing grant. Key: string (grant ref) ":" id16 (rule
     /// decision id).
     CONSENT_OWNER_REASON_RULE: VaultMeta b"consent.owner_reason.v1:" Named;
+    /// Settled contact-disclosure offers by (contact, verdict). Key: id16 + verdict byte + hex64.
+    CONSENT_WIDEN_CONTACT_VERDICT_INDEX: VaultMeta b"consent.widen.contact_verdict.v1:" Raw;
+    /// Completeness flag of the contact-verdict index above (u64 version). Key: ().
+    CONSENT_WIDEN_CONTACT_VERDICT_STATE: VaultMeta b"consent.widen.contact_verdict_state.v1" Raw;
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson;
     /// Marker for a ruled conflict packet. Key: bytes32.
@@ -465,7 +475,7 @@ side_tables! {
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
-    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored;
+    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored [accepts: crate::context_board::context_board_plugin_block_accepts_masked];
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
@@ -473,10 +483,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored;
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_baseline_accepts_masked];
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored;
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_verdict_accepts_masked];
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;
@@ -537,6 +547,10 @@ side_tables! {
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).
     COOPERATIVE_DELETION_SUCCESSION: VaultMeta b"cooperative_deletion:succession:v1:" Named;
+    /// Contacts by live `identity_ref` head, to its head claim. Key: id16(identity) + id16(contact).
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX: VaultMeta b"counterparty.contact.identity.v1:" Raw;
+    /// Completeness flag of the identity index above (u64 version). Key: ().
+    COUNTERPARTY_CONTACT_IDENTITY_INDEX_STATE: VaultMeta b"counterparty.contact.identity_state.v1" Raw;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;

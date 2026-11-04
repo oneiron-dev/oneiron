@@ -1,6 +1,7 @@
 //! Public streaming vocabulary. Stream handles carry no text or authority.
 use crate::memory::MemoryError;
-use crate::{EntityId, Error, FinishReason};
+use crate::{EntityId, Error};
+use oneiron_model::llm::FinishReason;
 use serde::{Deserialize, Serialize};
 
 /// Maximum in-memory UTF-8 text per handle.
@@ -124,7 +125,7 @@ pub struct MessageStreamReceipt {
     /// asserts none, and on a receipt kept before them; an erase of its
     /// MESSAGE takes them off.
     #[serde(default)]
-    pub reply_assertions: crate::llm::ReplyAssertions,
+    pub reply_assertions: oneiron_model::llm::ReplyAssertions,
 }
 /// Observable local partial. This is never serialized into LMDB.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

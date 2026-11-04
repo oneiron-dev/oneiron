@@ -10,6 +10,7 @@
 
 mod codec;
 mod doors;
+mod identity_index;
 mod lifecycle;
 mod storage;
 mod trusted_contact;
@@ -82,4 +83,7 @@ use crate::error::Result;
 #[cfg(test)]
 use rmpv::Value;
 
+pub(crate) use self::identity_index::{
+    backfill_counterparty_identity_index, maintain_counterparty_identity_index_for_put,
+};
 pub(crate) use self::storage::rebuild_checkpoint_contact_index;

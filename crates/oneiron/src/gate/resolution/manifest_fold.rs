@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 
 use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
 use super::manifest_types::{AuthoredMin, ConnectorClassPrecedence};
 use super::manifest_types::{

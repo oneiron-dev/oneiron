@@ -4,7 +4,8 @@ use super::{
     model::*,
 };
 use crate::limit_ask::EngineLimit;
-use crate::outbound::{OutboundDispatchOutcome, OutboundDispatchRequest};
+use crate::outbound::OutboundDispatchRequest;
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -193,7 +194,7 @@ pub(super) fn notify(
         crate::ports::JobQueue::port_job_enqueue(
             vault,
             txn,
-            crate::attempt_queue::EnqueueAttempt {
+            crate::store::attempt_inputs::EnqueueAttempt {
                 kind: if dispatch_ref.is_some() {
                     "esign.delivery"
                 } else {

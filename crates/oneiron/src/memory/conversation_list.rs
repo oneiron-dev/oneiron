@@ -24,14 +24,16 @@ use super::*;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::conversation::{
-    ConversationBody, ConversationKind, LatestMessage, MembershipWindow, PreviewCandidates,
-    snippet, turn_text,
-};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::memory::conversation_membership::MembershipWindow;
+use crate::memory::conversation_preview::LatestMessage;
+use crate::memory::conversation_preview::PreviewCandidates;
+use crate::memory::conversation_preview::snippet;
+use crate::memory::conversation_preview::turn_text;
 use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
+use crate::store::conversation_body::{ConversationBody, ConversationKind};
 
 /// Conversations read through the lane at a time.
 const LIST_CHUNK: usize = 256;
