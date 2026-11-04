@@ -82,7 +82,7 @@
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
       "const": 1,
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 2,
       "re-export": 1
      }
@@ -4716,7 +4716,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/policy_setting_choice.rs",
-     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy and…",
+     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy, inference…",
      "surface": {
       "crate-vis": 11
      }
@@ -23574,7 +23574,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility/private_sources.rs",
@@ -26134,7 +26134,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_run.rs",
@@ -26452,7 +26452,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -26707,7 +26707,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -30725,7 +30725,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "mod": 1,
       "re-export": 15
      }
@@ -30907,7 +30907,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ProjectorPolicy"
@@ -30915,7 +30915,7 @@
      "path": "src/dreamer_wake/projector.rs",
      "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 17,
       "fn": 2,
       "struct": 1
      }
@@ -42613,8 +42613,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 211,
-      "re-export": 93
+      "mod": 210,
+      "re-export": 94
      }
     },
     {
@@ -48182,7 +48182,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RecallRerank",
@@ -50905,28 +50905,6 @@
      "surface": {
       "enum": 1,
       "type": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "DreamerTrapKind",
-      "DreamerTrapState",
-      "ModelStepCheckpoint",
-      "SettledStepRequest",
-      "SettledStepView",
-      "StepProgression",
-      "TrapRef"
-     ],
-     "path": "src/model_step_record.rs",
-     "purpose": "Durable model-step claim vocabulary and progression values",
-     "surface": {
-      "const": 8,
-      "crate-vis": 7,
-      "enum": 3,
-      "fn": 3,
-      "struct": 4
      }
     },
     {
@@ -57923,7 +57901,7 @@
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -57990,7 +57968,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 8
      }
     },
@@ -66115,7 +66093,11 @@
       "AgentPackRefusalLevel",
       "AgentPackScope",
       "AgentPackSkill",
+      "AgentPackSkillCall",
+      "AgentPackSkillDependency",
+      "AgentPackSkillFormat",
       "AgentPackSkillRef",
+      "AgentPackSkillRole",
       "AgentPackTravelProjection",
       "AgentPackView",
       "AgentPackWakeCadence"
@@ -66124,9 +66106,9 @@
      "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
      "surface": {
       "const": 1,
-      "enum": 8,
-      "fn": 8,
-      "struct": 11
+      "enum": 10,
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -67502,7 +67484,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
       "re-export": 20
      }
@@ -83609,7 +83591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EraseHeldBytes",
@@ -83624,6 +83606,7 @@
      "path": "src/verbs/record_erase.rs",
      "purpose": "The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 8
      }
@@ -90172,7 +90155,7 @@
     "dreamer_wake": {
      "files": 68,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -90546,13 +90529,6 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Durable model-step failure and reply-check contracts"
-    },
-    "model_step_record": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Durable model-step claim vocabulary and progression values"
     },
     "note": {
      "files": 69,
@@ -91248,9 +91224,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 122,
+   "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6280,
+   "source_files": 6279,
    "test_files": 900
   },
   "oneiron-android": {
@@ -118412,7 +118388,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -118440,6 +118416,16 @@
      "path": "src/handler/residence_socket_tests.rs",
      "purpose": "A real enrol: root + thin index, one opened item, remote search and offline honesty",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/selector_scope.rs",
+     "purpose": "Single-vault selector grant scope shared by handler and livequery (FIX 9251)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -125171,7 +125157,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -125446,7 +125432,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1498,
+   "source_files": 1499,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -125529,7 +125515,29 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 3
+      "mod": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallerSettledStep",
+      "DreamerTrapKind",
+      "DreamerTrapState",
+      "ModelStepCheckpoint",
+      "SettledStepRequest",
+      "SettledStepView",
+      "StepProgression",
+      "TrapRef"
+     ],
+     "path": "src/model_step_record.rs",
+     "purpose": "Durable model-step claim vocabulary and progression values",
+     "surface": {
+      "const": 9,
+      "enum": 4,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -125565,6 +125573,13 @@
      "layout": "file",
      "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
     },
+    "model_step_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Durable model-step claim vocabulary and progression values"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -125575,7 +125590,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 0
   },
   "oneiron-uniffi": {
