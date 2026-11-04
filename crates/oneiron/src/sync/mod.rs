@@ -85,7 +85,8 @@ pub(crate) mod withdrawn_cutoffs;
 pub use asset_body::session::{ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, AssetBodySession};
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
-    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined, EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
+    EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
     ResidenceSearch, SealedBundleRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
     SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
@@ -122,9 +123,9 @@ pub use residence::{
     DeviceSyncPreference, discover_local_window_keys, effective_residence_mode,
     load_device_sync_preference, prune_thin_items, record_item_touch, set_device_sync_preference,
 };
+pub use selector::GuestDocumentShareRequest;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
-pub use selector::GuestDocumentShareRequest;
 pub use selector::{
     DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
