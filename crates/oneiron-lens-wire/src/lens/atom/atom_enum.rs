@@ -326,7 +326,7 @@ impl LensAtom {
         fallback_lens_text(self.kind(), fallback)
     }
 
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         match self {
             Self::TextBlock(atom) => atom.validate(),
             Self::LedgerRow(atom) => atom.validate(),

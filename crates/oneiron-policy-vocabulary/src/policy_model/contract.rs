@@ -63,7 +63,7 @@ impl PolicyOutputContract {
     /// The response format the request declares. `Binary` is plain text: a
     /// JSON schema around a single digit would contradict the instruction the
     /// policy document gave the model.
-    pub(crate) fn response_format(self, categories: Vec<JsonValue>) -> ResponseFormat {
+    pub fn response_format(self, categories: Vec<JsonValue>) -> ResponseFormat {
         match self {
             Self::Binary => ResponseFormat::Text,
             Self::CategoryJson => ResponseFormat::Json {
@@ -125,7 +125,7 @@ const POLICY_CONFIDENCE_MAX_LEN: usize = 32;
 /// is a broken one.
 ///
 /// [`POLICY_PATTERN_ID_MAX_LEN`]: super::pattern::POLICY_PATTERN_ID_MAX_LEN
-pub(super) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
+pub const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PARSE_MAX
     * (super::pattern::POLICY_PATTERN_ID_MAX_LEN + 4)
     + POLICY_RATIONALE_MAX_LEN
     + POLICY_CONFIDENCE_MAX_LEN
@@ -166,7 +166,7 @@ struct NotesWire {
 /// engine terms: the rationale and the confidence word by length, the rule-id
 /// array by count. Downstream this text becomes ledger rows, and the ledger
 /// must not be floodable by an answer.
-pub(super) fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
+pub fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
     // BEFORE the parse, not after it. Every other bound here runs on a value
     // `serde_json` has already built, which makes them semantic bounds rather
     // than memory ones; this is the only one that can stop a body the engine
@@ -202,7 +202,7 @@ pub(super) fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
 
 /// The response format of the notes request: the rationale contract's audit
 /// fields and nothing else.
-pub(super) fn rationale_notes_format() -> ResponseFormat {
+pub fn rationale_notes_format() -> ResponseFormat {
     ResponseFormat::Json {
         schema: json!({
             "type": "object",

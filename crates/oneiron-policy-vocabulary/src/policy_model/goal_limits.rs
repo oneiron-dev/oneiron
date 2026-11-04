@@ -11,13 +11,13 @@ use crate::EntityId;
 /// that. Under the holder precedence, the authenticated holder's own scoped
 /// rows then replace the narrowed values, never past the vault's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum GoalLimitsPrecedence {
+pub enum GoalLimitsPrecedence {
     NestedNarrowing,
     #[default]
     NestedNarrowingHolderCappedAtVault,
 }
 impl GoalLimitsPrecedence {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::NestedNarrowing => "nested_narrowing",
             Self::NestedNarrowingHolderCappedAtVault => "nested_narrowing_holder_capped_at_vault",
@@ -49,7 +49,7 @@ impl GoalLimitsPrecedence {
 
 /// The six thresholds of one row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct GoalLimitValues {
+pub struct GoalLimitValues {
     pub goal_bytes: u64,
     pub why_bytes: u64,
     pub axis_name_bytes: u64,
@@ -60,7 +60,7 @@ pub(crate) struct GoalLimitValues {
 
 impl GoalLimitValues {
     /// Field by field, the lower of the two.
-    pub(crate) fn narrow(self, other: Self) -> Self {
+    pub fn narrow(self, other: Self) -> Self {
         Self {
             goal_bytes: self.goal_bytes.min(other.goal_bytes),
             why_bytes: self.why_bytes.min(other.why_bytes),
@@ -110,7 +110,7 @@ impl GoalLimitValues {
 
 /// Where a scoped row applies: one project, or one room thread by its root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum GoalLimitScope {
+pub enum GoalLimitScope {
     Project(EntityId),
     Thread(EntityId),
 }
@@ -118,7 +118,7 @@ pub(crate) enum GoalLimitScope {
 /// One row scoped to a project or a thread. With a holder it is that
 /// holder's override there; without one it narrows every intake there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct GoalLimitRow {
+pub struct GoalLimitRow {
     pub scope: GoalLimitScope,
     pub holder: Option<EntityId>,
     pub values: GoalLimitValues,
@@ -167,7 +167,7 @@ impl GoalLimitRow {
 
     /// The row's frontier bytes: its scope, its ref, its holder if any and
     /// its six limits, each at a fixed width.
-    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
         let (tag, id) = match self.scope {
             GoalLimitScope::Project(id) => (1u8, id),
             GoalLimitScope::Thread(id) => (2, id),
@@ -189,7 +189,7 @@ impl GoalLimitRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GoalLimits {
+pub struct GoalLimits {
     pub precedence: GoalLimitsPrecedence,
     pub goal_bytes: u64,
     pub why_bytes: u64,
@@ -234,7 +234,7 @@ impl GoalLimits {
     }
 
     /// The vault-level thresholds.
-    pub(crate) fn values(&self) -> GoalLimitValues {
+    pub fn values(&self) -> GoalLimitValues {
         GoalLimitValues {
             goal_bytes: self.goal_bytes,
             why_bytes: self.why_bytes,
@@ -247,7 +247,7 @@ impl GoalLimits {
 
     /// Two trusted bundles as one: the lower vault limits, every scoped row
     /// of both, and the stricter precedence.
-    pub(crate) fn restrict(self, other: Self) -> Self {
+    pub fn restrict(self, other: Self) -> Self {
         let values = self.values().narrow(other.values());
         let precedence = self.precedence.stricter(other.precedence);
         let mut scoped = self.scoped;
@@ -262,7 +262,7 @@ impl GoalLimits {
     /// row scoped there that names no holder. Under the holder precedence
     /// the holder's own rows there replace those values, narrowed by one
     /// another and capped at the vault limits.
-    pub(crate) fn resolve_for(
+    pub fn resolve_for(
         &self,
         project: EntityId,
         thread: Option<EntityId>,
@@ -286,7 +286,7 @@ impl GoalLimits {
         held.map_or(nested, |held| vault.narrow(held))
     }
 
-    pub(crate) fn encode(&self) -> Value {
+    pub fn encode(&self) -> Value {
         let mut row = vec![(
             Value::from("precedence"),
             Value::from(self.precedence.as_str()),
@@ -303,7 +303,7 @@ impl GoalLimits {
 
     /// Strict: exactly the precedence and six vault limits, then optional
     /// `scoped` rows. Anything else is malformed and fails closed upstream.
-    pub(crate) fn decode(value: &Value) -> Option<Self> {
+    pub fn decode(value: &Value) -> Option<Self> {
         let entries = value.as_map()?;
         let rows = field(entries, "scoped")?;
         if entries.len() != 7 + usize::from(rows.is_some()) {
@@ -325,7 +325,7 @@ impl GoalLimits {
         ))
     }
 
-    pub(crate) fn fields(&self) -> [u64; 6] {
+    pub fn fields(&self) -> [u64; 6] {
         self.values().fields()
     }
 }

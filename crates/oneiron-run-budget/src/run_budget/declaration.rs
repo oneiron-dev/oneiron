@@ -107,16 +107,16 @@ impl DeclaredTeachers {
         &self.purpose
     }
 
-    pub(crate) fn pins(&self) -> &PinnedModelConfig {
+    pub fn pins(&self) -> &PinnedModelConfig {
         &self.pins
     }
 
-    pub(crate) fn alias(&self, selector: &str) -> Option<&ModelId> {
+    pub fn alias(&self, selector: &str) -> Option<&ModelId> {
         self.aliases.get(selector)
     }
 
     /// The frozen alias mappings, in selector order.
-    pub(crate) fn aliases(&self) -> impl Iterator<Item = (&String, &ModelId)> {
+    pub fn aliases(&self) -> impl Iterator<Item = (&String, &ModelId)> {
         self.aliases.iter()
     }
 }
@@ -197,26 +197,26 @@ impl RunDeclaration {
     /// This declaration with one admission's reservation at
     /// `reserve_units`: a bounded media stream reserves its bound, not one
     /// call's.
-    pub(crate) fn with_reserve(mut self, reserve_units: u64) -> Self {
+    pub fn with_reserve(mut self, reserve_units: u64) -> Self {
         self.budget.reserve_units = reserve_units;
         self
     }
 
-    pub(crate) fn admits_connector(&self, connector: &str) -> bool {
+    pub fn admits_connector(&self, connector: &str) -> bool {
         !self.declared || self.connectors.contains(connector)
     }
 
-    pub(crate) fn overrides_custody(&self, offer: &str) -> bool {
+    pub fn overrides_custody(&self, offer: &str) -> bool {
         self.custody_overrides.contains(offer)
     }
 
     /// The paid connectors the run may call, in name order.
-    pub(crate) fn connectors(&self) -> impl Iterator<Item = &String> {
+    pub fn connectors(&self) -> impl Iterator<Item = &String> {
         self.connectors.iter()
     }
 
     /// The offers the owner lets serve this run from a T1 key, in name order.
-    pub(crate) fn custody_overrides(&self) -> impl Iterator<Item = &String> {
+    pub fn custody_overrides(&self) -> impl Iterator<Item = &String> {
         self.custody_overrides.iter()
     }
 }
