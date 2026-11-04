@@ -6,7 +6,7 @@
 //! widen a vault limit through a per-run request.
 
 use super::DecisionRung;
-use crate::EntityId;
+use oneiron_contracts::EntityId;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
