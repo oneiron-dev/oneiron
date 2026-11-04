@@ -70,9 +70,10 @@ use crate::dreamer_consolidation::{
 };
 use crate::dreamer_runner::{EnqueueDreamerAttemptOutcome, dreamer_turn_role};
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead, withdrawn_in_txn};
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
 use super::read_phase::WakeStop;
@@ -865,8 +866,10 @@ pub(crate) fn note_assignment_in_txn(
 /// words as taken, in its enqueue transaction (FIX 12246): the same
 /// assignment-time record `hold_in_txn` makes, so erasing or demoting one
 /// pending chunk member retires the round and puts its surviving turns
-/// back to be read again. Completion marks this round applied through the
-/// same kind + dedupe-key id every projector round uses.
+/// back to be read again. A member demoted while a mate is legally held
+/// registers its round without stamping absent words, so the chunk
+/// waits for its promotion. Completion marks this round applied through
+/// the same kind + dedupe-key id every projector round uses.
 pub(crate) fn take_chunk_words_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -874,27 +877,75 @@ pub(crate) fn take_chunk_words_in_txn(
     dedupe_key: &str,
     turns: &[EntityId],
 ) -> Result<()> {
-    // A member erased since the retry resolved makes the chunk
-    // stillborn: its payload still names the gone turn, so preparation
-    // refuses the whole one-part chunk and nothing stamped here is
-    // ever extracted. Stamp nothing, register no round, leave the
-    // erased member exactly as its erasure left it, and put the live
-    // members back: the batch-mate reread the erasure owed the round
-    // it could not see yet.
+    // Each member is live (its words read here), gone (erased, deleted,
+    // or otherwise withdrawn: no promotion brings its words back), or
+    // away (its row is demoted to thin while no deletion marker names
+    // it: a promotion may bring it back). A soft-deleted TURN keeps its
+    // row as a header-only shell, so raw row presence cannot tell live
+    // from gone.
     let mut live = Vec::with_capacity(turns.len());
-    let mut whole = true;
+    let mut away = Vec::new();
+    let mut gone = false;
     for turn in turns {
-        if turn_key_in_txn(&vault.store, txn, turn)?.is_none() {
-            whole = false;
-        } else {
-            live.push(*turn);
+        match live_entity_row_in_txn(&vault.store, txn, turn)? {
+            LiveEntityRow::Live { .. } => {
+                // The one live state whose words still read as absent.
+                if withdrawn_in_txn(&vault.store, txn, turn)? {
+                    gone = true;
+                } else {
+                    live.push(*turn);
+                }
+            }
+            // Soft-deleted, stale, archived: reads as absent, refuses as
+            // missing, never defers.
+            LiveEntityRow::DeletedShell => gone = true,
+            LiveEntityRow::Absent => {
+                // A hard erase leaves its deletion marker; a demotion
+                // leaves none (and without sync nothing demotes at all,
+                // so every absence there is an erasure).
+                let erased =
+                    vault.store.port_deletion_state(txn, turn)?.deleted || !cfg!(feature = "sync");
+                if erased {
+                    gone = true;
+                } else {
+                    away.push(*turn);
+                }
+            }
         }
     }
-    if !whole {
+    // Any gone member makes the chunk stillborn: its payload still names
+    // a turn whose words never come back, so preparation refuses the
+    // whole one-part chunk and nothing stamped here is ever extracted.
+    // Stamp nothing, register no round, leave every gone member exactly
+    // as its erasure left it, and put the live members back: the
+    // batch-mate reread the erasure owed the round it could not see yet.
+    // Away members are not reread: there is no row to requeue, and
+    // their words are away, not gone.
+    if gone {
         for turn in &live {
             reread_in_txn(&vault.store, txn, turn)?;
         }
         return Ok(());
+    }
+    // An away member with no legal hold on the chunk defers nowhere:
+    // the residency check needs a held round, and without one
+    // preparation refuses. Take the stillborn shape too, so the live
+    // members are read again now and the away one when its promotion
+    // brings it back.
+    if !away.is_empty() {
+        let mut held = false;
+        for turn in turns {
+            if crate::store::legal_hold::held_in_txn(&vault.store, txn, turn.as_bytes())? {
+                held = true;
+                break;
+            }
+        }
+        if !held {
+            for turn in &live {
+                reread_in_txn(&vault.store, txn, turn)?;
+            }
+            return Ok(());
+        }
     }
     let id = round_id(kind, dedupe_key);
     let mut round = ROUND
@@ -905,6 +956,8 @@ pub(crate) fn take_chunk_words_in_txn(
             riders: Vec::new(),
         });
     round.applied = false;
+    // Full membership, away members included: the residency check defers
+    // the chunk only while every missing source is a member of its round.
     round.turns = turns.to_vec();
     ROUND.put(&vault.store, txn, &id, &round)?;
     let mut stamped = Vec::new();
@@ -913,7 +966,11 @@ pub(crate) fn take_chunk_words_in_txn(
         if !given.rounds.contains(&id) {
             given.rounds.push(id);
         }
-        if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
+        if away.contains(turn) {
+            // Away words are not here to take: the rounds link stays, so
+            // a later erase or retire finds the round, but no digest is
+            // stamped for words this replica does not hold.
+        } else if let Some(statements) = turn_statements_in_txn(vault, txn, turn)? {
             let reading = reading(&statements);
             given.taken = Some(reading);
             stamped.push((*turn, reading));
