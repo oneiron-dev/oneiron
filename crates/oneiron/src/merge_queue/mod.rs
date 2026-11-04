@@ -104,7 +104,7 @@ impl<'a> MergeQueue<'a> {
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {
         let RepoRef::LocalFolder { path, .. } = &repo_ref else {
-            return Err(crate::contract_oracle::invalid(
+            return Err(crate::store::contract_oracle::invalid(
                 "merge queue needs a local repository",
             ));
         };

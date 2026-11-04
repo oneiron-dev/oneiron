@@ -3,7 +3,11 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+mod claim_read_status;
 mod contracts;
+pub(crate) use claim_read_status::ClaimReadStatus;
+mod point_read;
+pub use point_read::{PointRead, ReadRow, ReadTarget};
 mod read_result;
 pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
