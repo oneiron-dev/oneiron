@@ -18,13 +18,9 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::model_stream_row::StreamRow;
 
 const STREAMS: SideTable<AttemptId, StreamRow, Named> = SideTable::new(&side_table::MODEL_STREAM);
-/// Whether a masked copy of a `MODEL_STREAM` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn model_stream_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<StreamRow, Named>(bytes)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -129,15 +125,6 @@ pub struct ModelStreamTerminal {
     pub response: Option<LlmResponse>,
     /// Why the producer ended without a terminal, when it did.
     pub failure: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StreamRow {
-    actor: EntityId,
-    stream_key: String,
-    request: LlmRequest,
-    response: Option<LlmResponse>,
-    failure: Option<String>,
 }
 
 fn status(row: &StreamRow) -> ModelStreamStatus {
