@@ -2769,7 +2769,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.connectors.slates.defer_revision": { description: "The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.slates.accept_revision": { description: "The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.slates.reask_issuer": { description: "The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.connectors.subscriptions.put": { description: "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.connectors.subscriptions.put": { description: "The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.list": { description: "An agent's connector event subscriptions, standing and revoked, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.revoke": { description: "The owner stops one connector event subscription; the agent's key for the channel stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.setup.prepare": { description: "The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4583,7 +4583,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           reask_issuer: (input: Facade.ConnectorIssuerReaskRequest, options?: O): FacadeReturns<"vault.connectors.slates.reask_issuer">[K] => invoke("vault.connectors.slates.reask_issuer", input, options, newInvocation()),
         },
         subscriptions: {
-          /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+          /** The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer. */
           put: (input: Facade.ChannelSubscriptionRequest, options?: O): FacadeReturns<"vault.connectors.subscriptions.put">[K] => invoke("vault.connectors.subscriptions.put", input, options, newInvocation()),
           /** An agent's connector event subscriptions, standing and revoked, for the owner. */
           list: (input: Facade.ChannelSubscriptionsRequest, options?: O): FacadeReturns<"vault.connectors.subscriptions.list">[K] => invoke("vault.connectors.subscriptions.list", input, options, newInvocation()),

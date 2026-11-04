@@ -1,5 +1,6 @@
 //! The served connector-event responder (OF-519): what a Dreamer pass runs
-//! when a subscribed Slack or LINE message wakes the agent it addressed.
+//! when a subscribed Slack, LINE, LinkedIn or addressed email message wakes
+//! the agent it addressed.
 //!
 //! The pass only hands the reply off (FIX 2405): it queues one durable
 //! reply job for the agent and event and settles at once, so no model call
@@ -29,10 +30,11 @@ mod worker;
 
 pub(crate) use self::worker::run_connector_reply_job;
 
-/// The channels the served sink answers on.
-const SERVED_REPLY_CHANNELS: [&str; 2] = [
+/// The channels whose directly routed messages the served sink answers on.
+const DIRECT_REPLY_CHANNELS: [&str; 3] = [
     oneiron::channel_identity_provider::SLACK_CHANNEL,
     oneiron::channel_identity_provider::LINE_CHANNEL,
+    oneiron::linkedin_connector::LINKEDIN_CHANNEL,
 ];
 
 /// The pass-facing half of the served reply: the hand-off. The model
@@ -76,7 +78,9 @@ impl ConnectorEventResponder for ServedConnectorResponder {
 /// The origin of an event `agent` answers here. Only a surface-born message
 /// the agent itself was addressed by has a sender to answer: a tap, an
 /// intake copy or another actor's message is the agent's to read, not to
-/// answer here.
+/// answer here. Threaded email keeps its ProposeConfirm route; the reply's
+/// ordinary dispatch holds it as Proposed unless a live autonomy envelope
+/// covers the send.
 fn answerable_origin(
     event: &ConnectorEvent,
     agent: EntityId,
@@ -84,10 +88,16 @@ fn answerable_origin(
     let Ok(origin) = SurfaceConnectorPayload::from_connector_event(event) else {
         return Ok(None);
     };
-    if origin.route != SurfaceEventDispatchRoute::ActorSelf
-        || !SERVED_REPLY_CHANNELS.contains(&origin.channel.as_str())
-        || origin.actor()? != agent
-    {
+    let answerable = match origin.route {
+        SurfaceEventDispatchRoute::ActorSelf => {
+            DIRECT_REPLY_CHANNELS.contains(&origin.channel.as_str())
+        }
+        SurfaceEventDispatchRoute::ProposeConfirm => {
+            origin.channel == oneiron::channel_identity_provider::EMAIL_CHANNEL
+        }
+        SurfaceEventDispatchRoute::ObservedSourceEnrichment => false,
+    };
+    if !answerable || origin.actor()? != agent {
         return Ok(None);
     }
     Ok(Some(origin))

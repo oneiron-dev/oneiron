@@ -104,6 +104,9 @@ pub fn check_rewrite(verb: &str, before: &Value, after: &Value) -> Result<(), St
         "host.compact" => crate::compaction::check_host_compact_rewrite(before, after),
         "host.wake" => crate::dreamer_wake::check_host_wake_rewrite(before, after),
         "host.budget.hit" if before != after => Err("a host verb's args are the host's".to_owned()),
+        "host.turn.generate" | "host.session.open" | "host.session.close" if before != after => {
+            Err("a host verb's args are the host's".to_owned())
+        }
         _ => Ok(()),
     }
 }

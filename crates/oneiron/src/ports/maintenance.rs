@@ -58,13 +58,6 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
         id: &EntityId,
         record: &crate::connector_key::ConnectorKeyRecord,
     ) -> Result<()>;
-    fn port_outbound_grant_touch(
-        &self,
-        txn: &mut Self::Write<'_>,
-        id: &EntityId,
-        grant: crate::outbound_grant::StandingOutboundGrant,
-        used_at: u64,
-    ) -> Result<()>;
     fn port_habit_streak_materialize(
         &self,
         txn: &mut Self::Write<'_>,

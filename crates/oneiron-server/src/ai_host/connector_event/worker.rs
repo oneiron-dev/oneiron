@@ -42,6 +42,8 @@ use crate::server::SyncServer;
 const REPLY_REF: &str = "reply";
 /// The verb a reply goes out on: an answer in the message's own thread.
 const REPLY_VERB: &str = "send";
+/// LinkedIn's verb for the same answer: its manifest has no plain `send`.
+const LINKEDIN_REPLY_VERB: &str = oneiron::linkedin_connector::LINKEDIN_SEND_DM_VERB;
 /// The purpose a reply's model call is metered and routed under.
 const REPLY_PURPOSE: &str = "connector_reply";
 
@@ -163,7 +165,7 @@ fn answer(
         }
     };
     result.body_ref = Some(kept.content_ref.clone());
-    let reply = reply_of(agent, kept);
+    let reply = reply_of(agent, &origin.channel, kept);
     let mut sink = OwnedServedChannelSink::new(
         Arc::clone(vault),
         server.config.line.monthly_push_allowance(),
@@ -323,11 +325,16 @@ fn reply_run_id(agent: EntityId, event_id: &str) -> String {
     format!("{REPLY_PURPOSE}:{}", &hasher.finalize().to_hex()[..32])
 }
 
-fn reply_of(agent: EntityId, kept: ConnectorReplyBody) -> ConnectorReply {
+fn reply_of(agent: EntityId, channel: &str, kept: ConnectorReplyBody) -> ConnectorReply {
+    let verb = if channel == oneiron::linkedin_connector::LINKEDIN_CHANNEL {
+        LINKEDIN_REPLY_VERB
+    } else {
+        REPLY_VERB
+    };
     ConnectorReply {
         agent,
         reply_ref: REPLY_REF.to_owned(),
-        verb: REPLY_VERB.to_owned(),
+        verb: verb.to_owned(),
         content_ref: kept.content_ref,
         occurred_at: kept.written_at,
     }

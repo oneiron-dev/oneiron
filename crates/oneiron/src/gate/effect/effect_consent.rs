@@ -106,17 +106,14 @@ fn external_effect_facts(effect: &ExternalEffectGateInput) -> crate::consent::Ef
 /// The action requirement one external effect must be covered by: acting actor
 /// × its verb class × an envelope naming the verb selector.
 ///
-/// The selector vocabulary mirrors the canonical
-/// [`crate::consent::action_grant_from_standing_outbound_grant`] adapter
-/// (`verb:<class>` / `channel:<channel>` / `contact:<ref>` / `brief:<ref>`),
-/// so a legacy grant scope-matched onto this effect reads as consent-COVERING
-/// it — the fold that closes the write-side residual without minting a second
-/// rememberable lane. An effect whose verb class is not named by a grant's
-/// dial is envelope-uncovered on the same axis, so it still asks (the DEC-0006
-/// bound-exceeded path). The actor is NOT class-narrowed and the envelope is
-/// NOT target-pinned: the adapter mints grants on `principal_ref` alone, and
-/// the door's scope matcher already verified the channel/contact/brief axes on
-/// this txn before this fold runs.
+/// The selector names the verb (`verb:<class>`). A standing outbound grant's
+/// bound is spelled in its own dial's vocabulary and never contains this
+/// requirement directly: the door's outbound match covers the effect and
+/// echoes this requirement as its covering grant. An effect no grant covers
+/// still asks (the DEC-0006 bound-exceeded path). The actor is NOT
+/// class-narrowed and the envelope is NOT target-pinned: the door's outbound
+/// match already verified the channel/contact/brief axes on this txn before
+/// this fold runs.
 pub(in crate::gate) fn external_effect_action_requirement(
     effect: &ExternalEffectGateInput,
 ) -> Option<crate::consent::GrantBound> {

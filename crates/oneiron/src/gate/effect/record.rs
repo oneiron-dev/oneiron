@@ -93,9 +93,9 @@ pub(crate) fn record_external_effect_policy(
     }
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(wtxn, &candidate)?;
     if decision.outcome() == GateOutcome::Allow
-        && let Some((grant_id, grant)) = matched_grant
+        && let Some(grant) = matched_grant.as_ref()
     {
-        touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+        record_standing_outbound_grant_use_in_txn(store, wtxn, grant, &candidate.diff_handle)?;
     }
     if decision.outcome() == GateOutcome::Allow
         && approval_context != ApprovalContext::Observe

@@ -410,7 +410,9 @@ pub use mutation::PublicBookingAuthority;
 mod write_index;
 use write_index::indexed_publication;
 pub use write_index::{booking_config_hash, resolve_public_booking_token};
-pub(crate) use write_index::{guard_publication_put, index_publication_in_txn};
+pub(crate) use write_index::{
+    guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

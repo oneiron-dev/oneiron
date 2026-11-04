@@ -32,15 +32,19 @@ impl ImportedEvidenceEntityResolution {
 }
 
 /// The inbound-content screen a caller ran immediately before admitting one
-/// imported claim (CAL-09): the verdict class and the screener's own reason
-/// codes. It rides the claim's evidence beside its source record, so each
-/// admission keeps the verdict it was admitted under.
+/// imported claim (CAL-09): the verdict class, the screener's own reason
+/// codes, and the screener's name when it gives one. It rides the claim's
+/// evidence beside its source record, so each admission keeps the verdict
+/// it was admitted under and what produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedEvidenceScreen {
     /// `clear`, `flagged` or `indeterminate`.
     pub verdict: String,
     /// The screener's reason codes; empty for a clear body.
     pub reason_codes: Vec<String>,
+    /// The screener that produced the verdict, by the name it gives; `None`
+    /// when no screener ran or it gives none.
+    pub screener: Option<String>,
 }
 
 /// Write metadata for admitting one normalized imported evidence claim.
@@ -435,25 +439,29 @@ pub(super) fn imported_candidate(
     let imported_evidence = imported_evidence_value(&admission.source_id, source_record_id);
     let mut evidence = imported_evidence.clone();
     if let (Some(screen), MsgpackValue::Map(entries)) = (&admission.screen, &mut evidence) {
-        entries.push((
-            MsgpackValue::from("screen"),
-            MsgpackValue::Map(vec![
-                (
-                    MsgpackValue::from("verdict"),
-                    MsgpackValue::from(screen.verdict.as_str()),
+        let mut fields = vec![
+            (
+                MsgpackValue::from("verdict"),
+                MsgpackValue::from(screen.verdict.as_str()),
+            ),
+            (
+                MsgpackValue::from("reason_codes"),
+                MsgpackValue::Array(
+                    screen
+                        .reason_codes
+                        .iter()
+                        .map(|code| MsgpackValue::from(code.as_str()))
+                        .collect(),
                 ),
-                (
-                    MsgpackValue::from("reason_codes"),
-                    MsgpackValue::Array(
-                        screen
-                            .reason_codes
-                            .iter()
-                            .map(|code| MsgpackValue::from(code.as_str()))
-                            .collect(),
-                    ),
-                ),
-            ]),
-        ));
+            ),
+        ];
+        if let Some(screener) = &screen.screener {
+            fields.push((
+                MsgpackValue::from("screener"),
+                MsgpackValue::from(screener.as_str()),
+            ));
+        }
+        entries.push((MsgpackValue::from("screen"), MsgpackValue::Map(fields)));
     }
     let candidate = ClaimCandidate::new(
         predicate.to_owned(),

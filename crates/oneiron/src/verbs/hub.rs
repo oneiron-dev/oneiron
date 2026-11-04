@@ -206,6 +206,20 @@ pub struct HubHookReplay {
     /// The test did not replay this hook in full: no entry, or an entry's
     /// inputs are gone. The verdict still stands.
     pub unreplayed: bool,
+    /// Each golden input the pack declares for this verb hook, run once.
+    pub golden: Vec<HubHookGoldenRun>,
+}
+
+/// One golden input of a verb hook, as the qualification ran it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HubHookGoldenRun {
+    /// Its place in the hook's `golden.json`, from 0.
+    pub index: usize,
+    pub verb: String,
+    /// The hook's selector took the call, so its body ran.
+    pub ran: bool,
+    /// The body returned the expected outcome.
+    pub passed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -506,6 +520,16 @@ fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificati
                     .map(super::HookReplayRow::from)
                     .collect(),
                 unreplayed: replay.unreplayed,
+                golden: replay
+                    .golden
+                    .into_iter()
+                    .map(|run| HubHookGoldenRun {
+                        index: run.index,
+                        verb: run.verb,
+                        ran: run.result.is_some(),
+                        passed: run.passed,
+                    })
+                    .collect(),
             })
             .collect(),
     }

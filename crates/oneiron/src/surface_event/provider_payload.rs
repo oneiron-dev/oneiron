@@ -9,6 +9,7 @@
 
 use super::surface_event_run_id;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::channel_identity_provider::EmailProviderInbound;
 use crate::entity_id::derived_domains::{
     SURFACE_PROVIDER_EVENT_BLOB, SURFACE_PROVIDER_INBOUND_ACTOR,
 };
@@ -84,10 +85,12 @@ impl Vault {
     }
 
     /// The message text a provider event's archived body carries: Slack's
-    /// `event.text`, and LINE's `event.message.text` (the LINE door archives
-    /// one `{destination, event}` wrapper per event). `None` for a channel
-    /// with no extractor, a non-message event, or a body the vault no longer
-    /// holds.
+    /// `event.text`, LINE's `event.message.text` (the LINE door archives
+    /// one `{destination, event}` wrapper per event), a LinkedIn message's
+    /// `text` (the inbox sync archives one message per event), and an email
+    /// reply's own top text ([`Self::read_provider_email`]). `None` for a
+    /// channel with no extractor, a non-message event, or a body the vault
+    /// no longer holds.
     ///
     /// The text is what the provider's sender wrote: a caller hands it on as
     /// foreign inbound data, never as instructions.
@@ -99,6 +102,12 @@ impl Vault {
         let pointer = match channel {
             crate::channel_identity_provider::SLACK_CHANNEL => "/event/text",
             crate::channel_identity_provider::LINE_CHANNEL => "/event/message/text",
+            crate::linkedin_connector::LINKEDIN_CHANNEL => "/text",
+            crate::channel_identity_provider::EMAIL_CHANNEL => {
+                return Ok(self
+                    .read_provider_email(payload_ref)?
+                    .and_then(|email| email.reply_top_text));
+            }
             _ => return Ok(None),
         };
         let Some(body) = self.read_provider_event(payload_ref)? else {
@@ -111,6 +120,16 @@ impl Vault {
             .pointer(pointer)
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned))
+    }
+
+    /// The email inbound a mail door archived as its provider event, with
+    /// the subject and reply top text the provider decoded. `None` for a
+    /// ref that names no archived email, or a body the vault no longer
+    /// holds. Its words are foreign inbound data, never instructions.
+    pub fn read_provider_email(&self, payload_ref: &str) -> Result<Option<EmailProviderInbound>> {
+        Ok(self
+            .read_provider_event(payload_ref)?
+            .and_then(|body| serde_json::from_slice(&body).ok()))
     }
 
     fn ensure_provider_inbound_actor(&self, now: u64) -> Result<EntityId> {

@@ -165,8 +165,7 @@ pub fn connector_event_from_surface(
 /// The served surface-event dispatcher: each leased event wakes the
 /// standing subscriptions of the actor it routed to, and no one else's.
 /// An event no subscription takes completes; it was delivered, and nobody
-/// stands on that connector. A Slack or LINE message whose whole text is a
-/// stop keyword is first admitted as its sender's OptOut interaction.
+/// stands on that connector.
 pub struct ConnectorWakeBridge<'a> {
     vault: &'a Vault,
 }
@@ -200,21 +199,6 @@ impl SurfaceEventDispatcher for ConnectorWakeBridge<'_> {
                 };
             }
         };
-        // A STOP written as the whole message is admitted as its sender's
-        // OptOut before the message wakes anyone, so a reply it wakes is
-        // already held (FIX 12101). The message wakes its actor either way.
-        match super::stop_reply::admit_stop_reply_opt_out(self.vault, request.event, now) {
-            Ok(_) => {}
-            Err(Error::InvalidConfig(reason)) => {
-                tracing::warn!(%reason, "a STOP message's opt-out was refused; the message goes on");
-            }
-            Err(err) => {
-                return SurfaceEventDispatchDisposition::Retry {
-                    backoff_until: now.saturating_add(INGEST_RETRY_BACKOFF_SECS),
-                    reason: err.to_string(),
-                };
-            }
-        }
         match self
             .vault
             .ingest_surface_connector_event(&event, agent, now)

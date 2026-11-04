@@ -23,7 +23,6 @@ pub use self::manifest_ops::{
 pub use self::proxy::PROXY_CONNECTOR;
 pub use self::qualification::ConnectorQualificationError;
 pub use self::tool_grant::{
-    CONNECTOR_CONSENT_ORIGIN_ACTION_ID, CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID,
     ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent,
     ConnectorToolConsentRow, ConnectorToolGrant,
 };

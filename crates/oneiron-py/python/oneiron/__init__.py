@@ -2365,7 +2365,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def put(self, spec):
-            """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
+            """The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer."""
             return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_put(json.dumps(spec))))
         def list(self, spec):
             """An agent's connector event subscriptions, standing and revoked, for the owner."""

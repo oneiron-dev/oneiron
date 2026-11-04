@@ -1,6 +1,6 @@
 //! `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent
-//! answer a built-in channel (OF-519). Subscribing an agent to Slack or LINE
-//! makes each message that channel's pack routes to the agent wake it, and
+//! answer a built-in channel (OF-519). Subscribing an agent to Slack, LINE
+//! or threaded email makes each routed message wake it, and
 //! the served responder answers on the message's own thread. The list shows
 //! an agent's standing subscriptions; a revoke stops further wakes.
 
@@ -73,7 +73,7 @@ struct ListQuery {
 struct SubscribeRequest {
     /// The agent that answers, as 32 hex.
     agent: String,
-    /// `slack` or `line`.
+    /// `slack`, `line` or `email`.
     channel: String,
 }
 

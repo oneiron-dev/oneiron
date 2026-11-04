@@ -5,7 +5,7 @@
 //! name also covers its own literal spelling, so a grant minted for one verb
 //! keeps covering exactly that verb.
 
-use super::scope::SEND_VERB_CLASS;
+use super::bound::SEND_VERB_CLASS;
 
 /// Each registered class and its member verbs, as the outbound capability
 /// manifests name them. A verb outside the class a grant names matches
@@ -27,4 +27,18 @@ pub(super) fn verb_in_class(class: &str, verb: &str) -> bool {
         || OUTBOUND_VERB_CLASSES
             .iter()
             .any(|(name, members)| *name == class && members.contains(&verb))
+}
+
+/// Every class `verb` is a member of: its own literal spelling, then each
+/// registered class that lists it. The verb is trimmed.
+pub(super) fn classes_of(verb: &str) -> Vec<&str> {
+    let verb = verb.trim();
+    let mut classes = vec![verb];
+    classes.extend(
+        OUTBOUND_VERB_CLASSES
+            .iter()
+            .filter(|(name, members)| *name != verb && members.contains(&verb))
+            .map(|(name, _)| *name),
+    );
+    classes
 }

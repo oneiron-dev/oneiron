@@ -94,6 +94,82 @@ impl ServedConnectorCallHost {
             text,
         }
     }
+
+    /// The elicitation this send declares, or `None`: a call the engine
+    /// bound no caller to, a revision with no elicitation shape, an
+    /// unreadable key ref or setting, and a key set to `never allow` all
+    /// declare none. A call that names a custody record declares it too: its
+    /// door clears the presented value from each question and every later
+    /// reply (FIX 3843).
+    pub(super) fn declared<'a>(
+        &'a self,
+        call: &'a FrozenOutboundCall,
+        view: &FrozenToolCallView,
+    ) -> Option<Declared<'a>> {
+        let caller = self.caller.as_ref()?;
+        let revision = view.protocol_revision()?;
+        let capability = elicitation_capability(revision)?;
+        let intake = Intake::of(revision)?;
+        let key_ref = EntityId::from_hex(view.key_ref()?).ok()?;
+        let principal = EntityId::from_hex(&caller.principal_ref).ok()?;
+        match self.vault.connector_elicitation_setting(&key_ref) {
+            Ok(setting) if setting != SlateDisposition::NeverAllow => {}
+            _ => return None,
+        }
+        Some(Declared {
+            capability,
+            intake,
+            call,
+            vault: &self.vault,
+            registry: &self.elicitations,
+            binding: QuestionBinding {
+                principal,
+                grant_id: caller.grant_id,
+                key_ref,
+                parent_intent: call.intent_id().copied(),
+                name: caller.name.clone(),
+                server: view.server().to_owned(),
+                tool: view.tool().to_owned(),
+                endpoint: view.endpoint().to_owned(),
+                revision: revision.to_owned(),
+            },
+        })
+    }
+}
+
+/// The client capability one pinned revision declares for elicitation:
+/// 2025-06-18 an empty object, 2025-11-25 and 2026-07-28 form mode alone,
+/// so URL mode stays undeclared; `None` for any other revision.
+fn elicitation_capability(revision: &str) -> Option<Value> {
+    match revision {
+        "2025-06-18" => Some(json!({})),
+        "2025-11-25" | "2026-07-28" => {
+            let mut modes = Map::new();
+            modes.insert(wire::FORM.to_owned(), json!({}));
+            Some(Value::Object(modes))
+        }
+        _ => None,
+    }
+}
+
+/// How a revision carries a connector's questions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Intake {
+    /// `elicitation/create` requests on the reply stream.
+    Stream,
+    /// A `tools/call` result that asks for input, answered by the same call
+    /// again.
+    Retry,
+}
+
+impl Intake {
+    fn of(revision: &str) -> Option<Self> {
+        match revision {
+            "2025-06-18" | "2025-11-25" => Some(Self::Stream),
+            "2026-07-28" => Some(Self::Retry),
+            _ => None,
+        }
+    }
 }
 
 impl Presenting {

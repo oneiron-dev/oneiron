@@ -7,14 +7,14 @@
 //! grant is a path of its own: an external tool its actor calls without
 //! asking. Capability slips are out of reach by design (Engine 12:28). A
 //! grant counts only under the policy frontier it was minted at, so a plan
-//! that changes a manifest leaves none counting.
+//! that changes a manifest leaves none counting. Each grant is a standing
+//! consent Grant row.
 use super::ShapeTarget;
 use super::live::ShapeSources;
 use super::plan::ShapePlanItem;
 use super::reach::{ReachActor, ShapeReachFact, ShapeReachVerdict};
 use crate::error::Result;
-use crate::outbound_grant::{StandingOutboundGrantScope, decode_standing_outbound_grant_body};
-use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
 use crate::{EntityId, Vault};
 
 /// The channel a scoped MCP grant's path names: the external tool rides the
@@ -40,7 +40,7 @@ pub(super) struct ReachOutbound {
     /// The actor it lets act, by the principal ref it was minted for.
     pub(super) principal: String,
     pub(super) scope: StandingOutboundGrantScope,
-    /// Its stored body's digest, which the frontier pins.
+    /// Its stored row's digest, which the frontier pins.
     pub(super) digest: [u8; 32],
 }
 
@@ -171,7 +171,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// A read failure or an undecodable grant.
+    /// A read failure or an unencodable grant row.
     pub(super) fn reach_outbound_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -179,18 +179,22 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<Vec<ReachOutbound>> {
         let mut grants = Vec::new();
-        for (id, body) in self.shape_bodies_in_txn(txn, ENTITY_TYPE_OUTBOUND_GRANT)? {
-            sources.list(id);
-            let grant = decode_standing_outbound_grant_body(&body)?;
+        for (_, row) in crate::consent::standing_grant_rows_in_txn(&self.store, txn)? {
+            let Some(grant) = StandingOutboundGrant::from_row(&row) else {
+                continue;
+            };
+            sources.list(grant.id);
             if grant.is_active_under_policy(policy_frontier) {
                 grants.push(ReachOutbound {
-                    grant: id,
+                    grant: grant.id,
                     principal: grant.principal_ref,
                     scope: grant.scope,
-                    digest: *blake3::hash(&body).as_bytes(),
+                    digest: *blake3::hash(&crate::consent::encode_consent_grant_row(&row)?)
+                        .as_bytes(),
                 });
             }
         }
+        grants.sort_by_key(|grant| *grant.grant.as_bytes());
         Ok(grants)
     }
 }

@@ -7,11 +7,13 @@ use crate::attempt_queue::AttemptId;
 use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
+use crate::outbound_grant::{
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
+    standing_outbound_grants_in_txn,
+};
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentLedgerError, OutboundAuthorizationBinding, derive_intent_id,
 };
-use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 
 use super::scope::{ScopedMcpConsentDecision, ScopedMcpEscalationReason};
 use super::tool_call::{FrozenToolCall, PreparedToolCall};
@@ -204,9 +206,7 @@ impl OutboundBindingAuthority {
         Option<(OutboundAuthorizationBinding, ScopedCapabilityProvenance)>,
         IntentLedgerError,
     > {
-        let Some(grant) =
-            crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, txn, &grant_id)?
-        else {
+        let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &grant_id)? else {
             return Ok(None);
         };
         if grant.principal_ref != principal_ref {
@@ -279,28 +279,34 @@ impl OutboundBindingAuthority {
                 OutboundBindingValidation::Invalid,
             ));
         };
-        let current_policy_floor = {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
-        };
         // A frozen call that carries typed capability provenance names its own
         // grant: check exactly that grant rather than searching for whichever
         // grant reproduces the binding (ONE-1885). Ordinary calls keep the scan.
-        let candidates = match call.capability_provenance() {
-            Some(capability) => vec![capability.grant_id()],
-            None => vault.entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)?,
-        };
-        for grant_id in candidates {
-            let Some(grant) = vault.get_standing_outbound_grant(&grant_id)? else {
-                if call.capability_provenance().is_some() {
-                    return Ok(FrozenCallValidation::Rejected(
-                        OutboundBindingValidation::Invalid,
-                    ));
+        let (current_policy_floor, candidates) = {
+            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            let floor =
+                crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?;
+            let candidates = match call.capability_provenance() {
+                Some(capability) => {
+                    let Some(grant) = standing_outbound_grant_in_txn(
+                        &vault.store,
+                        &rtxn,
+                        &capability.grant_id(),
+                    )?
+                    else {
+                        return Ok(FrozenCallValidation::Rejected(
+                            OutboundBindingValidation::Invalid,
+                        ));
+                    };
+                    vec![grant]
                 }
-                return Err(Error::CorruptedIndex("outbound grant type index row"));
+                None => standing_outbound_grants_in_txn(&vault.store, &rtxn)?,
             };
+            (floor, candidates)
+        };
+        for grant in candidates {
             let expected = self.binding_for_identity(
-                grant_id,
+                grant.id,
                 &grant,
                 intent_id,
                 call.server(),
@@ -426,8 +432,8 @@ fn grant_scope_binding_digest(grant: &StandingOutboundGrant) -> [u8; 32] {
         &mut hasher,
         b"oneiron.outbound.authorization_grant_scope.v1",
     );
-    binding_hash_bytes(&mut hasher, &grant.binding_diff_handle);
-    binding_hash_bytes(&mut hasher, &grant.read_frontier_hash);
+    binding_hash_bytes(&mut hasher, grant.grant_ref().as_bytes());
+    binding_hash_bytes(&mut hasher, &grant.policy_frontier);
     match &grant.scope {
         StandingOutboundGrantScope::ScopedMcp {
             server,

@@ -146,25 +146,6 @@ impl EntityStoreMaintenance for Store {
         crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
         self.entities.put(txn, id.as_bytes(), &payload)
     }
-    fn port_outbound_grant_touch(
-        &self,
-        txn: &mut RwTxn<'_>,
-        id: &EntityId,
-        grant: crate::outbound_grant::StandingOutboundGrant,
-        used_at: u64,
-    ) -> Result<()> {
-        let mut row = self
-            .port_entity_record(txn, id)?
-            .ok_or(Error::EntityNotFound)?;
-        if row.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
-            return Err(Error::CorruptedIndex("outbound grant entity type"));
-        }
-        row.body =
-            crate::outbound_grant::encode_standing_outbound_grant_body(&grant.touched(used_at)?)?;
-        let payload = row.encode();
-        crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
-        self.entities.put(txn, id.as_bytes(), &payload)
-    }
     fn port_habit_streak_materialize(
         &self,
         txn: &mut RwTxn<'_>,

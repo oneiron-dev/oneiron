@@ -20,10 +20,13 @@
 //! a space posting preset in the owner's mode) posts with his own user token
 //! from the app's install, so Slack shows it as his.
 //!
-//! Telegram (its `telegram` module), and email from a native mail identity
-//! through the host's own mail server (its `email` module), ride beside them.
+//! Telegram (its `telegram` module), email from a native mail identity
+//! through the host's own mail server (its `email` module), and email from a
+//! member's delegated Gmail row through Gmail as the member (its `gmail`
+//! module), ride beside them.
 //! Each provider's API is where the host's installed [`ServedTransports`]
-//! put it.
+//! put it. A LinkedIn reply (its `linkedin` module) calls the installed
+//! LinkedIn connector's tools through the host's connector calls.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -45,13 +48,16 @@ use crate::{EntityId, Vault};
 
 mod content;
 mod email;
+mod gmail;
 mod host;
 mod line_wire;
+mod linkedin;
 mod telegram;
 
 use self::content::trusted_contact_check_in_text;
 pub use self::host::{
-    LINE_API_BASE, SLACK_API_BASE, ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
+    LINE_API_BASE, SLACK_API_BASE, ServedConnectorCalls, ServedEndpoints, ServedTransports,
+    TELEGRAM_API_BASE,
 };
 use self::line_wire::{
     fresh_line_reply_token, line_archived_audience, line_destination, line_retry_key, line_text,
@@ -702,7 +708,11 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "reply") => self.line_send(request, LineMode::Reply),
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             (telegram::TELEGRAM_CHANNEL, "send") => self.telegram_send(request),
+            (EMAIL_CHANNEL, "send") if self.sends_from_gmail(request) => self.gmail_send(request),
             (EMAIL_CHANNEL, "send") => self.email_send(request),
+            (linkedin::LINKEDIN_CHANNEL, linkedin::LINKEDIN_SEND_DM_VERB) => {
+                self.linkedin_send(request)
+            }
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
