@@ -87,6 +87,9 @@ impl Store {
             Some(lease),
         )?;
         store.owner.opened_with_writer_lease = true;
+        // A crashed lease holder's journaled decision times rise into the
+        // clock floor before any admission (review #4484 P1-B).
+        store.replay_authorization_lease_journal()?;
         Ok(store)
     }
 
