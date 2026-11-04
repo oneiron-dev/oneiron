@@ -3399,25 +3399,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/activation.rs` | src | s | 2 struct · 5 fn | LensActivateRequest, LensDeactivateRequest | The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250) |
 | `src/lens/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | UnselectedLensProposalErase | An erased actor out of the lens proposals it made and the slot selections it decided (FIX 3520) |
 | `src/lens/artifact.rs` | src | s | 4 crate-vis | — | A proposed lens's vault rows (FIX 9896; dashboard-v2:D8, ARCH-0035 Rule A): the lens is a CODE kind=lens row… |
-| `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 5 fn · 1 crate-vis | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
-| `src/lens/atom/atom_leaves.rs` | src | m | 27 struct · 6 enum · 2 fn · 12 crate-vis | AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom, GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll +25 | Leaf payload structs with per-atom validate and fallback impls |
-| `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode tree type with its Deserialize seeds: the tree decodes whole, at any width or depth its codec reads… |
-| `src/lens/atom/atom_scalars.rs` | src | s | 2 struct · 5 fn · 3 const · 1 crate-vis | FiniteF64, LensText | Scalar newtypes LensText/FiniteF64 with TryFrom/serde impls, and kit-version/kind-list consts |
-| `src/lens/atom/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its… |
 | `src/lens/default_vault.rs` | src | s | 2 struct · 1 fn | DefaultVaultInput, DefaultVaultItem | Renderer-neutral default vault composition over already-admitted projections |
-| `src/lens/generated_ui/genui_app_catalog.rs` | src | s | 4 struct · 1 enum · 6 fn · 1 const · 4 crate-vis | GeneratedUiCatalog, GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion, GeneratedUiComponentAtom, GeneratedUiComponentSchema | Component catalogs an app declares (FIX 9891, 9893): the catalog name, its semver `catalogVersion`, the… |
-| `src/lens/generated_ui/genui_card.rs` | src | m | 1 struct · 13 fn | GeneratedUiCard | Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding |
-| `src/lens/generated_ui/genui_catalog.rs` | src | m | 2 struct · 2 enum · 11 fn · 1 const | GeneratedUiPrebuilt, GeneratedUiPrimitive, GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities | The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion |
-| `src/lens/generated_ui/genui_decode.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 crate-vis | GeneratedUiDecoded, GeneratedUiFallback | The staged version boundary every generated-UI envelope crosses first (FIX 7967; CALLS "FIX 7967 7970… |
-| `src/lens/generated_ui/genui_envelope.rs` | src | s | 2 struct · 1 enum · 11 fn · 3 const · 1 crate-vis | GeneratedLens, LensLoadAction, LensVersionStamp | Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation |
-| `src/lens/generated_ui/genui_fingerprint.rs` | src | m | 5 struct · 24 fn | LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle, LensHandleRoleChange | Golden-corpus behavior fingerprint and structured behavior diff |
-| `src/lens/generated_ui/genui_heal.rs` | src | s | 1 crate-vis | — | Healing a generated-UI segment cut mid-stream (FIX 7970; ARCH-0048 G4 healing-tolerant parse): a cut string… |
-| `src/lens/generated_ui/genui_json_patch.rs` | src | m | 1 enum · 3 crate-vis | GeneratedUiJsonPatchOperation | RFC-6902 JSON Patch for the patch stream profile (FIX 7968): the operation type, its all-or-nothing… |
-| `src/lens/generated_ui/genui_regen.rs` | src | s | 3 struct · 2 enum · 1 trait · 15 fn | LensEvaluatedRevision, LensRegenFailure, LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator | Regen request and outcome decision path over behavior fingerprints |
-| `src/lens/generated_ui/genui_render.rs` | src | m | 6 struct · 1 enum · 8 fn · 7 crate-vis | GeneratedUiCardElement, GeneratedUiCardStart, GeneratedUiCardStateUpdate, GeneratedUiDataModel, GeneratedUiNode, GeneratedUiRender, GeneratedUiSegment | Flat render validation, segment framing and reassembly, and segment wire validators |
-| `src/lens/generated_ui/genui_state.rs` | src | m | 5 struct · 6 enum · 7 fn · 8 crate-vis | GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiActionTier, GeneratedUiArchiveReason, GeneratedUiCardLifecycle, GeneratedUiCardPhase, GeneratedUiStatePatch, GeneratedUiStateSnapshot +3 | Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate |
-| `src/lens/generated_ui/genui_stream.rs` | src | m | 6 struct · 2 enum · 10 fn · 3 crate-vis | GeneratedUiCardReady, GeneratedUiCardStatePatch, GeneratedUiCardStateSnapshot, GeneratedUiPartialNode, GeneratedUiPartialTree, GeneratedUiStream, GeneratedUiStreamOutcome, GeneratedUiStreamProfile | Stream profiles and the one incremental stream state (FIX 7968, 7970) |
-| `src/lens/generated_ui/mod.rs` | src | s | 11 re-export · 1 crate-vis | — | The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation and app-declared… |
 | `src/lens/guest.rs` | src | s | 2 struct · 5 fn · 3 const | LensExecutionRuntime, LensGuestPolicy | Sandboxed, read-only lens authoring |
 | `src/lens/inspection.rs` | src | s | 4 struct · 7 fn · 2 const · 1 crate-vis | InspectionHandle, InspectionResolveRequest, InspectionResolved, InspectionState | OF-235: shareable inspection state and its handle link |
 | `src/lens/instrument.rs` | src | s | 2 struct · 3 fn · 1 crate-vis | InstrumentAtoms, InstrumentView | The single escaped Instrument renderer for a validated atom stream |
@@ -3440,7 +3422,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/scope.rs` | src | s | 1 struct · 7 crate-vis | LensScope | Where a proposed lens is read (FIX 2136): the world and facet its author declares for it, or, undeclared… |
 | `src/lens/sdk.rs` | src | m | 3 struct · 1 fn · 1 const | LensDefaultRequest, LensDossierSource, WeaveLensRequest | `vault.lenses.default` (OF-250): the default vault projection over the caller's own read key |
 | `src/lens/selection.rs` | src | s | 8 struct · 4 fn | LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan, LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved | Frame-bound selection doors |
-| `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 4 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
 | `src/lens/tests/atom_fuzz.rs` | test | s | — | — | Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer |
 | `src/lens/tests/genui_render.rs` | test | s | — | — | Generated-UI render-protocol tests: cards, segments, prebuilt shorthand, and tree construction |
 | `src/lens/tests/genui_validation.rs` | test | s | — | — | Generated-lens validation tests: closed enums, URL bans, unsafe atoms, budgets, and size caps |
@@ -3453,10 +3434,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lens/validate.rs` | src | s | 11 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
-| `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
-| `src/lens/wire_limits.rs` | src | s | 1 crate-vis | — | Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their… |
-| `src/lib.rs` | src | m | 209 mod · 95 re-export · 26 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 208 mod · 96 re-export · 26 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -3806,7 +3784,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | Merge queue request, batch, pointer and observation records |
 | `src/memory/message_presence.rs` | src | s | 2 struct | MessagePresenceScope, ScopedPresenceFrame | Scope and wire bytes of a live MESSAGE partial |
 | `src/memory/message_result.rs` | src | m | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 41 mod · 66 re-export · 29 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 40 mod · 67 re-export · 29 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 4 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/external_import.rs` | src | s | 1 enum · 4 fn | ExternalImportProof | The outside import doors (FIX 6871, G7 PR1): `vault.code.imports.create` and `vault.code.imports.get` |
@@ -3975,11 +3953,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/vault_standing.rs` | src | s | 1 crate-vis | — | The owner or administrator standing a room reader presents |
 | `src/memory/voice_actor.rs` | src | s | 1 struct · 2 enum · 3 fn · 5 crate-vis | VoiceBankActor, VoiceCreator, VoiceRefSubjectKind | Credential-bound voice actors and their transaction-local proof values |
 | `src/memory/wake_observation.rs` | src | s | 13 struct · 4 enum · 3 fn · 2 const | ClaimAuthoringFallback, WakeCallState, WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector +9 | Durable and live wake-observation read vocabulary |
-| `src/memory/web_acquisition/door.rs` | src | s | 2 struct · 1 fn | WebCrawlRequest, WebFetchRequest | Typed inputs for the two acquisition doors |
-| `src/memory/web_acquisition/mod.rs` | src | m | 7 struct · 6 enum · 1 trait · 10 fn · 2 type · 2 const · 2 re-export · 3 crate-vis | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, MinExtractedContentBytes +6 | Web acquisition values and the host-supplied acquisition port |
-| `src/memory/web_acquisition/refusal.rs` | src | s | 1 enum · 6 fn · 2 const · 2 crate-vis | HostedEgressRefusal | — |
-| `src/memory/web_acquisition/result.rs` | src | s | 6 fn · 1 crate-vis | — | — |
-| `src/memory/web_acquisition/url.rs` | src | s | 8 crate-vis | — | — |
 | `src/memory/web_fetch.rs` | src | s | 2 fn | — | Actor-bound web acquisition and import |
 | `src/memory/wellness_doors.rs` | src | s | 3 struct · 4 fn | WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
 | `src/memory/witness/assertions.rs` | src | s | 2 crate-vis | — | The records a witnessed reply asserts (OF-063), judged in the writer's one snapshot: every cited and created… |
@@ -6884,14 +6857,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_connector/provider.rs` | src | s | 1 re-export | — | Web provider profiles are defined beside the core setting vocabulary |
 | `src/web_connector/setting.rs` | src | s | 3 fn · 1 re-export | — | The vault's one switch: which provider serves its web calls, on whose key |
 | `src/web_connector/usage.rs` | src | s | 2 fn · 1 re-export | — | One usage row per web call: provider, tool, key source, latency and cost |
-| `src/web_fetch.rs` | src | m | 6 struct · 2 trait · 12 fn · 4 re-export | FirecrawlRenderer, HeadlessDocument, HeadlessRenderer, NativeHeadlessRenderer, NativeReadabilityRenderer, RenderedPage, Renderer, WebFetcher | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
-| `src/web_fetch/client.rs` | src | s | 3 fn | — | The readability rung's HTTP client as a host builds it (FIX 7123) |
-| `src/web_fetch/door.rs` | src | s | 1 re-export | — | Acquisition request values are defined at the lower import port |
-| `src/web_fetch/egress.rs` | src | m | 2 struct · 7 fn · 3 re-export · 4 crate-vis | HostedEgressGuard, HostedPrivateOrigin | The managed (hosted) node's web-fetch egress guard (SCAN C447) |
-| `src/web_fetch/ladder.rs` | src | m | 10 crate-vis | — | Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page… |
-| `src/web_fetch/render.rs` | src | m | 12 crate-vis | — | Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential… |
-| `src/web_fetch/rungs.rs` | src | s | — | — | The built-in rungs' [`Renderer`] impls |
-| `src/web_fetch/tests.rs` | test | XL | — | — | — |
 | `src/window_key.rs` | src | s | 1 re-export · 1 crate-vis | — | Monthly CRDT window keys and their timestamp conversion |
 | `src/workspace_roster/codec.rs` | src | L | 48 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/companion_bind.rs` | src | s | 2 crate-vis | — | The first binding of a member's companion to her principal, and the one check a brought companion passes… |
