@@ -187,6 +187,11 @@ struct Nonces {
     /// closed: from then on every admission takes the writer, which the swap
     /// seals.
     fenced: bool,
+    /// An owner's clock recovery is under way ([`SpentNonces::begin_clock_recovery`]):
+    /// every admission takes the writer, which the recovery's writer
+    /// serializes with, so no spend judged on the clock that ran ahead lands
+    /// after the recovery set it back (L02 11-04 16:34 condition).
+    recovering: bool,
     /// Spent by an admission here and not yet landed, each with the authority
     /// second its slip's replay window ends: it leaves once its rows land, or
     /// past that second when they have not.
@@ -668,7 +673,7 @@ impl SpentNonces {
         clock: super::ProofClock,
     ) -> bool {
         let mut nonces = self.lock();
-        if nonces.fenced {
+        if nonces.fenced || nonces.recovering {
             return false;
         }
         // A spend journaled since this proof was judged on `clock` took a
@@ -727,12 +732,18 @@ impl SpentNonces {
         }
     }
 
-    /// Lets the proof clock go below the spends judged here, after an owner's
-    /// clock recovery set it back to the wall ([`Vault::recover_proof_clock`]).
-    pub(super) fn forget_proof_high(&self) {
-        if self.in_own_process() {
-            self.lock().live_high = 0;
+    /// Starts an owner's clock recovery ([`Vault::recover_proof_clock`]),
+    /// enforcing the stopped vault it needs (L02 11-04 16:34): `false` while
+    /// any spend made here has not landed, whose landing would raise the
+    /// floor again after the recovery. Until the returned guard drops, every
+    /// admission takes the writer.
+    pub(super) fn begin_clock_recovery(&self) -> Option<ClockRecovery<'_>> {
+        let mut nonces = self.lock();
+        if self.in_own_process() && !nonces.drained() {
+            return None;
         }
+        nonces.recovering = true;
+        Some(ClockRecovery { nonces: self })
     }
 
     /// Notes that the rows of a spend [`Self::admit`] took are queued on the
@@ -1084,6 +1095,25 @@ impl SpentNonces {
 pub(in crate::authority) struct SpendDoor {
     served: Arc<Vault>,
     opened_at: u64,
+}
+
+/// An owner's clock recovery in progress ([`SpentNonces::begin_clock_recovery`]).
+pub(super) struct ClockRecovery<'a> {
+    nonces: &'a SpentNonces,
+}
+
+impl ClockRecovery<'_> {
+    /// The recovery set the clock back to the wall: the spends judged on the
+    /// clock that ran ahead no longer hold the live clock there.
+    pub(super) fn recovered(&self) {
+        self.nonces.lock().live_high = 0;
+    }
+}
+
+impl Drop for ClockRecovery<'_> {
+    fn drop(&mut self) {
+        self.nonces.lock().recovering = false;
+    }
 }
 
 impl SpendDoor {
