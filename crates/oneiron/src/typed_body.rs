@@ -739,3 +739,5 @@ fn fork_at(doc: &LoroDoc, frontier: &[u8]) -> Result<LoroDoc> {
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
 }
+
+pub mod live_pin;
