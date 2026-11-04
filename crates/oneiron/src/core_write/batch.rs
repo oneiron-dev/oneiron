@@ -64,6 +64,16 @@ impl CoreWriteLane<'_> {
         txn: &heed::RoTxn<'_>,
         ids: &[crate::EntityId],
     ) -> crate::Result<bool> {
+        self.as_ref().admits_puts_in(txn, ids)
+    }
+}
+
+impl CoreWriteLaneRef<'_> {
+    pub(crate) fn admits_puts_in(
+        self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+    ) -> crate::Result<bool> {
         let (Self::Read(lane) | Self::Target(lane)) = self else {
             return Ok(true);
         };
