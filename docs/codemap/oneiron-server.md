@@ -557,7 +557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openai_proxy/choices.rs` | src | s | 10 crate-vis | — | FIX 8188, 8189: every choice a call asks for, on the caller's own clock |
 | `src/api/openai_proxy/exchange.rs` | src | s | 2 crate-vis | — | The exchange a call proposes back (FIX 8188, 8192): the newest user text, every answer the caller got and… |
 | `src/api/openai_proxy/mod.rs` | src | m | 4 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
-| `src/api/openai_proxy/receipt.rs` | src | s | 7 crate-vis | — | FIX 3389: the lasting receipt a raw `/v1/chat/completions` reply states (OF-538), as the facade, MCP and WS… |
+| `src/api/openai_proxy/receipt.rs` | src | s | 8 crate-vis | — | FIX 3389: the lasting receipt a raw `/v1/chat/completions` reply states (OF-538), as the facade, MCP and WS… |
 | `src/api/openai_proxy/release.rs` | src | s | 1 crate-vis | — | FIX 8191: the completed answer, judged right before it is released |
 | `src/api/openai_proxy/timing.rs` | src | s | 4 crate-vis | — | FIX 8190: when a refused model call may be sent again, as its source error said it |
 | `src/api/openai_proxy/wire.rs` | src | s | 9 crate-vis | — | OpenAI memory-proxy response conversion and refusal mapping (OF-445) |
@@ -657,6 +657,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/recovery_kit_target_routes/pad_access.rs` | src | m | 3 crate-vis | — | A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953… |
 | `src/api/owner_routes/recovery_kit_target_routes/root_doors.rs` | src | m | 5 crate-vis | — | The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is… |
 | `src/api/owner_routes/recovery_kit_target_routes/secret_anchor.rs` | src | s | 3 crate-vis | — | `POST /v1/owner/secrets/anchor-sign` (FIX 1956): the owner's recovery kit pushes a portable secret's current… |
+| `src/api/owner_routes/removal_archive_routes.rs` | src | s | 1 crate-vis | — | The owner's list of the removal archives this vault took in (FIX 11797): each by its receipt id, the shared… |
 | `src/api/owner_routes/room_thread_setting_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/settings/room-threads`: the owner's two switches over Admins and private room threads (owner… |
 | `src/api/owner_routes/root_routes.rs` | src | m | 4 crate-vis | — | `/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is… |
 | `src/api/owner_routes/schema.rs` | src | s | 31 crate-vis | — | The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611): `POST… |
@@ -1018,11 +1019,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_verdict/hook.rs` | src | s | 2 crate-vis | — | `ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any… |
 | `src/device_local.rs` | src | s | 10 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `src/device_sync.rs` | src | m | 8 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
+| `src/device_sync/batch_admission.rs` | src | s | 1 crate-vis | — | The reap freeze's admission for each batch the device sync connection applies or sends (FIX 12036) |
 | `src/device_sync/catalog.rs` | src | s | 3 crate-vis | — | The device's view of the models the owner's other nodes offer (OF-575), learned while its home connection is… |
 | `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
 | `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
 | `src/device_sync/freeze.rs` | src | s | 8 crate-vis | — | The reap freeze a managed vault's device sync works under (WILL-PLAN L14 row 14, FIX 5127) |
 | `src/device_sync/removal_delivery.rs` | src | m | 6 crate-vis | — | The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396) |
+| `src/device_sync/removal_delivery/import_gate.rs` | src | s | 5 crate-vis | — | The admission each removal archive import takes (FIX 11796, a device sync admission, FIX 12038), and the… |
+| `src/device_sync/removal_delivery/kept_files.rs` | src | s | 2 crate-vis | — | The removal archive files the receiver deletes (FIX 11797): one whose import has committed, and one whose… |
 | `src/device_sync/renewal.rs` | src | m | 8 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
 | `src/device_sync/route.rs` | src | s | 6 crate-vis | — | FIX 3131: the home device sync dials over the mesh |
 | `src/document_memory.rs` | src | s | 1 crate-vis | — | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
@@ -1076,14 +1080,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/reader.rs` | src | m | 23 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
 | `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
+| `src/handler/admitted_windows.rs` | src | s | 7 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
-| `src/handler/asset_bodies.rs` | src | s | 3 crate-vis | — | A socket's by-reference ASSET body transfers on the home (FIX 5489): the engine's session over the windows… |
+| `src/handler/asset_bodies.rs` | src | m | 3 crate-vis | — | A socket's by-reference ASSET body transfers on the home (FIX 5489): the engine's session over the windows… |
 | `src/handler/conn_state.rs` | src | s | 11 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 4 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
 | `src/handler/connection/dispatch_error.rs` | src | s | 1 crate-vis | — | The close a dispatched frame's handler error ends its connection with, apart from the loop so each file… |
 | `src/handler/connection/run.rs` | src | m | 1 crate-vis | — | The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it… |
-| `src/handler/documents.rs` | src | m | 6 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
+| `src/handler/document_copy.rs` | src | s | 1 crate-vis | — | A marked source's edit notice, delivered to the sockets that hold its document by its copy id (FIX 10730… |
+| `src/handler/documents.rs` | src | m | 8 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 5 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/ephemeral/message_scope.rs` | src | s | 3 crate-vis | — | Where a message's live partials go (FIX 9537) |
 | `src/handler/federation.rs` | src | s | 2 crate-vis | — | Authenticated selector fetches with durable defer and current-grant replay |
@@ -1106,7 +1112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 15 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
-| `src/handler/window_copy.rs` | src | s | 1 crate-vis | — | The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4… |
+| `src/handler/window_copy.rs` | src | s | 2 crate-vis | — | The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4… |
 | `src/handler/window_pads.rs` | src | s | 6 crate-vis | — | The home's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
@@ -1145,7 +1151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/production_tests.rs` | test | XL | 9 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
 | `src/livequery/publication.rs` | src | m | 7 crate-vis | — | Revision-keyed publication lifecycle; one bounded owner per logical session |
 | `src/livequery/remediation_tests.rs` | test | s | — | — | — |
-| `src/livequery/residence.rs` | src | m | 4 crate-vis | — | Grant-scoped home-node reads for opened-item devices |
+| `src/livequery/residence.rs` | src | m | 5 crate-vis | — | Grant-scoped home-node reads for opened-item devices |
 | `src/livequery/residence/authority.rs` | src | s | 8 crate-vis | — | The authority log over residence: its tail, range, checkpoint and append, and an entry past one frame in… |
 | `src/livequery/residence/bundle_access.rs` | src | s | 1 crate-vis | — | `residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call |
 | `src/livequery/residence/bundle_commit.rs` | src | s | 2 crate-vis | — | `residence.bundle.commit` and `residence.bundle.commit.status`: the end of a sealed bundle upload, and the… |
@@ -1153,7 +1159,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/checkpoint_roots.rs` | src | s | 4 crate-vis | — | `residence.authority.checkpoint.{roots,attest,countersign}` (FIX 4882): the home's half of checkpoint root… |
 | `src/livequery/residence/custody.rs` | src | s | 1 crate-vis | — | `residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its… |
 | `src/livequery/residence/home_handoff.rs` | src | s | 3 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
-| `src/livequery/residence/index.rs` | src | m | 5 crate-vis | — | A window's residence index: its paged projection, touches, promotions and version vector |
+| `src/livequery/residence/index.rs` | src | m | 7 crate-vis | — | A window's residence index: its paged projection, touches, promotions and version vector |
 | `src/livequery/residence/machine_history.rs` | src | s | 2 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
 | `src/livequery/residence/pad_custody.rs` | src | s | 1 crate-vis | — | `residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this… |
 | `src/livequery/residence/pad_objects.rs` | src | s | 1 crate-vis | — | A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the… |

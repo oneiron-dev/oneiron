@@ -94,8 +94,22 @@ impl Vault {
     /// Storage errors, and a CLAIM whose attested authorship does not verify.
     pub fn record_author(&self, id: &EntityId) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
+        self.record_author_in_txn(&txn, id)
+    }
+
+    /// [`Self::record_author`] on the caller's read snapshot, so a walk over
+    /// many rows pays one transaction, not one per row (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a CLAIM whose attested authorship does not verify.
+    pub fn record_author_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityId>> {
         let crate::vault::LiveEntityRow::Live { entity_type, body } =
-            crate::vault::live_entity_row_in_txn(&self.store, &txn, id)?
+            crate::vault::live_entity_row_in_txn(&self.store, txn, id)?
         else {
             return Ok(None);
         };
@@ -105,7 +119,7 @@ impl Vault {
                     tracing::debug!("a park skipped a CLAIM it cannot decode; it restores cold");
                     return Ok(None);
                 };
-                crate::batch::authenticated_claim_author_in_txn(&self.store, &txn, id, &claim)?
+                crate::batch::authenticated_claim_author_in_txn(&self.store, txn, id, &claim)?
                     .map(WriteActor::entity_ref)
                     .or_else(|| crate::memory::claim_author(&claim))
             }
@@ -119,7 +133,7 @@ impl Vault {
             ENTITY_TYPE_MESSAGE => {
                 let mut authors = Vec::new();
                 for edge in self.store.port_edges(
-                    &txn,
+                    txn,
                     id,
                     EdgeDirection::Out,
                     Some(EdgeKind::AuthoredBy),
@@ -140,7 +154,7 @@ impl Vault {
         match named {
             Some(author) => Ok(Some(author)),
             None => Ok(
-                crate::provenance::birth::row_birth_in_txn(&self.store, &txn, id)?
+                crate::provenance::birth::row_birth_in_txn(&self.store, txn, id)?
                     .map(|birth| birth.made_by.process.actor),
             ),
         }
