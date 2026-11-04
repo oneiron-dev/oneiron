@@ -7,6 +7,8 @@ use crate::batch::export::{
 };
 use crate::error::SyncProtocolValidation;
 use crate::federation::PactDelivery;
+use crate::sync::asset_body::references::bound_refs;
+use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
@@ -302,6 +304,29 @@ impl SyncClient {
         staged: StagedVaultImport,
         confirmation: VaultImportConfirmation,
     ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
+        self.confirm_staged_vault_import_with_bodies(
+            staged,
+            confirmation,
+            &std::collections::HashMap::new(),
+        )
+    }
+
+    /// Confirms a staged artifact with detached ASSET bodies supplied by its
+    /// caller. Only references in the digest-pinned admitted artifact are
+    /// attempted, at the receipt's federated tier, while its births are watched.
+    /// The live carrier and the body's measured facts are checked by the usual
+    /// body landing door; successful births release their staged facet stamps.
+    ///
+    /// Missing bodies and failed or withheld landings keep today's pending-row
+    /// behavior and do not fail confirmation. This door fetches no body over a
+    /// socket. An already-confirmed receipt returns its existing result without
+    /// attempting later body delivery.
+    pub fn confirm_staged_vault_import_with_bodies(
+        &mut self,
+        staged: StagedVaultImport,
+        confirmation: VaultImportConfirmation,
+        bodies: &std::collections::HashMap<crate::EntityId, Vec<u8>>,
+    ) -> std::result::Result<VaultImportStageReceipt, TransportError> {
         // Serializes the staged-import admission and the terminal receipt
         // transition for THIS vault; the durable reread remains the
         // cross-process guard when a true CAS is unavailable. The lock lives on
@@ -403,6 +428,19 @@ impl SyncClient {
         .map_err(map_federated_admission_err)?;
         revalidate_admitted_facet_stamps(&admission_key, &staged.admitted_update)
             .map_err(map_federated_admission_err)?;
+        let carried_bodies = if bodies.is_empty() {
+            Vec::new()
+        } else {
+            let admitted =
+                crate::sync::schema::create_window_doc("federation-staged-bodies", &admission_key);
+            admitted.import(&staged.admitted_update).map_err(|_| {
+                TransportError::InvalidPayload("admitted body references unreadable")
+            })?;
+            bound_refs(&admitted)
+                .into_iter()
+                .filter_map(|body| bodies.get(&body.id).map(|bytes| (body, bytes.as_slice())))
+                .collect()
+        };
         let births = staged_births(
             &self.vault,
             &admission_key,
@@ -417,7 +455,20 @@ impl SyncClient {
                 &durable.window_key,
                 &window,
                 &staged.admitted_update,
-            )
+            )?;
+            let lane = AssetBodyLane::FederationReceive { role: durable.role };
+            with_manager_peer(&self.manager, lane, |peer| {
+                for (body, bytes) in &carried_bodies {
+                    if let Err(error) = land_carried_body(peer, &admission_key, body, bytes) {
+                        tracing::warn!(
+                            %error,
+                            entity = %body.id.to_hex(),
+                            "staged asset body not landed"
+                        );
+                    }
+                }
+            });
+            Ok::<_, TransportError>(())
         })?;
         let released = births
             .release(&self.vault, &admission_key, &born)
