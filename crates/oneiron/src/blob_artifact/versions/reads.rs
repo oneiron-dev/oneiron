@@ -119,6 +119,7 @@ impl Vault {
                     record.fork_of_version,
                     record.calc_engine.as_ref(),
                     &made_by_text(&record.made_by)?,
+                    &record.production,
                 )
         {
             return Err(Error::CorruptedIndex("blob artifact version claim"));

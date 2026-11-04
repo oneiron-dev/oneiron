@@ -79,26 +79,16 @@ impl Memory<'_> {
             occurred,
             now,
         )?;
-        match &made_by {
-            Some(made_by) => vault.append_blob_artifact_version_made_by(
-                &id,
-                None,
-                &bytes,
-                &provenance,
-                made_by,
-                actor,
-                occurred,
-                now,
-            )?,
-            None => vault.append_blob_artifact_version(
-                &id,
-                &bytes,
-                &provenance,
-                actor,
-                occurred,
-                now,
-            )?,
-        };
+        vault.append_blob_artifact_version_from_host(
+            &id,
+            &bytes,
+            &provenance,
+            made_by.as_ref(),
+            actor,
+            self.task_host(),
+            occurred,
+            now,
+        )?;
         Ok(vault.blob_artifact_view(&id)?)
     }
 }
