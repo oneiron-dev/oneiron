@@ -7944,6 +7944,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
@@ -8311,6 +8312,18 @@ dependencies = [
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
