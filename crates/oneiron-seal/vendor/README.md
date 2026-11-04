@@ -58,14 +58,12 @@
   written in it. Never run the workspace formatter over this directory.
 - Local patch list (the first vendor commit is the unmodified sources plus
   the manifest strip, so `git log -p` on this directory shows each change).
-  Decode admission is opt-in. The iterative parser and checked xref
-  arithmetic apply with or without an admission.
+  All of it is additive: without a `DecodeAdmission` every load and decode
+  runs upstream's code.
   - `src/decode_admission.rs` (new): the `DecodeAdmission` trait (`admit`
-    before each allocation, defaulted `release`/`transfer` for local reuse,
-    `decoded` to observe an output length),
+    before each allocation, `decoded` to observe an output length),
     `DecodeAdmissionError` (`MemoryFloor { needed, available }`, `Deadline`,
-    `Cancelled`), the admitted growth helper (releases the replaced capacity
-    after a successful realloc), the codec working-state charge
+    `Cancelled`), the admitted growth helper, the codec working-state charge
     and the `BTreeMap` node charge. `src/lib.rs` exports both types.
   - `src/error.rs`: `Error::DecodeAdmission`.
   - `src/load_options.rs`: `LoadOptions::decode_admission` (default `None`;
@@ -75,27 +73,18 @@
     fallback included), LZW (weezl `decode_bytes` into admitted output),
     ASCII85 and the copy of unfiltered content. `decompressed_content` and
     `decompressed_content_with_limit` go through a dispatcher whose `None`
-    arm is upstream's `decode_filters`. Dictionary capacity and fallible
-    reservation expose the parser's admitted map growth.
+    arm is upstream's `decode_filters`.
   - `src/filters/png.rs`: `decode_frame_admitted` for the PNG predictor.
-  - `src/object_stream.rs`: `ObjectStream::new_admitted`, including each
-    member's admitted object graph.
+  - `src/object_stream.rs`: `ObjectStream::new_admitted`.
   - `src/parser_aux.rs`: `decode_xref_stream_admitted`; it reads each field
-    a byte at a time instead of through a buffer as wide as `/W` says, and
-    checks `/Index` object-id arithmetic in both decode paths.
-  - `src/admitted/`: dictionary-growth, textual-xref and `/Prev`-merge
-    admission helpers.
-  - `src/parser/iterative.rs`: single-pass literal strings and explicit-stack
-    arrays and dictionaries, with object-graph allocation admitted first;
-    the 100-level nesting refusals are gone.
+    a byte at a time instead of through a buffer as wide as `/W` says.
   - `src/parser/mod.rs`: the admitted stream content copy, and a refusal
     while resolving an indirect `/Length`, inside an indirect object or in
     an xref stream is carried out of nom instead of becoming an unknown
     length, `IndirectObject` or `InvalidTrailer`.
   - `src/reader.rs`: `Reader::decode_admission`, set by every constructor
     (`None` for the metadata and incremental loaders); object streams, the
-    delayed stream copies, the encrypted loader's raw object copies and
-    `/Prev` xref growth use it, and a refusal ends the load. The encrypted
-    loader's object-stream members and `get_compressed_object`'s container
-    move instead of being cloned; the result is the same, with or without
-    an admission.
+    delayed stream copies and the encrypted loader's raw object copies use
+    it, and a refusal ends the load. The encrypted loader's object-stream
+    members and `get_compressed_object`'s container move instead of being
+    cloned; the result is the same, with or without an admission.
