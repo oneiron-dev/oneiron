@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::error::Result;
 use super::mutation_commands::{path_arg, run_git, utf8_trimmed};
+use crate::error::Result;
 
 static BUNDLE_BLOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -111,4 +111,3 @@ fn hash_blob(root: &Path, content: &[u8]) -> Result<String> {
     let _ = std::fs::remove_file(&file);
     utf8_trimmed(hashed?, "git blob id must be UTF-8")
 }
-
