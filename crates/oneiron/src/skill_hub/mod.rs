@@ -65,8 +65,7 @@ pub(crate) use refinement_admission::{
 #[cfg(test)]
 pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
 pub(crate) use refinement_custody::{
-    erase_refinement_custody_in_txn, refinement_carrier_payload, refinement_custody_exists_in_txn,
-    remove_refinement_carrier_in_txn, retire_refinement_holder_in_txn,
+    erase_refinement_custody_in_txn, refinement_carrier_payload, retire_refinement_holder_in_txn,
     stage_refinement_carrier_put, validate_refinement_carrier_put,
 };
 #[cfg(feature = "sync")]
@@ -196,10 +195,7 @@ pub(crate) use source_carrier::encode_source_carrier;
 pub(crate) use source_carrier::{decode_source_carrier, validate_hub_source_carrier_put};
 #[cfg(feature = "sync")]
 pub(crate) use source_carrier::{source_carrier_holder, source_carrier_matches_id};
-pub(crate) use source_custody::{
-    retire_source_holder_in_txn, source_carriers_for_holder_in_txn, source_custody_exists_in_txn,
-    stage_source_custody_put,
-};
+pub(crate) use source_custody::{retire_source_holder_in_txn, stage_source_custody_put};
 #[cfg(test)]
 mod source_replication_tests;
 

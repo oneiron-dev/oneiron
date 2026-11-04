@@ -252,6 +252,19 @@ pub struct StoreCore {
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
+    /// The engine's project write hooks, supplied by the open door with the
+    /// delete guards.
+    pub(crate) project_writes: &'static dyn crate::store::StoreProjectWrites,
+    /// The engine's record hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
+    /// The engine's side-table actor scrubs, supplied by the open door with
+    /// the delete guards.
+    pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
+    /// The engine's sync hooks, supplied by the open door with the delete
+    /// guards.
+    #[cfg(feature = "sync")]
+    pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,

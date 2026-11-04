@@ -5,15 +5,15 @@ use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::dispatch_byoa::{ByoaError, ByoaResult, ByoaStream};
-use oneiron::origin::smart_http::SpillFloor;
 
 /// Drains every byte `reader` yields into a spooled stream on its own thread.
 /// The disk floor and the run's deadline are its only stops; a read failure
 /// is an error, never an early end of the stream.
 pub(super) fn drain_spooled(
     mut reader: impl Read + Send + 'static,
-    floor: Option<Arc<dyn SpillFloor>>,
+    floor: Option<Arc<dyn ProposalSpoolFloor>>,
     deadline: Instant,
 ) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
     let (done, drain) = mpsc::sync_channel(1);

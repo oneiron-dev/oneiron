@@ -14,14 +14,14 @@ pub(super) struct ClaimSupport {
 
 impl Memory<'_> {
     /// The caller's in-writer check, the publication owner's authority, the
-    /// keyed-claim and authorship guards and the prior head's grant; `true`
-    /// means a hard-delete marker refused the id.
+    /// keyed-claim and authorship guards and the prior head's grant; returns
+    /// the identity refused by a hard-delete marker, or `None` when admitted.
     pub(super) fn admit_claim_write_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
         write: &ClaimWrite<'_>,
         envelope: &crate::WriteEnvelope,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<EntityId>, Error> {
         let ClaimWrite {
             input,
             id,
@@ -42,10 +42,10 @@ impl Memory<'_> {
         if let Some(origin) = write.signed_replay_origin
             && self.admit_claim_identity_in_txn(content.read(), write, envelope, origin, true)?
         {
-            return Ok(true);
+            return Ok(Some(origin));
         }
         if self.admit_claim_identity_in_txn(content.read(), write, envelope, id, false)? {
-            return Ok(true);
+            return Ok(Some(id));
         }
         if let Some(old_id) = prior {
             let old = self
@@ -62,7 +62,7 @@ impl Memory<'_> {
                 "memory.claim.supersede",
             )?;
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Checks the original replay row before a fresh proposal, and the

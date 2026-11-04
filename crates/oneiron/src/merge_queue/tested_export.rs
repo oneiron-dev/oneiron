@@ -7,14 +7,12 @@
 //! place, every reason that export holds and its way out. No hold is a red
 //! verdict, and nothing here approves, rebases, rechecks or retries: the
 //! owner's `vault.code.export` and the owner queue doors are unchanged.
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, PoisonError};
+use std::collections::BTreeMap;
 
 use super::{
     GreenQueueRevision, MergeQueue, QueueExportHold, QueueExportHoldReason, QueueGreenExportView,
     QueueRevisionIntent, QueueSealTarget,
 };
-use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::repo_mutation::proposal::RepoProposal;
@@ -31,12 +29,6 @@ fn held<T>(reason: QueueExportHoldReason, detail: impl Into<String>) -> Result<H
 
 /// How many object ids one presence read names.
 const OBJECT_READ_CHUNK: usize = 1_000;
-
-/// The tested revisions whose every blob a readiness read found in their
-/// object store, by store and revision (FIX 7349). A sealed revision's
-/// blobs never change and its green keeps them reachable, so each is read
-/// once a process, not on every observe.
-static PRESENT_REVISIONS: Mutex<BTreeSet<(String, EntityId)>> = Mutex::new(BTreeSet::new());
 
 impl MergeQueue<'_> {
     /// Runs `act` holding this queue's repository writer, which re-enters
@@ -185,31 +177,22 @@ impl MergeQueue<'_> {
                 format!("{path} is a submodule link"),
             );
         }
-        let proved = (green.store.clone(), revision.revision_id);
-        let present = PRESENT_REVISIONS
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(&proved);
-        if !present {
-            let oids = revision
-                .blob_frontiers
-                .values()
-                .map(|blob| GitOid::parse_hex(blob.git_oid.clone()))
-                .collect::<Result<Vec<_>>>()?;
-            let wire = GitWire::new(self.vault)?;
-            for chunk in oids.chunks(OBJECT_READ_CHUNK) {
-                let present = wire.object_info(&self.repo, chunk)?;
-                if let Some(missing) = chunk.iter().find(|oid| !present.contains_key(*oid)) {
-                    return held(
-                        QueueExportHoldReason::HeldObject,
-                        format!("object {} is not in the object store", missing.as_str()),
-                    );
-                }
+        // Store identities are path-derived: recreating a store can leave
+        // the same revision id without its blobs, so re-read presence now.
+        let oids = revision
+            .blob_frontiers
+            .values()
+            .map(|blob| GitOid::parse_hex(blob.git_oid.clone()))
+            .collect::<Result<Vec<_>>>()?;
+        let wire = GitWire::new(self.vault)?;
+        for chunk in oids.chunks(OBJECT_READ_CHUNK) {
+            let present = wire.object_info(&self.repo, chunk)?;
+            if let Some(missing) = chunk.iter().find(|oid| !present.contains_key(*oid)) {
+                return held(
+                    QueueExportHoldReason::HeldObject,
+                    format!("object {} is not in the object store", missing.as_str()),
+                );
             }
-            PRESENT_REVISIONS
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(proved);
         }
         match self.vault.queue_promotion_gap(revision.revision_id)? {
             None => Ok(Ok(())),

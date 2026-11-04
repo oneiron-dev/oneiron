@@ -299,6 +299,20 @@ pub(crate) fn remember_body_instances_in_txn<D: ManifestDbs + SideTableDbs>(
     digest: &[u8; 32],
     instances: &[[u8; 16]],
 ) -> Result<()> {
+    let journaled = remembered_body_instance_rows_in_txn(dbs, wtxn, digest, instances)?;
+    dbs.key_custody().journal_body_history(journaled)
+}
+
+/// Collects the instance rows [`remember_body_instances_in_txn`] would
+/// journal, without journaling them, so a writer that journals once per
+/// commit (FIX 6229) can carry them in its own frame instead of one frame
+/// per bind.
+pub(crate) fn remembered_body_instance_rows_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+    instances: &[[u8; 16]],
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let mut journaled = Vec::new();
     for instance in instances {
         let key = (*digest, *instance);
@@ -307,7 +321,7 @@ pub(crate) fn remember_body_instances_in_txn<D: ManifestDbs + SideTableDbs>(
             journaled.push((BODY_INSTANCES.key_bytes(&key), Vec::new()));
         }
     }
-    dbs.key_custody().journal_body_history(journaled)
+    Ok(journaled)
 }
 
 /// Every instance [`remember_body_instances_in_txn`] holds for the body

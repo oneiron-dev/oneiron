@@ -16,11 +16,6 @@ const WRITER: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::LI
 const ISSUE_REVERSE: SideTable<String, EntityId, Raw> =
     SideTable::new(&side_table::LINEAR_ISSUE_REVERSE);
 const PULL_CURSOR: SideTable<(), String, Raw> = SideTable::new(&side_table::LINEAR_PULL_CURSOR);
-/// Whether a masked copy of a `LINEAR_PULL_CURSOR` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn linear_pull_cursor_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<String, Raw>(bytes)
-}
 
 fn revision(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<u64> {
     Ok(REVISIONS.get(store, txn, &id)?.unwrap_or(0))

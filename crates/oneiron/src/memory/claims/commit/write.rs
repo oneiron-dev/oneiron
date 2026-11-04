@@ -49,8 +49,8 @@ impl Memory<'_> {
                     .unwrap_or_else(|| err.into()));
             }
         };
-        if refused {
-            return Err(hard_deleted_refusal(&write.id));
+        if let Some(refused_id) = refused {
+            return Err(hard_deleted_refusal(&refused_id));
         }
         self.commit_receipt(write.id, write.prior, approval)
     }

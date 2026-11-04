@@ -69,7 +69,7 @@ pub(crate) fn ensure_person_substrate(
         let plan =
             super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
         super::apply_short_id_plan(store, txn, &facet, plan)?;
-        crate::federation::record_scope::stamp_put(
+        store.scope_stamps.stamp_put(
             store,
             txn,
             facet,
@@ -172,7 +172,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 )?;
                 super::apply_short_id_plan(store, &mut txn, &id, plan)?;
             }
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,
@@ -255,7 +255,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,

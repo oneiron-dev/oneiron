@@ -105,6 +105,9 @@ pub struct CheckpointPinBinding {
     pub slhdsa: Vec<u8>,
     /// The crypto epoch the key signs at.
     pub epoch: u64,
+    /// What keeps the install's checkpoint signing seed at rest, as the owner
+    /// is told it: `hardware` | `platform` | `software` | `process`.
+    pub assurance: String,
     /// The root's signature over every other field.
     pub signature: CheckpointPinSignature,
 }
@@ -211,6 +214,7 @@ impl From<&AuthorityCheckpointKeyBinding> for CheckpointPinBinding {
             install: binding.install.to_vec(),
             slhdsa: binding.slhdsa.clone(),
             epoch: binding.epoch,
+            assurance: binding.assurance.clone(),
             signature: (&binding.signature).into(),
         }
     }

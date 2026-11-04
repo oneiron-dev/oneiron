@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 
 use super::*;
 use crate::result_body::ResultBodyPin;
+use crate::store::result_body_rows::code_run_row_inline;
 
 impl Vault {
     /// [`Self::code_run_result_body_in_txn`] as it streams: the body of
