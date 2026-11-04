@@ -25,20 +25,24 @@ pub(crate) use private_sources::{
 pub(crate) struct AudienceCache {
     rows: BTreeMap<(EntityId, u64), Vec<MembershipRow>>,
     ledger_reads: usize,
-    /// Own-entry windows kept for one committed snapshot ([`OwnWindows`]).
-    own_windows: Mutex<OwnWindows>,
+    /// Own-entry windows and answers kept for one committed snapshot
+    /// ([`OwnEntryMemo`]).
+    own_entry: Mutex<OwnEntryMemo>,
 }
 
-/// An unbound reader's own windows per `(room, reader)`
-/// ([`crate::workspace_roster::own_room_windows_in_txn`]), for the one
-/// committed snapshot `at` names. That door reads only the snapshot (the
-/// room's record, roster and ledger) and the vault's fixed posture, so every
-/// row of one recall that sits in a room shares its answer; each row still
-/// tests its own time against them.
+/// What [`AudienceCache::own_entry_readable_raw`] keeps for the one
+/// committed snapshot `at` names. Both read only that snapshot and the
+/// vault's fixed posture, never a clock, so one recall's rows share them.
 #[derive(Default)]
-struct OwnWindows {
+struct OwnEntryMemo {
+    /// An unbound reader's own windows per `(room, reader)`
+    /// ([`crate::workspace_roster::own_room_windows_in_txn`]): every row that
+    /// sits in a room shares them, and each still tests its own time.
     windows: HashMap<(EntityId, EntityId), Option<Vec<MembershipWindow>>>,
-    /// The snapshot `windows` holds, and whether that snapshot keeps any.
+    /// Whole answers per `(row, reader, BLAKE3 of the revision served)`, over
+    /// base rows only: a row judged again by a later stage of one recall.
+    answers: HashMap<(EntityId, EntityId, [u8; 32]), bool>,
+    /// The snapshot kept, and whether that snapshot keeps anything.
     at: Option<(usize, bool)>,
 }
 
@@ -55,7 +59,7 @@ impl AudienceCache {
         self.ledger_reads
     }
 
-    /// Whether the own-entry windows may be served and kept for `txn`,
+    /// Whether the own-entry memo may be served and kept for `txn`,
     /// emptied when `txn` reads another snapshot. As the policy fold's
     /// per-snapshot cache: a write never keeps any (its staged rows can move
     /// a roster under it, and an aborted write's id is reused), and a
@@ -68,7 +72,7 @@ impl AudienceCache {
         if crate::store::active_write_txn_depth() > 0 {
             return false;
         }
-        let Ok(mut own) = self.own_windows.lock() else {
+        let Ok(mut own) = self.own_entry.lock() else {
             return false;
         };
         let id = txn.id();
@@ -78,6 +82,7 @@ impl AudienceCache {
             return keeps;
         }
         own.windows.clear();
+        own.answers.clear();
         let committed = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
@@ -163,6 +168,41 @@ impl AudienceCache {
         raw: &[u8],
         reader: EntityId,
     ) -> Result<bool> {
+        let keep = self.own_windows_keep(vault, txn);
+        // A whole answer is kept over base rows only: a session's composed
+        // view moves no snapshot id under its overlay rows.
+        let key = (keep && !dbs.is_union()).then(|| (id, reader, *blake3::hash(raw).as_bytes()));
+        if let Some(key) = &key
+            && let Some(kept) = self
+                .own_entry
+                .lock()
+                .ok()
+                .and_then(|own| own.answers.get(key).copied())
+        {
+            return Ok(kept);
+        }
+        let answer = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep)?;
+        if let Some(key) = key
+            && let Ok(mut own) = self.own_entry.lock()
+        {
+            own.answers.insert(key, answer);
+        }
+        Ok(answer)
+    }
+
+    /// [`Self::own_entry_readable_raw`]'s judgement, room windows kept when
+    /// `keep` says the snapshot allows it.
+    #[expect(clippy::too_many_arguments)]
+    fn own_entry_judged(
+        &self,
+        vault: &Vault,
+        dbs: &crate::store::StoreRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        reader: EntityId,
+        keep: bool,
+    ) -> Result<bool> {
         let mut pending = vec![(id, raw.to_vec())];
         for live in base_and_view_rows_in(vault, dbs, txn, id)? {
             if live.as_slice() != raw {
@@ -170,7 +210,6 @@ impl AudienceCache {
             }
         }
         let mut seen = BTreeSet::from([id]);
-        let keep = self.own_windows_keep(vault, txn);
         while let Some((id, bytes)) = pending.pop() {
             let Some(h) = EntityMetadataHeader::parse(&bytes) else {
                 return Ok(false);
@@ -182,7 +221,7 @@ impl AudienceCache {
                 }
                 let kept = keep
                     .then(|| {
-                        let own = self.own_windows.lock().ok()?;
+                        let own = self.own_entry.lock().ok()?;
                         own.windows
                             .get(&(room, reader))
                             .map(|windows| own_windows_admit(windows, h.occurred_start))
@@ -198,7 +237,7 @@ impl AudienceCache {
                             return Ok(false);
                         };
                         let admits = own_windows_admit(&windows, h.occurred_start);
-                        if keep && let Ok(mut own) = self.own_windows.lock() {
+                        if keep && let Ok(mut own) = self.own_entry.lock() {
                             own.windows.insert((room, reader), windows);
                         }
                         admits
