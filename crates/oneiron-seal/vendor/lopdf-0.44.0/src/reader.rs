@@ -490,11 +490,6 @@ pub struct Reader<'a> {
     pub decode_admission: Option<Arc<dyn DecodeAdmission>>,
 }
 
-/// Maximum allowed embedding of literal strings.
-pub const MAX_BRACKET: usize = 100;
-
-pub const MAX_NESTING_DEPTH: usize = 100;
-
 /// PDF metadata extracted without loading the entire document.
 /// This is useful for quickly getting basic information about large PDFs.
 #[derive(Debug, Clone)]
@@ -608,10 +603,11 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            if let Some(admission) = self.decode_admission.as_deref() {
-                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-            }
-            xref.merge(prev_xref);
+            crate::admitted::xref::merge_admitted(
+                &mut xref,
+                prev_xref,
+                self.decode_admission.as_deref(),
+            )?;
 
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
             if let Some(prev) = prev_xref_stream_start.and_then(|offset| offset.as_i64().ok()) {
@@ -620,10 +616,11 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                if let Some(admission) = self.decode_admission.as_deref() {
-                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-                }
-                xref.merge(prev_xref);
+                crate::admitted::xref::merge_admitted(
+                    &mut xref,
+                    prev_xref,
+                    self.decode_admission.as_deref(),
+                )?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
@@ -845,10 +842,11 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            if let Some(admission) = self.decode_admission.as_deref() {
-                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-            }
-            xref.merge(prev_xref);
+            crate::admitted::xref::merge_admitted(
+                &mut xref,
+                prev_xref,
+                self.decode_admission.as_deref(),
+            )?;
 
             // Read xref stream in hybrid-reference file
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -858,10 +856,11 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                if let Some(admission) = self.decode_admission.as_deref() {
-                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
-                }
-                xref.merge(prev_xref);
+                crate::admitted::xref::merge_admitted(
+                    &mut xref,
+                    prev_xref,
+                    self.decode_admission.as_deref(),
+                )?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
