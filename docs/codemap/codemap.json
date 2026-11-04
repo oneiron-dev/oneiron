@@ -66460,7 +66460,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 23,
       "re-export": 21
      }
     },
@@ -66517,15 +66517,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SiteSkillExposure"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/site_exposure.rs",
-     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "purpose": "Site-skill exposures (FIX 11436): the rows live in `store::site_skill_exposure`; this module keeps the skill…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -71969,7 +71965,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 83,
+      "mod": 84,
       "re-export": 31
      }
     },
@@ -73241,6 +73237,20 @@
      "purpose": "The scan an erase's scrub makes of one side table: every row whose key and value decode, with any row whose…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SiteSkillExposure"
+     ],
+     "path": "src/store/site_skill_exposure.rs",
+     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -90051,7 +90061,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 366,
+     "files": 367,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90291,7 +90301,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6262,
+   "source_files": 6263,
    "test_files": 898
   },
   "oneiron-android": {
