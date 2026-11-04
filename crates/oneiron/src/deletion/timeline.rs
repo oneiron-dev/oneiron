@@ -93,7 +93,7 @@ fn row_window(
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     let world = if pad {
-        crate::world_keys::pad_body_world(raw).and_then(Result::ok)
+        crate::store::world_pad_rows::pad_body_world(raw).and_then(Result::ok)
     } else {
         crate::write_envelope::claim_body::decode_claim_body(
             &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -307,7 +307,7 @@ impl Vault {
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         let mut count = {
             let txn = self.store.env.read_txn()?;
-            crate::scan_check::ScanCount::start(
+            crate::store::scan_count::ScanCount::start(
                 &self.store,
                 &txn,
                 crate::store::EngineScan::TimelineRecords,

@@ -329,7 +329,13 @@ fn resolve_left_guests(dir: &std::path::Path) {
             continue;
         };
         let Ok(record) = serde_json::from_slice::<executor::GuestRecord>(&bytes) else {
-            let _removed = std::fs::remove_file(&path);
+            if path.extension().is_some_and(|extension| extension == "bad") {
+                continue;
+            }
+            let aside = path.with_added_extension("bad");
+            if std::fs::hard_link(&path, &aside).is_ok() {
+                let _removed = std::fs::remove_file(&path);
+            }
             continue;
         };
         // A forced removal ends the container or finds it gone; only a

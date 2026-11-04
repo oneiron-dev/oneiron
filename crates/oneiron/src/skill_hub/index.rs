@@ -26,8 +26,7 @@ use super::support::{
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-/// Claim predicate for mutable hub aliases attached to canonical skill identity.
-pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
+pub use crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 
 /// Cached capability-surface projection for a hub-derived skill entity.
 const CAPABILITY: SideTable<EntityId, SkillCapabilitySurface, Raw> =
