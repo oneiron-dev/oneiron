@@ -1,7 +1,7 @@
 //! Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation.
 
-use super::validation::{validate_manifest_path, validate_project_id};
 use super::repo_ref::{RepoRef, normalize_commit_hash, validate_normalized_commit_hash};
+use super::validation::{validate_manifest_path, validate_project_id};
 use crate::error::{CodeError, Error, Result};
 use crate::msgpack_shape::{OverBudget, ShapeBudget, over_budget};
 use crate::side_table::{CodecError, RawValue};

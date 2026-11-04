@@ -9,13 +9,13 @@ use serde_json::{Value, json};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
-use crate::store::result_manifest::CodeRunRawOutput;
 use crate::code_run::CodeRunReplayRecord;
-use crate::memory::result_facet::ResultFacet;
-use crate::store::result_manifest::ResultOccurrence;
 use crate::consent::AuthenticatedOwner;
 use crate::engine_executor::is_result_output_path;
+use crate::memory::result_facet::ResultFacet;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::result_manifest::CodeRunRawOutput;
+use crate::store::result_manifest::ResultOccurrence;
 
 impl Memory<'_> {
     fn result_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {

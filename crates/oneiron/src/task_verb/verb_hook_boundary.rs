@@ -41,11 +41,8 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
 };
 use crate::task_verb::revoke_lands;
+use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
 use crate::verb_catalog::CUSTODY_VALUE_ROWS;
-use crate::task_verb::sdk::{
-    AgentVerb, NO_RECORD_ROWS,
-    validate_input,
-};
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 

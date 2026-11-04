@@ -23,8 +23,8 @@ const MODE_TREE: u32 = 0o040_000;
 pub use crate::store::code_tree_blob::CodeTreeBlob;
 
 pub use crate::store::code_revision_record::CodeTreeInventory;
-use crate::store::code_revision_record::tree_inventory::invalid;
 pub(crate) use crate::store::code_revision_record::tree_inventory::document_mode;
+use crate::store::code_revision_record::tree_inventory::invalid;
 
 /// Complete-tree operations that read code documents and Git objects.
 pub trait CodeTreeInventoryRuntime: Sized {
@@ -62,7 +62,6 @@ pub trait CodeTreeInventoryRuntime: Sized {
 }
 
 impl CodeTreeInventoryRuntime for CodeTreeInventory {
-
     /// The complete tree `commit` names, captured with no documents: every
     /// path a blob (G4 PR1). The commit must name `expected_tree` in this
     /// object store before anything is enumerated.
