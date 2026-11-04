@@ -25628,7 +25628,7 @@
      "path": "src/dispatch_byoa/dispatcher/terminal.rs",
      "purpose": "The terminal capture door, moved whole from the dispatcher: a terminated executor's exhaust folded into one…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -25871,7 +25871,7 @@
      "path": "src/dispatch_byoa/seat_quota.rs",
      "purpose": "What each runner seat's quota last read as (OF-137), kept by the route so a pass picks seats without reading…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -59565,7 +59565,7 @@
      "path": "src/recovery/checkpoint/credential_custody.rs",
      "purpose": "A restore's credential values (KS-6 part 2, FIX-LIST 5687, 7403; CALLS `KS-6 required restore set`, `KS-6…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -63552,7 +63552,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -70920,7 +70920,7 @@
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -74839,7 +74839,7 @@
      "path": "src/store/usage_sources.rs",
      "purpose": "An erased row out of the stored usage events' source sets (FIX 6933)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -125452,6 +125452,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/runtime/usage/redelivery.rs",
+     "purpose": "Retry custody for automatic settlements whose durable staging failed",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/runtime/usage/settlement.rs",
      "purpose": "Attribution and durable recording of served run receipts",
      "surface": {
@@ -126308,7 +126318,7 @@
      "path": "src/usage/keys.rs",
      "purpose": "Owner/vault keys and validation for the durable meter queue",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -126323,7 +126333,7 @@
      "path": "src/usage/ledger.rs",
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 6,
       "struct": 4
      }
@@ -126399,6 +126409,16 @@
       "enum": 5,
       "fn": 11,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/pending.rs",
+     "purpose": "Durable redelivery of the same frozen automatic settlement (FIX 737)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -127689,7 +127709,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -127731,7 +127751,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -127782,7 +127802,7 @@
    },
    "over_bar": 45,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1529,
+   "source_files": 1531,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
