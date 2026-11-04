@@ -595,7 +595,7 @@ fn verification_in_txn(
         .copied()
         .collect();
     coverage.archive =
-        super::history_coverage::archive_coverage_in_txn(vault, txn, adopted.as_ref(), &scope)?;
+        super::history_coverage::archive_coverage_in_txn(vault, txn, adopted.as_deref(), &scope)?;
     Ok(coverage)
 }
 
