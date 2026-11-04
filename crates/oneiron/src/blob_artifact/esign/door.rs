@@ -32,7 +32,7 @@ use super::lane_scope::{self, EsignScope};
 use super::model::{DocumentStatus, EsignDocument};
 use super::outbound::{EsignActScope, EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
-use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
+use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::memory::Memory;
 use crate::outbound::{
       OutboundDispatchRequest, OutboundIntent,

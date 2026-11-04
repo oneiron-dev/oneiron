@@ -584,15 +584,23 @@ pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
 
+pub(crate) mod habit_streak;
+pub(crate) mod own_rate_rows;
+pub mod persona_snapshot_record;
+
+pub mod snapshot_catalog;
+pub(crate) mod snapshot_ledger;
+pub(crate) mod snapshot_lifecycle;
+pub mod query_health;
+pub(crate) mod query_memo_lifetime;
+pub mod skill_source_index;
+
 pub(crate) mod task_authority_guard;
 pub(crate) mod vad_annotation;
-
 pub(crate) mod container_output;
 pub(crate) mod live_speaker_calls;
 pub mod record_ref;
-
 pub(crate) mod identity_redirect_rows;
-
 pub(crate) mod authority_rows;
 pub mod channel_class;
 pub mod claim_source_ranking;

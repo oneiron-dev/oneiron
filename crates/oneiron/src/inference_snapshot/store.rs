@@ -149,24 +149,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
     written
 }
 
-/// Takes the row `id` out of the catalog and stages its key's retirement,
-/// both in `wtxn`: from the commit on no open finds it, and a restored
-/// earlier image cannot open its key. The body file and the custody entry
-/// go after the commit. `true` when a row was there.
-///
-/// # Errors
-/// Custody and storage faults.
-pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    // Lenient: a damaged row still retires. Its conversation index entry
-    // goes only when the row decodes; a damaged row must not abort the
-    // erase or reconcile that found it.
-    if let Some(record) = CATALOG.get_lenient(store, wtxn, id)? {
-        catalog::delete_conversation_entry(store, wtxn, &record.manifest.conversation, id)?;
-    }
-    let gone = CATALOG.delete(store, wtxn, id)?;
-    store.stage_inference_snapshot_retirement_in_txn(wtxn, &id.0)?;
-    Ok(gone)
-}
+pub(super) use crate::store::snapshot_catalog::retire_in_txn;
 
 /// The wrapped key's bytes, checked to be the custody entry's width.
 fn checked_key(wrapped: WrappedSnapshotKey) -> Result<WrappedSnapshotKey> {
