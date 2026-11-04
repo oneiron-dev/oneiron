@@ -313,6 +313,9 @@ pub(crate) fn rescan(
                         original: None,
                     });
                 }
+                // The refused bytes are dropped with the note: keep_originals
+                // must not keep them against the name-only row it just landed.
+                note.original = None;
                 continue;
             }
         }
