@@ -142,6 +142,8 @@ export type CheckpointPinBinding = {
   slhdsa: string
   /** The crypto epoch the key signs at. */
   epoch: number
+  /** What keeps the install's checkpoint signing seed at rest, as the owner is told it. */
+  assurance: "hardware" | "platform" | "software" | "process"
   signature: CheckpointPinSignature
 }
 
@@ -908,6 +910,8 @@ class CheckpointPinBinding(TypedDict):
     # The SLH-DSA-SHA2-256s public key.
     slhdsa: str
     epoch: int
+    # What keeps the install's checkpoint signing seed at rest, as the owner is told it.
+    assurance: Literal["hardware", "platform", "software", "process"]
     signature: CheckpointPinSignature
 
 class CheckpointPin(TypedDict):
