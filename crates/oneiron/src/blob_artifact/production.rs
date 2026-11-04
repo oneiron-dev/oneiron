@@ -13,7 +13,8 @@ use crate::write_envelope::WriteActor;
 use super::store_keys::{entity_value, u64_value};
 
 /// The production witness retained for an output. Unknown means the writer
-/// held no host binding; Erased records the removal of a host witness.
+/// held no host binding. Erased is the neutral, no-actor form used by erasure
+/// and checkpoint projection; it does not assert an erase operation executed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputProductionStamp {
     Unknown,
