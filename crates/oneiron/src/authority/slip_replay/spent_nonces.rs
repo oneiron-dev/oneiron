@@ -767,7 +767,11 @@ impl SpentNonces {
                     error = %error,
                     "the slip-spend journal did not read; every proof it may hold is refused"
                 );
-                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Read);
+                // The file's last write time bounds every proof it holds.
+                let Some(written) = journal_written_secs(&path) else {
+                    return Err(Error::Io(error));
+                };
+                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Read, written);
             }
         };
         if bytes.is_empty() {
@@ -782,6 +786,16 @@ impl SpentNonces {
             }
         }
         let torn = bytes.len() % JOURNAL_RECORD_LEN;
+        // Every proof a record holds was admitted at or below the largest
+        // proof clock a readable record names and the file's last write
+        // time: a failed replay's floor rises past both, whatever the clock
+        // reads after a step back across the crash (review #4484 P1).
+        let proof_bound = records
+            .iter()
+            .map(|record| record.proof_now)
+            .chain(journal_written_secs(&path))
+            .max()
+            .unwrap_or(0);
         if unreadable > 0 || torn > 0 {
             tracing::warn!(
                 unreadable,
@@ -821,14 +835,21 @@ impl SpentNonces {
                     kind = ?error.kind(),
                     "the slip-spend journal replay did not land; every proof it may hold is refused"
                 );
-                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Land);
+                return self.refuse_journaled_proofs(
+                    vault,
+                    JournalRecoveryFailure::Land,
+                    proof_bound,
+                );
             }
         }
         // A complete record that does not read may be a spend already
         // answered: no row says it landed, so its proof is refused too.
         if unreadable > 0 {
-            return self
-                .refuse_journaled_proofs(vault, JournalRecoveryFailure::Unreadable(unreadable));
+            return self.refuse_journaled_proofs(
+                vault,
+                JournalRecoveryFailure::Unreadable(unreadable),
+                proof_bound,
+            );
         }
         // After the commit, never before: a crash between the two replays
         // the same records at the next open, which the rows absorb. Only a
@@ -875,11 +896,12 @@ impl SpentNonces {
         &self,
         vault: &Vault,
         failure: JournalRecoveryFailure,
+        proof_bound: u64,
     ) -> Result<()> {
         let _active_write_txn = active_write_txn_guard();
         let mut txn = vault.store.env.write_txn()?;
         let clock = admission_now_in_txn(vault, &mut txn)?;
-        let floor = clock.now.saturating_add(WINDOW_SECS + 1);
+        let floor = clock.now.max(proof_bound).saturating_add(WINDOW_SECS + 1);
         if PROOF_NOT_BEFORE
             .get(&vault.store, &txn, &())?
             .is_none_or(|kept| kept < floor)
@@ -1221,4 +1243,17 @@ fn file_journal_recovery_item_in_txn(
         return Ok(());
     }
     vault.emit_diagnostic_event_in_txn(txn, &id, &event)
+}
+
+/// The journal file's last write time in Unix seconds, from its metadata,
+/// which reads even when its records do not: no record's proof clock is
+/// later than it, as the host's wall wrote them.
+fn journal_written_secs(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|elapsed| elapsed.as_secs())
 }
