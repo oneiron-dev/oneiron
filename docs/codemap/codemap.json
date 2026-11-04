@@ -41340,21 +41340,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "WorldKeyDestroyCause",
-      "WorldKeyDestruction"
-     ],
-     "path": "src/key_material.rs",
-     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "LearningCell"
      ],
      "path": "src/learning/cell.rs",
@@ -90353,13 +90338,6 @@
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
-    "key_material": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
-    },
     "learning": {
      "files": 17,
      "impl_vault": false,
@@ -91203,7 +91181,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6275,
+   "source_files": 6274,
    "test_files": 900
   },
   "oneiron-android": {
@@ -125453,11 +125431,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "WorldKeyDestroyCause",
+      "WorldKeyDestruction"
+     ],
+     "path": "src/key_material.rs",
+     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 2
+      "mod": 3
      }
     },
     {
@@ -125486,6 +125479,13 @@
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
     },
+    "key_material": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -125496,7 +125496,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-uniffi": {
