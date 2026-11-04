@@ -27,7 +27,10 @@ use oneiron::dreamer_consolidation::{
     THING_CHILD_LOAN_REFUSED, THING_CHILD_RUNTIME_UNBOUND, THING_CHILD_SPAWN_REFUSED,
     ThingChildHost, ThingChildLaunch, ThingChildStart,
 };
-use oneiron::llm::{WorkClass, WorkContext, run_admission::{WorkCancel, lookup_work_parent}};
+use oneiron::llm::{
+    WorkClass, WorkContext,
+    run_admission::{WorkCancel, lookup_work_parent},
+};
 use oneiron::{ModelId, ModelLocality, Vault};
 
 use self::generation::GenerationCount;
