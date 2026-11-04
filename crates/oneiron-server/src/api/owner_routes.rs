@@ -29,7 +29,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::openapi::OwnerRoute;
+use super::openapi::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
