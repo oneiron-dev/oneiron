@@ -6,6 +6,7 @@ use std::convert::TryInto;
 use std::fs::File;
 #[cfg(not(feature = "async"))]
 use std::io::Read;
+use std::mem::size_of;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -882,6 +883,19 @@ impl Reader<'_> {
     }
 
     fn load_encrypted_document(&mut self, _filter_func: Option<FilterFunc>) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            let bytes = self
+                .document
+                .reference_table
+                .entries
+                .len()
+                .checked_mul(size_of::<(u32, XrefEntry)>())
+                .ok_or(DecodeAdmissionError::MemoryFloor {
+                    needed: u64::MAX,
+                    available: 0,
+                })?;
+            admission.admit(bytes)?;
+        }
         // First, extract all raw object bytes without parsing
         let entries: Vec<_> = self
             .document
@@ -897,6 +911,9 @@ impl Reader<'_> {
             match entry {
                 XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
                     Ok((obj_id, raw_bytes)) => {
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Vec<u8>>())?;
+                        }
                         self.raw_objects.insert(obj_id, raw_bytes);
                     }
                     // A refused admission ends the load; an unreadable object is skipped, as before.
@@ -905,6 +922,9 @@ impl Reader<'_> {
                 },
                 XrefEntry::Compressed { container, index } => {
                     // Store compressed object info for later processing
+                    if let Some(admission) = self.decode_admission.as_deref() {
+                        decode_admission::reserve(admission, &mut object_streams, 1)?;
+                    }
                     object_streams.push((obj_num, container, index));
                 }
                 XrefEntry::Free | XrefEntry::UnusableFree => {
@@ -937,6 +957,9 @@ impl Reader<'_> {
                 match self.parse_raw_object(raw_bytes) {
                     Ok((id, mut obj)) => {
                         let _ = encryption::decrypt_object(state, *obj_id, &mut obj);
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                        }
                         self.document.objects.insert(id, obj);
                     }
                     Err(err @ Error::DecodeAdmission(_)) => return Err(err),
@@ -963,6 +986,9 @@ impl Reader<'_> {
                             for (obj_num, _index) in objects_in_stream {
                                 let obj_id = (obj_num, 0);
                                 if let Some(obj) = object_stream.objects.remove(&obj_id) {
+                                    if let Some(admission) = self.decode_admission.as_deref() {
+                                        admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                                    }
                                     self.document.objects.insert(obj_id, obj);
                                 }
                             }
@@ -1003,6 +1029,20 @@ impl Reader<'_> {
         let refuse = |err: DecodeAdmissionError| {
             refused.lock().unwrap().get_or_insert(err);
         };
+
+        if let Some(admission) = self.decode_admission.as_deref() {
+            let mut normal = 0usize;
+            let mut compressed = 0usize;
+            for entry in self.document.reference_table.entries.values() {
+                if entry.is_normal() {
+                    normal += 1;
+                } else if entry.is_compressed() {
+                    compressed += 1;
+                }
+            }
+            decode_admission::admit_btree::<ObjectId, Object>(admission, normal)?;
+            decode_admission::admit_btree::<u32, u32>(admission, compressed)?;
+        }
 
         // Build a map of which container each compressed object belongs to
         // according to the xref. This prevents stale ObjStm copies (e.g., from
@@ -1120,8 +1160,13 @@ impl Reader<'_> {
             return Err(err.into());
         }
 
+        let pending = object_streams.into_inner().unwrap();
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, pending.len())?;
+        }
+
         // Only add entries, but never replace entries
-        for (id, entry) in object_streams.into_inner().unwrap() {
+        for (id, entry) in pending {
             self.document.objects.entry(id).or_insert(entry);
         }
 
@@ -1257,10 +1302,16 @@ impl Reader<'_> {
             if self.raw_objects.is_empty() {
                 let offset = self.get_offset(encrypt_ref)?;
                 let (_, encrypt_obj) = self.read_object(offset as usize, Some(encrypt_ref), &mut HashSet::new())?;
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                }
                 self.document.objects.insert(encrypt_ref, encrypt_obj);
             } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref)
                 && let Ok((_, obj)) = self.parse_raw_object(raw_bytes)
             {
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                }
                 self.document.objects.insert(encrypt_ref, obj);
             }
         }
