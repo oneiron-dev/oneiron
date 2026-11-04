@@ -630,6 +630,7 @@ fn admit_result_in_txn(
     Ok(())
 }
 
+pub mod command_spec;
 mod account;
 mod leg;
 mod reapi;

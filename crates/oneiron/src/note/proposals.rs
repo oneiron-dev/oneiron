@@ -9,74 +9,12 @@ use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
-/// Whose act a NOTE row records: an actor, or no one once that actor was
-/// erased (FIX 3520). It reads and writes as the actor's hex id, or as
-/// [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoteActor {
-    Actor(EntityId),
-    Erased,
-}
-
-impl NoteActor {
-    /// Whether this is `actor`. No one is never an actor.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-
-    /// The actor, while it is not erased. No one has no id, so it never
-    /// stands for a live writer (FIX 6072, Engine R2).
-    #[must_use]
-    pub const fn id(self) -> Option<EntityId> {
-        match self {
-            Self::Actor(id) => Some(id),
-            Self::Erased => None,
-        }
-    }
-
-    /// Its stored spelling: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
-    #[must_use]
-    pub fn to_wire(self) -> String {
-        match self {
-            Self::Actor(id) => id.to_hex(),
-            Self::Erased => ERASED_CALL_IDENTITY.to_owned(),
-        }
-    }
-
-    /// A stored spelling read back: [`ERASED_CALL_IDENTITY`], or a hex id.
-    pub(crate) fn from_wire(value: &str) -> Option<Self> {
-        if value == ERASED_CALL_IDENTITY {
-            return Some(Self::Erased);
-        }
-        EntityId::from_hex(value).ok().map(Self::Actor)
-    }
-}
-
-impl Serialize for NoteActor {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_wire())
-    }
-}
-
-impl<'de> Deserialize<'de> for NoteActor {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        Self::from_wire(&value)
-            .ok_or_else(|| serde::de::Error::custom("not an actor id or the erased marker"))
-    }
-}
+pub use crate::store::note_body::NoteActor;
 
 /// What an actor's erase does with a fork it opened that no one decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -11,6 +11,7 @@ mod citation_floor;
 mod commit_receipts;
 mod doc_actor;
 mod document;
+pub mod document_resources;
 mod forks;
 mod history_erase;
 mod lift;
