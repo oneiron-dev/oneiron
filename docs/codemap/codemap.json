@@ -25537,6 +25537,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dispatch_byoa/json_lines.rs",
+     "purpose": "One JSON object per line, read whole from a stream's start in order (FIX 9240)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
@@ -90065,7 +90075,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91208,7 +91218,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6274,
+   "source_files": 6275,
    "test_files": 900
   },
   "oneiron-android": {
