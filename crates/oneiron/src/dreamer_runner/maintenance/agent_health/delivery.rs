@@ -11,13 +11,13 @@
 use std::collections::HashSet;
 
 use super::{AgentHealthCard, AgentHealthOutcome, CARD_REF_PREFIX, CARDS, card_ref};
+use crate::{EntityId, Result, Vault};
 use crate::{
     agent_inbox_lens::AgentInboxConcern,
-    inbox::view_values::AgentInboxItemKind,
     agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::AgentInboxItemKind,
     inbox::view_values::{AgentInboxParticipant, InboxImpact},
 };
-use crate::{EntityId, Result, Vault};
 
 /// The cards as inbox rows: kind Concern, under "Waiting on you", one row
 /// per card, each naming the agent it is about so a renderer groups them per

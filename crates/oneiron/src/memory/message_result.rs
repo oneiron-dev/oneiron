@@ -15,17 +15,17 @@ use super::structural::kind_string_for_type;
 use super::*;
 
 use crate::claim::{CallerLocality, ClaimReadStatus, ScopedReadResult};
-use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
-use crate::store::result_manifest::CodeRunRawOutput;
 use crate::code_run::ExecutorStorage;
-use crate::memory::result_facet::ResultFacet;
 use crate::code_run::ResultRead;
 use crate::code_run::result_refusal;
 use crate::code_run::unknown_handle;
 use crate::engine_executor::{JsResultRef, JsResultTarget};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::memory::result_facet::ResultFacet;
 use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
+use crate::store::result_manifest::CodeRunRawOutput;
 use crate::vault::ReadMode;
 
 /// The facet input key that narrows a read to a range of the body: a range

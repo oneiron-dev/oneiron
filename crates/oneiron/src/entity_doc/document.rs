@@ -4,10 +4,10 @@ use super::doc_actor::DocActor;
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::write_envelope::provenance::ActorStamp;
-use crate::write_envelope::provenance::made_by::{MadeBy, MadeByClass};
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::ActorStamp;
+use crate::write_envelope::provenance::made_by::{MadeBy, MadeByClass};
 use loro::{
     CommitOptions, ExportMode, Frontiers, LoroDoc, LoroMap, LoroText, LoroValue, ValueOrContainer,
 };

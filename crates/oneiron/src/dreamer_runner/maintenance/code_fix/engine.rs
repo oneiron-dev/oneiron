@@ -35,13 +35,10 @@ use super::publisher::{
     EngineCandidateRun, EngineNotRun, EnginePairState,
 };
 use crate::code_run::shadow_runner::{
-        ShadowDeterminism,
-
-     ShadowRunRequest, ShadowRunResult,
-     ShadowSourceAdmission, ShadowStatus,
-
+    ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowSourceAdmission, ShadowStatus,
     prepare_admitted_shadow_step_source,
 };
+use crate::code_run::step_replay_capsules;
 use crate::dreamer_runner::shadow_values::EngineArtifactPin;
 use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
 use crate::dreamer_runner::shadow_values::ShadowArmLease;
@@ -60,7 +57,6 @@ use crate::dreamer_runner::shadow_values::ShadowTraceEntry;
 use crate::dreamer_runner::shadow_values::ShadowTraceKind;
 use crate::dreamer_runner::shadow_values::ShadowUnavailable;
 use crate::dreamer_runner::shadow_values::ShadowUnavailableReason;
-use crate::code_run::{   step_replay_capsules};
 use crate::dreamer_runner::step_replay::CapsuleHost;
 use crate::dreamer_runner::step_replay::ExecutorStepStart;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
