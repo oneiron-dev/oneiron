@@ -66,7 +66,7 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
     request.headers_mut().insert(
         call.shape
             .auth_header()
-            .parse()
+            .parse::<reqwest::header::HeaderName>()
             .expect("Responses auth header is a valid header name"),
         auth,
     );
