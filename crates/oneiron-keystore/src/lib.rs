@@ -88,8 +88,9 @@ pub enum SlotKind {
     /// a head and a tail slot, and each kit kind has its own pair: issuing
     /// one kind of kit replaces only that kind's piece. Each recovery-root kit
     /// drawn and not yet confirmed also has a pending pair of its own, named
-    /// by its kit id (FIX 11977, 12046). One slot more, named by the vault id
-    /// alone, names the install that keeps a data-key kit piece (FIX 12054).
+    /// by its kit id (FIX 11977, 12046). Install-name slots filed by the vault
+    /// id alone name each current piece's install (FIX 12054, FIX 12055) and
+    /// each pending recovery-root kit's install.
     KitPiece(KitPieceSlot),
 }
 
@@ -112,8 +113,8 @@ impl SlotKind {
 }
 
 /// Which slot of this machine's kit pieces: the kit kind, the current pair or
-/// one drawn kit's pending pair, then the piece's first 32 bytes (head) or the
-/// rest (tail).
+/// one drawn kit's pending pair, the piece's first 32 bytes (head) or rest
+/// (tail), or an install-name slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KitPieceSlot {
     /// The data-key kit's piece, its first 32 bytes.
@@ -132,17 +133,27 @@ pub enum KitPieceSlot {
     /// The piece of the recovery-root kit whose id this holds, drawn and not
     /// yet confirmed, its remaining bytes.
     RecoveryRootPendingTail([u8; 4]),
+    /// The 16-byte machine id of the install whose slots keep this pending
+    /// recovery-root kit's piece, then zeros. Filed under the all-zero install
+    /// so a sealed vault can find that exact pending kit before its pages open.
+    RecoveryRootPendingInstall([u8; 4]),
     /// The 16-byte machine id of the install whose slots keep the data-key
     /// kit's piece, then zeros (FIX 12054). Filed under the all-zero install,
     /// so the vault id alone names it: a sealed vault's pages open before its
     /// machine id can be read.
     VaultKeyInstall,
+    /// The 16-byte machine id of the install whose slots keep the
+    /// recovery-root kit's piece, then zeros (FIX 12055): the twin of
+    /// [`Self::VaultKeyInstall`] for the world kit, filed the same way, so a
+    /// sealed vault's kept recovery-root piece is found before its pages
+    /// open too.
+    RecoveryRootInstall,
 }
 
 impl KitPieceSlot {
     /// Stable name in the backend, as [`SlotKind::label`]. A pending slot's
     /// name carries its kit's id: `kit-piece-recovery-root-pending-<kit id
-    /// hex>-head|tail`.
+    /// hex>-head|tail|install`.
     #[must_use]
     pub fn label(self) -> Cow<'static, str> {
         let (kit, half) = match self {
@@ -151,8 +162,10 @@ impl KitPieceSlot {
             Self::RecoveryRootHead => return Cow::Borrowed("kit-piece-recovery-root-head"),
             Self::RecoveryRootTail => return Cow::Borrowed("kit-piece-recovery-root-tail"),
             Self::VaultKeyInstall => return Cow::Borrowed("kit-piece-vault-key-install"),
+            Self::RecoveryRootInstall => return Cow::Borrowed("kit-piece-recovery-root-install"),
             Self::RecoveryRootPendingHead(kit) => (kit, "head"),
             Self::RecoveryRootPendingTail(kit) => (kit, "tail"),
+            Self::RecoveryRootPendingInstall(kit) => (kit, "install"),
         };
         let mut label = String::from("kit-piece-recovery-root-pending-");
         for byte in kit {
@@ -168,9 +181,9 @@ impl KitPieceSlot {
 ///
 /// `install` is the install's incarnation, the engine's machine id. A restore that
 /// makes a new machine gets a new id, so it never opens the slot of the install it
-/// was copied from, even on the same host with the same keystore. One slot is
-/// filed under the all-zero install, no machine's id:
-/// [`KitPieceSlot::VaultKeyInstall`], which the vault id alone names (FIX 12054).
+/// was copied from, even on the same host with the same keystore. Install-name
+/// slots are filed under the all-zero install, no machine's id, so the vault id
+/// alone names them (FIX 12054, FIX 12055).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeystoreSlot {
     pub vault_id: [u8; 32],
