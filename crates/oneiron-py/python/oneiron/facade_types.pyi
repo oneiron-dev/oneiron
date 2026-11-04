@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4455 declarations.
+Census: 1224 facade rows, 4457 declarations.
 Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -1895,7 +1895,7 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["goal_unmet", "interrupted"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet", "interrupted", "not_model_free"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
 class TaskWorkflowOutcomeStartedBody(TypedDict):
     at: int
 class TaskWorkflowOutcomeStarted(TypedDict):
@@ -2170,6 +2170,14 @@ class FanoutSlotTerminal(TypedDict):
     finished_at: int
 AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 SpendState = Literal["open", "closed"]
+class AgentSpendCalibration(TypedDict):
+    samples: int
+    total_units: int
+    ewma_units: int
+    last_units: int
+    updated_at: int
+class SpendCalibrationSample(TypedDict):
+    before: NotRequired[AgentSpendCalibration | None]
 class SpendPayer(TypedDict):
     party: EntityId
     granted_by: NotRequired[EntityId | None]
@@ -2187,6 +2195,8 @@ class SpendScope(TypedDict):
     opened_at: int
     closed_at: NotRequired[int | None]
     agent: NotRequired[EntityId | None]
+    calibration_sample: NotRequired[SpendCalibrationSample | None]
+    exploration_attempt: NotRequired[AttemptId | None]
     payer: NotRequired[SpendPayer | None]
 class SpendSignalWrapUp(TypedDict):
     signal: Literal["wrap_up"]

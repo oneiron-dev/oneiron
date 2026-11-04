@@ -38,6 +38,11 @@ pub use secret_projection::{
     repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
     repo_document_source,
 };
+/// The empty root whose deletes retain a held row write's causal unit.
+pub(crate) const HELD_EDIT_CAUSALITY_MAP: &str = "held_edit_causality";
+/// Every neutral delete uses this one non-entity key.
+pub(crate) const HELD_EDIT_CAUSALITY_KEY: &str = "0";
+
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.
 mod tombstones;
