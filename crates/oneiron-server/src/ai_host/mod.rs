@@ -79,6 +79,7 @@ pub(crate) mod trained_serving;
 mod training_offer;
 pub(crate) mod training_pack;
 mod turn_actions;
+pub(crate) use turn_actions::action_reader;
 mod turn_program;
 mod turn_program_host;
 mod turns;
