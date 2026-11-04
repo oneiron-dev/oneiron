@@ -59,8 +59,7 @@ pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};
 pub(crate) use refinement_admission::{
-    RefinementAdmissionProof, skill_refinement_origin_in_txn, stage_refinement_origin,
-    validate_refinement_admission,
+    RefinementAdmissionProof, skill_refinement_origin_in_txn, validate_refinement_admission,
 };
 #[cfg(test)]
 pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
