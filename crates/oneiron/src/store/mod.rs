@@ -139,11 +139,17 @@ pub use delete_guards::StoreDeleteGuards;
 mod hooks;
 pub use hooks::StoreHooks;
 mod scope_stamps;
-pub use scope_stamps::StoreScopeStamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
 mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
@@ -221,6 +227,7 @@ pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
+pub(crate) mod executor_speech_identity;
 mod gate_decision;
 pub(crate) mod file_key_masks;
 pub(crate) mod found_key_notice_queue;
@@ -241,6 +248,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
@@ -293,7 +301,9 @@ mod short_id_alias;
 pub(crate) mod skill_content_index;
 pub mod skill_hub_predicates;
 pub mod skill_package;
+pub(crate) mod skill_refinement_custody;
 pub(crate) mod skill_source_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
 pub(crate) mod task_body_checks;
@@ -334,8 +344,8 @@ pub(crate) use body_envelope::{
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
     erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
