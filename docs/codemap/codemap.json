@@ -67765,7 +67765,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -71961,7 +71961,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 87,
+      "crate-vis": 88,
       "mod": 81,
       "re-export": 31
      }
@@ -73317,6 +73317,16 @@
      "purpose": "The custody index of a skill candidate's refinement carriers: which carriers a candidate owns, the holder…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_refinement_origin.rs",
+     "purpose": "The permanent origin facts of a refinement candidate: the hash of the first native Proposed claim or…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -89999,7 +90009,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 361,
+     "files": 362,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90239,7 +90249,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6257,
+   "source_files": 6258,
    "test_files": 898
   },
   "oneiron-android": {
