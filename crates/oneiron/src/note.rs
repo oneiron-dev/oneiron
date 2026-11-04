@@ -613,11 +613,11 @@ pub(crate) use scan::measure as measure_note_document;
 pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
-mod token_uses;
 #[cfg(feature = "sync")]
 pub(crate) mod frame_envelope;
 #[cfg(feature = "sync")]
 mod replica;
+mod token_uses;
 #[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]

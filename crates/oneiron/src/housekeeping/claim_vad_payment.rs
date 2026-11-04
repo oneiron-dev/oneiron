@@ -114,9 +114,7 @@ impl Vault {
             let mut seen = BTreeSet::new();
             let mut owed = Vec::with_capacity(handed.len());
             for id in handed {
-                if seen.insert(id)
-                    && crate::store::claim_vad_owed_in_txn(&self.store, &txn, &id)?
-                {
+                if seen.insert(id) && crate::store::claim_vad_owed_in_txn(&self.store, &txn, &id)? {
                     owed.push(id);
                 }
             }
