@@ -121,7 +121,6 @@ pub use notifications::{
     caller_marker_contains, notification_body_json, notification_scoped_to_caller,
 };
 pub(crate) use plugin::erase_section_fit_receipts_in_txn;
-pub(crate) use plugin::scrub_section_fit_receipt_actors_in_txn;
 pub use plugin::{
     AdmittedPluginSection, ApprovedPluginIdentity, AuthorityLaneRef, BoardBlockKind,
     BoardBlockPage, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope, CORE_SECTION_IDS,
@@ -143,6 +142,9 @@ pub use plugin::{
     render_plugin_proposal_section, render_plugin_row, render_plugin_section_pages,
     render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
     validate_manifest_for_proposal,
+};
+pub(crate) use plugin::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,

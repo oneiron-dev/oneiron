@@ -114,6 +114,8 @@ pub struct DependentWalkCheck {
     pub threshold: u64,
     /// Dependents withdrawn when the walk crossed it.
     pub walked: u64,
+    /// Unix seconds of the crossing.
+    pub raised_at: u64,
 }
 
 impl DependentWalkCheck {
@@ -403,6 +405,7 @@ fn ask_in_txn(
         door: walk.door.code().to_owned(),
         threshold: policy.check_threshold,
         walked: walk.walked,
+        raised_at: crate::unix_seconds_now(),
     };
     CHECK.put(store, txn, document, &check)?;
     tracing::warn!(
@@ -631,15 +634,23 @@ impl Vault {
             .collect())
     }
 
-    /// The checks walks raised, one per source, in source order.
+    /// The checks walks raised, one per source, in source order. These same
+    /// crossings are also listed by [`Self::scan_checks`].
     ///
     /// # Errors
     ///
     /// Storage failures.
     pub fn dependent_walk_checks(&self) -> Result<Vec<DependentWalkCheck>> {
         let txn = self.store.env.read_txn()?;
+        self.dependent_walk_checks_in(&txn)
+    }
+
+    pub(crate) fn dependent_walk_checks_in(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Vec<DependentWalkCheck>> {
         Ok(CHECK
-            .scan(&self.store, &txn)?
+            .scan(&self.store, txn)?
             .into_iter()
             .map(|(_, check)| check)
             .collect())
@@ -652,7 +663,21 @@ impl Vault {
     /// Storage failures.
     pub fn dependent_walk_policy(&self) -> Result<DependentWalkPolicy> {
         let txn = self.store.env.read_txn()?;
-        policy_in(&self.store, &txn)
+        self.dependent_walk_policy_in(&txn)
+    }
+
+    pub(crate) fn dependent_walk_policy_in(&self, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
+        policy_in(&self.store, txn)
+    }
+
+    pub(crate) fn set_dependent_walk_check_threshold_in(
+        &self,
+        txn: &mut RwTxn<'_>,
+        threshold: u64,
+    ) -> Result<()> {
+        let mut policy = self.dependent_walk_policy_in(txn)?;
+        policy.check_threshold = threshold;
+        POLICY.put(&self.store, txn, &(), &policy)
     }
 
     /// Sets the local dependent walk policy for the batches that follow.

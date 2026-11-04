@@ -494,12 +494,7 @@ pub(super) fn same_repository(left: &RepoRef, right: &RepoRef) -> bool {
     repo_mutation_repo_key(left) == repo_mutation_repo_key(right)
 }
 
-pub(super) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
-    match repo_ref {
-        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
-        RepoRef::GitHubAtCommit { .. } => repo_ref.canonical(),
-    }
-}
+pub(super) use crate::git_wire::mutation_commands::repo_mutation_repo_key;
 
 /// The [`SNAPSHOT`] key for one content-addressed snapshot.
 pub(super) fn repo_mutation_snapshot_key(fork_hash: RepoForkHash) -> String {

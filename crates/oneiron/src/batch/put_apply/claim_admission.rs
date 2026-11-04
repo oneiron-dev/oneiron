@@ -21,7 +21,7 @@ pub(super) fn admit_claim_put(
     id: EntityId,
     input: ClaimPutAdmission<'_>,
 ) -> Result<Option<ClaimBody>> {
-    crate::federation::guard_ruling_overwrite(
+    store.record_hooks.guard_ruling_overwrite(
         store,
         txn,
         &id,
@@ -74,7 +74,7 @@ pub(super) fn admit_claim_put(
         )?;
     }
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
-    crate::workspace_roster::guard_goal_claim_put(
+    store.project_writes.guard_goal_claim_put(
         store,
         txn,
         id,
@@ -154,7 +154,7 @@ pub(super) fn validate_witness_message_body(
         // `gate::validate_replicated_witness_message_body`).
         crate::gate::validate_replicated_witness_message_body(data)?;
     } else {
-        crate::gate::validate_canonical_witness_message_body(data)?;
+        crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
 }

@@ -39,55 +39,23 @@ mod response;
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::super::consent_wait::code_consent_waits_bound_to_in_txn;
 use super::records::REPLAY_RECORDS;
 use super::replay_capsule::actor_gone_in_txn;
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
-use crate::side_table::{self, Erased, Named, SideKey, SideTable};
+use crate::side_table::{Erased, SideKey};
 use crate::store::{ResponseDb, Store, response_carrier, settle_shared_response_in_txn};
 use crate::{EntityId, Result, Vault};
 
-pub(crate) use self::response::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
-
-/// The rows. Key: id16(wait) + id16(run) + be64(generation).
-const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
-    SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);
+pub(crate) use self::response::wait_delivery_owners;
+use crate::store::executor_wait_delivery::{HOLDERS, WaitHolder, wait_reply_erased};
 
 /// The generation a connector call's caller holds its call's settled reply
 /// under (FIX 5718 part 3; CALLS C5718-23): the key names the wait, the
 /// caller's actor where a run's id goes, and this generation, which no
 /// run's park reaches. Such a row names no run.
 const CALLER_GENERATION: u64 = u64::MAX;
-
-/// What one run holds of a wait's reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum WaitHolder {
-    /// The reply, for `actor`'s run, when its run's stamps name one.
-    Kept { actor: Option<EntityId> },
-    /// Its run's actor was erased: the reply reads as erased for it, for
-    /// good.
-    Erased,
-}
-
-impl WaitHolder {
-    const fn actor(self) -> Option<EntityId> {
-        match self {
-            Self::Kept { actor } => actor,
-            Self::Erased => None,
-        }
-    }
-
-    pub(super) const fn erased(self) -> bool {
-        matches!(self, Self::Erased)
-    }
-}
 
 /// Where a run's wait stands for it (FIX 5718).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

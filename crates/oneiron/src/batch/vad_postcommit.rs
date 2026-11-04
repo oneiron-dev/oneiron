@@ -273,7 +273,7 @@ pub(super) fn ops_touch_watched_units(
         let (BatchOp::Put { id, .. } | BatchOp::Delete { id }) = op else {
             continue;
         };
-        if crate::llm::decision::questions::unit_watched_in_txn(&vault.store, txn, id)? {
+        if crate::store::decision_question_watches::unit_watched_in_txn(&vault.store, txn, id)? {
             return Ok(true);
         }
     }

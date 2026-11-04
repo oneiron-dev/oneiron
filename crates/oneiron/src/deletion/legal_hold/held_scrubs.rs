@@ -66,8 +66,10 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
         return Ok(true);
     }
     #[cfg(feature = "sync")]
-    let carried =
-        crate::sync::row_birth::actor_erase::birth_carriers_remain_in_txn(vault, txn, &ids)?;
+    let carried = vault
+        .store
+        .sync_hooks
+        .birth_carriers_remain_in_txn(vault, txn, &ids)?;
     #[cfg(not(feature = "sync"))]
     let carried = false;
     Ok(carried)

@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm::decision::SlideReviewLimits;
+use crate::model_decision::SlideReviewLimits;
 
 /// A slide review's own pacing, each field narrowing the vault's policy
 /// row (FIX 9336): units per batch, units, text bytes and image bytes of

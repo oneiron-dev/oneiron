@@ -13,7 +13,7 @@ pub(crate) mod health_review;
 pub mod helper;
 mod helper_eval;
 mod identity;
-mod invocation;
+use oneiron_base::skill_invocations as invocation;
 pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;

@@ -6,46 +6,13 @@ use rmpv::Value;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::agent_record::AgentCeiling;
 use crate::write_envelope::SourceLineage;
 
 use super::constants::MAX_DELEGATION_DEPTH;
 use super::decision::{GateDecision, GateOutcome};
 use crate::error::GateError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PolicyApprovalCeiling {
-    Auto,
-    Proposed,
-}
-
-impl PolicyApprovalCeiling {
-    pub(super) fn parse(value: &Value) -> Option<Self> {
-        match value.as_str()? {
-            "auto" => Some(Self::Auto),
-            "proposed" => Some(Self::Proposed),
-            _ => None,
-        }
-    }
-
-    /// Gate-side conversion from the persisted AGENT_DEF descriptor mirror.
-    /// Lives here so the dependency direction stays `gate.rs` → `agent_def.rs`
-    /// and `PolicyApprovalCeiling` stays `pub(crate)`.
-    pub(super) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
-        match ceiling {
-            AgentCeiling::Auto => Self::Auto,
-            AgentCeiling::Proposed => Self::Proposed,
-        }
-    }
-
-    pub(super) fn restrict(self, other: Self) -> Self {
-        if matches!(self, Self::Proposed) || matches!(other, Self::Proposed) {
-            Self::Proposed
-        } else {
-            Self::Auto
-        }
-    }
-}
+pub(crate) use crate::store::policy_record::PolicyApprovalCeiling;
 
 #[must_use]
 pub(super) fn foreign_agent_effective_ceiling(

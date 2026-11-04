@@ -296,6 +296,8 @@ pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
 pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE;
+pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,

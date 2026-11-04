@@ -60,11 +60,19 @@ fixed call contract, model pins, real provider usage and request hashes. Judge
 usage is eval overhead. Offline engine ingest/index time and tokenizer work are
 measured separately; no offline LLM call means zero offline provider dollars.
 
+Measured `beam measure` rows, exported context-pack records, and emitted
+competitor rows each carry `secret_scan`: the benchmark run's own
+Oneiron-vault secret-scan mode (`scan-on`/`scan-off`), read from the actual
+vault switch at run time. (Competitor rows serialize it as `secretScan`.) It
+is not a claim about any competitor's own scanner.
+
 ## Data and comparison boundaries
 
 The bundled LongMemEval-S and BEAM tier files are small conformance samples,
-not the native 500K/1M/10M datasets. `beam tiers <graduation.json>` requires a
-non-regressed previous tier. The 10M cell stays `not-yet-run (10M-gated)`.
+not the native 500K/1M/10M datasets. `beam tiers <graduation.json>` reports
+BEAM-128K first, followed by LongMemEval-S. Either can be recorded on its own.
+The larger BEAM tiers require all preceding tiers to have cleared without
+regression. The 10M cell stays `not-yet-run (10M-gated)` until scale work is ready.
 Every corpus item must carry `metadata.dataset_timestamp` in Unix seconds;
 `occurredAt` must agree with it. Learned time follows corpus order, not ingest
 wall-clock time. Measured plans freeze read-time decay with `temporal_now`.

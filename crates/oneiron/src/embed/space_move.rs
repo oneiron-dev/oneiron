@@ -1124,6 +1124,9 @@ impl Vault {
         // The binding the move applied goes back with its slots (O3b PR B).
         super::binding_move::move_undone_in_txn(self, &mut wtxn, &moving, actor)?;
         wtxn.commit()?;
+        // FIX 11482: the undone move's note commits here in a raw transaction
+        // with no owner scope, so this door sends the signal itself.
+        self.store.notify_notification_updates();
         self.embedding_setup_committed(setup);
         self.embedding_move_ended();
         Ok(())

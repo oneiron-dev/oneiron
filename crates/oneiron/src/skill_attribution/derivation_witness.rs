@@ -165,7 +165,7 @@ pub(super) fn record_pairs_in_txn(
     pairs: &[(EntityId, EntityId)],
     producer: WitnessProducer,
 ) -> Result<bool> {
-    let live = token.lease_holds_in_txn(store, wtxn);
+    let live = super::run_writes::run_write_lease_holds_in_txn(token, store, wtxn);
     if !live && !producer.lands_late() {
         return Ok(false);
     }
@@ -381,7 +381,7 @@ pub(crate) fn note_summary_request_in_txn(
     let Some(token) = current_run_write_token() else {
         return;
     };
-    if !token.lease_holds_in_txn(store, wtxn) {
+    if !super::run_writes::run_write_lease_holds_in_txn(&token, store, wtxn) {
         return;
     }
     let mut rest = token.attempt().as_bytes().to_vec();

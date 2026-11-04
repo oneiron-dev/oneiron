@@ -3,6 +3,7 @@
 pub mod codec;
 pub(crate) mod commit_metadata;
 pub(crate) mod file_frontiers;
+pub(crate) mod tables;
 pub(crate) mod tree_codec;
 pub(crate) mod tree_inventory;
 mod types;

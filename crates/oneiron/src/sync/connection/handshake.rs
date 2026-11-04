@@ -294,8 +294,18 @@ impl SyncConnection {
             }
         }
 
-        self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
-            .await;
+        // Leave-only single try (OF-158): a confirmed leave publishes and
+        // clears its remaining run buffer here too, before `running=false`;
+        // the steady leave arm already cleared its own, so this adds 0 then.
+        // Non-leave shutdown stays thaw-waiting, as before.
+        if *self.left.borrow() {
+            self.queue_on_exit(&mut self.batch_gate(), &mut debounce_buffer)
+                .await;
+            self.publish_leave_unqueued(&mut debounce_buffer);
+        } else {
+            self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
+                .await;
+        }
         self.manager.outbound().detach(attachment);
         self.running.send_replace(false);
         Ok(())

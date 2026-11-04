@@ -111,7 +111,7 @@ pub use self::catalog::{
 };
 pub use self::error::{
     BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError,
-    RetryableLlmError, SpentKind, UnsupportedCapability,
+    RetryableLlmError, SpentKind, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 // Public so `oneiron`'s auto-checker names a dynamic model the same way the safeguard
 // binding does, across the crate line.

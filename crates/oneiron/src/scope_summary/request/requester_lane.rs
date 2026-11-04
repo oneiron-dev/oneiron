@@ -18,8 +18,9 @@ use super::{
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
 use crate::Vault;
-use crate::claim::{ClaimReadStatus, FrozenReadLane, ScopedRead};
+use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::error::Result;
+use crate::ports::ClaimReadStatus;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
 
 /// The declaration key a narrowed requester's frozen lane rides under.

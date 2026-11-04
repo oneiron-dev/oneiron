@@ -96,7 +96,8 @@ pub(super) fn dispatch_put_type(
                 .refinement_admission
                 .is_some_and(|proof| proof.binds_claim(&fixed.id, data))
             && !fixed.write_envelope.is_some_and(|envelope| {
-                crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
+                crate::store::claim_projection::session_claim_producer(&body)
+                    == Some(envelope.actor().entity_ref())
             })
         {
             return Err(Error::InvalidClaimBody(
@@ -112,7 +113,23 @@ pub(super) fn dispatch_put_type(
                 "local claim write policy snapshot missing",
             ))?;
             if fixed.allow_reserved_predicate {
-                crate::gate::check_reserved_claim_policy(&body, fixed.write_envelope, policy)?;
+                let stored_actor_erasure = fixed
+                    .transition
+                    .map(|proof| {
+                        proof.matches_stored_section_fit_actor_erasure(
+                            store,
+                            wtxn,
+                            &fixed.id,
+                            &body,
+                            fixed.occurred,
+                            fixed.learned_at,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                if !stored_actor_erasure {
+                    crate::gate::check_reserved_claim_policy(&body, fixed.write_envelope, policy)?;
+                }
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,
@@ -214,7 +231,9 @@ pub(super) fn dispatch_put_type(
         revision.squatter = put.squatter;
         revision.put = Some(put);
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
-        crate::federation::validate_federation_grant_body_bytes(data)?;
+        store
+            .record_hooks
+            .validate_federation_grant_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
@@ -235,7 +254,9 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+        store
+            .record_hooks
+            .validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
@@ -275,7 +296,7 @@ pub(super) fn dispatch_put_type(
             crate::agent_def::agent_id_pin_for_put_in_txn(store, wtxn, &fixed.id, &decoded)?;
         dispatch.new_agent_definition = Some(decoded);
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
-        dispatch.new_workflow = Some(crate::agent_def::workflow::validate_workflow_put(
+        dispatch.new_workflow = Some(crate::store::workflow_definition::validate_workflow_put(
             store,
             wtxn,
             &fixed.id,

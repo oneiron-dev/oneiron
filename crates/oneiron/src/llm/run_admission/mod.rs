@@ -48,7 +48,6 @@ pub use job_maximum::{
 };
 pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
-pub(crate) use person_billing::erase_billing_account_actor_in_txn;
 pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
