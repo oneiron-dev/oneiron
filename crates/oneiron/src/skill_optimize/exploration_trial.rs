@@ -258,6 +258,35 @@ pub(crate) fn settle_exploration_route_in_txn(
     ROUTES.put(&vault.store, txn, routed.as_bytes(), &route)
 }
 
+/// Corrects an already-settled route to the scope's latest total. Repeating
+/// the same correction changes nothing; admission and reservations stay put.
+pub(crate) fn revise_exploration_route_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    unit: &LeaseUnit,
+    spent: u64,
+) -> Result<()> {
+    let Some((routed, mut route)) = lineage_route_in_txn(vault, txn, attempt)? else {
+        return Ok(());
+    };
+    let Some(previous) = route.settled else {
+        return Ok(());
+    };
+    if previous == spent || route.unit != *unit {
+        return Ok(());
+    }
+    if let Some(mut ledger) = SLICES.get(&vault.store, txn, &route.goal_claim)? {
+        ledger.charged = ledger
+            .charged
+            .saturating_sub(previous)
+            .saturating_add(spent);
+        SLICES.put(&vault.store, txn, &route.goal_claim, &ledger)?;
+    }
+    route.settled = Some(spent);
+    ROUTES.put(&vault.store, txn, routed.as_bytes(), &route)
+}
+
 /// Stops `proposal`'s trial from routing more runs. Runs already routed keep
 /// their charges and settle as usual. No trial: nothing to close.
 /// # Errors

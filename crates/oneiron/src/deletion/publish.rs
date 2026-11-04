@@ -46,7 +46,7 @@ struct TombstonePersistence<'a> {
     snapshot: &'a [u8],
     version_vector: &'a [u8],
     tombstone: &'a TombstoneValueV2,
-    delete_update: Option<&'a crate::sync::window::DeleteBearingUpdate>,
+    delete_update: Option<&'a super::delete_bearing_update::DeleteBearingUpdate>,
     scrubbed_update_keys: &'a [String],
     /// A history-free cut that failed its proof (FIX 6520): stored as
     /// before, and this txn owes the erasure sweep the window.
@@ -194,14 +194,15 @@ impl Vault {
         due: Option<&PendingConfirmedErase>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
-        use crate::store::loro_document::doc_version_vector;
+        use super::delete_bearing_update::export_tombstone_commit_delta;
+        use crate::store::loro_document::{doc_version_vector, entity_carriers};
         use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
         use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
         use crate::sync::window::{
-            apply_tombstone_to_window_doc, entity_carriers, export_tombstone_commit_delta,
-            load_window_from_state, mark_removed_carriers_first, merge_persisted_state_into_doc,
+            apply_tombstone_to_window_doc, load_window_from_state, mark_removed_carriers_first,
+            merge_persisted_state_into_doc,
         };
         use crate::window_key::WindowKey;
         use loro::CommitOptions;
@@ -530,17 +531,23 @@ impl Vault {
                 .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| {
-                    crate::workspace_roster::precheck_goal_delete(
+                    self.store.delete_guards.precheck_goal_delete(
                         &self.store,
                         &wtxn,
                         *id,
                         gate.is_some(),
                     )
                 })
-                .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    self.store
+                        .delete_guards
+                        .reject_ruling_delete(&self.store, &wtxn, id)
+                })
                 .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
-                    crate::workspace_roster::reject_audience_edit_delete(&self.store, &wtxn, id)
+                    self.store
+                        .delete_guards
+                        .reject_audience_edit_delete(&self.store, &wtxn, id)
                 })
                 .and_then(|()| {
                     if value.reason.is_hard() {
@@ -678,7 +685,7 @@ impl Vault {
     ) -> Result<bool> {
         let history_free = crate::sync::window::history_free_window_required(self, window_key)?
             || doc.is_shallow()
-            || crate::sync::note::is_native(doc);
+            || super::window_document_format::is_native(doc);
         if history_free {
             crate::sync::window::merge_window_heads(doc)?;
         }
@@ -772,8 +779,12 @@ impl Vault {
             // SAME txn that stages it — a revocation landing since the gate ran
             // stops the deletion before it becomes remote truth.
             reverify_deletion_authority_before_publication(gate, wtxn)?;
-            crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
-            crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+            self.store
+                .delete_guards
+                .reject_ruling_delete(&self.store, wtxn, id)?;
+            self.store
+                .delete_guards
+                .reject_audience_edit_delete(&self.store, wtxn, id)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,

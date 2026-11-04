@@ -35,6 +35,7 @@
 //! owner's erase leaves the fixed marker there (`model_step`, FIX 10460).
 
 mod asker;
+mod connector_reply;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -275,6 +276,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
+    let mut reply_body_events = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -283,6 +285,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if let Some(event_id) =
+            connector_reply::frozen_connector_event_id_for_erase(&record, actors)
+        {
+            reply_body_events.insert(event_id);
+        }
         if record.kind == TURN_ACTION_ATTEMPT_KIND {
             // A turn action keeps the slip its requester's request was
             // admitted on; the requester's erase takes it out, in every
@@ -331,6 +338,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
     crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
+        store,
+        txn,
+        &reply_body_events,
+    )?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;

@@ -18,7 +18,7 @@ mod source;
 mod worker;
 
 #[cfg(unix)]
-use confined::{walk_files, walk_notes};
+use confined::{walk_files, walk_notes, walk_notes_rescan};
 pub(crate) use reader::{
     LinkCounts, NoteCounts, TitleCounts, choose_title, crossed_rows, earlier_titles, read_folder,
     resolve_links,
@@ -66,6 +66,15 @@ fn walk_notes(
     _visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("importing a folder ({}) needs a unix host", path.display())
+}
+
+#[cfg(not(unix))]
+fn walk_notes_rescan(
+    path: &std::path::Path,
+    _unopened_dir: &mut dyn FnMut(&std::path::Path),
+    visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    walk_notes(path, visit)
 }
 
 #[cfg(not(unix))]

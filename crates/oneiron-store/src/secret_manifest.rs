@@ -21,8 +21,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_base::error::{Error, Result, SecretError};
 use crate::secret_record::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
+use oneiron_base::error::{Error, Result, SecretError};
 
 /// The repo-side secret manifest: a schema-versioned list of declared
 /// entries.

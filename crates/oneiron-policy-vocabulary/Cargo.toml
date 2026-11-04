@@ -1,0 +1,21 @@
+[package]
+name = "oneiron-policy-vocabulary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Policy-model vocabulary of the oneiron engine: the output contract, the owner's pattern rules and the goal limits"
+repository.workspace = true
+
+[dependencies]
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+regex = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[lints]
+workspace = true

@@ -263,7 +263,12 @@ impl Vault {
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
-            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
+            self.store.delete_guards.precheck_goal_delete(
+                &self.store,
+                &txn,
+                *id,
+                gate.is_some(),
+            )?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,

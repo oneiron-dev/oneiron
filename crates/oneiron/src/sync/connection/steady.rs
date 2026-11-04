@@ -29,6 +29,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         local_rx: &mut mpsc::UnboundedReceiver<LocalUpdate>,
+        debounce_buffer: &mut Vec<LocalUpdate>,
         promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
@@ -43,7 +44,6 @@ impl SyncConnection {
 
         // One node tick after its first edit; a busy writer cannot postpone it.
         let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
-        let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut document_buffer: Vec<Vec<u8>> = Vec::new();
         // Window updates and documents lead the tick's batch in turn (FIX 8870).
         let mut batch_turn = super::node_batch::NodeBatchTurn::default();
@@ -51,7 +51,8 @@ impl SyncConnection {
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
         let mut publication_slot = None;
-        let mut debounce_deadline: Option<Instant> = None;
+        let mut debounce_deadline = (!debounce_buffer.is_empty())
+            .then(|| Instant::now() + Duration::from_millis(debounce_ms));
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -94,7 +95,7 @@ impl SyncConnection {
                     &mut write,
                     event_tx,
                     &machine_history_due,
-                    &mut debounce_buffer,
+                    debounce_buffer,
                 )
                 .await
             {
@@ -134,15 +135,15 @@ impl SyncConnection {
                             // Flush debounce buffer before disconnecting; the
                             // close code tells a server fault from a refusal
                             // (FIX 5927).
-                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Closed(ServerClose::read(frame.as_ref()));
                         }
                         None => {
-                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
                         Some(Err(e)) => {
-                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
@@ -168,7 +169,7 @@ impl SyncConnection {
                     match partial {
                         Ok(frame) => {
                             if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                                self.queue_on_exit(&mut gate, debounce_buffer).await;
                                 return LoopExit::Disconnected(format!("Presence send failed: {error}"));
                             }
                         }
@@ -245,11 +246,11 @@ impl SyncConnection {
                     debounce_deadline = None;
 
                     match self.flush_node_batch(
-                        &mut write, client, &mut debounce_buffer, &mut document_buffer,
+                        &mut write, client, debounce_buffer, &mut document_buffer,
                         &mut publication_slot, &mut batch_turn,
                     ).await {
                         Err(error) => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            flush_to_queue(&self.queue, debounce_buffer);
                             return LoopExit::Disconnected(error);
                         }
                         Ok(Some((part, sent))) => {
@@ -460,7 +461,7 @@ impl SyncConnection {
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
-                        self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                        self.queue_on_exit(&mut gate, debounce_buffer).await;
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Renegotiate;
                     }
@@ -471,7 +472,7 @@ impl SyncConnection {
                 // `wait_for` returns goes before the close frame's await, so
                 // the loop stays `Send` for a host that spawns it.
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
-                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                    self.queue_on_shutdown(&mut gate, debounce_buffer).await;
                     let _ = write.send(Message::Close(None)).await;
                     break LoopExit::Shutdown;
                 }
@@ -479,7 +480,7 @@ impl SyncConnection {
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
+                    self.queue_on_shutdown(&mut gate, debounce_buffer).await;
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
                     break LoopExit::Shutdown;

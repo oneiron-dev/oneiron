@@ -215,9 +215,7 @@ pub(super) fn find_text(
                 }
                 blocks
                     .iter()
-                    .filter(|block| {
-                        counts.get(block.part_id.as_str()).copied().unwrap_or(0) == 1
-                    })
+                    .filter(|block| counts.get(block.part_id.as_str()).copied().unwrap_or(0) == 1)
                     .flat_map(|block| {
                         char_occurrences(&block.text, text).into_iter().filter_map(
                             |(start, end)| Locator::html(block.part_id.clone(), start, end).ok(),
@@ -359,9 +357,7 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
     let admitted = |node: &NodeRef<'_>| {
         node.attr("data-part-id")
             .map(|value| value.trim().to_owned())
-            .filter(|value| {
-                !value.is_empty() && value.len() <= ANNOTATION_LOCATOR_TEXT_MAX_BYTES
-            })
+            .filter(|value| !value.is_empty() && value.len() <= ANNOTATION_LOCATOR_TEXT_MAX_BYTES)
     };
     let mut used_ids = BTreeSet::new();
     for (node, _) in &candidates {

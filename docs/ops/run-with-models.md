@@ -2717,6 +2717,8 @@ of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
 
+A yes on an open pack setup allow ask at the role door returns the still-open ask, records nothing and wakes no waiter (positive input only: a no and every other ask behave exactly as before); the allow lands only on the owner's proof at `/v1/owner/decisions/asks/answer`.
+
 - **What the ladder reads.** The unit's body and the bodies of its outgoing
   neighbours go into the call's state, as the JSON a reader is served. A
   one-off graph ask reads the same neighbours (up to 16, under the

@@ -16,9 +16,13 @@ pub(crate) use agent_grant::{
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
-    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal, ArchiveDeleteRole,
+    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal,
     require_archive_delete_in_txn,
 };
+// The old path of the role the deletion gate now names at
+// `deletion::archive_role`; kept for callers of the federation path.
+#[allow(unused_imports)]
+pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
