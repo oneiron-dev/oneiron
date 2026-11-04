@@ -428,6 +428,7 @@ pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 pub mod dispatch_attempt_kind;
 
 pub mod checkout_lease;
+pub mod contract_oracle;
 
 pub mod repo_mutation_record;
 
