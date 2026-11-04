@@ -713,7 +713,7 @@ impl Vault {
             }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
-            crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
             crate::comm::seed_claim_class_descriptors(&vault)?;
             vault.store.project_writes.seed_root_project(&vault)?;
         }

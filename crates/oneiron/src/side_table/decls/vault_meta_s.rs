@@ -405,7 +405,7 @@ side_tables! {
     /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
+        => crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn;
     /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
     /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
     /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair
@@ -460,7 +460,7 @@ side_tables! {
     /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
     /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
-        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
+        => crate::store::skill_attribution_judgments::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
     /// id is redacted where it is named. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named
@@ -470,12 +470,12 @@ side_tables! {
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill;
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
-        => crate::skill_attribution::erase_positive_proposals_in_txn;
+        => crate::store::positive_skill_proposals::erase_positive_proposals_in_txn;
     /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
     /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
     /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
     SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
-        => crate::skill_attribution::erase_site_exposure_in_txn;
+        => crate::store::site_skill_exposure::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;

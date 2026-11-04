@@ -143,6 +143,22 @@ pub(super) fn session_sources_in_txn(
     })
 }
 
+/// Whether any retained source of this sitting belongs to an excluded
+/// conversation, using the planner's membership rules before reading text.
+pub(crate) fn session_summary_excluded(vault: &Vault, session: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let excluded = vault.dreamer_excluded_conversations_in_txn(&txn)?;
+    if excluded.is_empty() {
+        return Ok(false);
+    }
+    for turn in session_sources_in_txn(vault, &txn, session)?.sources {
+        if excluded.contains_turn(vault, &txn, &turn)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// `turn`'s learned time while a sitting retains its words: a TURN whose row
 /// stands, not withdrawn (deleted, stale or held from use) nor archived, and
 /// not an earlier summary's reply.

@@ -175,6 +175,19 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_exact_while`] with the actual answering binding and
+    /// the same vault-longest-wait deadline.
+    pub(crate) async fn generate_exact_recorded_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_exact_within`] on `deadline` (FIX 7792): only a
     /// ladder that is one picked model takes the call.
     pub async fn generate_exact_by(

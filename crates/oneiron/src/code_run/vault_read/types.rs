@@ -13,8 +13,9 @@ pub use oneiron_contracts::code_run::vault_read::{
     View,
 };
 
-/// Maximum refs accepted by one batch short-id hydrate call. Copied from the
-/// accepted route's `CORE_MAX_BATCH_ENTITIES`.
+/// Maximum refs read in one internal named-read frame of a batch short-id
+/// hydrate call (FIX 11697): a batch past it is read frame by frame, every
+/// ref served, none refused for its count.
 pub const VAULT_READ_MAX_BATCH_REFS: usize = 256;
 
 /// Accepted over-fetch recipe. `Exact` is collapsed before this call.

@@ -106,6 +106,14 @@ side_tables! {
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
         => crate::learning::erase_receipt_scope_in_txn;
+    /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
+    /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
+    /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
+    /// Key: u64be (the sequence). Value: id16.
+    AUTHLOG_STORE_ORDER: VaultMeta b"authlog:store_order:v1:" Raw;
+    /// The store-order index's state: whether every row stored before the index existed has
+    /// been sequenced, and the next free sequence (9 raw bytes: the flag, then u64be). Key: ().
+    AUTHLOG_STORE_ORDER_STATE: VaultMeta b"authlog:store_order_state:v1" Raw;
     /// One-shot consumption marker and promotion receipt for a specific authoring strategy's sealed
     /// BEAM measurement. Two shapes share this key over its lifetime (a non-JSON consumption
     /// sentinel, then a JSON receipt) and no reader ever decodes it — every access is a raw

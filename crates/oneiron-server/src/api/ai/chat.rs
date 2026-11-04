@@ -78,6 +78,7 @@ mod hook_ask;
 mod hooks;
 mod recall;
 mod segments;
+pub(crate) use segments::RetrySession;
 mod sitting;
 mod sources;
 

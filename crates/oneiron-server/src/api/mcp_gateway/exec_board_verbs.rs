@@ -41,6 +41,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
             actor,
+            off_record_session: actor.off_record_session.clone(),
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,

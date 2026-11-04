@@ -464,9 +464,10 @@ side_tables! {
     /// press's 32-byte approve-once digest.
     LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw
         => crate::linear_sync::erase_effect_approval_actor_in_txn;
-    /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
-    /// operation id.
-    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
+    /// Frozen Linear effect binding digest, verified writer, scheduler and TASK, so hard erase
+    /// can retire the authorization (FIX 12508). Key: 32-byte operation id.
+    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw
+        => crate::linear_sync::erase_effect_authorized_actor_in_txn;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored [accepts: crate::linear_sync::linear_sync_link_accepts_masked];
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().

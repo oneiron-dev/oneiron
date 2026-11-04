@@ -137,7 +137,7 @@ fn insert_row(
             rebuild_room_row(
                 doc,
                 "room_turns",
-                &id(row.id)?.to_hex(),
+                &row.key,
                 &row.row,
                 crate::room_codec::room_parts::ROOM_TURN_MAX_ROW_BYTES,
             )

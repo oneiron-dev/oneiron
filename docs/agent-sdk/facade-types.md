@@ -307,17 +307,17 @@ export type AllRelationships = "all"
 export type ClaimRelationships = AllRelationships | string[]
 /** `oneiron::memory::claim_admission::ClaimScope` */
 export type ClaimScope = { world_id: string; scope_facet_id: string; scope_relationship_id: ClaimRelationships; scope_project_id: string }
-/** `oneiron::write_envelope::provenance::made_by::MadeByInputRole` */
+/** `oneiron_store::write_envelope::provenance::made_by::MadeByInputRole` */
 export type MadeByInputRole = "input" | "prompt"
-/** `oneiron::write_envelope::provenance::made_by::MadeByInput` */
+/** `oneiron_store::write_envelope::provenance::made_by::MadeByInput` */
 export type MadeByInput = { row: string; role: MadeByInputRole }
-/** `oneiron::write_envelope::claim_body::made_by::MadeByClass` */
+/** `oneiron_store::write_envelope::claim_body::made_by::MadeByClass` */
 export type MadeByClass = "stated" | "concluded"
-/** `oneiron::write_envelope::provenance::made_by::MadeByProcess` */
+/** `oneiron_store::write_envelope::provenance::made_by::MadeByProcess` */
 export type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string }
-/** `oneiron::write_envelope::provenance::made_by::MadeByTrigger` */
+/** `oneiron_store::write_envelope::provenance::made_by::MadeByTrigger` */
 export type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string }
-/** `oneiron::write_envelope::provenance::made_by::MadeBy` */
+/** `oneiron_store::write_envelope::provenance::made_by::MadeBy` */
 export type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null }
 /** `oneiron::memory::reads::ClaimView` */
 export type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; claim_scope: ClaimScope; made_by?: MadeBy | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null }
@@ -979,7 +979,7 @@ export type TaskRedo = { task_ref: EntityId; intent_key: string }
 export type WitnessAuthor = "user" | "companion" | "system"
 /** `oneiron::memory::witness::types::WitnessAssertions` */
 export type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] }
-/** `oneiron::store::conversation_record::QuoteSpan` */
+/** `oneiron_store::conversation_record::QuoteSpan` */
 export type QuoteSpan = { message: EntityId; start: number; end: number }
 /** `oneiron::memory::witness::stream::api_types::MessageBirth` */
 export type MessageBirth = { conversation_ref: string; turn_ref?: string | null; author: WitnessAuthor; message_type: string; metadata?: unknown | null; is_visible: boolean; order: number; occurred_at: number; assertions?: WitnessAssertions; quote?: QuoteSpan | null }
@@ -1221,7 +1221,7 @@ export type AffectClaimConsolidateRequest = { claim_ref: string }
 export type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number }
 /** `oneiron::memory::affect::AffectClaimConsolidation` */
 export type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] }
-/** `oneiron::write_envelope::coping_outcome::CopingStrategy` */
+/** `oneiron_store::write_envelope::coping_outcome::CopingStrategy` */
 export type CopingStrategy = "SitSel" | "SitMod" | "AttDep" | "CogChg" | "ResMod" | "ERFlex"
 /** `oneiron::memory::coping_doors::CopingOutcomeRecordRequest` */
 export type CopingOutcomeRecordRequest = { affected_person_ref: string; baseline_turn_ref: string; later_turn_ref: string; strategy: CopingStrategy; confidence: number; scope: ClaimScope; sensitivity?: number | null }
@@ -1375,7 +1375,7 @@ export type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin"
 export type RetrievalWeightRow = { signal: RetrievalBlendSignal; weight: number; origin: RetrievalWeightOrigin; pinned: boolean }
 /** `oneiron::store::retrieval_telemetry::types::RetrievalPolicyPin` */
 export type RetrievalPolicyPin = { signal: RetrievalBlendSignal; value: number }
-/** `oneiron::model_binding::ModelSlot` */
+/** `oneiron_model::model_binding::ModelSlot` */
 export type ModelSlot = "llm" | "embedder" | "oneironer"
 /** `oneiron_model::llm::call::ModelLocality` */
 export type ModelLocality = "on_device" | "own_server" | "third_party"
@@ -1625,29 +1625,29 @@ export type CampaignEnrollmentState = "enrolled" | "paused" | "exited" | "suppre
 export type CampaignActionProvenance = { actor_ref: string; evidence_refs: string[]; recorded_at: number }
 /** `oneiron::memory::campaign_records::actions::CampaignEnrollmentReceipt` */
 export type CampaignEnrollmentReceipt = { membership_claim_ref: string; person_ref: string; campaign_ref: string; state: CampaignEnrollmentState; channels: CampaignMemberChannelSpec[]; approval: string; provenance: CampaignActionProvenance; receipt_ref: string }
-/** `oneiron::write_envelope::cohort_claims::types::StageKey` */
+/** `oneiron_store::write_envelope::cohort_claims::types::StageKey` */
 export type StageKey = string
-/** `oneiron::write_envelope::cohort_claims::ladder::StageDefinition` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::StageDefinition` */
 export type StageDefinition = { key: StageKey; label: string }
-/** `oneiron::write_envelope::cohort_claims::types::StageEvidenceClass` */
+/** `oneiron_store::write_envelope::cohort_claims::types::StageEvidenceClass` */
 export type StageEvidenceClass = "meaningful_reply" | "calendar_event" | "calendar_event_outcome" | "document_artifact_and_send_receipt" | "counterparty_ledger" | "task_list_progress" | "recurring_commitment"
-/** `oneiron::write_envelope::cohort_claims::ladder::StageTransitionRule` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::StageTransitionRule` */
 export type StageTransitionRule = { from?: StageKey | null; to: StageKey; evidence_class: StageEvidenceClass; owner_attested_allowed: boolean }
-/** `oneiron::write_envelope::cohort_claims::ladder::ReplyCode` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::ReplyCode` */
 export type ReplyCode = "positive_now" | "positive_later" | "referral" | "objection" | "not_interested" | "complaint"
-/** `oneiron::write_envelope::cohort_claims::ladder::ReplyDisposition` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::ReplyDisposition` */
 export type ReplyDisposition = { kind: "promote"; stage: StageKey } | { kind: "snooze" } | { kind: "route_referral" } | { kind: "record_only" } | { kind: "exit" } | { kind: "suppress" }
-/** `oneiron::write_envelope::cohort_claims::ladder::ReplyRouteRule` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::ReplyRouteRule` */
 export type ReplyRouteRule = { code: ReplyCode; disposition: ReplyDisposition }
-/** `oneiron::write_envelope::cohort_claims::ladder::NoShowRecoveryRule` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::NoShowRecoveryRule` */
 export type NoShowRecoveryRule = { same_day_reschedule: boolean; bump_after_secs: number; snooze_after_failed_bump: boolean }
-/** `oneiron::write_envelope::cohort_claims::ladder::StageLadderDefinition` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::StageLadderDefinition` */
 export type StageLadderDefinition = { key: string; stages: StageDefinition[]; transitions: StageTransitionRule[]; reply_routes: ReplyRouteRule[]; no_show_recovery: NoShowRecoveryRule }
-/** `oneiron::write_envelope::cohort_claims::types::EvidenceBasis` */
+/** `oneiron_store::write_envelope::cohort_claims::types::EvidenceBasis` */
 export type EvidenceBasis = "machine" | "owner_attested"
 /** `oneiron::memory::campaign_records::actions::CampaignStageEvidence` */
 export type CampaignStageEvidence = { class: StageEvidenceClass; basis: EvidenceBasis; evidence_refs: string[]; recorded_at: number }
-/** `oneiron::write_envelope::cohort_claims::ladder::PromotionMode` */
+/** `oneiron_store::write_envelope::cohort_claims::ladder::PromotionMode` */
 export type PromotionMode = "auto" | "propose"
 /** `oneiron::memory::campaign_records::actions::CampaignStageEvidenceRequest` */
 export type CampaignStageEvidenceRequest = { campaign_ref: string; person_ref: string; ladder: StageLadderDefinition; target_stage: StageKey; evidence: CampaignStageEvidence; mode?: PromotionMode }
@@ -2015,9 +2015,9 @@ export type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; 
 export type InboxItemMarked = { item_id: string; read_state: AgentInboxReadState; until?: number | null }
 /** `oneiron::agent_inbox_lens::read_state::InboxItemLaterRequest` */
 export type InboxItemLaterRequest = { item_id: string; until?: number | null }
-/** `oneiron::write_envelope::skill_source::hub_record::HubPin` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::HubPin` */
 export type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" }
-/** `oneiron::write_envelope::skill_source::hub_record::HubRef` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::HubRef` */
 export type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin }
 /** `oneiron::verbs::skills::SkillLibraryLifecycle` */
 export type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded"
@@ -2053,15 +2053,15 @@ export type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[];
 export type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts }
 /** `oneiron::verbs::skill_defaults::BootstrapSkillView` */
 export type BootstrapSkillView = { skill_id: string; content_hash: string; source: HubRef; resident?: SkillLibraryView | null }
-/** `oneiron::write_envelope::skill_source::hub_record::SkillHubKind` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::SkillHubKind` */
 export type SkillHubKind = "git" | "http-index" | "local-dir"
-/** `oneiron::write_envelope::skill_source::hub_record::SkillHubTrustTier` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::SkillHubTrustTier` */
 export type SkillHubTrustTier = "untrusted" | "community" | "verified"
-/** `oneiron::write_envelope::skill_source::hub_record::HubSyncPolicy` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::HubSyncPolicy` */
 export type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub"
-/** `oneiron::write_envelope::skill_source::hub_record::SkillHubRecord` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::SkillHubRecord` */
 export type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy }
-/** `oneiron::write_envelope::skill_source::hub_record::TrackedHubRef` */
+/** `oneiron_store::write_envelope::skill_source::hub_record::TrackedHubRef` */
 export type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null }
 /** `oneiron::skill_hub::default_hub::DefaultSkillHub` */
 export type DefaultSkillHub = { hub: EntityId; record: SkillHubRecord; skills: TrackedHubRef }
@@ -3953,13 +3953,13 @@ export type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKi
 export type SwitchOwner = string
 /** `oneiron::training_pack::types::TrainingOwner` */
 export type TrainingOwner = string
-/** `oneiron::model_binding::ModelRole` */
+/** `oneiron_model::model_binding::ModelRole` */
 export type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner"
 /** `oneiron_model::llm::call::ModelTierRef` */
 export type ModelTierRef = string
-/** `oneiron::model_binding::ModelDisposition` */
+/** `oneiron_model::model_binding::ModelDisposition` */
 export type ModelDisposition = "offline" | "served"
-/** `oneiron::model_binding::ModelBinding` */
+/** `oneiron_model::model_binding::ModelBinding` */
 export type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean }
 /** `oneiron::training_pack::types::CheckpointFileKind` */
 export type CheckpointFileKind = "weights" | "tokenizer" | "config" | "template" | "adapter_config"
@@ -4261,9 +4261,9 @@ export type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: Po
 export type PolicyManifestPropose = { manifest: PolicyManifest }
 /** `oneiron_contracts::claim::confidence::ConfidenceBand` */
 export type ConfidenceBand = "low" | "medium" | "high" | "certain"
-/** `oneiron::model_binding::VerdictMode` */
+/** `oneiron_model::model_binding::VerdictMode` */
 export type VerdictMode = "shadow" | "enforce"
-/** `oneiron::model_binding::VerdictBinding` */
+/** `oneiron_model::model_binding::VerdictBinding` */
 export type VerdictBinding = { model: ModelId; slot: ModelSlot; floor: ConfidenceBand; mode: VerdictMode }
 /** `oneiron::gate::policy_manifest_doors::types::GateCheckerView` */
 export type GateCheckerView = { binding?: VerdictBinding | null }
@@ -5569,11 +5569,11 @@ export type WorkflowView = { workflow_ref: EntityId; name: string; steps: Entity
 export type WorkflowRequest = { workflow_ref: EntityId }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowUpdateRequest` */
 export type WorkflowUpdateRequest = { workflow_ref: EntityId; expected_revision: number; name: string; steps: EntityId[] }
-/** `oneiron::config::context_spec::MemoryProjection` */
+/** `oneiron_store::config::context_spec::MemoryProjection` */
 export type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number }
-/** `oneiron::config::context_spec::ChatProjection` */
+/** `oneiron_store::config::context_spec::ChatProjection` */
 export type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number }
-/** `oneiron::config::context_spec::ContextSpec` */
+/** `oneiron_store::config::context_spec::ContextSpec` */
 export type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowDispatchRequest` */
 export type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref?: EntityId | null }
@@ -6520,7 +6520,7 @@ export type ModelStepRetryPolicy = { max_attempts: number }
 /** `oneiron::llm::step::public::ModelStepSubmit` */
 export type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy }
 /** `oneiron_model::llm::catalog::LlmCapability` */
-export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs"
+export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs" | "reasoning_summary"
 /** `oneiron_model::llm::error::UnsupportedCapability` */
 export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null }
 /** `oneiron_model::llm::error::LabelReadFailure` */
@@ -7439,31 +7439,31 @@ export type EsignSealedView = { attempt_ref: string; audit_chain_sha256: string;
 export type EsignSealTrail = { trail: "readable"; status: DocumentStatus } | { trail: "unreadable"; error: MemoryError }
 /** `oneiron::blob_artifact::esign::door::EsignSealView` */
 export type EsignSealView = EsignSealTrail & { document_ref: string; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null; delivery_receipts: EsignDeliveryReceipt[] }
-/** `oneiron::core_write::shape::CoreWriteTextField` */
+/** `oneiron_store::core_write::shape::CoreWriteTextField` */
 export type CoreWriteTextField = { field: string; value: string }
-/** `oneiron::core_write::conversations::ConversationCreateInput` */
+/** `oneiron_store::core_write::conversations::ConversationCreateInput` */
 export type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::conversations::CoreEntityWriteReceipt` */
+/** `oneiron_store::core_write::conversations::CoreEntityWriteReceipt` */
 export type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown }
-/** `oneiron::core_write::conversations::ConversationTurnCreateInput` */
+/** `oneiron_store::core_write::conversations::ConversationTurnCreateInput` */
 export type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::dag::CoreDagAddressMode` */
+/** `oneiron_store::core_write::dag::CoreDagAddressMode` */
 export type CoreDagAddressMode = "broadcast" | "direct"
-/** `oneiron::core_write::dag::CoreDagQuoteInput` */
+/** `oneiron_store::core_write::dag::CoreDagQuoteInput` */
 export type CoreDagQuoteInput = { message: string; start: number; end: number }
-/** `oneiron::core_write::dag::DagRecordAppendInput` */
+/** `oneiron_store::core_write::dag::DagRecordAppendInput` */
 export type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; containing_turn?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null }
-/** `oneiron::store::conversation_record::DagReplyTarget` */
+/** `oneiron_store::conversation_record::DagReplyTarget` */
 export type DagReplyTarget = { kind: "turn"; record: EntityId; revision: string } | { kind: "message"; record: EntityId; revision: string; containing_turn: EntityId }
-/** `oneiron::core_write::dag::DagRecordAppendReceipt` */
+/** `oneiron_store::core_write::dag::DagRecordAppendReceipt` */
 export type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null; entity_type: number; containing_turn?: string | null; reply_target?: DagReplyTarget | null }
-/** `oneiron::core_write::batch::CoreBatchEntityInput` */
+/** `oneiron_store::core_write::batch::CoreBatchEntityInput` */
 export type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::batch::CoreBatchWriteInput` */
+/** `oneiron_store::core_write::batch::CoreBatchWriteInput` */
 export type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] }
-/** `oneiron::core_write::batch::CoreBatchEntityReceipt` */
+/** `oneiron_store::core_write::batch::CoreBatchEntityReceipt` */
 export type CoreBatchEntityReceipt = { id: string; entity_type: number }
-/** `oneiron::core_write::batch::CoreBatchWriteReceipt` */
+/** `oneiron_store::core_write::batch::CoreBatchWriteReceipt` */
 export type CoreBatchWriteReceipt = { count: number; entities: CoreBatchEntityReceipt[] }
 /** `oneiron::memory::structural::types::BlobArtifactInput` */
 export type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null }
@@ -7619,7 +7619,7 @@ export type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNod
 export type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView }
 /** `oneiron::office_body::verbs::OfficeBodyCommitsRequest` */
 export type OfficeBodyCommitsRequest = { artifact_ref: string; actor_ref?: string | null }
-/** `oneiron::write_envelope::provenance::text_commit::TextCommitReceipt` */
+/** `oneiron_store::write_envelope::provenance::text_commit::TextCommitReceipt` */
 export type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy }
 /** `oneiron::office_body::verbs::OfficeBodyCommitGap` */
 export type OfficeBodyCommitGap = "receipt_missing"
@@ -7913,11 +7913,11 @@ export type KeptAsk = { seq: number; to: KeptRoute; answer?: KeptAnswer | null }
 export type KeptDecision = { decision: TypedDecision; ask?: KeptAsk | null }
 /** `oneiron::memory::conflict_settle::candidate_decisions::DreamerDecidedCandidateView` */
 export type DreamerDecidedCandidateView = { job_ref: string; position: number; subject: string; corrects: string | null; decisions: KeptDecision[] }
-/** `oneiron::write_envelope::claim_body::evidence_refs::EvidenceKind` */
+/** `oneiron_store::write_envelope::claim_body::evidence_refs::EvidenceKind` */
 export type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record"
-/** `oneiron::write_envelope::claim_body::evidence_refs::CursorSpan` */
+/** `oneiron_store::write_envelope::claim_body::evidence_refs::CursorSpan` */
 export type CursorSpan = { start: number[]; end: number[] }
-/** `oneiron::write_envelope::claim_body::evidence_refs::EvidenceRef` */
+/** `oneiron_store::write_envelope::claim_body::evidence_refs::EvidenceRef` */
 export type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null }
 /** `oneiron::memory::consolidation::GeneratedClaimInput` */
 export type GeneratedClaimInput = { claim_ref: string; predicate: string; subject_ref: string; value: unknown; confidence: number; scope: ClaimScope; sensitivity?: number | null; evidence_refs: EvidenceRef[]; claim_evidence_refs?: string[]; supersedes?: string | null; valid_from?: number | null; valid_to?: number | null; confidence_details?: ConfidenceDetails | null }

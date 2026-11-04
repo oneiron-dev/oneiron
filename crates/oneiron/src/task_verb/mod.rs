@@ -394,7 +394,7 @@ pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage}
 pub use linear_store::VaultLinearTaskStore;
 pub(crate) use linear_store::{
     drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
-    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+    mark_mirror_dirty_in, put_mirror_link_in,
 };
 pub(crate) use mirror_edit::prove_task_owner_in;
 

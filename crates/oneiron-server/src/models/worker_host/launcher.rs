@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use oneiron::llm::{CacheDigest, CacheIdentity, WorkerFailure, WorkerKind, parse_llama_alias};
 use oneiron_driver::{LaunchFailure, LauncherFuture, RunningWorker, WorkerLauncher, WorkerSpec};
 
-use super::bundle::{EXL3_SERVER, LLAMA_IDENTITY, sha256_hex};
+use super::bundle::{EXL3_SERVER, LLAMA_IDENTITY, bundle_sha256_for, sha256_hex};
 use super::install::{self, Exl3Digests, InstalledEnv, InstalledWeights, permanent, transient};
 use super::launch_manifest::{
     self, BuildSection, LaunchManifest, LaunchRecord, LaunchSlot, launch_nonce,
@@ -76,6 +76,7 @@ pub(super) struct Installation {
     pub(super) weights: InstalledWeights,
     draft: Option<InstalledWeights>,
     pub(super) bundle_dir: PathBuf,
+    /// Kind-scoped code digest, not the whole installed directory's digest.
     pub(super) bundle_sha256: String,
     pub(super) env: Option<InstalledEnv>,
     native_binary_sha256: Option<String>,
@@ -134,7 +135,8 @@ impl ProcessLauncher {
             Some(draft) => Some(install::weights(store, draft, kind, true, token).await?),
             None => None,
         };
-        let (bundle_dir, bundle_sha256) = install::bundle(&runtime_root).await?;
+        let (bundle_dir, _) = install::bundle(&runtime_root).await?;
+        let bundle_sha256 = bundle_sha256_for(kind);
         let media = matches!(kind, WorkerKind::VoxCpm2 | WorkerKind::Asr);
         // A media worker's environment is its row's own lock, never EXL3's.
         let lock = match self.launch.env_lock.as_deref() {
