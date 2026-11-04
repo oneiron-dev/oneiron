@@ -11,12 +11,14 @@ use super::{
     PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 use crate::Vault;
-use crate::store::attempt_id::AttemptId;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::attempt_id::AttemptId;
+use crate::store::receipt_row::{
+    ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
+};
 use rmpv::Value;
 use std::collections::BTreeMap;
 

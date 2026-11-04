@@ -1,10 +1,10 @@
 //! Deterministic receipt projection of a stored gate decision.
 
-use std::collections::BTreeMap;
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
 use crate::store::receipt_row::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, ReceiptKind, ReceiptRecord, hex_lower,
 };
+use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
+use std::collections::BTreeMap;
 
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";

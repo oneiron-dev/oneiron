@@ -12,9 +12,9 @@ use crate::edit_distance::delta::{
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::store::gate_receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::gate_receipt::gate_decision_receipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;

@@ -15478,21 +15478,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ActiveWorldSelection",
-      "ResolvedWorldAuthority",
-      "WorldAuthoritySet"
-     ],
+     "notable": [],
      "path": "src/claim/world_access.rs",
      "purpose": "World-access authority values and their strict claim-value codecs",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
-      "fn": 10,
-      "re-export": 1,
-      "struct": 3
+      "fn": 2,
+      "re-export": 2
      }
     },
     {
@@ -30890,28 +30884,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AgentWakePolicy",
-      "AgentWakeRole",
-      "AgentWakeSignals",
-      "AgentWakeTriggers",
-      "CadencePrecedence",
-      "DreamerWakePolicy",
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicyOutcome",
       "WakePolicyTimerLease",
       "WakePolicyTrigger",
-      "WakeRecipe",
-      "WeaveRecipePriority"
+      "WakeRecipe"
      ],
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
       "crate-vis": 7,
-      "enum": 5,
+      "enum": 2,
       "fn": 8,
-      "re-export": 1,
-      "struct": 8
+      "re-export": 2,
+      "struct": 4
      }
     },
     {
@@ -57188,7 +57175,7 @@
      "purpose": "A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 3
      }
@@ -70675,6 +70662,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentWakePolicy",
+      "AgentWakeRole",
+      "AgentWakeSignals",
+      "AgentWakeTriggers",
+      "CadencePrecedence",
+      "DreamerWakePolicy",
+      "WeaveRecipePriority"
+     ],
+     "path": "src/store/dreamer_wake_policy.rs",
+     "purpose": "The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the…",
+     "surface": {
+      "enum": 3,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -72027,7 +72033,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 106,
+      "mod": 108,
       "re-export": 31
      }
     },
@@ -73984,6 +73990,22 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActiveWorldSelection",
+      "ResolvedWorldAuthority",
+      "WorldAuthoritySet"
+     ],
+     "path": "src/store/world_authority.rs",
+     "purpose": "The world-access authority values (ONE-1420): one authority set of base reality plus sorted, unique world…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -90338,7 +90360,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 412,
+     "files": 414,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90578,7 +90600,7 @@
    },
    "over_bar": 138,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6292,
+   "source_files": 6294,
    "test_files": 895
   },
   "oneiron-android": {

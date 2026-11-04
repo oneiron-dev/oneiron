@@ -1286,7 +1286,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/transition/mod.rs` | src | s | 1 fn · 8 crate-vis | — | Signed, causally ordered claim state transitions |
 | `src/claim/transition/tests.rs` | test | m | — | — | — |
 | `src/claim/transition/write.rs` | src | m | 1 crate-vis | — | Host-authorized issuance of one immutable machine-claim transition |
-| `src/claim/world_access.rs` | src | m | 3 struct · 10 fn · 1 const · 1 re-export · 1 crate-vis | ActiveWorldSelection, ResolvedWorldAuthority, WorldAuthoritySet | World-access authority values and their strict claim-value codecs |
+| `src/claim/world_access.rs` | src | s | 2 fn · 1 const · 2 re-export | — | World-access authority values and their strict claim-value codecs |
 | `src/claim/write_target.rs` | src | s | 2 crate-vis | — | Stored-target checks for generic writes of engine-owned claims |
 | `src/claim_check.rs` | src | s | 3 struct · 1 enum · 1 trait · 2 fn · 2 const · 4 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckNotes, AutoCheckOutcome, AutoCheckSignals | Claim auto-check candidates and normalized verdict values |
 | `src/cluster.rs` | src | s | 1 re-export | — | Deterministic claim clustering is defined in the Dreamer layer |
@@ -2502,7 +2502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/observation/live.rs` | src | m | 18 crate-vis | — | The live half of the wake observation: the passes and admitted calls running on one open vault |
 | `src/dreamer_wake/observation/read.rs` | src | s | 1 fn · 9 re-export | — | The wake observation's typed read: an attempt's or a pass's durable rows from one snapshot, one page at a… |
 | `src/dreamer_wake/owed.rs` | src | s | 4 crate-vis | — | The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled |
-| `src/dreamer_wake/policy.rs` | src | m | 8 struct · 5 enum · 8 fn · 1 re-export · 7 crate-vis | AgentWakePolicy, AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence, DreamerWakePolicy, WakeIdleState, WakePolicyDecision +5 | Row-backed wake admission |
+| `src/dreamer_wake/policy.rs` | src | m | 4 struct · 2 enum · 8 fn · 2 re-export · 7 crate-vis | WakeIdleState, WakePolicyDecision, WakePolicyOutcome, WakePolicyTimerLease, WakePolicyTrigger, WakeRecipe | Row-backed wake admission |
 | `src/dreamer_wake/policy/observation.rs` | src | m | 4 struct · 2 fn | WakeCadenceReceipt, WakeCadenceRequest, WakeCadenceView, WakeRecipeInputView | The shared scheduler's last committed cadence decision, not a second tick source |
 | `src/dreamer_wake/policy/tests.rs` | test | s | — | — | — |
 | `src/dreamer_wake/program.rs` | src | m | 3 struct · 2 trait · 1 fn | TurnProgramExecutor, TurnProgramHost, TurnProgramReactor, TurnProgramRequest, TurnProgramRuntime | The Dreamer's turn program runtime (DOOR-141 PR2 and PR3b, FIX 4382) |
@@ -4606,7 +4606,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_setting_doors.rs` | src | m | 4 struct · 9 fn · 1 re-export · 1 crate-vis | InferenceDefaultsReplaceRequest, PolicyActionOutcome, PolicySettingActReceipt, WakePolicySetRequest | The app's policy actions as host verbs (OF-181) |
 | `src/ports/claim_read_status.rs` | src | s | 1 crate-vis | — | Status modes carried by an actor-keyed read lane |
 | `src/ports/contracts.rs` | src | m | 1 struct · 12 trait | BlobStore, ChangeLogStore, ClaimStore, DependencyIndex, EdgeStore, EntityStore, JobQueue, JobScope +5 | The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions |
-| `src/ports/dependent_walk.rs` | src | m | 3 struct · 5 fn · 3 const · 11 crate-vis | DependentWalkCheck, DependentWalkPolicy, DependentWalkProgress | A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from… |
+| `src/ports/dependent_walk.rs` | src | m | 3 struct · 5 fn · 3 const · 14 crate-vis | DependentWalkCheck, DependentWalkPolicy, DependentWalkProgress | A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from… |
 | `src/ports/dependent_walk/mark.rs` | src | s | 6 crate-vis | — | A walk row and the marks it holds: what each mark of a source covers, and the worlds a row is withdrawn for |
 | `src/ports/dependent_walk/tests.rs` | test | m | — | — | Done-means for the batched dependent walk (rule 5: no erase refuses for its count of dependents): every door… |
 | `src/ports/document_fields.rs` | src | s | 3 crate-vis | — | Field vocabulary shared by document writes and value-based recovery |
@@ -5699,6 +5699,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/document_frame_tags.rs` | src | s | 10 const · 1 mod | — | Document frame tags shared by persisted document consumers and transport |
 | `src/store/document_segments.rs` | src | s | 1 struct · 1 fn · 1 const | DocsSegment | Structural document segments used by indexing and birth fingerprints |
 | `src/store/dreamer_attempt_kind.rs` | src | s | 27 const | — | Queue discriminators and wire constants used by stored Dreamer attempts |
+| `src/store/dreamer_wake_policy.rs` | src | s | 4 struct · 3 enum | AgentWakePolicy, AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence, DreamerWakePolicy, WeaveRecipePriority | The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the… |
 | `src/store/embedding.rs` | src | m | 8 struct · 3 enum · 3 trait · 7 fn · 1 type · 9 const · 2 re-export · 6 crate-vis | EgressDecision, EgressPredicate, Embedder, EmbedderLocality, EmbeddingMatchEvidence, EmbeddingProvenanceCount, EmbeddingSpace, KindSlotBindings +6 | Embedding space, input, provenance and host-provider vocabulary |
 | `src/store/executor_speech_identity.rs` | src | s | 4 crate-vis | — | The deterministic ids of a durable executor run's speech turn and compaction session, and the domain-tagged… |
 | `src/store/executor_wait_delivery.rs` | src | s | 1 struct · 13 crate-vis | WaitDelivery | A durable executor run's wait replies as rows: the delivery a waiter was given, the reply a wait settled… |
@@ -5817,7 +5818,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 106 mod · 31 re-export · 105 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 105 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | DescriptionPolicy, MeasuredDescription, ModelDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
@@ -5977,6 +5978,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/window_rows.rs` | src | s | 27 crate-vis | — | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
 | `src/store/witness_message_body.rs` | src | m | 9 crate-vis | — | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/store/workflow_definition.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
+| `src/store/world_authority.rs` | src | s | 3 struct · 8 fn · 1 crate-vis | ActiveWorldSelection, ResolvedWorldAuthority, WorldAuthoritySet | The world-access authority values (ONE-1420): one authority set of base reality plus sorted, unique world… |
 | `src/store/world_pad_custody.rs` | src | m | 15 crate-vis | — | The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's… |
 | `src/store/world_pad_custody/census.rs` | src | s | 1 crate-vis | — | Which worlds a custody head's pad compartments are sealed for (FIX 9178): a world whose pads custody holds… |
 | `src/store/world_pad_custody/current.rs` | src | s | 5 crate-vis | — | One world's current pads, moved between the owner's machines (KS-5, FIX 6706, L04 leaf): what pad hydration… |

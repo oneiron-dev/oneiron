@@ -25,8 +25,8 @@ use super::request::{
     ScopeSummaryRequest, ScopeSummaryTarget, decode_request, enqueue_with_lineage_in_txn,
 };
 use crate::attempt_queue::AttemptQueue;
-use crate::store::attempt_id::AttemptId;
 use crate::error::Result;
+use crate::store::attempt_id::AttemptId;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use oneiron_contracts::claim::ClaimSource;
