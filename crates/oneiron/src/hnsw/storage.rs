@@ -10,14 +10,17 @@ use crate::error::{Error, Result};
 use crate::store::ManifestDbs;
 
 use super::keys::{
-    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES,
-    ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES, ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
+    COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES,
+    ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
 };
 use super::one_way::reconcile_removed_one_way_links;
 use super::search::score_prefix;
 use super::types::HeapEntry;
 
-pub(crate) use crate::store::vector_index::{has_population, increment_embedding_model_epoch, increment_vector_version, read_embedding_model_epoch, read_vector_version};
+pub(crate) use crate::store::vector_index::{
+    has_population, increment_embedding_model_epoch, increment_vector_version,
+    read_embedding_model_epoch, read_vector_version,
+};
 
 pub(super) fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta().get(txn, COUNT_KEY)? else {

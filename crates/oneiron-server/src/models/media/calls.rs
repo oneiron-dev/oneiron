@@ -6,9 +6,9 @@ use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
 use super::{
-    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
-    MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
-    RungVoices, Vault, submit_stamps,
+    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
+    MediaDispatchRelease, MediaJobState, MediaRequest, MediaResponse, MediaRuntime, MediaTicket,
+    PayerPerson, RetryHint, RunAdmission, RungVoices, Vault, submit_stamps,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
@@ -64,6 +64,18 @@ impl MediaRuntime {
         self.run_in(request, None, payer, sources).await
     }
 
+    /// [`Self::run`] with a hook invoked immediately before each backend dispatch.
+    pub(crate) async fn run_released(
+        &self,
+        request: MediaRequest,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaResponse> {
+        self.run_in_released(request, None, payer, sources, release)
+            .await
+    }
+
     /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
     /// only to the rungs of its ladder that hold the voice, each in its own
     /// binding of it.
@@ -106,6 +118,18 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaResponse> {
+        self.run_admitted_released(run, request, voices, replay, None)
+            .await
+    }
+
+    pub(super) async fn run_admitted_released(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+        replay: Option<MediaReplayKey>,
+        release: MediaDispatchRelease<'_>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
@@ -117,7 +141,10 @@ impl MediaRuntime {
         }
         let kept = key.map(|_| request.clone());
         let ladder = self.ladder(&request)?;
-        match ladder.media(run, request, None, voices).await? {
+        match ladder
+            .media_released(run, request, None, voices, release)
+            .await?
+        {
             MediaAnswer::Done(response) => {
                 if let (Some(key), Some(kept)) = (key, &kept) {
                     self.keep_replay_answer(key, kept, &response, None, None);

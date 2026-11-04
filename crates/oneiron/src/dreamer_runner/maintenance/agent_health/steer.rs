@@ -1,11 +1,13 @@
 //! Atomic steering of a live or recorded task attempt.
-use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+};
 use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
 use crate::task_verb::{superseded_attempt_ids, task_create_owner_in};
 use crate::{EdgeActorClass, EntityId};
+use serde::{Deserialize, Serialize};
 
 /// `steer`'s input: the child TASK, the nudge, and the caller's retry key.
 /// A resend with the same key and instruction answers the first receipt.

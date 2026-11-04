@@ -9,7 +9,6 @@ use super::{
     brief, dup_cost_unit, duplicate, entity, settled, task_of,
 };
 use crate::agent_dispatch::{AgentDispatcher, SpendScope};
-use crate::workspace_roster::spend_scope::SpendState;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::edge::EdgeKind;
 use crate::learning::{
@@ -20,6 +19,7 @@ use crate::model_step_record::DreamerTrapKind;
 use crate::ports::EdgeDirection;
 use crate::run_budget::LeaseUnit;
 use crate::store::diagnostic_record::AgentHealthSignal;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::{EntityId, Result, Vault};
 
 /// `long_wait`: an attempt that spent more than the dial's share of its life

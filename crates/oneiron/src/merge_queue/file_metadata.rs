@@ -6,10 +6,12 @@
 use std::path::Path;
 
 use super::MergeFile;
-use crate::store::code_document_values::CodeFileMetadataEdit;
 use crate::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
-use crate::{store::repo_proposal_record::ReceivedTreeEdit, repo_mutation::stage_received_tree_edits};
+use crate::store::code_document_values::CodeFileMetadataEdit;
+use crate::{
+    repo_mutation::stage_received_tree_edits, store::repo_proposal_record::ReceivedTreeEdit,
+};
 
 /// A symlink's Git mode.
 const MODE_SYMLINK: u32 = 0o120_000;
