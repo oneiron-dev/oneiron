@@ -1,7 +1,7 @@
 //! Typed decision questions, answer contracts, and measurement values.
 
-use crate::EntityId;
-use crate::error::Error;
+use oneiron_contracts::EntityId;
+use oneiron_contracts::error::Error;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -48,7 +48,7 @@ pub enum AnswerContract {
 }
 
 impl AnswerContract {
-    pub fn validate(&self) -> crate::error::Result<()> {
+    pub fn validate(&self) -> oneiron_contracts::error::Result<()> {
         match self {
             Self::Choice { options }
                 if options.is_empty()
@@ -187,7 +187,7 @@ pub struct DecisionQuestion {
 }
 
 impl DecisionQuestion {
-    pub fn validate(&self) -> crate::error::Result<()> {
+    pub fn validate(&self) -> oneiron_contracts::error::Result<()> {
         if self.version == 0 || self.text.trim().is_empty() || self.text.len() > 16_384 {
             return Err(invalid("invalid typed question"));
         }
@@ -252,7 +252,7 @@ impl Default for DecisionBand {
 }
 
 impl DecisionBand {
-    pub fn validate(self) -> crate::error::Result<()> {
+    pub fn validate(self) -> oneiron_contracts::error::Result<()> {
         if !self.low.is_finite()
             || !self.high.is_finite()
             || self.low < 0.0
@@ -282,7 +282,7 @@ impl DecisionDial {
     /// band a valid band inside this one's (FIX 1587), so
     /// `host.low <= resident.low < resident.high <= host.high`. An equal band
     /// stays inside.
-    pub fn narrow(self, resident: Self) -> crate::error::Result<Self> {
+    pub fn narrow(self, resident: Self) -> oneiron_contracts::error::Result<Self> {
         self.band.validate()?;
         resident.band.validate()?;
         if self.first > self.ceiling
@@ -377,7 +377,7 @@ pub struct PairedReading {
 impl PairedReading {
     /// Rows a host hands in: at most one per measuring provider, each bound to one of
     /// the answer's own providers.
-    pub(crate) fn rows_valid(rows: &[Self], answered: EntityId, providers: &[ProviderPin]) -> bool {
+    pub fn rows_valid(rows: &[Self], answered: EntityId, providers: &[ProviderPin]) -> bool {
         rows.iter().enumerate().all(|(index, row)| {
             providers.contains(&row.provider)
                 && rows[..index]
@@ -394,7 +394,7 @@ impl PairedReading {
 
     /// A receipt's paired and person rows: each list valid, and no provider's person row
     /// reading the question its paired row read.
-    pub(crate) fn readings_valid(
+    pub fn readings_valid(
         paired: &[Self],
         person: &[Self],
         answered: EntityId,
@@ -412,7 +412,7 @@ impl PairedReading {
 
 /// A paired reading reads another question than the one answered, at a real version,
 /// as a probability.
-pub(crate) fn paired_valid(
+pub fn paired_valid(
     answered: EntityId,
     question: EntityId,
     question_version: u32,
@@ -471,7 +471,7 @@ pub enum HumanAskReason {
     ExplorationBudget,
 }
 
-pub(crate) fn invalid(message: &str) -> Error {
+pub fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 

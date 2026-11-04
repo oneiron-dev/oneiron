@@ -1,7 +1,7 @@
 //! Caller-prepared decision state fitting.
 
 use super::{MAX_DECISION_STATE_BYTES, StateCut};
-use crate::Result;
+use oneiron_contracts::Result;
 use serde_json::Value;
 
 /// The call's bounded state, as `state` builds it with every long text cut to the bytes it
