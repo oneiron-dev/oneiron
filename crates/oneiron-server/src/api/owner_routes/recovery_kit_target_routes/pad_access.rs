@@ -28,7 +28,7 @@ use oneiron::sync::residence::{grant_local_sealed_pad_access_with_kit, sealed_ge
 use oneiron::world_keys::{PadAdmissionTarget, RecoveryRootSeed, SealedBundleGeneration};
 use serde::{Deserialize, Serialize};
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use super::{Kit, OwnerDevice, kit_target, kit_target_refused};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -48,6 +48,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/recovery-kit/pad-access",
                 summary: "The owner's kit, in the named target's own call and for it alone, grants a machine (this install when none is named) every pad object the home keeps: over this install's home connection, or here when this install keeps the generations; neither is home_unavailable. Answers the generations offered, usable here and pending with the home.",
                 row: None,
+                shape: Some(RestShape::json(
+                    pad_access_body_schema,
+                    pad_access_answer_schema,
+                )),
             },
             post(pad_access),
         ),
@@ -57,6 +61,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/recovery-kit/upkeep",
                 summary: "The last sealed bundle relay this install's upkeep finished (its pending pad access and pending erases), the last that failed, and the last kit grant this process answered, each with its time or as unobserved.",
                 row: None,
+                shape: None,
             },
             get(upkeep),
         ),

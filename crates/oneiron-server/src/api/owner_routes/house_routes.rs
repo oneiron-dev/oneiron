@@ -10,7 +10,7 @@ use axum::response::Json;
 use axum::routing::post;
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::house;
@@ -23,6 +23,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/workspace/finish",
             summary: "Finish one stored workspace (`workspace_ref`): the house its stored preset names takes the root project's lead. A repeat leaves the root as the first finish signed it.",
             row: None,
+            shape: Some(RestShape::json(
+                finish_workspace_body_schema,
+                workspace_finished_schema,
+            )),
         },
         post(finish),
     )]

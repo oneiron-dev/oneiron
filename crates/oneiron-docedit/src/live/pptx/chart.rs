@@ -345,6 +345,8 @@ pub enum SeriesField {
     Name,
     Values,
     Family,
+    /// Both sides moved it to different plots of its family (FIX 12255).
+    Plot,
     X,
     BubbleSize,
     #[serde(rename = "bubble_3d")]
@@ -434,9 +436,198 @@ pub(super) fn check(payload: &NodePayload) -> Result<(), LiveError> {
     Ok(())
 }
 
+/// The plot of its family that draws one series: its family and its
+/// ordinal among the family's plots (`None` the only one).
+fn plot_key(family: ChartKind, line: &ChartSeries) -> (ChartKind, u32) {
+    (line.family.unwrap_or(family), line.plot.unwrap_or(0))
+}
+
+/// Where one side of a fork moved the series `id` to, among its base
+/// plots (FIX 12255): the base ordinals of the plot it drew it in, or an
+/// empty list for a plot of its own; `None` where it stayed in its base
+/// plot. A move-aware compare, never a plain field one: settlement
+/// renumbers ordinals when a plot goes, so the series counts as moved only
+/// where it left its base plot-mates: beside series of another base plot,
+/// or alone while a mate it left behind stayed put. A series with its
+/// mates, one whose mates are gone, and one whose family changed (placed
+/// by settlement, not moved) never count as moved. A co-occupant that
+/// itself moved to the destination names its own move, never this one's.
+fn plot_moved(
+    base_family: ChartKind,
+    base_series: &[ChartSeries],
+    side_family: ChartKind,
+    side_series: &[ChartSeries],
+    id: NodeId,
+) -> Option<Vec<u32>> {
+    let base = base_series.iter().find(|line| line.id == Some(id))?;
+    let side = side_series.iter().find(|line| line.id == Some(id))?;
+    let (family, ordinal) = plot_key(base_family, base);
+    if side.family.unwrap_or(side_family) != family {
+        return None;
+    }
+    let known: BTreeSet<NodeId> = base_series.iter().filter_map(|line| line.id).collect();
+    let base_key = |other: NodeId| -> Option<(ChartKind, u32)> {
+        base_series
+            .iter()
+            .find(|was| was.id == Some(other))
+            .map(|was| plot_key(base_family, was))
+    };
+    let (_, at) = plot_key(side_family, side);
+    // No raw-ordinal early return here (review-4320 P1): settlement
+    // renumbers ordinals when a plot goes, so `at == ordinal` does not
+    // prove the series stayed in its base plot. The mate-aware compare
+    // below decides instead: co-occupants from another base plot mark a
+    // different logical destination, while pure settlement renumbering
+    // (mates beside it, mates gone, family changed) stays silent.
+    // Its side plot's base series, drawn in its family there as in the
+    // base: a new series never moves it, and a series that changed family
+    // is judged by that field instead. A co-occupant whose base plot holds
+    // a stronger claim elsewhere moved here on its own: it names its own
+    // move, never this series' destination; one this destination retained,
+    // beside its mates, or with none surviving elsewhere, still anchors it.
+    let mut targets: Vec<u32> = Vec::new();
+    for line in side_series {
+        let Some(other) = line.id else {
+            continue;
+        };
+        if other == id || !known.contains(&other) {
+            continue;
+        }
+        if plot_key(side_family, line) != (family, at) {
+            continue;
+        }
+        let Some((kind, nth)) = base_key(other) else {
+            continue;
+        };
+        if kind != family {
+            continue;
+        }
+        if nth != ordinal {
+            // A co-occupant that left surviving base-plot mates behind moved
+            // here on its own: it names its own move, never this series'
+            // destination — unless this destination still holds its base
+            // plot's strongest claim (review-4320 P1): the mates'
+            // departures do not move an occupant the destination retained.
+            // An occupied unchanged ordinal keeps the plot's claim even
+            // when more natives moved elsewhere. Among changed ordinals,
+            // the surviving native count decides. A foreign-only plot at
+            // the old ordinal carries no claim.
+            let plot_claim = |place: u32| -> (bool, usize) {
+                let count = side_series
+                    .iter()
+                    .filter(|line| {
+                        line.id.is_some_and(|mate| base_key(mate) == Some((family, nth)))
+                            && plot_key(side_family, line) == (family, place)
+                    })
+                    .count();
+                (count != 0 && place == nth, count)
+            };
+            let here = plot_claim(at);
+            let moved = side_series.iter().any(|line| {
+                let (_, place) = plot_key(side_family, line);
+                place != at && plot_claim(place) > here
+            });
+            if moved {
+                continue;
+            }
+            targets.push(nth);
+        }
+    }
+    // At least one base-plot mate exists, and every surviving one joined
+    // the destination: a group move, not an own move. One surviving mate
+    // left behind still makes it a move; no mate at all never suppresses it.
+    let mut mates = base_series
+        .iter()
+        .filter_map(|line| line.id)
+        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)))
+        .peekable();
+    let joined = mates.peek().is_some()
+        && mates.all(|other| {
+            side_series
+                .iter()
+                .any(|line| line.id == Some(other) && plot_key(side_family, line) == (family, at))
+        });
+    if !targets.is_empty() {
+        // Beside series of another base plot: moved, unless every surviving
+        // base-plot mate joined it there too.
+        if joined {
+            return None;
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        return Some(targets);
+    }
+    // Its surviving mates drawn elsewhere: moved to a plot of its own only
+    // where it sits alone and a mate it left behind stayed put.
+    let left: Vec<NodeId> = base_series
+        .iter()
+        .filter_map(|line| line.id)
+        .filter(|&other| {
+            other != id
+                && base_key(other) == Some((family, ordinal))
+                && side_series.iter().any(|line| line.id == Some(other))
+                && !side_series.iter().any(|line| {
+                    line.id == Some(other) && plot_key(side_family, line) == (family, at)
+                })
+        })
+        .collect();
+    if left.is_empty() || joined {
+        return None;
+    }
+    let last = side_series
+        .iter()
+        .filter(|line| line.family.unwrap_or(side_family) == family)
+        .map(|line| line.plot.unwrap_or(0))
+        .max();
+    for other in left {
+        let Some(mate) = side_series.iter().find(|line| line.id == Some(other)) else {
+            continue;
+        };
+        let (_, place) = plot_key(side_family, mate);
+        let mut company = false;
+        let mut foreign = false;
+        for line in side_series {
+            let Some(next) = line.id else {
+                continue;
+            };
+            if next == other || !known.contains(&next) {
+                continue;
+            }
+            if plot_key(side_family, line) != (family, place) {
+                continue;
+            }
+            let Some((kind, nth)) = base_key(next) else {
+                continue;
+            };
+            if kind != family {
+                continue;
+            }
+            company = true;
+            foreign |= nth != ordinal;
+        }
+        // A mate drawn with no series of another base plot stayed put; one
+        // alone in the family's last plot moved to a plot of its own.
+        if !foreign && (company || Some(place) != last) {
+            return Some(Vec::new());
+        }
+    }
+    None
+}
+
+/// Whether two move destinations name the same plot (review-4320 P1):
+/// two non-empty destinations share a base-plot ordinal, while a solo
+/// `[]` only ever equals `[]`.
+fn same_plot_destination(head: &[u32], proposal: &[u32]) -> bool {
+    if head.is_empty() || proposal.is_empty() {
+        return head == proposal;
+    }
+    head.iter().any(|nth| proposal.contains(nth))
+}
+
 /// The conflicts of a chart both sides of a fork wrote, when the base, the
 /// head and the proposal all hold a chart: one series' name, values, family,
 /// x values or draw of categories both sides wrote differently, one series
+/// both sides moved to different plots of its family (FIX 12255), one series
 /// both sides moved to different places (among the series all three hold),
 /// or one series one side deleted and the other wrote
 /// ([`Conflict::SeriesVsSeries`]); one category point of the chart's set or
@@ -590,6 +781,21 @@ pub(crate) fn conflicts(
                     &before(proposal_series, id),
                 ) {
                     out.push(series(SeriesField::Order));
+                }
+                // Both sides moved it to different plots of its family.
+                let head_plot =
+                    plot_moved(*base_family, base_series, *head_family, head_series, id);
+                let proposal_plot = plot_moved(
+                    *base_family,
+                    base_series,
+                    *proposal_family,
+                    proposal_series,
+                    id,
+                );
+                if let (Some(head_plot), Some(proposal_plot)) = (head_plot, proposal_plot)
+                    && !same_plot_destination(&head_plot, &proposal_plot)
+                {
+                    out.push(series(SeriesField::Plot));
                 }
             }
             (None, Some(written)) | (Some(written), None) if written != *was => {

@@ -24,7 +24,7 @@ use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -41,6 +41,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key",
                 summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
                 row: None,
+                shape: None,
             },
             get(status),
         ),
@@ -50,6 +51,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/signer",
                 summary: "This install's checkpoint signer, the pin another host trusts this vault's backups by.",
                 row: None,
+                shape: None,
             },
             get(signer),
         ),
@@ -59,6 +61,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/prf-input",
                 summary: "The PRF input a passkey of that name is asked at.",
                 row: None,
+                shape: None,
             },
             get(prf_input),
         ),
@@ -68,6 +71,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/unlock",
                 summary: "Holds the vault key on this server, from the password or a passkey's PRF output.",
                 row: None,
+                shape: Some(RestShape::json(unlock_body_schema, vault_key_report_schema)),
             },
             post(unlock),
         ),
@@ -77,6 +81,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/password",
                 summary: "Sets the vault password, replacing an earlier one.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_password_body_schema,
+                    vault_key_wrap_info_schema,
+                )),
             },
             post(set_password),
         ),
@@ -86,6 +94,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/passkeys",
                 summary: "Wraps the vault key to a passkey by its PRF output.",
                 row: None,
+                shape: Some(RestShape::json(
+                    add_passkey_body_schema,
+                    vault_key_wrap_info_schema,
+                )),
             },
             post(add_passkey),
         ),
@@ -95,6 +107,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/device",
                 summary: "Wraps the vault key to this install's keystore.",
                 row: None,
+                shape: Some(RestShape::no_body(vault_key_wrap_info_schema)),
             },
             post(add_device),
         ),
@@ -104,6 +117,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/remove",
                 summary: "Removes one wrap; the last one stays.",
                 row: None,
+                shape: Some(RestShape::json(
+                    remove_wrap_body_schema,
+                    wrap_removed_schema,
+                )),
             },
             post(remove),
         ),
@@ -113,6 +130,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/vault-key/retire-escrow",
                 summary: "Retires an escrow recipient whose secret was released.",
                 row: None,
+                shape: Some(RestShape::json(
+                    retire_escrow_body_schema,
+                    escrow_retirement_schema,
+                )),
             },
             post(retire_escrow),
         ),

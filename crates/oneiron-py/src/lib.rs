@@ -90,6 +90,7 @@ impl WitnessTurnInput {
                 author: message.author,
                 message_type: message.message_type,
                 content: message.content,
+                parts: None,
                 metadata: message.metadata,
                 is_visible: message.is_visible.unwrap_or(true),
                 order: message.order,
@@ -8010,6 +8011,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.skills.callables")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.skills.callables", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_callable_amend(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.callable.amend")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.callable.amend", input))
             .map_err(raise)?;
         encode(&output)
     }

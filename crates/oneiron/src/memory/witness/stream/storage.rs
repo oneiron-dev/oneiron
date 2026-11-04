@@ -78,11 +78,22 @@ impl Seed {
             .ok_or(Error::CorruptedIndex("stream actor class"))
     }
     pub(super) fn message(&self, content: String) -> WitnessMessage {
+        self.message_with_parts(content, None)
+    }
+    /// The MESSAGE a new-message terminal witnesses, carrying the terminal's
+    /// ordered output parts: birth facts like `quote`, kept verbatim. Text
+    /// readers keep reading `content`; parts never enter the seed row.
+    pub(super) fn message_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessMessage {
         WitnessMessage {
             id: Some(self.message_id.to_hex()),
             author: self.author,
             message_type: self.message_type.clone(),
             content,
+            parts,
             metadata: self.metadata.clone(),
             is_visible: self.is_visible,
             order: self.order,
@@ -90,11 +101,19 @@ impl Seed {
         }
     }
     pub(super) fn turn(&self, content: String) -> WitnessTurn {
+        self.turn_with_parts(content, None)
+    }
+    /// [`Self::turn`], carrying the terminal's ordered output parts.
+    pub(super) fn turn_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessTurn {
         WitnessTurn {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
             thread_audience: self.thread_audience.clone(),
-            messages: vec![self.message(content)],
+            messages: vec![self.message_with_parts(content, parts)],
             occurred_at: self.occurred_at,
             assertions: self.assertions.clone(),
         }

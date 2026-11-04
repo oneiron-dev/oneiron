@@ -69,6 +69,29 @@ fn own_windows_admit(windows: &Option<Vec<MembershipWindow>>, at: u64) -> bool {
         .is_none_or(|windows| windows.iter().any(|w| w.contains(at)))
 }
 
+/// Whether `reader`'s live own-entry windows admit a candidate's header
+/// time in every anchored room. No row is fabricated for this check.
+/// An unreadable roster omits the candidate, as an ordinary own-entry read.
+pub(crate) fn anchors_own_windows_admit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rooms: &[EntityId],
+    reader: EntityId,
+    at: u64,
+) -> bool {
+    for &room in rooms {
+        let Ok(windows) =
+            crate::workspace_roster::own_room_windows_in_txn(vault, txn, room, reader)
+        else {
+            return false;
+        };
+        if !own_windows_admit(&windows, at) {
+            return false;
+        }
+    }
+    true
+}
+
 impl AudienceCache {
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads

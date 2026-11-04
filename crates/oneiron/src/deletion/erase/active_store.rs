@@ -163,6 +163,9 @@ impl Vault {
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
         if erase {
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, act)?;
+            // Erase-only: an erased MESSAGE's model-call rows go with the
+            // custody they lifted, under this erase's act.
+            crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
         }
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
@@ -229,6 +232,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         erase: bool,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, bool, bool)> {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
@@ -258,6 +262,9 @@ impl Vault {
                 id,
                 None,
             )?;
+            // Erase-only: an erased MESSAGE's model-call rows go with the
+            // custody they lifted, under this erase's act (first consume carries).
+            crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

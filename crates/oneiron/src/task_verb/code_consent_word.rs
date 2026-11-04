@@ -238,6 +238,7 @@ impl Memory<'_> {
                     author: WitnessAuthor::Companion,
                     message_type: QUESTION_TYPE.to_owned(),
                     content: text.to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,

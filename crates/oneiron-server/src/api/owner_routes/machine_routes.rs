@@ -24,7 +24,7 @@ use oneiron::authority::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -39,6 +39,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/machines/answer",
                 summary: "One machine's answer (`?machine=<id>`): its role, the carrier of the owner's standing answer, and the revision a surface presents back as seen.",
                 row: None,
+                shape: None,
             },
             get(get_answer),
         ),
@@ -48,6 +49,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/machines/answer",
                 summary: "The owner marks or re-marks one of his machines yours, work or school, or rented, from any linked surface; a stale seen is a conflict.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_answer_body_schema,
+                    machine_answer_schema,
+                )),
             },
             post(set_answer),
         ),
@@ -57,6 +62,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/machines/remove",
                 summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
                 row: None,
+                shape: Some(RestShape::json(
+                    remove_machine_body_schema,
+                    machine_answer_schema,
+                )),
             },
             post(remove),
         ),

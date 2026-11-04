@@ -22,6 +22,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/removal-archives",
             summary: "The removal archives this vault took in for its owner: each archive's latest delivery by receipt_id, with vault_id (the shared vault it came from), delivered_at, expires_at, state (imported while kept here within its term, lapsed after) and imported_at. Never an archive's content.",
             row: None,
+            shape: None,
         },
         get(read),
     )]

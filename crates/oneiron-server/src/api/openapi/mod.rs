@@ -8,7 +8,6 @@ mod facade_paths;
 mod left_slip_paths;
 mod openai_proxy_paths;
 mod owner_paths;
-mod owner_rest_paths;
 mod security;
 mod signing_paths;
 mod voice_bank_paths;
@@ -27,7 +26,7 @@ pub(crate) use self::endpoints_merge::{
     SKILL_PACK_LAYER_BOUNDARY, SKILL_PACK_LOAD_HINT, SKILL_PACK_MIME_TYPE, SKILL_PACK_NAME,
     SKILL_PACK_RESOLUTION, openapi_json, skills_pack,
 };
-pub(super) use self::owner_paths::OwnerRoute;
+pub(super) use self::owner_paths::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use self::security::{add_security_scheme, set_schema_property_description};
 // Only the test suite names the assembled document bare (`api/tests` calls
 // `openapi_document()`); the non-test build reaches it through the handlers.

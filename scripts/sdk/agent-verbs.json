@@ -243,6 +243,7 @@
       "mcp_scope": "filtered",
       "section": true,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>",
         "output": "crate::task_verb::sdk::BoardFrameReply",
         "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
@@ -268,6 +269,7 @@
       "mcp_scope": "filtered",
       "section": true,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
@@ -293,6 +295,7 @@
       "mcp_scope": "filtered",
       "section": true,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
@@ -308,6 +311,7 @@
       "output": "crate::task_verb::sdk::BoardWakeReply",
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Read",
       "admission": {
@@ -679,6 +683,7 @@
       "output": "crate::vault_shape::ShapeApplyReceipt",
       "call": "memory.shape_apply(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
@@ -718,6 +723,7 @@
       "output": "Vec<crate::vault_shape::ShapeInboxGroup>",
       "call": "memory.shape_inbox_groups(&memory.embedded_owner(\"vault.shape.groups\")?)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -734,6 +740,7 @@
       "output": "crate::vault_shape::ShapeApplyReceipt",
       "call": "memory.resolve_shape_inbox_group(&memory.embedded_owner(\"vault.shape.groups.resolve\")?, None, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -1043,6 +1050,7 @@
       "output": "crate::task_verb::sdk::TaskWaveReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"tasks.wave\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -1058,6 +1066,7 @@
       "output": "crate::task_verb::sdk::FanoutBatchView",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.fanout.spawn\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_session": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -1332,6 +1341,7 @@
       "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
       "call": "crate::llm::run_admission::resident_doors::resident_shares_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -1347,6 +1357,7 @@
       "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
       "call": "crate::llm::run_admission::resident_doors::set_resident_share_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -2164,6 +2175,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "openapi": true,
@@ -2181,6 +2193,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "openapi": true
@@ -2197,6 +2210,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "openapi": true
@@ -2213,6 +2227,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "openapi": true
@@ -2477,6 +2492,7 @@
       "output": "crate::memory::ExportTransferPiece",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.read\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -2491,6 +2507,7 @@
       "output": "crate::memory::ExportTransferReleased",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.release\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -2521,6 +2538,7 @@
       "output": "crate::task_verb::sdk::SelfActorRefs",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.actor\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -2739,6 +2757,7 @@
       "output": "Option<crate::task_verb::sdk::ExplainMemoryReply>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.memory\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -2753,6 +2772,7 @@
       "output": "Option<crate::task_verb::sdk::ExplainGateReply>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.gate\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -3023,6 +3043,7 @@
       "openapi": true,
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "host_door_lists": true
     },
@@ -3219,6 +3240,7 @@
       "output": "Option<crate::claim::WeaveDigestView>",
       "call": "memory.weave_digest(None, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -3233,6 +3255,7 @@
       "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_lens_owner": true,
       "host_door_client_surface": true,
@@ -3249,6 +3272,7 @@
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -3277,6 +3301,7 @@
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -3503,6 +3528,7 @@
       "output": "crate::inbox::InboxGroupResolution",
       "call": "memory.resolve_inbox_group_of_kind(&memory.embedded_owner(\"vault.inbox.groups.resolve\")?, None, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -4165,6 +4191,7 @@
       "output": "crate::task_verb::sdk::SkillOptimizeResultView",
       "call": "crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.resolve\")?, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -4431,6 +4458,7 @@
       "output": "crate::memory::PluginSectionInstallOutcome",
       "call": "memory.plugin_section_propose(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -4447,6 +4475,7 @@
       "output": "crate::memory::PluginSectionsView",
       "call": "memory.plugin_sections_list(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -4499,6 +4528,7 @@
       "output": "crate::memory::PluginSectionSuggestion",
       "call": "memory.plugin_section_suggest(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -4547,6 +4577,7 @@
       "output": "crate::task_verb::sdk::ChatCompletionResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.chat.completions\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -4610,6 +4641,7 @@
       "output": "crate::task_verb::sdk::ConnectorSlateNarrowView",
       "call": "crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -5051,6 +5083,7 @@
       "output": "crate::task_verb::sdk::OutboxDivergedPage",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.list\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -5065,6 +5098,7 @@
       "output": "crate::task_verb::sdk::OutboxDivergedAnswerReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.answer\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -5175,6 +5209,7 @@
       "output": "Option<crate::federation::SharedVaultDeletion>",
       "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
@@ -5205,6 +5240,7 @@
       "output": "crate::task_verb::sdk::OrgAdminPowers",
       "call": "crate::task_verb::sdk::read_org_admin_powers(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -6072,6 +6108,7 @@
       "output": "Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>",
       "call": "crate::task_verb::sdk::deliver_trusted_contact_notice(memory, input, &mut crate::outbound::ServedChannelSink::new(memory.vault())?)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -7474,6 +7511,7 @@
       "output": "crate::world_keys::OwnerWorkReceipt",
       "call": "crate::task_verb::sdk::cancel_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.cancel\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
@@ -8068,6 +8106,7 @@
       "call": "crate::policy_model::doors::enforce_owner_policy_embedded(memory, input)?",
       "scope": "Write",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "admission": {
         "unrestricted_record_scope": true
@@ -8084,6 +8123,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.policy.relay.decide\", &input)?",
       "scope": "Write",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "admission": {
         "unrestricted_record_scope": true
@@ -8676,6 +8716,7 @@
       "output": "crate::policy_model::SecretLiftStatus",
       "call": "crate::policy_model::secret_lift_as_owner(memory.vault(), &memory.embedded_owner(\"vault.secrets.lift_history\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -8899,6 +8940,7 @@
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
       "call": "crate::policy_setting_doors::inference_defaults_embedded(memory)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
@@ -8914,6 +8956,7 @@
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
       "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
@@ -9008,6 +9051,7 @@
       "output": "crate::lens::LensSelection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.select\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Read",
       "admission": {
@@ -9024,6 +9068,7 @@
       "output": "crate::lens::LensSelectionResolved",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.resolve\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Read",
       "admission": {
@@ -9040,6 +9085,7 @@
       "output": "crate::lens::LensResultSetActionResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.result_set.action\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Write",
       "admission": {
@@ -9055,6 +9101,7 @@
       "output": "crate::claim::ScopedReadResult<crate::lens::LensFrameCard>",
       "call": "memory.lenses_default(input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_lens_owner": true,
       "host_door_client_surface": true,
@@ -9199,6 +9246,7 @@
       "output": "crate::task_verb::sdk::SecretUseAnswer",
       "call": "crate::task_verb::sdk::use_secret_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -9214,6 +9262,7 @@
       "output": "crate::task_verb::sdk::SecretGrantView",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.materialize\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -9230,6 +9279,7 @@
       "output": "crate::task_verb::sdk::SecretGrantView",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.renew\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -9246,6 +9296,7 @@
       "output": "crate::task_verb::sdk::SecretGrantView",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.teardown\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -9262,6 +9313,7 @@
       "output": "crate::task_verb::sdk::SecretUseAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.use\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -9289,6 +9341,7 @@
       "output": "crate::receipt::ShareRevokeReceipt",
       "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -9302,6 +9355,7 @@
       "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>",
       "call": "crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -9537,6 +9591,7 @@
       "output": "Option<crate::artifact_hosting::door_types::ArtifactPreviewView>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.read\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true,
       "scope": "Read",
@@ -10750,6 +10805,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10765,6 +10821,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10780,6 +10837,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10795,6 +10853,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10810,6 +10869,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10825,6 +10885,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10840,6 +10901,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -10855,6 +10917,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -11413,6 +11476,7 @@
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
       "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -11428,6 +11492,7 @@
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
       "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -11464,6 +11529,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11482,6 +11548,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11500,6 +11567,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11518,6 +11586,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11536,6 +11605,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11554,6 +11624,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11573,6 +11644,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11592,6 +11664,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11611,6 +11684,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11630,6 +11704,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11649,6 +11724,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11668,6 +11744,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11687,6 +11764,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11706,6 +11784,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -11725,6 +11804,7 @@
       "mcp_scope": "filtered",
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "host_door_session": true,
@@ -12275,6 +12355,7 @@
       "output": "crate::critic::review::CriticReviewOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.critic.review\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {},
@@ -13378,6 +13459,7 @@
       "output": "crate::reaction::MessageReactionReceipt",
       "call": "memory.messages_react(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -13588,6 +13670,16 @@
       "section": false
     },
     {
+      "name": "vault.skills.callable.amend",
+      "description": "The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing.",
+      "input": "crate::skill::helper::CallableAmendRequest",
+      "output": "crate::skill::helper::CallableAmendReceipt",
+      "call": "crate::skill::helper::amend_callable_case(memory.vault(), &crate::WriteActor::new(memory.actor(), memory.actor_class()), &input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.skills.pack_receipt",
       "description": "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner.",
       "input": "SkillPackReceiptRequest",
@@ -13667,6 +13759,7 @@
       "call": "crate::task_verb::sdk::read_web_connector_setting(memory)?",
       "scope": "Read",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true,
       "admission": {
@@ -13682,6 +13775,7 @@
       "call": "crate::task_verb::sdk::replace_web_connector_setting(memory, input)?",
       "scope": "Write",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true,
       "admission": {
@@ -13697,6 +13791,7 @@
       "call": "crate::task_verb::sdk::read_web_connector_usage(memory, input)?",
       "scope": "Read",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true,
       "admission": {
@@ -14222,6 +14317,7 @@
       "output": "crate::task_verb::sdk::AnonymousChatResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.anonymous_chat\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "no_record": true,
       "scope": "Read",
       "section": false,
@@ -14339,6 +14435,7 @@
       "output": "crate::llm::catalog_doors::ModelTrialView",
       "call": "memory.vault().resend_model_trial_arm_as_owner(&memory.embedded_owner(\"vault.models.trials.resend_arm\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14444,6 +14541,7 @@
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14647,6 +14745,7 @@
       "output": "crate::task_verb::sdk::AskImageAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.ask_image\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14676,6 +14775,7 @@
       "output": "crate::receipt::GraphAskOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "proposes": true,
@@ -14693,6 +14793,7 @@
       "output": "crate::receipt::GraphAskOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.admit\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "proposes": true,
@@ -14708,6 +14809,7 @@
       "output": "crate::llm::decision::questions::QuestionRecord",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.create\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14722,6 +14824,7 @@
       "output": "crate::llm::decision::questions::QuestionRecord",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.edit\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14736,6 +14839,7 @@
       "output": "crate::receipt::QuestionPaused",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14750,6 +14854,7 @@
       "output": "crate::llm::decision::questions::ScheduledBackfill",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.backfill\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14764,6 +14869,7 @@
       "output": "Option<crate::llm::decision::questions::QuestionRecord>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14778,6 +14884,7 @@
       "output": "Vec<crate::llm::decision::questions::OutcomeWindowClose>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcome_windows\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14792,6 +14899,7 @@
       "output": "crate::receipt::QuestionAnswersReply",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14808,6 +14916,7 @@
       "output": "Vec<crate::receipt::QuestionAnswer>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14823,6 +14932,7 @@
       "output": "crate::receipt::QuestionOutcomes",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14838,6 +14948,7 @@
       "output": "crate::receipt::QuestionOutcomesProjected",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes.project\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14854,6 +14965,7 @@
       "output": "Option<crate::llm::decision::questions::QuestionScheduleHead>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.schedule\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -14939,6 +15051,7 @@
       "output": "crate::llm::decision::DecisionAsk",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.confirm_grant\", &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -14990,6 +15103,7 @@
       "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
       "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
@@ -15027,6 +15141,7 @@
       "context": "run",
       "effect": "ConnectorAnswer",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
         "description": "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data.",
         "host_door_caller": true,
@@ -15053,6 +15168,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
         "description": "Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded.",
         "host_door_caller": true,
@@ -15070,6 +15186,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
         "description": "Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles.",
         "host_door_caller": true,
@@ -15087,6 +15204,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserFindInput>",
         "description": "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page.",
         "host_door_caller": true,
@@ -15104,6 +15222,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserClickInput>",
         "description": "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
         "host_door_caller": true,
@@ -15121,6 +15240,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserPointInput>",
         "description": "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor.",
         "host_door_caller": true,
@@ -15138,6 +15258,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserTypeInput>",
         "description": "Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page.",
         "host_door_caller": true,
@@ -15155,6 +15276,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSelectInput>",
         "description": "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.",
         "host_door_caller": true,
@@ -15172,6 +15294,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserWaitForInput>",
         "description": "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next.",
         "host_door_caller": true,
@@ -15189,6 +15312,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
         "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
         "host_door_caller": true,
@@ -15206,6 +15330,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserScreenshotInput>",
         "description": "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.",
         "host_door_caller": true,
@@ -15223,6 +15348,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserViewInput>",
         "description": "Reads back a held image by its ref.",
         "host_door_caller": true,
@@ -15240,6 +15366,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserCropInput>",
         "description": "Crops a held image to a rectangle.",
         "host_door_caller": true,
@@ -15257,6 +15384,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserZoomInput>",
         "description": "Zooms into a rectangle of a held image.",
         "host_door_caller": true,
@@ -15274,6 +15402,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
         "description": "Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt.",
         "host_door_caller": true,
@@ -15291,6 +15420,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
         "description": "The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed.",
         "host_door_caller": true,
@@ -15308,6 +15438,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>",
         "description": "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
         "host_door_caller": true,
@@ -15325,6 +15456,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStartInput>",
         "description": "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
         "host_door_caller": true,
@@ -15342,6 +15474,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStopInput>",
         "description": "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given.",
         "host_door_caller": true,
@@ -15359,6 +15492,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
         "description": "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires.",
         "host_door_caller": true,
@@ -15376,6 +15510,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetireInput>",
         "description": "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had.",
         "host_door_caller": true,
@@ -15393,6 +15528,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetiredInput>",
         "description": "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why.",
         "host_door_caller": true,
@@ -15410,6 +15546,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
         "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift.",
         "host_door_caller": true,
@@ -15427,6 +15564,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>",
         "description": "Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft.",
         "host_door_caller": true,
@@ -15444,6 +15582,7 @@
       "mcp": "none",
       "section": false,
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
         "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
         "host_door_caller": true,
@@ -17056,6 +17195,7 @@
       "output": "crate::core_write::CoreEntityWriteReceipt",
       "call": "memory.conversations_turns_create(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -17074,6 +17214,7 @@
       "output": "crate::core_write::DagRecordAppendReceipt",
       "call": "memory.conversations_records_append(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -17092,6 +17233,7 @@
       "output": "crate::core_write::CoreBatchWriteReceipt",
       "call": "memory.core_batch_write(&input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -17756,6 +17898,7 @@
       "output": "crate::office_body::DeckPreview",
       "call": "memory.artifacts_body_deck_preview(&input, None)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -17934,6 +18077,7 @@
       "output": "Option<crate::dreamer_runner::TurnProgramAdmissionView>",
       "call": "crate::dreamer_runner::turn_program_admission(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -17950,6 +18094,7 @@
       "output": "Option<crate::dreamer_runner::ProgramRunView>",
       "call": "crate::dreamer_runner::program_run(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -17966,6 +18111,7 @@
       "output": "Option<crate::dreamer_runner::SettledProgramStepView>",
       "call": "crate::dreamer_runner::settled_program_step(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -17982,6 +18128,7 @@
       "output": "Option<crate::dreamer_runner::ProgramCheckpointView>",
       "call": "crate::dreamer_runner::program_checkpoint(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
@@ -18394,6 +18541,7 @@
       "output": "crate::dreamer_runner::FreeTimePolicyView",
       "call": "crate::task_verb::sdk::free_time_policy_set_as_agent(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -18651,6 +18799,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -18794,6 +18943,7 @@
       "context": "run",
       "effect": "MemorySupersedeClaim",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
         "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override.",
         "host_door_lists": true
@@ -18830,6 +18980,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -18903,6 +19054,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -18929,6 +19081,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -18955,6 +19108,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -18981,6 +19135,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -19031,6 +19186,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -19057,6 +19213,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -19083,6 +19240,7 @@
         ]
       },
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true
     },
@@ -19134,6 +19292,7 @@
       "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>",
       "call": "crate::task_verb::sdk::follow_brief_citation_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
@@ -19456,6 +19615,7 @@
       },
       "mcp_scope": "filtered",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "section": false,
@@ -19473,6 +19633,7 @@
       },
       "mcp_scope": "filtered",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "host_door_caller": true,
       "section": false,
@@ -19657,6 +19818,7 @@
       "output": "crate::linear_sync::LinearMappingEditReceipt",
       "call": "memory.linear_mapping_edit(&input, None)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -19697,6 +19859,7 @@
       "context": "run",
       "effect": "Fold",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
         "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
         "host_door_caller": true,
@@ -19712,6 +19875,7 @@
       "context": "run",
       "effect": "Fold",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldCompactRequest",
         "description": "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs.",
         "host_door_caller": true,
@@ -19727,6 +19891,7 @@
       "context": "run",
       "effect": "Fold",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldUnfoldRequest",
         "description": "Appends a fold of the attached run after its current tail, without replacing the earlier stub.",
         "host_door_caller": true,
@@ -19742,6 +19907,7 @@
       "context": "run",
       "effect": "Fold",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldRunRequest",
         "description": "Lists the attached run's landed folds, pending marks and outstanding compact ask.",
         "host_door_caller": true,
@@ -19765,6 +19931,7 @@
       "context": "run",
       "effect": "TasksRefuse",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
         "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay.",
         "host_door_lists": true
@@ -19778,6 +19945,7 @@
       "context": "run",
       "effect": "ReportBlocked",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>",
         "description": "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task.",
         "openapi": true,
@@ -19792,6 +19960,7 @@
       "context": "run",
       "effect": "AgentsSpawn",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
         "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity.",
         "host_door_lists": true
@@ -19949,6 +20118,7 @@
       "context": "run",
       "effect": "LeaderSplit",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
         "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope.",
         "host_door_lists": true
@@ -19962,6 +20132,7 @@
       "context": "run",
       "effect": "SkillsCall",
       "host": {
+        "host_door_precheck": false,
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>",
         "description": "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately.",
         "host_door_lists": true
@@ -20021,6 +20192,7 @@
       "output": "crate::code_run::fold_api::RunAttached",
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -20037,6 +20209,7 @@
       "output": "crate::compaction::FoldReply<crate::compaction::FoldDescription>",
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Read",
       "admission": {
@@ -20053,6 +20226,7 @@
       "output": "crate::engine_executor::history::FoldHistory",
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
+      "host_door_precheck": false,
       "host_door_caller": true,
       "scope": "Read",
       "admission": {

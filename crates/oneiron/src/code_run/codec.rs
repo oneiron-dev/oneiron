@@ -38,7 +38,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 10] = [
     "callable_rows",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
-pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 9] = [
+pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "seq",
     "effect",
     "request",
@@ -48,6 +48,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 9] = [
     "action_digest",
     "spawn_targets",
     "hook_view_served",
+    "rewritten_request",
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
@@ -100,6 +101,7 @@ const KEY_FINISHED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[5];
 const KEY_ACTION_DIGEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[6];
 const KEY_SPAWN_TARGETS: &str = CODE_RUN_BRIDGE_CALL_KEYS[7];
 const KEY_HOOK_VIEW_SERVED: &str = CODE_RUN_BRIDGE_CALL_KEYS[8];
+const KEY_REWRITTEN_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[9];
 
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
@@ -308,6 +310,10 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
             Value::from(KEY_HOOK_VIEW_SERVED),
             Value::Boolean(call.hook_view_served),
         ),
+        (
+            Value::from(KEY_REWRITTEN_REQUEST),
+            call.rewritten_request.clone().unwrap_or(Value::Nil),
+        ),
     ])
 }
 
@@ -327,6 +333,11 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
         spawn_targets: decode_spawn_targets(required(fields[7], "missing bridge spawn_targets")?)?,
         // A pre-carrier row cannot prove that no hook view was served.
         hook_view_served: fields[8].map_or(Ok(true), bool_value)?,
+        // Rows bound before rewrites were recorded carry no rewritten call.
+        rewritten_request: match fields[9] {
+            None | Some(Value::Nil) => None,
+            Some(request) => Some(request.clone()),
+        },
     })
 }
 
@@ -646,6 +657,7 @@ fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
     }
     call.validate_speech_coherence()?;
     call.validate_spawn_coherence()?;
+    call.validate_rewritten_coherence()?;
     Ok(())
 }
 

@@ -164,6 +164,9 @@ pub enum Conversion {
     /// wrote: they keep their expressions and their stale results, and the
     /// opening application recalculates them.
     WorkbookRecalcDeferred { part: String },
+    /// A table-cell write cut these `a:fld` fields whole (FIX 12227): each
+    /// named dynamic field, by its `type` attribute, became static text.
+    TableFieldsCut { fields: Vec<String> },
 }
 
 /// Why a rewritten chart's embedded workbook was rebuilt rather than
@@ -410,6 +413,10 @@ impl Conversion {
             ),
             Self::WorkbookRecalcDeferred { part } => format!(
                 "chart workbook {part} keeps its formulas; the opening application recalculates them"
+            ),
+            Self::TableFieldsCut { fields } => format!(
+                "table field(s) {} cut whole: each became static text",
+                fields.join(", ")
             ),
         }
     }

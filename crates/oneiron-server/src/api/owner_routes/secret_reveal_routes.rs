@@ -20,7 +20,7 @@ use oneiron::secret_custody::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -38,6 +38,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/reveals",
                 summary: "The vault's reveals, newest first, each with its receipt and, while it waits on the owner, its ask card and digest.",
                 row: None,
+                shape: None,
             },
             get(reveals),
         ),
@@ -47,6 +48,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/reveals/answer",
                 summary: "The owner's answer to one asked reveal, against the exact digest it was listed with.",
                 row: None,
+                shape: Some(RestShape::json(
+                    answer_reveal_body_schema,
+                    reveal_answered_schema,
+                )),
             },
             post(answer),
         ),
@@ -56,6 +61,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/reveal",
                 summary: "The owner reads one secret's value.",
                 row: None,
+                shape: Some(RestShape::json(
+                    owner_reveal_body_schema,
+                    revealed_view_schema,
+                )),
             },
             post(reveal),
         ),

@@ -108,6 +108,8 @@ impl VerbHookPreSnapshot {
                 Landing::from_snapshot(&landing.verb, landing.original, landing.notes)
             }),
             session: self.session,
+            // A rebuilt post-only pre never compensates a pre failure (FIX 1431).
+            resumed_ask: None,
         }
     }
 }

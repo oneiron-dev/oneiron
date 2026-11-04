@@ -5,43 +5,55 @@
 //! MESSAGE row the person's own words are witnessed into before the call
 //! when one is written (FIX 7004); an off-record turn's words are no stored
 //! row. A part that names no rows of its own, as a caller's history line or
-//! a log not all pinned, leaves the whole set unknown, never a partial list.
-//! Nothing reads the set to decide.
+//! a log not all pinned, leaves the complete set unknown, never a partial
+//! list. Cached replies separately retain known rows for erase and read checks.
 use oneiron::EntityId;
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::memory::WitnessReceipt;
 use oneiron::skill_optimize::union_source_rows;
 
-/// What a turn's call has been read from so far; `None` once unknown.
-pub(super) struct TurnSources(Option<Vec<EntityId>>);
+/// What a turn's call has been read from so far, with completeness kept apart.
+pub(super) struct TurnSources {
+    rows: Vec<EntityId>,
+    complete: bool,
+}
 
 impl TurnSources {
     /// The answering agent's definition, its instructions' row.
     pub(super) fn of_agent(agent: EntityId) -> Self {
-        Self(Some(vec![agent]))
+        Self {
+            rows: vec![agent],
+            complete: true,
+        }
     }
 
     /// The rows one part of the call was read from: `None`, a part whose
     /// rows are unknown, leaves the set unknown.
     pub(super) fn add(&mut self, rows: Option<&[EntityId]>) {
-        match (self.0.as_mut(), rows) {
-            (Some(into), Some(rows)) => into.extend_from_slice(rows),
-            _ => self.0 = None,
+        match rows {
+            Some(rows) => self.rows.extend_from_slice(rows),
+            None => self.complete = false,
         }
     }
 
     /// The craft notes the call is shown, each by its claim.
     pub(super) fn craft(&mut self, entries: &[ManifestEntry]) {
-        let claims: Option<Vec<EntityId>> = entries
-            .iter()
-            .map(|entry| EntityId::from_hex(&entry.reference).ok())
-            .collect();
-        self.add(claims.as_deref());
+        for entry in entries {
+            match EntityId::from_hex(&entry.reference) {
+                Ok(row) => self.rows.push(row),
+                Err(_) => self.complete = false,
+            }
+        }
     }
 
-    /// The set, sorted and deduplicated; `None` when unknown.
+    /// Known positive rows, even when another part left the full set unknown.
+    pub(super) fn known_rows(&self) -> Vec<EntityId> {
+        self.rows.clone()
+    }
+
+    /// The complete set, sorted and deduplicated; `None` when unknown.
     pub(super) fn rows(self) -> Option<Vec<EntityId>> {
-        union_source_rows([self.0])
+        union_source_rows([self.complete.then_some(self.rows)])
     }
 }
 

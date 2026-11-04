@@ -185,12 +185,27 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<LlmResponse> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_by`], with the actual answering binding for
+    /// the model-call record. The picked-model guard and no-fallback walk
+    /// are the same call's, not a lookup after it answered (FIX 12742).
+    pub(crate) async fn generate_exact_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
         self.generate_from(run, request, selector, may_send, deadline, false, None)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::stream`] on `deadline` (FIX 8213).
@@ -201,7 +216,27 @@ impl OfferLadder {
         selector: Option<&str>,
         deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
-        self.stream_from(run, request, selector, true, deadline)
+        self.stream_from(run, request, selector, true, deadline, None)
+    }
+
+    /// [`Self::stream_by`], with the binding of the rung that answers for the
+    /// model-call record (FIX 12743): the exact answering rung's model,
+    /// locality, prompt and route pin, the owner's fallback included. The
+    /// receiver resolves exactly when a `Done` event goes out, sent before
+    /// it on the same task; any other end leaves it unresolved.
+    pub(crate) fn stream_recorded_by(
+        self: &std::sync::Arc<Self>,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        deadline: CallDeadline,
+    ) -> LlmResult<(
+        LlmStream<'static>,
+        tokio::sync::oneshot::Receiver<ModelCallBinding>,
+    )> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.stream_from(run, request, selector, true, deadline, Some(tx))
+            .map(|stream| (stream, rx))
     }
 
     /// [`Self::media`] on `deadline` (FIX 8134): the caller's one deadline

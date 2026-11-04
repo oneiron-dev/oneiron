@@ -120,6 +120,109 @@ pub(crate) fn mask_unplaced_json(value: &mut serde_json::Value) -> bool {
     })
 }
 
+/// Each run of adjacent strings in `value` that the write door finds a hit
+/// in only when it reads them together, as the residual check of a typed
+/// body's lift reads its state whole (`typed_body/lift.rs`): a key split
+/// over two texts, which no string alone shows, masked for a reader other
+/// than the owner (FIX 12232). Strings are counted in the order `value`
+/// serializes them. A run ends at the last string of the shortest prefix
+/// that, kept as it is with every other string read as [`UNPLACED`], holds
+/// a hit, and starts at the first string of the shortest stretch ending
+/// there that still does. Its two ends read as [`UNPLACED`], and so does
+/// each string between them whose placeholder clears that stretch's hit.
+/// A string stays as it is when `fits` refuses `value` with it masked (a
+/// tag only its type's own words spell). A hit that stands with every
+/// string masked is no string's to mask. `true` when one changed.
+pub(crate) fn mask_spanning_json(
+    value: &mut serde_json::Value,
+    fits: &dyn Fn(&serde_json::Value) -> bool,
+) -> Result<bool> {
+    if !reads_hit(value)? || hit_masking(value, &|_| true)? {
+        return Ok(false);
+    }
+    let total = {
+        let mut texts = Vec::new();
+        strings_of(value, &mut texts);
+        texts.len()
+    };
+    let mut changed = false;
+    loop {
+        // Keeping strings 0..clean shows no hit; keeping 0..held shows one.
+        let (mut clean, mut held) = (0, total);
+        while held - clean > 1 {
+            let mid = clean + (held - clean) / 2;
+            if hit_masking(value, &|at| at >= mid)? {
+                held = mid;
+            } else {
+                clean = mid;
+            }
+        }
+        let end = held - 1;
+        // Keeping held..=end shows the hit; keeping clean..=end does not.
+        let (mut held, mut clean) = (0, end + 1);
+        while clean - held > 1 {
+            let mid = held + (clean - held) / 2;
+            if hit_masking(value, &|at| !(mid..=end).contains(&at))? {
+                held = mid;
+            } else {
+                clean = mid;
+            }
+        }
+        let start = held;
+        let mut touched = Vec::new();
+        for place in start..=end {
+            if place == start
+                || place == end
+                || !hit_masking(value, &|at| at == place || !(start..=end).contains(&at))?
+            {
+                touched.push(place);
+            }
+        }
+        let mut masked = false;
+        for place in touched {
+            let mut next = value.clone();
+            if mask_strings_at(&mut next, &|at| at == place) && fits(&next) {
+                *value = next;
+                masked = true;
+            }
+        }
+        if !masked {
+            break;
+        }
+        changed = true;
+        if !reads_hit(value)? {
+            break;
+        }
+    }
+    Ok(changed)
+}
+
+/// Whether the write door finds a hit in `value` read whole, as the
+/// residual check reads a typed body's state, with each string `masked`
+/// names read as [`UNPLACED`].
+fn hit_masking(value: &serde_json::Value, masked: &dyn Fn(usize) -> bool) -> Result<bool> {
+    let mut read = value.clone();
+    mask_strings_at(&mut read, masked);
+    reads_hit(&read)
+}
+
+/// Whether the write door finds a hit in `value` read whole.
+fn reads_hit(value: &serde_json::Value) -> Result<bool> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|_| Error::InvariantViolation("a masked view did not encode"))?;
+    Ok(write_payload_hit(&bytes).is_some())
+}
+
+/// Each string of `value` whose place in serialization order `masked`
+/// names, read as [`UNPLACED`]; `true` when one changed.
+fn mask_strings_at(value: &mut serde_json::Value, masked: &dyn Fn(usize) -> bool) -> bool {
+    let place = std::cell::Cell::new(0);
+    each_string(value, &|text| {
+        let at = place.replace(place.get() + 1);
+        (masked(at) && text != UNPLACED).then(|| UNPLACED.to_owned())
+    })
+}
+
 impl CarrierText {
     /// The two outcomes of one row's texts as one: a hit left unplaced
     /// first, then a key marked now, then one marked before.
@@ -372,6 +475,37 @@ impl MaskedText {
             shown,
             stored: from..to,
         })
+    }
+
+    /// The text the reader reads, cut into one piece per stretch of the
+    /// stored text that `cuts` (stored positions, in order) bound: a DOCX
+    /// paragraph's runs, each under one set of marks (FIX 12301). A stretch
+    /// read as it is is cut where the stored text is; a handle reads whole in
+    /// the piece its stretch starts in, so each later piece its stretch
+    /// covers reads none of it. The pieces join to [`Self::text`]. `None`
+    /// when no handle's stretch crosses a cut: each piece then holds its keys
+    /// whole.
+    pub(crate) fn split_at_stored(&self, cuts: &[usize]) -> Option<Vec<String>> {
+        let crosses = self.0.iter().any(|run| {
+            run.handle && cuts.iter().any(|&cut| run.source.start < cut && cut < run.source.end)
+        });
+        if !crosses {
+            return None;
+        }
+        let piece = |at: usize| cuts.partition_point(|&cut| cut <= at);
+        let mut pieces = vec![String::new(); cuts.len() + 1];
+        // The runs' stretches start in order, so each run's piece follows
+        // the one before it.
+        for run in &self.0 {
+            if run.handle {
+                pieces[piece(run.source.start)].push_str(&run.text);
+                continue;
+            }
+            for (offset, character) in run.text.chars().enumerate() {
+                pieces[piece(run.source.start + offset)].push(character);
+            }
+        }
+        Some(pieces)
     }
 }
 

@@ -98,6 +98,7 @@ impl Memory<'_> {
             version: anchor.version,
             locator: (&anchor.locator).into(),
             quote: anchor_text(&file.bytes, &anchor.locator, &limits)?,
+            body: anchor.body.as_ref().map(Into::into),
         })
     }
 
@@ -186,7 +187,9 @@ impl Memory<'_> {
         let origin = self.annotation_origin(&thread)?;
         let resolution = if thread.drift.is_some() {
             AnnotationResolution::Drifted
-        } else if thread.anchor == origin {
+        } else if thread.anchor.version == origin.version
+            && thread.anchor.locator == origin.locator
+        {
             AnnotationResolution::Pinned
         } else {
             AnnotationResolution::Mapped

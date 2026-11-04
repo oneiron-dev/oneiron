@@ -140,7 +140,7 @@ fn barrier_ask() -> Value {
     request_map(vec![("state", Value::from("barrier"))])
 }
 
-fn is_barrier_ask(value: &Value) -> bool {
+pub(super) fn is_barrier_ask(value: &Value) -> bool {
     *value == barrier_ask()
 }
 
@@ -159,7 +159,7 @@ fn barrier_hit(stored: &Value, offered: &Value) -> Result<bool> {
 }
 
 /// The ask a spawn request's fields hold, when they hold the key.
-fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
+pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
     fields
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(ASK_KEY)).then_some(value))
@@ -186,7 +186,7 @@ fn erased_ask() -> Value {
     ])
 }
 
-fn is_erased_ask(value: &Value) -> bool {
+pub(super) fn is_erased_ask(value: &Value) -> bool {
     *value == erased_ask()
 }
 
@@ -300,9 +300,33 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
         return Ok(false);
     }
     let before = call.clone();
-    if let Value::Map(fields) = &mut call.request {
+    // Only the ask that ran is erased's (FIX 1442): the original never
+    // reached the erased target, so it stays as working evidence -- unless
+    // it duplicates the dispatched ask, which reached the target in the
+    // rewrite's place and is scrubbed with it.
+    let target_is_rewritten = matches!(&call.rewritten_request, Some(Value::Map(_)));
+    let target = match &mut call.rewritten_request {
+        Some(rewritten @ Value::Map(_)) => rewritten,
+        _ => &mut call.request,
+    };
+    let mut dispatched: Option<String> = None;
+    if let Value::Map(fields) = target {
         for (key, value) in fields {
             if key.as_str() == Some(ASK_KEY) && value.is_str() {
+                if target_is_rewritten {
+                    dispatched = str_value(value).ok().map(str::to_owned);
+                }
+                *value = erased_ask();
+            }
+        }
+    }
+    if target_is_rewritten
+        && let Some(dispatched) = dispatched.as_deref()
+        && let Value::Map(fields) = &mut call.request
+    {
+        for (key, value) in fields {
+            if key.as_str() == Some(ASK_KEY) && str_value(value).is_ok_and(|ask| ask == dispatched)
+            {
                 *value = erased_ask();
             }
         }
@@ -342,7 +366,13 @@ pub(crate) fn spawn_ask_part(call: &CodeRunBridgeCall) -> Option<&Value> {
     if call.effect != SelfEffect::AgentsSpawn || call.spawn_targets.seats.is_empty() {
         return None;
     }
-    let Value::Map(fields) = &call.request else {
+    // The seat-owed ask is the dispatched one (FIX 1442); symmetric with
+    // `swap_spawn_ask` below, so carry and put-back meet in the same field.
+    let request = match &call.rewritten_request {
+        Some(rewritten @ Value::Map(_)) => rewritten,
+        _ => &call.request,
+    };
+    let Value::Map(fields) = request else {
         return None;
     };
     ask_of(fields).filter(|ask| ask.is_str())
@@ -371,7 +401,12 @@ pub(crate) fn barrier_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
 /// checkpoint takes a carried ask out of its call, nil in its place, and
 /// puts it back. `None` for a request with no ask.
 pub(crate) fn swap_spawn_ask(call: &mut CodeRunBridgeCall, ask: Value) -> Option<Value> {
-    let Value::Map(fields) = &mut call.request else {
+    // Symmetric with `spawn_ask_part` above (FIX 1442).
+    let request = match &mut call.rewritten_request {
+        Some(rewritten @ Value::Map(_)) => rewritten,
+        _ => &mut call.request,
+    };
+    let Value::Map(fields) = request else {
         return None;
     };
     fields
@@ -452,10 +487,22 @@ impl CodeRunBridgeCall {
             Value::Map(fields) => ask_of(fields),
             _ => None,
         };
-        let erased = ask.is_some_and(is_erased_ask);
-        let barrier = ask.is_some_and(is_barrier_ask);
-        let live = ask.is_some_and(Value::is_str);
-        if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
+        // The outcome belongs to what ran: erased/live/barrier coherence reads
+        // the dispatched ask, while the original ask keeps its well-formedness
+        // check (FIX 1442).
+        let run = match self.rewritten_request.as_ref().unwrap_or(&self.request) {
+            Value::Map(fields) => ask_of(fields),
+            _ => None,
+        };
+        let erased = run.is_some_and(is_erased_ask);
+        let barrier = run.is_some_and(is_barrier_ask);
+        let live = run.is_some_and(Value::is_str);
+        // A nil effective ask is the checkpoint's placeholder for an ask
+        // carried apart in a target-owned part: the row still encodes, so
+        // the target's erase retires that copy. The original ask keeps its
+        // check otherwise.
+        let carried = run.is_some_and(Value::is_nil);
+        if !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil()) {
             return Err(invalid_code_run_replay(
                 "spawn ask is not text, nil, or a typed marker",
             ));

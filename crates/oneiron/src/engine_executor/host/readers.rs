@@ -46,16 +46,19 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut spawn: SelfReaderSpawnCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         if self.gated_write.reader_child().is_none() {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
                 Err(reason) => {
-                    return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                        effect: SelfEffect::ReaderSpawn,
-                        outcome: reason,
-                        reason_codes: Vec::new(),
-                    }));
+                    return Ok((
+                        SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            effect: SelfEffect::ReaderSpawn,
+                            outcome: reason,
+                            reason_codes: Vec::new(),
+                        }),
+                        None,
+                    ));
                 }
             }
         }
@@ -65,8 +68,12 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))?
+                .0,
+            None,
+        ))
     }
 
     /// `summarize(r, {group?, ...})`: every member resolved in this run and
@@ -79,7 +86,7 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut call: SelfSummarizeCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         if self.gated_write.reader_child().is_none() {
             let members: Vec<String> = call.members().into_iter().map(str::to_owned).collect();
             let mut bound = Vec::with_capacity(members.len());
@@ -91,17 +98,23 @@ impl RecordingJsHost<'_, '_> {
                             .get("denied")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("denied");
-                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                            effect: SelfEffect::Summarize,
-                            outcome: code.to_owned(),
-                            reason_codes: Vec::new(),
-                        }));
+                        return Ok((
+                            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                effect: SelfEffect::Summarize,
+                                outcome: code.to_owned(),
+                                reason_codes: Vec::new(),
+                            }),
+                            None,
+                        ));
                     }
                 };
                 if read.is_tainted() {
-                    return Ok(SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
-                        reply: read.withheld(),
-                    }));
+                    return Ok((
+                        SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
+                            reply: read.withheld(),
+                        }),
+                        None,
+                    ));
                 }
                 let output = read.output();
                 bound.push(DelegatedSource {
@@ -120,8 +133,12 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::Summarize(Box::new(call)))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::Summarize(Box::new(call)))?
+                .0,
+            None,
+        ))
     }
 
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
@@ -132,12 +149,15 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut report: SelfReaderReportCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         let failed = |code: &str| {
-            SelfDispatchOutcome::Failed(SelfFailedResult {
-                effect: SelfEffect::ReaderReport,
-                error: code.to_owned(),
-            })
+            (
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::ReaderReport,
+                    error: code.to_owned(),
+                }),
+                None,
+            )
         };
         if self.gated_write.reader_child().is_some() {
             let storage = self.storage.ok_or(Error::InvalidConfig(
@@ -171,7 +191,11 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::ReaderReport(report))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::ReaderReport(report))?
+                .0,
+            None,
+        ))
     }
 }

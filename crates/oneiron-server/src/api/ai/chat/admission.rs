@@ -453,6 +453,8 @@ pub(in crate::api::ai::chat) fn start_turn(
         stamp_reply(&mut reply, user);
     }
     let hooks_vault = Arc::clone(&vault);
+    let mut reply_rows = sources.known_rows();
+    reply_rows.extend([destination, turn]);
     let answering = begin_sourced_answer(
         &server.ai,
         Answer {
@@ -519,6 +521,8 @@ pub(in crate::api::ai::chat) fn start_turn(
         turn,
         answering,
         credential,
+        peer,
+        reply_rows,
         board_omitted: omitted,
     })
 }
