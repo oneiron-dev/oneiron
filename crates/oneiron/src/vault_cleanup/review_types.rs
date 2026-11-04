@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::CleanupKind;
 use crate::entity_id::EntityId;
-use crate::memory::EntityView;
+use crate::vault::entity_view::EntityView;
 use crate::note::NoteReadView;
 use crate::ports::ScopedReadResult;
 
