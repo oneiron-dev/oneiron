@@ -5,15 +5,11 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSu
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, LegacyCompact, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
 pub(super) mod checkpoint;
 
-/// Immutable receipt of the file-mode-review proposal ids that promoted a revision, as their
-/// sorted hex spellings. Key: revision id.
-const PROMOTIONS: SideTable<EntityId, Vec<String>, LegacyCompact> =
-    SideTable::new(&side_table::CODE_REVISION_PROMOTION);
+use crate::store::code_revision_record::tables::PROMOTIONS;
 
 /// One file a promoted revision changed and the operations that changed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,8 +370,4 @@ fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {
         .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE)
 }
 
-/// OF-222 (FIX 2768) archive seam: the promotion receipts a whole-vault archive carries beside
-/// each revision, lent with their own key type and codec.
-pub(crate) fn archive_promotion_table() -> crate::batch::export::LentSideTable {
-    &PROMOTIONS
-}
+pub(crate) use crate::store::code_revision_record::tables::archive_promotion_table;

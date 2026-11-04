@@ -122,13 +122,25 @@ pub mod ports {
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
+pub(crate) mod attempt_archive_mark;
+pub mod attempt_cancel;
 pub mod attempt_cleanup;
+pub mod attempt_hold;
+pub mod attempt_id;
 pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
+pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_route;
+pub mod attempt_read_producer;
+pub mod attempt_record;
 pub mod attempt_result;
+pub(crate) mod attempt_retention;
+pub mod attempt_run_signal;
+pub mod attempt_state;
 pub mod canonical_document;
 pub mod checkout_task;
+pub mod claim_refinement_control;
 pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
@@ -162,17 +174,23 @@ pub(crate) mod loro_tombstones;
 pub mod materialization_event;
 pub mod model_description_rows;
 pub mod model_score_diff;
+pub(crate) mod model_step_response_carriage;
+pub mod model_step_submission;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
+pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub mod person_billing_account;
+pub mod positive_skill_proposals;
 pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
 pub mod repo_fork;
+pub mod resident_budget_rows;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
@@ -187,6 +205,7 @@ pub(crate) mod window_rows;
 pub mod consolidation_scope;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
+pub mod dreamer_wake_policy;
 pub mod setting_seed;
 pub mod snapshot_key;
 pub mod snapshot_lock_result;
@@ -216,35 +235,52 @@ pub(crate) use claim_vad_owed::{
     claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
     settle_claim_vad_in_txn,
 };
+pub mod birth_record;
 pub mod body_descriptor;
+pub(crate) mod claim_lineage;
+pub(crate) mod claim_projection;
 mod commitment_due;
+pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
 pub mod decision_ask_role;
 pub(crate) mod decision_question_watches;
+pub mod decision_rule_rows;
+pub mod default_skill_hub;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
-mod gate_decision;
+pub(crate) mod executor_speech_identity;
+pub mod executor_wait_delivery;
 pub(crate) mod file_key_masks;
 pub(crate) mod found_key_notice_queue;
+mod gate_decision;
+pub(crate) mod gate_receipt;
 pub(crate) mod graph_version;
 pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
+pub mod owned_body;
+pub(crate) mod pending_custody_revoke;
 pub mod receipt_identity;
+pub mod receipt_row;
+pub mod reference_refusal;
 pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_reader;
 pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
 pub mod retrieval_signal;
 pub mod row_birth;
-pub(crate) mod pending_custody_revoke;
-pub(crate) mod secret_handle_labels;
-pub(crate) mod secret_name_index;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
+pub mod seat_model_description;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
+pub(crate) mod side_table_erase_scan;
+pub mod site_skill_exposure;
+pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
 pub mod workflow_definition;
@@ -255,8 +291,9 @@ pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
-pub mod world_registration_keys;
 pub(crate) mod world_pad_rows;
+pub mod world_authority;
+pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -272,6 +309,7 @@ mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
 pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -292,15 +330,19 @@ pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
+pub mod revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
+pub(crate) mod skill_attribution_judgments;
 pub(crate) mod skill_content_index;
 pub mod skill_hub_predicates;
 pub mod skill_package;
 pub(crate) mod skill_refinement_custody;
+pub(crate) mod skill_refinement_origin;
 pub(crate) mod skill_source_carrier;
 pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
@@ -343,8 +385,8 @@ pub(crate) use body_envelope::{
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
     erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
@@ -472,6 +514,7 @@ pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 pub mod dispatch_attempt_kind;
 
 pub mod checkout_lease;
+pub mod contract_oracle;
 
 pub mod repo_mutation_record;
 
@@ -506,3 +549,15 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub(crate) mod authority_rows;
+pub(crate) mod consent_bound;
+pub(crate) mod gate_reason;
+pub(crate) mod policy_record;
+pub(crate) mod record_links;
+pub(crate) mod record_references;
+pub(crate) mod scan_count;
+
+pub(crate) mod host_issuer_seed;
+pub(crate) mod principal_record;
+pub(crate) mod witness_message_body;

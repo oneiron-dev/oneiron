@@ -1838,7 +1838,10 @@ weights, builds the worker's environment from the row's `env_lock`, starts
 it on the provider's `base_url`, counts it ready after one real render,
 restarts it after a crash and, when `idle_stop_secs` asks, stops it when
 idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
-same for the local Whisper worker, from an operator's weights manifest. A
+same for the local Whisper worker, from the house `whisper-large-v3` pin or
+an operator's weights manifest; its `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12 on x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified). A
 call to a managed worker's rung waits while it starts and holds it through
 its renders or its transcription; the worker runs one inference at a time.
 `deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
