@@ -30,7 +30,10 @@ use oneiron::code_run::model_call::{
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
-use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
+use oneiron::llm::{
+    WorkClass,
+    run_admission::{RunAdmission, WorkPhysical},
+};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
@@ -642,6 +645,7 @@ impl StepRunner {
             .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();
+            context.class = WorkClass::Foreground;
             context.physical = if request.envelope.host_keyless {
                 WorkPhysical::KeylessOwnServer
             } else {
