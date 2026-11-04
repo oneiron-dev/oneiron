@@ -34,11 +34,8 @@ use crate::skill::SkillLifecycle;
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault};
 
-/// Predicate of a proposed heal for a model finding's issue (OF-418 L3).
-pub const COACH_DIAGNOSTIC_PROPOSAL_PREDICATE: &str = "coach.diagnostic.proposal";
-/// Predicate of a proposed resolution of a model finding's issue, for the owner to confirm
-/// (OF-418 L3).
-pub const COACH_ISSUE_RESOLUTION_PREDICATE: &str = "coach.issue.resolution";
+pub use crate::attempt_queue::maintenance_predicate::COACH_DIAGNOSTIC_PROPOSAL_PREDICATE;
+pub use crate::attempt_queue::maintenance_predicate::COACH_ISSUE_RESOLUTION_PREDICATE;
 /// The owner of the config a retrieval run records it ran under: its replay inputs' `config`.
 pub const RETRIEVAL_REPLAY_CONFIG: &str = "retrieval.replay_config";
 /// What an issue asks when no recorded link proves its producer.

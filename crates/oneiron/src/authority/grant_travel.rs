@@ -27,7 +27,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
-use crate::share_travel::{BornWithField, GrantTravel, TravelChoice};
+use crate::share_travel::GrantTravel;
+use oneiron_authority::share_travel::BornWithField;
+use oneiron_authority::share_travel::TravelChoice;
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::world_strength::{FrontierEdit, WorldFrontier};

@@ -7,9 +7,9 @@ use crate::authority::AuthorityFold;
 use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::vault::LiveEntityRow;
+use oneiron_authority::federation::Scope;
 
 /// How the room meet sees a member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

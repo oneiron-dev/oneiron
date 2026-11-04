@@ -15,13 +15,13 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -180,8 +180,10 @@ pub(super) fn retained_claim_names(
         let Some(named) = hash else {
             return Ok(true);
         };
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
             continue;
         };
         if version_claim_reference(&body) == Some((*artifact, *named)) {

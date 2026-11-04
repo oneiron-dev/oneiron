@@ -106,6 +106,39 @@ pub(crate) fn stage_owner_machine_transition(
     )
 }
 
+/// Stage `kind` attributed to `actor` of class system, a writer no person
+/// stands behind: the engine's own principal for a critical confirm's lapse,
+/// or a MACHINE author for its own deferred Auto grant.
+pub(crate) fn stage_system_machine_transition(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: crate::EntityId,
+    kind: ClaimTransitionKind,
+    delta: TransitionDelta,
+    actor: crate::EntityId,
+    now: u64,
+) -> crate::Result<crate::ClaimBody> {
+    stage_machine_claim_transition(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        id,
+        kind,
+        delta,
+        actor,
+        crate::edge::EdgeActorClass::System,
+        crate::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
 /// Close a MACHINE-born claim through its signed history; any other claim is
 /// returned unchanged. `actor` is the typed door's authenticated writer, and
 /// `None` attributes the close to the vault's embedded owner.

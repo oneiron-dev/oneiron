@@ -537,7 +537,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         crate::scan_check::ScanCount::start(
             &vault.store,
             &txn,
-            crate::scan_check::EngineScan::GateDecisionRows,
+            crate::store::EngineScan::GateDecisionRows,
             &[],
         )?
     };

@@ -21,12 +21,17 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
-use crate::code_document::CodeDocumentFrontier;
-use crate::code_revision::{CodeRevision, CodeTreeInventory, queue_provenance_id};
 use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire};
-use crate::repo_mutation::proposal::{RepoProposal, RepoProposalStatus};
+use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::{
+    code_revision_identity::queue_provenance_id,
+    code_revision_record::{CodeRevision, CodeTreeInventory},
+};
+use crate::{
+    repo_mutation::proposal::RepoProposal, store::repo_proposal_record::RepoProposalStatus,
+};
 
 /// What a seal stands on, read from the queue's and checker's rows.
 pub(super) struct SealEvidence {
@@ -589,3 +594,5 @@ impl MergeQueue<'_> {
         )
     }
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

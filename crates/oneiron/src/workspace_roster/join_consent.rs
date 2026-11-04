@@ -36,12 +36,14 @@ use super::join_receipt::{
     JOINS, JoinReceiptRef, READY, RecordedAnswer, RosterActor, join_ref, ready_key,
 };
 use super::{project, rooms, thread_audience_allows_in};
-use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
+use crate::agent_dispatch::{AgentDispatcher, payer_binds_in_txn};
 use crate::conversation::{RoomHost, room_host_in_txn};
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::MembershipStanding;
-use crate::llm::run_admission::LeaseUnit;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::run_budget::LeaseUnit;
+use crate::workspace_roster::spend_scope::SpendScopeId;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 pub use oneiron_contracts::room_join::{
@@ -278,8 +280,7 @@ pub fn decide_join_in_txn(
     request: &JoinRequest,
     now: u64,
 ) -> Result<(JoinDecision, ConsentSet)> {
-    let filed = JOINS
-        .get(&vault.store, txn, &join_ref(request)?)?
+    let filed = super::join_history::live_join(&vault.store, txn, &join_ref(request)?)?
         .filter(|receipt| receipt.request == *request);
     let (principal, answers) = filed.map_or((None, Vec::new()), |receipt| {
         (receipt.principal_id(), receipt.answers)
@@ -445,7 +446,9 @@ pub(super) fn agent_person_in_txn(
 ) -> Result<Option<EntityId>> {
     Ok(
         crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-            .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Person)
+            .filter(|anchor| {
+                anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person
+            })
             .map(|anchor| anchor.subject_ref),
     )
 }
@@ -585,7 +588,9 @@ fn house_org_in_txn(
         return Ok(None);
     }
     let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-        .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Org)
+        .filter(|anchor| {
+            anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Org
+        })
     else {
         return Ok(None);
     };

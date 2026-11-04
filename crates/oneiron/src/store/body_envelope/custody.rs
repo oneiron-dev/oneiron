@@ -156,7 +156,7 @@ impl BodyMint {
             });
         }
         let mut instance = [0u8; 16];
-        crate::world_keys::os_fill(&mut instance)?;
+        crate::key_material::os_fill(&mut instance)?;
         // Leased before its entry is published (FIX 6022).
         let lease = self.leases.lease(instance);
         let secret = custody.get_or_create(&instance_id(&self.binding, &instance)?)?;

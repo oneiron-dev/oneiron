@@ -106,6 +106,9 @@ side_tables! {
     /// The pinned signed handoff (encoded `ClaimHistoryHandoff`) that roots one MACHINE claim's
     /// signed birth and transition history. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_PIN: VaultMeta b"claim:machine-history-pin:v1:" Raw;
+    /// The running seal over every control put one MACHINE claim's history index took (FIX
+    /// 4296): the put count (u64 BE), then a chained digest (32 bytes). Key: id16 (target claim).
+    CLAIM_MACHINE_HISTORY_SEAL: VaultMeta b"claim:machine-history-seal:v1:" Raw;
     /// Empty marker indexing one MACHINE claim's signed history control rows under their target.
     /// Key: id16 (target claim) + id16 (control).
     CLAIM_MACHINE_HISTORY_TARGET: VaultMeta b"claim:machine-history-target:v1:" Raw;

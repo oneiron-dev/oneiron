@@ -18,9 +18,9 @@ use crate::batch::secret_scan::{KnownStreamFinder, StreamKnown};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::result_body::ResultBodyPin;
 use crate::secret_custody::KnownValues;
 use crate::store::body_store::SecretScan;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::store::{
     BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES, SpilledBody, StagedBodyKey,
 };
@@ -440,8 +440,8 @@ impl crate::Vault {
         occurred: TimeRange,
         learned_at: u64,
         staged: &StagedAssetBody,
-        tier: crate::sync::client::ImportTier,
-        birth: Option<&crate::provenance::birth::RowBirth>,
+        tier: crate::store::window_protocol::ImportTier,
+        birth: Option<&crate::store::row_birth::RowBirth>,
     ) -> Result<()> {
         let batch = self.batch_in().with_import_tier(tier);
         if let Staged::File(file) = &staged.body {
