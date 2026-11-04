@@ -30,6 +30,7 @@ mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod llama_metrics;
 mod media_worker;
 mod probe;
 #[cfg(unix)]
