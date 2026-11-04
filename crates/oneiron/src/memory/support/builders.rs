@@ -217,6 +217,27 @@ impl Memory<'_> {
         self
     }
 
+    /// Records the caller origin the host observed at root admission. This
+    /// is separate from read locality and destination and changes no gate.
+    #[must_use]
+    pub fn with_caller_origin(mut self, origin: crate::agent_dispatch::CallerOrigin) -> Self {
+        self.caller_origin = Some(origin);
+        self
+    }
+
+    /// The host's explicit origin, or an in-process host invocation when
+    /// that is known. Default on-device read locality proves no connection.
+    #[must_use]
+    pub fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin.unwrap_or_else(|| {
+            if self.native_invocation() {
+                crate::agent_dispatch::CallerOrigin::NativeHost
+            } else {
+                crate::agent_dispatch::CallerOrigin::Unknown
+            }
+        })
+    }
+
     /// Binds the off-record session the host's request names (its
     /// `x-oneiron-session`) for this surface's principal, the request's own:
     /// context, not authority. Inside one the live registry holds anonymous

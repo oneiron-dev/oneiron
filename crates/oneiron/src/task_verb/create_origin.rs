@@ -13,10 +13,9 @@
 //! lease: a creator whose row is gone, whose project moved or whose spend
 //! scope has settled refuses, rather than landing as free work.
 //!
-//! A root create keeps a witness too when the host stamped the conversation
-//! whose request started it (OF-221, [`Memory::with_origin_conversation`]):
-//! no creator, only that conversation, so an approval or a wave cut that
-//! lands after the chat has moved on still links the work back to it.
+//! A root create keeps its caller-origin witness too (FIX 4973), with the
+//! conversation the host stamped when one exists (OF-221). An approval or
+//! wave cut carries that first provenance rather than the later approver's.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,12 +44,12 @@ const ORIGINS: SideTable<[u8; 16], TaskCreateOrigin, Named> =
 /// The creator one TASK create runs under: the creator's attempt, the
 /// project its frozen dispatch input holds, its queue run tag, the
 /// conversation its work started from and the team run it works in. Built
-/// only from a verified host binding, or, for a root, from the host's
-/// conversation stamp alone; no caller writes any field.
+/// only from a verified host binding or the root host's admission facts;
+/// no caller writes any field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskCreateOrigin {
-    /// `None`: a root create the host stamped with its conversation.
+    /// `None`: a root create, with or without an origin conversation.
     parent_attempt: Option<AttemptId>,
     project_ref: Option<EntityId>,
     run_id: Option<String>,
@@ -59,9 +58,25 @@ pub(crate) struct TaskCreateOrigin {
     origin_conversation: Option<EntityId>,
     /// OF-540: the team run the creator's dispatch froze; `None` is no team.
     team: Option<TeamRunStamp>,
+    /// The caller origin captured with this create, never the later approver.
+    caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 impl TaskCreateOrigin {
+    /// Proposal identity is unchanged by provenance: a retry from another
+    /// connection still finds the first ask and keeps its original stamp.
+    pub(super) fn same_creator_as(&self, other: &Self) -> bool {
+        self.parent_attempt == other.parent_attempt
+            && self.project_ref == other.project_ref
+            && self.run_id == other.run_id
+            && self.origin_conversation == other.origin_conversation
+            && self.team == other.team
+    }
+
+    pub(super) const fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin
+    }
+
     pub(crate) const fn parent_attempt(&self) -> Option<AttemptId> {
         self.parent_attempt
     }
@@ -119,23 +134,22 @@ fn require_creator_actor(memory: &Memory<'_>, input: &AgentDispatchInput) -> Mem
 /// transaction. A live host binding's: the bound attempt must still be
 /// leased by the binding's owner at its generation, be an agent dispatch,
 /// and be run by this surface's actor; a lost lease refuses, it never falls
-/// back to a root. With no binding the create is a root, witnessed only when
-/// the host stamped its conversation; `None` otherwise.
+/// back to a root. With no binding the create is a root whose caller origin
+/// and optional conversation are frozen, including an explicit Unknown.
 pub(crate) fn task_create_origin_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     binding: Option<&HostBinding>,
 ) -> MemoryResult<Option<TaskCreateOrigin>> {
     let Some(binding) = binding else {
-        return Ok(memory
-            .origin_conversation()
-            .map(|conversation| TaskCreateOrigin {
-                parent_attempt: None,
-                project_ref: None,
-                run_id: None,
-                origin_conversation: Some(conversation),
-                team: None,
-            }));
+        return Ok(Some(TaskCreateOrigin {
+            parent_attempt: None,
+            project_ref: None,
+            run_id: None,
+            origin_conversation: memory.origin_conversation(),
+            team: None,
+            caller_origin: memory.caller_origin(),
+        }));
     };
     let (record, input) = creator_run_in(memory.vault(), txn, binding.parent())?;
     if !record.state.is_running()
@@ -158,6 +172,7 @@ pub(crate) fn task_create_origin_in_txn(
         run_id: record.run_id.clone(),
         origin_conversation,
         team: input.team,
+        caller_origin: input.caller_origin,
     };
     require_creator_in_txn(memory, txn, &origin)?;
     Ok(Some(origin))

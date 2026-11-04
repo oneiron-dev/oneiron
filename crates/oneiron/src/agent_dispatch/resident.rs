@@ -266,6 +266,7 @@ impl AgentDispatcher<'_> {
                         now,
                     },
                     AgentSpawnContext {
+                        caller_origin: Some(super::CallerOrigin::NativeHost),
                         context_spec: Some(ContextSpec {
                             briefing: Some(briefing),
                             ..ContextSpec::default()
@@ -364,6 +365,7 @@ impl AgentDispatcher<'_> {
                     now,
                 },
                 AgentSpawnContext {
+                    caller_origin: Some(super::CallerOrigin::NativeHost),
                     context_spec: Some(ContextSpec {
                         briefing: Some(briefing),
                         ..ContextSpec::default()

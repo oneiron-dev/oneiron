@@ -253,6 +253,7 @@ impl<'v> Memory<'v> {
                 task_grant: self.task_grant,
                 kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,
+                caller_origin: self.caller_origin,
                 task_host: None,
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
