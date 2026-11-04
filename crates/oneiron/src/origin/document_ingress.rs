@@ -5,7 +5,7 @@ use crate::code_document::{CodeEditReceipt, CodeFileIngress};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::store::code_document_values::CodeFileEdit;
