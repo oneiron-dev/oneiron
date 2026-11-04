@@ -15,10 +15,10 @@ use std::io::{Cursor, Read};
 const PACKAGE: SideTable<EntityId, HubPackage, Raw> =
     SideTable::new(&side_table::SKILL_HUB_PACKAGE);
 
-pub use crate::store::skill_package::codec::{decode_hub_package, encode_hub_package};
 pub(super) use crate::store::skill_package::codec::{
     MAX_ENCODED, encoded_file_bytes, invalid, is_hub_package_envelope,
 };
+pub use crate::store::skill_package::codec::{decode_hub_package, encode_hub_package};
 
 /// A same-tree metadata edit cannot claim different source identity. A real
 /// hash change is allowed; the shared put stage physically retires its old

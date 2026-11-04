@@ -16,11 +16,11 @@
 
 use serde_json::Value;
 
+use super::ConnectorPackBasis;
 use crate::Vault;
 use crate::connector_key::SlateDisposition;
 use crate::federation::SharedActKind;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use super::ConnectorPackBasis;
 
 use super::{Pinned, RESTRICTIVE_TARGETS_PINNED, entity, shown};
 

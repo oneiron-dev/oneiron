@@ -222,7 +222,9 @@ pub(super) fn execution_scope_in(
             recipe_root = true;
             break;
         }
-        let bound = if payload.attempt_type == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
+        let bound = if payload.attempt_type
+            == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+        {
             crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?.scope
         } else if [
             crate::dreamer_runner::DreamerConsolidationScope::Micro,

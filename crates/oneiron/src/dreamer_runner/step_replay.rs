@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use crate::side_table::ErasedForm;
 use crate::Result;
 use crate::compaction::output::OutputRef;
+use crate::side_table::ErasedForm;
 use crate::{ContentPart, EntityId, LlmRequest, ModelId, ModelLocality};
+use serde::{Deserialize, Serialize};
 
 /// What a capsule's exposure put in front of the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,4 +230,3 @@ impl ErasedForm for StepReplayCapsule {
         Ok(erased(self))
     }
 }
-
