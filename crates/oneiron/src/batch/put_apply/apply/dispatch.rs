@@ -96,7 +96,7 @@ pub(super) fn dispatch_put_type(
                 .refinement_admission
                 .is_some_and(|proof| proof.binds_claim(&fixed.id, data))
             && !fixed.write_envelope.is_some_and(|envelope| {
-                crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
+                crate::store::claim_projection::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
             })
         {
             return Err(Error::InvalidClaimBody(

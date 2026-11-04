@@ -365,7 +365,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
     SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
-    crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
+    crate::store::claim_projection::remove_claim_projection_index(store, wtxn, *id)?;
     store.port_remove_entity_row(wtxn, id)?;
     crate::ports::audit_mutation_in_txn(
         store,

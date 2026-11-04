@@ -160,7 +160,7 @@ pub(crate) fn prune_retired_bodies_in_rows(
     let gone = pruned.row_keys();
     rows.retain(|(key, _)| !gone.contains(key));
     for digest in &pruned.digests {
-        crate::provenance::body::prune_digest_in_rows(rows, digest)?;
+        crate::store::owned_body::prune_digest_in_rows(rows, digest)?;
     }
     Ok(pruned)
 }

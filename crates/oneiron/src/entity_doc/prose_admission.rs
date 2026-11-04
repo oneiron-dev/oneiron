@@ -30,7 +30,8 @@ use crate::gate::record_references::{
     ReferenceRefusal, parse_record_links, validate_record_references,
 };
 use crate::memory::Memory;
-use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
+use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
+use crate::receipt::{receipt_reference_refusals};
 use crate::write_envelope::WriteActor;
 
 /// The row an anchored edit lands through.
