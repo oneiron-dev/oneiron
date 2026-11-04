@@ -283,24 +283,33 @@ pub(super) fn handle_app_message(
 /// A verb RPC the owner loop answers off the loop: the bound credential it
 /// runs under, the request, the call context the socket took on arrival
 /// (FIX 2059), and the socket its answer is queued for.
-pub(super) struct VerbCall {
-    auth: CoreAuth,
-    request: crate::livequery::RpcRequest,
-    context: crate::livequery::SocketCallContext,
-    conn: u32,
+pub(super) enum VerbCall {
+    Verb {
+        auth: CoreAuth,
+        request: crate::livequery::RpcRequest,
+        context: crate::livequery::SocketCallContext,
+        conn: u32,
+    },
+    Residence(crate::livequery::ResidenceWorkCall),
 }
 
 impl VerbCall {
-    /// Runs the verb to its answer and queues the answer on `direct_tx`,
-    /// whose send door judges each frame again (DEC-0005).
     pub(super) async fn answer(
         self,
         server: std::sync::Arc<SyncServer>,
         direct_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), ProtocolError> {
-        let reply =
-            crate::livequery::rpc_reply(&server, &self.auth, self.request, self.context).await?;
-        for frame in reply.queued(self.conn) {
+        let (auth, request, context, conn) = match self {
+            Self::Verb {
+                auth,
+                request,
+                context,
+                conn,
+            } => (auth, request, context, conn),
+            Self::Residence(call) => return call.answer(server, direct_tx).await,
+        };
+        let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
+        for frame in reply.queued(conn) {
             direct_tx
                 .send(frame)
                 .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
@@ -513,6 +522,21 @@ fn answer_app_message(
             // The machine this socket proved, judged again now: residence
             // reads serve it by its own world read settings (OF-534 G6).
             let peer = state.peer_machine(&server.vault);
+            if request.method == "residence.bundle.commit"
+                || (request.method == "residence.bundle.commit.status"
+                    && request.params.get("workId").is_some())
+            {
+                return Ok(Some(VerbCall::Residence(
+                    crate::livequery::ResidenceWorkCall::new(
+                        server,
+                        bound,
+                        peer,
+                        request,
+                        conn,
+                        state.residence_work.attachment(),
+                    ),
+                )));
+            }
             crate::livequery::residence_rpc(
                 server,
                 &bound,
@@ -534,7 +558,7 @@ fn answer_app_message(
                 context,
                 connection.as_deref(),
             );
-            return Ok(Some(VerbCall {
+            return Ok(Some(VerbCall::Verb {
                 auth: auth.clone(),
                 request,
                 context,
