@@ -201,10 +201,10 @@ pub use report::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
-    /// The output bytes with the reservation that holds them (FIX 8452):
-    /// clones share the buffer and its lease through the `Arc`, so no clone
-    /// is memory nothing reserved. The lease drops with the last owner.
-    pub bytes: crate::memory::SharedBytes,
+    /// Shared output bytes. The native engine retains their reservation
+    /// with them (FIX 8452): clones share the buffer and its lease through
+    /// the `Arc`, and the lease drops with the last owner.
+    pub bytes: crate::SharedBytes,
     pub evidence_sha256: Sha256Digest,
     pub requested_profile: PadesProfile,
     pub achieved_profile: PadesProfile,
