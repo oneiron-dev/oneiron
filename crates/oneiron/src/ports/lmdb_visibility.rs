@@ -109,6 +109,9 @@ thread_local! {
 struct DeletionMemo {
     /// Open recall scopes on this thread; the memo keeps nothing outside one.
     scopes: usize,
+    /// Counts the outermost scopes opened on this thread, so a memo keyed by
+    /// [`recall_memo_key`] never carries an answer from one recall to the next.
+    generation: u64,
     /// The store (its policy-fold cache's address) and snapshot kept, and
     /// whether that snapshot may keep states.
     at: Option<(usize, usize, bool)>,
@@ -138,7 +141,13 @@ impl DeletionMemo {
 /// drops, deletion states read in a committed snapshot of a base store are
 /// kept and read back. Scopes nest; the last to close empties the memo.
 pub(crate) fn deletion_memo_scope() -> DeletionMemoScope {
-    DELETION_MEMO.with(|memo| memo.borrow_mut().scopes += 1);
+    DELETION_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.scopes == 0 {
+            memo.generation = memo.generation.wrapping_add(1);
+        }
+        memo.scopes += 1;
+    });
     DeletionMemoScope { _private: () }
 }
 
@@ -158,6 +167,22 @@ impl Drop for DeletionMemoScope {
             }
         });
     }
+}
+
+/// The key another per-recall memo keeps a pure snapshot answer under:
+/// this recall's scope, the store and the committed snapshot `txn` reads
+/// through `dbs`, or `None` where [`deletion_memo_key`] keeps nothing (no
+/// scope, a write, a composed view, a snapshot not the committed one).
+pub(crate) fn recall_memo_key(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Option<(u64, usize, usize)> {
+    let (store, snapshot) = deletion_memo_key(dbs, txn)?;
+    Some((
+        DELETION_MEMO.with(|memo| memo.borrow().generation),
+        store,
+        snapshot,
+    ))
 }
 
 /// The memo key for `txn` read through `dbs`, or `None` when nothing may be
