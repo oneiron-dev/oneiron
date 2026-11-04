@@ -8784,9 +8784,13 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-model",
  "rmpv",
+ "rustix",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "tracing",
+ "uuid",
+ "xxhash-rust",
  "zeroize",
 ]
 
