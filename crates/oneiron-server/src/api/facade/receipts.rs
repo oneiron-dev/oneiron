@@ -22,7 +22,8 @@ pub(super) async fn facade_call_receipt(
     // L15 bench-only: one stage line per vault.recall, cleared on arrival.
     let l15_recall = request.uri().path().trim_start_matches('/') == "vault.recall";
     if l15_recall {
-        drop(oneiron::stage_timing::take_json());
+        // Keep this request's own pre-total journal syncs (L15-LEAD bench).
+        oneiron::stage_timing::clear_except(&["server.nonce_journal_sync", "server.lease_journal_sync"]);
     }
     let l15_total = l15_recall.then(|| oneiron::stage_timing::stage("server.total"));
     let (mut parts, body) = request.into_parts();

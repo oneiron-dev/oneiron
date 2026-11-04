@@ -86,3 +86,10 @@ pub fn take_json() -> String {
     json.push('}');
     json
 }
+
+/// Bench-only: drops every span recorded so far except those named in
+/// `keep` (work this request did before the drain, e.g. its nonce journal).
+pub fn clear_except(keep: &[&str]) {
+    let mut stages = STAGES.lock().unwrap_or_else(PoisonError::into_inner);
+    stages.retain(|(name, _)| keep.contains(name));
+}
