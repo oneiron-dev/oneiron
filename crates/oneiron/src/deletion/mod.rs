@@ -10,6 +10,8 @@ mod coop_reply;
 mod coop_request;
 mod coop_succession;
 mod delete;
+#[cfg(feature = "sync")]
+pub(crate) mod delete_bearing_update;
 mod derived_rows;
 mod erase;
 mod gate;
@@ -27,6 +29,8 @@ mod timeline;
 mod tombstone;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
+#[cfg(feature = "sync")]
+pub(crate) mod window_document_format;
 // A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
