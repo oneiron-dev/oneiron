@@ -83,6 +83,16 @@ pub(super) fn connector_dispatch_request(
     if let Some(alternative) = task.ambient_alternative.clone() {
         request = request.ambient_alternative(alternative);
     }
+    // FIX 12100's replay: the schedule chokepoint froze the selection on
+    // the TASK, so the executor selects by the same rules instead of
+    // rebuilding execution without it.
+    if let Some(selection) = &task.selection {
+        request = request.send_autonomy_context(
+            selection
+                .request
+                .send_autonomy(selection.counterparty_class.as_deref()),
+        );
+    }
     request
 }
 

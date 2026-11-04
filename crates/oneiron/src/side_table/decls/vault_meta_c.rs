@@ -14,6 +14,9 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// FIX 12004: one meeting card delivered to the owners' INBOX, a prep pack or a check-in with
+    /// its one morning re-ask, holding the lens as delivered. Key: id16(EVENT) + string (kind).
+    CALENDAR_INBOX_CARD: VaultMeta b"calendar.inbox-card.v1:" Named Admitted;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -411,6 +414,9 @@ side_tables! {
     /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
     /// send until the projection that releases it or the event's delete. Key: id16 (the event).
     COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
+    /// A durable send receipt the comm projector's import skipped, written when it first warned
+    /// about it: the reason and when. Node-local. Key: id16 (the receipt's TASK).
+    COMM_SKIPPED_SEND_RECEIPT: VaultMeta b"comm.skipped_send_receipt.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.
@@ -439,6 +445,10 @@ side_tables! {
     CONNECTOR_SLATE_SCOPE_SIGNAL: VaultMeta b"connector.grant_slate.scope_signal.v1/" Named;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
+    /// The qualification kit the owner's last successful qualify of a catalog key used, which an
+    /// accepted issuer revision's re-run qualifies its dependent rows with (FIX 9304). Key: id16
+    /// (catalog key).
+    CONNECTOR_QUALIFICATION_KIT: VaultMeta b"connector.qualification_kit.v1/" Named;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
     CONNECTOR_WAKE_DECISION: VaultMeta b"connector.wake.v1:" LegacyJson;
     /// Permanent catalog-name to key-id index; never deleted on key removal. Key: string(catalog

@@ -13,7 +13,7 @@
 
 use std::borrow::Borrow;
 
-use super::frame_seal::{BodySource, seal_section_body, write_counted};
+use super::frame_seal::{BodySource, seal_section_body};
 use super::*;
 
 /// The most envelopes one section segment holds: 1 GiB of section body.
@@ -136,8 +136,43 @@ fn write_segments<P: Borrow<Envelope>>(
             put(&of.to_be_bytes())?;
             put(&count.to_be_bytes())?;
         }
-        write_counted(put, &part.borrow().to_bytes())?;
+        let part = part.borrow();
+        let len = u32::try_from(part.len()).map_err(|_| refused("a sealed part is too large"))?;
+        put(&len.to_be_bytes())?;
+        write_envelope(part, put)?;
     }
+    Ok(())
+}
+
+/// Streams an envelope through the body's fallible sink without joining its bytes.
+fn write_envelope(envelope: &Envelope, put: &mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()> {
+    struct Writer<'a> {
+        put: &'a mut dyn FnMut(&[u8]) -> Result<()>,
+        error: Option<Error>,
+    }
+
+    impl std::io::Write for Writer<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            match (self.put)(bytes) {
+                Ok(()) => Ok(bytes.len()),
+                Err(error) => {
+                    self.error = Some(error);
+                    Err(std::io::Error::other("bundle body write failed"))
+                }
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = Writer { put, error: None };
+    let result = envelope.write_to(&mut writer);
+    if let Some(error) = writer.error {
+        return Err(error);
+    }
+    result?;
     Ok(())
 }
 

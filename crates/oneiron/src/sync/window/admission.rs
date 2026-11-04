@@ -224,6 +224,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP),
         )?;
+        // FIX 6870: and every repo manifest head.
+        crate::sync::repo_manifests::admit_repo_manifest_map(
+            key,
+            &candidate.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP),
+        )?;
         // OF-013: every withdrawn cutoff the snapshot holds names its
         // artifact, and every epoch floor its session (FIX 2867).
         cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
@@ -293,6 +298,10 @@ fn validate_window_update(
             crate::sync::office_proposals::admit_office_proposal_map(
                 key,
                 &root.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP),
+            )?;
+            crate::sync::repo_manifests::admit_repo_manifest_map(
+                key,
+                &root.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP),
             )?;
             cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
                 &root.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
@@ -391,6 +400,10 @@ fn validate_window_update(
         crate::sync::office_proposals::OFFICE_PROPOSALS_MAP,
         ContainerType::Map,
     );
+    let repo_manifests = ContainerID::new_root(
+        crate::sync::repo_manifests::REPO_MANIFESTS_MAP,
+        ContainerType::Map,
+    );
     let withdrawn_cutoffs = ContainerID::new_root(
         crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ContainerType::Map,
@@ -422,6 +435,8 @@ fn validate_window_update(
             crate::sync::message_docs::admit_message_doc_carrier(key, &map_key, &value)?;
         } else if op.container == office_proposals {
             crate::sync::office_proposals::admit_office_proposal_carrier(key, &map_key, &value)?;
+        } else if op.container == repo_manifests {
+            crate::sync::repo_manifests::admit_repo_manifest_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {
             cutoffs.push(
                 crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_carrier(&map_key, &value)?,

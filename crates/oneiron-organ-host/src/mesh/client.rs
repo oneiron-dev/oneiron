@@ -330,6 +330,7 @@ async fn received(
         outputs,
         report,
         receipt,
+        _frame: None,
     })
 }
 
@@ -347,7 +348,7 @@ async fn answer(
     let (answered, signed) = run_handler(&ask, asks);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
-            let value_len = rmp_serde::to_vec_named(value).map_or(0, |bytes| bytes.len() as u64);
+            let value_len = oneiron_organ_protocol::encoded_len(value).unwrap_or(0);
             let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
             here.hold_sent(value_len.saturating_add(data_len))?
         }

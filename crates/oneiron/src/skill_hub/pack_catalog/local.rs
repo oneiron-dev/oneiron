@@ -50,9 +50,11 @@ impl Vault {
     /// `vault.packs.put` by a resident agent (ARCH-0080 §7, §8 local pack):
     /// the agent replaces the `local` pack, and each hook whose body it
     /// wrote binds as its own, in a claim stamped with the agent, reading and
-    /// acting at the agent's own ceiling. A binding another author stands on
-    /// is left as it is; the owner sees every binding and turns any off. A
-    /// put of any other pack is refused.
+    /// acting at the agent's own ceiling. A hook that asks wider (Skip, Ask
+    /// or Rewrite on another actor's verbs, or blocking) also becomes the
+    /// owner's proposal, in the same write (§10). A binding another author
+    /// stands on is left as it is; the owner sees every binding and turns any
+    /// off. A put of any other pack is refused.
     pub fn put_local_pack_as_agent(
         &self,
         agent: &WriteActor,

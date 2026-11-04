@@ -41,10 +41,11 @@ const AUTO_CLOSE: [LiftCloseReason; 3] = [
 
 /// The found-key answers that settle a key for good, part of the auto-close
 /// call: a grant leaves the value live where the record keeps it.
-const ANSWERS: [FoundKeyAction; 3] = [
+const ANSWERS: [FoundKeyAction; 4] = [
     FoundKeyAction::Rotate,
     FoundKeyAction::Delete,
     FoundKeyAction::NotASecret,
+    FoundKeyAction::KeptAsText,
 ];
 
 /// `closed_by` of a proposal that closed on its own.
