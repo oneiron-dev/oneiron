@@ -481,7 +481,7 @@ side_tables! {
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked];
     /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::llm::llm_description_policy_accepts_masked];
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
