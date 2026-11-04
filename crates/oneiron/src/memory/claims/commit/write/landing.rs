@@ -165,6 +165,15 @@ impl Memory<'_> {
             .as_ref()
             .map_or(learned_at, |header| header.learned_at);
         let mut replay_claim_of_weight = None;
+        // A signed-MACHINE exact replay stages no candidate put (see below):
+        // the live row already stands under its immutable birth, and the
+        // history projection (stale, demotion scope) is preserved without
+        // minting a new birth. Re-putting the projected state would re-sign
+        // it, and both the projection check and the birth verifier fail the
+        // replay closed (round-2 P1 on #4519). Only the unsigned live-weight
+        // refresh below still applies. Gated to prior-free replays, so a
+        // competing head still takes the supersession path with its put.
+        let mut signed_replay_no_put = false;
         let candidate = if in_place_replay(write)
             && let Some(existing) = self.vault.get_claim_in_txn(content.read(), &id)?
         {
@@ -183,6 +192,15 @@ impl Memory<'_> {
             .map(|edge| edge.weight);
             if live_weight.is_some_and(|weight| Some(weight) != birth_weight) {
                 replay_claim_of_weight = live_weight;
+            }
+            if prior.is_none() {
+                let pinned = self.vault.store.vault_meta.get(
+                    content.read(),
+                    &crate::claim::history_projection::pin_key(id),
+                )?;
+                if pinned.is_some() {
+                    signed_replay_no_put = true;
+                }
             }
             let candidate = candidate.with_stale(existing.stale);
             if let Some(scope) = existing.scope {
@@ -213,14 +231,17 @@ impl Memory<'_> {
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         );
         let text = crate::claim::claim_value_index_text(&write.value);
-        let mut ops = vec![BatchOp::ClaimCandidate {
-            id,
-            candidate: Box::new(candidate),
-            envelope,
-            occurred,
-            learned_at,
-            internal_lexical_query_hint: false,
-        }];
+        let mut ops = Vec::new();
+        if !signed_replay_no_put {
+            ops.push(BatchOp::ClaimCandidate {
+                id,
+                candidate: Box::new(candidate),
+                envelope,
+                occurred,
+                learned_at,
+                internal_lexical_query_hint: false,
+            });
+        }
         if let Some(weight) = replay_claim_of_weight {
             ops.push(BatchOp::SetEdgeWeight {
                 src: id,
@@ -235,11 +256,13 @@ impl Memory<'_> {
                 fields: vec![("val".to_owned(), text)],
             });
         }
-        content.apply_claim_ops(
-            ops,
-            self.vault.text_index_trusted.load(Ordering::Acquire),
-            ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
-        )?;
+        if !ops.is_empty() {
+            content.apply_claim_ops(
+                ops,
+                self.vault.text_index_trusted.load(Ordering::Acquire),
+                ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
+            )?;
+        }
         Ok(closure_envelope)
     }
 
