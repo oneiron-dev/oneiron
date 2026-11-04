@@ -2,9 +2,8 @@
 //! sensitivity band, each written by the Dreamer from only the facts at or
 //! below that band.
 //!
-//! Every wake pass compares the facts of each person on the change index
-//! (a fact write puts its person there, in its own transaction) with the
-//! facts its last request was made from, and queues a `dreamer.person_about` attempt on the
+//! Every wake pass compares each person's facts with the facts its last
+//! request was made from, and queues a `dreamer.person_about` attempt on the
 //! Micro queue when they moved. The attempt asks the narrative model once per
 //! band whose facts differ from the band below it, reads the facts again, and
 //! lands every line in one write. The board reads the stored line of the
@@ -30,8 +29,8 @@ use crate::inference_context::HostInferenceContext;
 use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
-use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use oneiron_model::llm::{
@@ -45,8 +44,6 @@ use std::collections::{BTreeMap, BTreeSet};
 mod claim_hooks;
 mod sources;
 
-#[cfg(feature = "sync")]
-pub(crate) use claim_hooks::dirty_person_about_for_claim_in_txn;
 pub(crate) use claim_hooks::{
     erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
 };
@@ -71,11 +68,6 @@ marked (stated), go by the stated one. No markup and no quotes.";
 /// One person's `about` lines and the facts they stand on. Key: id16 (PERSON).
 const PERSON_ABOUT: SideTable<EntityId, PersonAbout, Named> =
     SideTable::new(&side_table::PEOPLE_ABOUT);
-
-/// Persons whose facts moved since a wake pass last read them (FIX 1377):
-/// the change index the wake sweep drains, so a pass reads only those
-/// persons' facts. Key: id16 (PERSON).
-const ABOUT_DIRTY: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::PEOPLE_ABOUT_DIRTY);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersonAbout {
@@ -278,74 +270,69 @@ pub(crate) fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
 /// Queues the `about` attempt of every person whose facts moved since its
 /// last request. A person with no facts left loses its lines at once, with no
 /// model call. Runs at the start of every Dreamer wake pass.
-///
-/// Only the persons on the change index are read (FIX 1377). The drain -
-/// facts, digest, the row write and the index delete - runs in one write
-/// transaction, so a fact write lands either side of it whole: before it,
-/// its mark is drained with the facts that carry it; after it, its mark
-/// stands for the next pass. The grant clock persists first, as the read
-/// snapshot this replaces kept it.
 pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()> {
-    vault.store.authorization_now()?;
+    let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
+    if persons.is_empty() {
+        return Ok(());
+    }
     let read = dreamer_read(vault)?;
-    let mut touched = false;
-    vault.with_write_txn(|txn| {
-        let mut persons = Vec::new();
-        for row in ABOUT_DIRTY.iter_from(&vault.store, txn, &[])? {
-            let (person, _) = row?;
-            persons.push(person);
-        }
+    let mut due = Vec::new();
+    {
+        let txn = snapshot(vault)?;
         for person in persons {
-            let facts = person_facts(vault, &read, txn, person)?;
+            let facts = person_facts(vault, &read, &txn, person)?;
             let digest = facts_digest(&facts, TOP_BAND);
-            let row = PERSON_ABOUT.get(&vault.store, txn, &person)?;
-            let due = match &row {
-                Some(row) => row.asked != digest || row.moved,
-                None => !facts.is_empty(),
-            };
-            if due {
-                touched = true;
-                let mut row = row.unwrap_or_default();
-                // A CLAIM write that moved no fact leaves the row as it
-                // stood, an owner's revert included. Facts back where the
-                // lines were written from show those lines again, with no
-                // model call.
-                let moved = row.asked != digest;
-                let current = row.written == digest;
-                row.asked = digest;
-                row.moved = false;
-                if moved && facts.is_empty() {
-                    row.written = digest;
-                    row.lines.clear();
-                    row.at = now;
-                    row.previous = None;
-                } else if moved && !current {
-                    DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
-                        txn,
-                        DreamerConsolidationScope::Micro.attempt_kind(),
-                        DreamerAttemptPayload {
-                            attempt_type: DREAMER_PERSON_ABOUT_ATTEMPT_TYPE.to_owned(),
-                            input: person_about_input(person),
-                            parent_attempt: None,
-                        },
-                        Some(format!(
-                            "{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE}:{}:{}",
-                            person.to_hex(),
-                            crate::entity_id::bytes_to_hex_lower(&digest)
-                        )),
-                        None,
-                        now,
-                    )?;
-                }
-                PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+            let row = PERSON_ABOUT.get(&vault.store, &txn, &person)?;
+            match &row {
+                Some(row) if row.asked == digest && !row.moved => continue,
+                None if facts.is_empty() => continue,
+                _ => due.push((person, digest, facts.is_empty())),
             }
-            ABOUT_DIRTY.delete(&vault.store, txn, &person)?;
+        }
+    }
+    if due.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn(|txn| {
+        for (person, digest, empty) in &due {
+            let mut row = PERSON_ABOUT
+                .get(&vault.store, txn, person)?
+                .unwrap_or_default();
+            // A CLAIM write that moved no fact leaves the row as it stood,
+            // an owner's revert included. Facts back where the lines were
+            // written from show those lines again, with no model call.
+            let moved = row.asked != *digest;
+            let current = row.written == *digest;
+            row.asked = *digest;
+            row.moved = false;
+            if moved && *empty {
+                row.written = *digest;
+                row.lines.clear();
+                row.at = now;
+                row.previous = None;
+            } else if moved && !current {
+                DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
+                    txn,
+                    DreamerConsolidationScope::Micro.attempt_kind(),
+                    DreamerAttemptPayload {
+                        attempt_type: DREAMER_PERSON_ABOUT_ATTEMPT_TYPE.to_owned(),
+                        input: person_about_input(*person),
+                        parent_attempt: None,
+                    },
+                    Some(format!(
+                        "{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE}:{}:{}",
+                        person.to_hex(),
+                        crate::entity_id::bytes_to_hex_lower(digest)
+                    )),
+                    None,
+                    now,
+                )?;
+            }
+            PERSON_ABOUT.put(&vault.store, txn, person, &row)?;
         }
         Ok(())
     })?;
-    if touched {
-        vault.store.notify_attempt_observers();
-    }
+    vault.store.notify_attempt_observers();
     Ok(())
 }
 

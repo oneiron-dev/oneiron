@@ -2,7 +2,7 @@
 //! transaction before the row changes: a put that changes a body, a door
 //! that drops a fact without a new body (FIX 3196), and the erase (FIX 3155).
 
-use super::{ABOUT_DIRTY, PERSON_ABOUT};
+use super::PERSON_ABOUT;
 use crate::EntityId;
 use crate::claim::ClaimSubject;
 use crate::error::Result;
@@ -32,8 +32,8 @@ fn stored_claim_subject(
 }
 
 /// Hides the `about` lines of the PERSON `subject` names, until a wake pass
-/// reads its facts again, and puts the person on that pass's change index
-/// (FIX 1377), row or no row. Any other subject is left as it is.
+/// reads its facts again. Any other subject, or a person with no row, is
+/// left as it is.
 fn mark_subject_moved_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -42,7 +42,6 @@ fn mark_subject_moved_in_txn(
     let ClaimSubject::Entity(person) = subject else {
         return Ok(());
     };
-    ABOUT_DIRTY.put(store, txn, &person, &())?;
     let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
         return Ok(());
     };
@@ -99,13 +98,11 @@ pub(crate) fn erase_person_about_in_txn(
 ) -> Result<()> {
     if PERSON_ABOUT.get(store, txn, id)?.is_some() {
         PERSON_ABOUT.delete(store, txn, id)?;
-        ABOUT_DIRTY.delete(store, txn, id)?;
         return Ok(());
     }
     let Some(ClaimSubject::Entity(person)) = stored_claim_subject(store, txn, id)? else {
         return Ok(());
     };
-    ABOUT_DIRTY.put(store, txn, &person, &())?;
     let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
         return Ok(());
     };
@@ -113,21 +110,4 @@ pub(crate) fn erase_person_about_in_txn(
     row.lines.clear();
     row.previous = None;
     PERSON_ABOUT.put(store, txn, &person, &row)
-}
-
-/// A window demotion removes this CLAIM's local row (`dreamer_wake`'s
-/// demotion hook): the fact still stands at home, so no line hides, but the
-/// facts a wake pass reads here change, and its person joins the sweep's
-/// change index (FIX 1377). Runs in the remover's transaction, before the
-/// row goes.
-#[cfg(feature = "sync")]
-pub(crate) fn dirty_person_about_for_claim_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    claim: &EntityId,
-) -> Result<()> {
-    if let Some(ClaimSubject::Entity(person)) = stored_claim_subject(store, txn, claim)? {
-        ABOUT_DIRTY.put(store, txn, &person, &())?;
-    }
-    Ok(())
 }

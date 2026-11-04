@@ -108,8 +108,6 @@ pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
-#[cfg(feature = "sync")]
-pub(crate) use person_about::dirty_person_about_for_claim_in_txn;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
     enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_dropped_in_txn,

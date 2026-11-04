@@ -395,9 +395,6 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
-    /// Persons whose facts moved since a wake pass last read them: the PEOPLE `about` sweep's
-    /// change index (FIX 1377). Key: id16 (PERSON).
-    PEOPLE_ABOUT_DIRTY: VaultMeta b"people:about:dirty:v1:" Raw;
     /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
     /// 3332). Key: id16 (PERSON).
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named

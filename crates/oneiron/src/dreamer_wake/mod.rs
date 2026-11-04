@@ -112,9 +112,7 @@ pub(crate) fn erase_in_txn(
 /// The window demotion hook (OF-534), in the remover's transaction before
 /// any row or edge of `gone` goes. Each TURN it removes leaves the sieve's
 /// working state and the projection, unerased: its audits and history stay,
-/// and so do PEOPLE `about` lines, since a demoted fact still stands; a
-/// demoted CLAIM's person joins the about sweep's change index, since the
-/// facts read here did change. A kept
+/// and so do PEOPLE `about` lines, since a demoted fact still stands. A kept
 /// TURN that loses a MESSAGE here keeps both and owes no read: its words
 /// are whole at home, and reading the part left would read a fragment.
 #[cfg(feature = "sync")]
@@ -126,13 +124,11 @@ pub(crate) fn demote_in_txn(
     use crate::ports::EntityStoreRead;
     let mut turns = std::collections::BTreeSet::new();
     for id in gone {
-        let Some(row) = store.port_entity_record(txn, id)? else {
-            continue;
-        };
-        if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
+        if store
+            .port_entity_record(txn, id)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN)
+        {
             turns.insert(*id);
-        } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            crate::dreamer_consolidation::dirty_person_about_for_claim_in_txn(store, txn, id)?;
         }
     }
     for turn in &turns {
