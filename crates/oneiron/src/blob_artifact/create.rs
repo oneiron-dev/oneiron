@@ -23,7 +23,9 @@ pub struct ArtifactCreateRequest {
     /// The run that made the bytes; an agent's version names it.
     #[serde(default)]
     pub run_ref: Option<String>,
-    /// The first version's made_by envelope; the writer's own when absent.
+    /// The first version's made_by input; the authenticated writer owns its
+    /// process identity/class, and a supplied process actor stays as input
+    /// provenance (FIX 9618). The writer's own envelope when absent.
     #[serde(default)]
     pub made_by: Option<serde_json::Value>,
 }
@@ -31,8 +33,9 @@ pub struct ArtifactCreateRequest {
 impl Memory<'_> {
     /// `vault.artifacts.create`: registers an artifact and appends its first
     /// version as the bound actor. A person's upload is theirs; an agent's
-    /// version names the run that made it. The two writes are sequential: a
-    /// refused version leaves the registration.
+    /// version names the run that made it. A supplied made_by keeps its
+    /// attribution as input, never as native producer authority (FIX 9618).
+    /// The two writes are sequential: a refused version leaves the registration.
     /// # Errors
     /// Bytes that are not base64, a made_by that is no envelope, an agent
     /// with no run, or the vault's refusal.
