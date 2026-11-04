@@ -61958,6 +61958,8 @@ pub struct OwedWakeHoldView {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(rename = "expired", default, skip_serializing_if = "Option::is_none")]
+    pub expired: Option<bool>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::TurnProgramOwedWakeItem`.
