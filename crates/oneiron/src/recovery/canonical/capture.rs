@@ -145,7 +145,7 @@ pub(crate) fn capture_canonical_window_within(
     }
     let turns = binary_rows_within(doc, "room_turns", budget)?;
     for (key, row) in
-        crate::sync::room_parts::capture_rows(&turns, &mut |bytes| budget.take(bytes))?
+        crate::room_codec::room_parts::capture_rows(&turns, &mut |bytes| budget.take(bytes))?
     {
         snapshot.room_turns.push(CanonicalRoomTurn {
             id: parse_id(&key)?,
@@ -154,7 +154,7 @@ pub(crate) fn capture_canonical_window_within(
     }
     let facts = binary_rows_within(doc, "room_facts", budget)?;
     for (key, row) in
-        crate::sync::room_parts::capture_rows(&facts, &mut |bytes| budget.take(bytes))?
+        crate::room_codec::room_parts::capture_rows(&facts, &mut |bytes| budget.take(bytes))?
     {
         snapshot.room_facts.push(CanonicalRoomFact { key, row });
     }

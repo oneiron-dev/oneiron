@@ -143,6 +143,22 @@ fn revoke_deleted_row_in_txn(
     crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)
 }
 
+/// Rebinds a successfully moved row's custody to its replacement's origin (FIX
+/// 12779): the `FOUND`/`DUE` state under the old derived origin moves to the
+/// new one, and each custody minted from the old row now names the new origin.
+/// Runs in the caller's write transaction, with the row move it follows.
+fn rebind_moved_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    place: &str,
+    old_full: &[u8],
+    new_full: &[u8],
+) -> Result<()> {
+    let old = crate::batch::secret_scan::side_row_origin(place, old_full)?;
+    let new = crate::batch::secret_scan::side_row_origin(place, new_full)?;
+    crate::secret_custody::move_side_row_custody_in_txn(&vault.store, wtxn, &old, &new)
+}
+
 pub(crate) fn erase_review_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -179,7 +195,18 @@ pub(crate) fn erase_review_scope_in_txn(
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
                 let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
                 match CRITIQUE_ARTIFACT.put(&vault.store, &mut savepoint, &moved, &artifact) {
-                    Ok(()) => savepoint.commit()?,
+                    Ok(()) => {
+                        savepoint.commit()?;
+                        // FIX 12779: the moved row keeps its custody; its origin
+                        // moves with it, in the same outer transaction.
+                        rebind_moved_row_in_txn(
+                            vault,
+                            wtxn,
+                            &format!("side:{}", ARTIFACT.decl().name),
+                            &ARTIFACT.key_bytes(&key),
+                            &CRITIQUE_ARTIFACT.key_bytes(&moved),
+                        )?;
+                    }
                     Err(error) => {
                         drop(savepoint);
                         // FIX 12085: a dropped replacement's custody goes with it. A
@@ -307,6 +334,14 @@ pub(crate) fn erase_review_scope_in_txn(
             continue;
         }
         savepoint.commit()?;
+        // FIX 12779: the moved row keeps its custody; its origin moves with it.
+        rebind_moved_row_in_txn(
+            vault,
+            wtxn,
+            &format!("side:{}", REVIEW.decl().name),
+            &REVIEW.key_bytes(&hash),
+            &REVIEW.key_bytes(&moved),
+        )?;
         let verdict = field_mut(&mut review, "verdict").and_then(|verdict| {
             verdict
                 .as_str()
@@ -395,6 +430,14 @@ fn erase_review_session_rows_in_txn(
             continue;
         }
         savepoint.commit()?;
+        // FIX 12779: the moved row keeps its custody; its origin moves with it.
+        rebind_moved_row_in_txn(
+            vault,
+            wtxn,
+            &format!("side:{}", REVIEW.decl().name),
+            &REVIEW.key_bytes(&hash),
+            &REVIEW.key_bytes(&moved),
+        )?;
         REVIEW_ID.put(&vault.store, wtxn, &verdict, &REVIEW.key_bytes(&moved))?;
     }
     Ok(())
