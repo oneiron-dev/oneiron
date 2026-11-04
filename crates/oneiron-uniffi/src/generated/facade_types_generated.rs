@@ -49906,7 +49906,7 @@ pub struct OfferDraft {
     pub intent_key: String,
 }
 
-/// `oneiron::run_budget::job_maximum::DeclaredMaximum`.
+/// `oneiron_run_budget::run_budget::job_maximum::DeclaredMaximum`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DeclaredMaximum {
     #[serde(rename = "units")]
