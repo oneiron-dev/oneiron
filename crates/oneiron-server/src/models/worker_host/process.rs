@@ -31,7 +31,7 @@ pub(super) struct ProcessWorker {
     /// A media worker's stats route (FIX 8318).
     stats: Option<StatsRoute>,
     /// A llama worker's metrics route (FIX 9190): bound only for llama.
-    llama_metrics: Option<String>,
+    llama_metrics: Option<super::llama_metrics::MetricsRoute>,
 }
 
 impl ProcessWorker {
@@ -89,7 +89,10 @@ impl ProcessWorker {
 
     /// Binds this worker's llama.cpp `/metrics` route, for a llama worker
     /// only: the launcher calls it right after [`Self::spawn`].
-    pub(super) fn with_llama_metrics(mut self, metrics: String) -> Self {
+    pub(super) fn with_llama_metrics(
+        mut self,
+        metrics: super::llama_metrics::MetricsRoute,
+    ) -> Self {
         self.llama_metrics = Some(metrics);
         self
     }
@@ -190,8 +193,11 @@ impl RunningWorker for ProcessWorker {
 /// Reads llama.cpp's deferred and processing gauges. Both are required;
 /// missing or unreadable samples mean unknown, not idle. The pinned server
 /// exposes no resident-memory gauge.
-async fn llama_activity(client: &reqwest::Client, metrics: &str) -> Option<WorkerActivity> {
-    let reply = client.get(metrics).send().await.ok()?;
+async fn llama_activity(
+    client: &reqwest::Client,
+    metrics: &super::llama_metrics::MetricsRoute,
+) -> Option<WorkerActivity> {
+    let reply = metrics.request(client).send().await.ok()?;
     if !reply.status().is_success() {
         return None;
     }

@@ -230,8 +230,9 @@ impl ProcessLauncher {
             .and_then(|record| record.native_socket.clone());
         // A llama worker's activity is read on its `/metrics` (FIX 9190):
         // only llama binds a route, never guessed from (None, None).
-        let llama_metrics =
-            matches!(self.row.kind, WorkerKind::LlamaCpp).then(|| self.route("/metrics"));
+        let llama_metrics = matches!(self.row.kind, WorkerKind::LlamaCpp).then(|| {
+            super::llama_metrics::MetricsRoute::new(self.route("/metrics"), &self.launch.args, &env)
+        });
         spawn(
             &program,
             &args,
@@ -616,7 +617,7 @@ fn spawn(
     health: &str,
     native: Option<PathBuf>,
     stats: Option<StatsRoute>,
-    llama_metrics: Option<String>,
+    llama_metrics: Option<super::llama_metrics::MetricsRoute>,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
     #[cfg(unix)]
     {
