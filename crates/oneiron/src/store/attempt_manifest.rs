@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::vault::RevisionRef;
+use crate::store::revision_ref::RevisionRef;
 
 /// What one [`ManifestEntry`] names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

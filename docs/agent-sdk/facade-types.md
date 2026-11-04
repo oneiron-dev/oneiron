@@ -237,7 +237,7 @@ export type HealthOtherSession = { attempt: EntityId; generation: number; at: nu
 export type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; stream_at?: number | null; tool_finished_at?: number | null; other_session?: HealthOtherSession | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMoveBasis` */
 export type ConcernMoveBasis = { digest: string }
-/** `oneiron::attempt_queue::run_signal::RunSignalState` */
+/** `oneiron::store::attempt_run_signal::RunSignalState` */
 export type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable"
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMoveLink` */
 export type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean }
@@ -583,7 +583,7 @@ export type TasksOverflow = { known_omitted_rows: number; source_exhausted: bool
 export type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null }
 /** `oneiron::vault_shape::card::ShapeCard` */
 export type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string }
-/** `oneiron::attempt_queue::types::AttemptId` */
+/** `oneiron_store::attempt_id::AttemptId` */
 export type AttemptId = { bytes: number[] }
 /** `oneiron::task_verb::route_receipts::TaskRouteOutcome` */
 export type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } }
@@ -783,7 +783,7 @@ export type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; stat
 export type FanoutSlotState = "held" | "pending" | "completed" | "error"
 /** `oneiron::task_verb::fanout_batch::FanoutSlotTerminal` */
 export type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number }
-/** `oneiron::attempt_queue::types::AttemptState` */
+/** `oneiron::store::attempt_state::AttemptState` */
 export type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned"
 /** `oneiron::workspace_roster::spend_scope::SpendState` */
 export type SpendState = "open" | "closed"
@@ -815,21 +815,21 @@ export type FanoutLaunchRequest = { launch_ref: EntityId }
 export type SelfBudgetRequest = { attempt: string; run?: string | null }
 /** `oneiron::agent_dispatch::budget_doors::SpendLeaseView` */
 export type SpendLeaseView = { lease: SpendScope; spend: SpendRead }
-/** `oneiron::attempt_queue::cancel::types::AttemptLandingReserve` */
+/** `oneiron::store::attempt_cancel::AttemptLandingReserve` */
 export type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null }
-/** `oneiron::attempt_queue::cancel::types::LandingTrigger` */
+/** `oneiron::store::attempt_cancel::LandingTrigger` */
 export type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning"
-/** `oneiron::attempt_queue::cancel::types::AttemptLanding` */
+/** `oneiron::store::attempt_cancel::AttemptLanding` */
 export type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelReceiptKind` */
+/** `oneiron::store::attempt_cancel::AttemptCancelReceiptKind` */
 export type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled"
-/** `oneiron::attempt_queue::cancel::types::CancelStanding` */
+/** `oneiron::store::attempt_cancel::CancelStanding` */
 export type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none"
-/** `oneiron::attempt_queue::cancel::types::ForceCancelGrounds` */
+/** `oneiron::store::attempt_cancel::ForceCancelGrounds` */
 export type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality"
-/** `oneiron::attempt_queue::cancel::types::AttemptResumePoint` */
+/** `oneiron::store::attempt_cancel::AttemptResumePoint` */
 export type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelReceipt` */
+/** `oneiron::store::attempt_cancel::AttemptCancelReceipt` */
 export type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null }
 /** `oneiron::agent_dispatch::budget_hold::BudgetHoldState` */
 export type BudgetHoldState = "warned" | "held" | "resumed"
@@ -1977,11 +1977,11 @@ export type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcer
 export type InboxRunGroupsRequest = { limit?: number | null; after?: string | null }
 /** `oneiron::inbox::model::InboxExceptionClass` */
 export type InboxExceptionClass = "checker_hedge" | "manifest_critical" | "supersedes_user_stated" | "conflict" | "meeting_outcome_check_in" | "plugin_install"
-/** `oneiron::receipt::kernel::ReceiptKind` */
+/** `oneiron::store::receipt_row::ReceiptKind` */
 export type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle"
-/** `oneiron::receipt::kernel::ReceiptRecord` */
+/** `oneiron::store::receipt_row::ReceiptRecord` */
 export type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> }
-/** `oneiron::receipt::kernel::ReceiptView` */
+/** `oneiron::store::receipt_row::ReceiptView` */
 export type ReceiptView = { component: string; receipt: ReceiptRecord }
 /** `oneiron::inbox::model::InboxGroupMember` */
 export type InboxGroupMember = { claim_id: string; created_at: number; age_secs: number; hold_reasons?: string[]; exception_classes?: InboxExceptionClass[]; verb_class: string; duplicate_claim_ids?: string[]; receipt_view: ReceiptView }
@@ -4054,7 +4054,7 @@ export type PolicyOutboundRequest = { subject: PolicyClassifySubject; content: s
 /** `oneiron::policy_model::enforce::PolicyEnforcementAction` */
 export type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped"
 /** `oneiron::policy_model::verdict::PolicySkipReason` */
-export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "policy-moving"
+export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "admission-denied" | "policy-moving"
 /** `oneiron::policy_model::verdict::PolicyClassifyDecision` */
 export type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason }
 /** `oneiron::policy_model::verdict::PolicyVerdictCategory` */
@@ -4133,7 +4133,7 @@ export type AutoWeaveWriterClass = "agent" | "system"
 export type AutoWeaveGrantRequest = { writer: string; writer_class: AutoWeaveWriterClass; scope: string; scope_id: string }
 /** `oneiron::consent::registry::ConsentRegistryQuery` */
 export type ConsentRegistryQuery = { limit: number; include_revoked?: boolean }
-/** `oneiron::consent::bound::ConsentDomain` */
+/** `oneiron::store::consent_bound::ConsentDomain` */
 export type ConsentDomain = "disclosure" | "action"
 /** `oneiron::consent::grant::ConsentGrantStatus` */
 export type ConsentGrantStatus = "active" | "revoked"
@@ -5343,7 +5343,7 @@ export type MergeQueueEnqueueRequest = { repo: EntityId; proposals: EntityId[]; 
 export type BatchState = "Queued" | "Staged" | "Ready" | "Landing" | "HeadAdvanced" | "GreenAdvanced" | "Quarantined" | "RollingBack" | "RolledBack" | "Cancelled"
 /** `oneiron::memory::merge_queue_doors::types::MergeQueuePathView` */
 export type MergeQueuePathView = { mask: number; commit: string; tree: string; verdict_ref?: string | null }
-/** `oneiron::contract_oracle::graph::AffectedTests` */
+/** `oneiron::store::contract_oracle::graph::AffectedTests` */
 export type AffectedTests = { packages: string[]; targets: Record<string, string[]> }
 /** `oneiron::memory::merge_queue_doors::types::MergeQueueBatchView` */
 export type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; expected_head: string; base_green: string; proposals: string[]; state: BatchState; paths: MergeQueuePathView[]; landed_head?: string | null; slow_verdict_ref?: string | null; quarantine?: Quarantine | null; selected_tests: AffectedTests }
@@ -5351,11 +5351,11 @@ export type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; exp
 export type MergeQueueBatchRequest = { repo: EntityId; batch_ref: string }
 /** `oneiron::memory::merge_queue_doors::types::MergeQueueObserveRequest` */
 export type MergeQueueObserveRequest = { repo: EntityId; batches: string[] }
-/** `oneiron::contract_oracle::types::CommandOutput` */
+/** `oneiron::store::contract_oracle::types::CommandOutput` */
 export type CommandOutput = { status: number; stdout: number[]; stderr: number[] }
-/** `oneiron::contract_oracle::types::ContractDiff` */
+/** `oneiron::store::contract_oracle::types::ContractDiff` */
 export type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } } | { SchemaBytesDrift: { contract: string; offset: number; before?: string | null; after?: string | null } }
-/** `oneiron::contract_oracle::types::ContractVerdict` */
+/** `oneiron::store::contract_oracle::types::ContractVerdict` */
 export type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] }
 /** `oneiron::merge_queue::driver_types::QueueDriveStatus` */
 export type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "held_seal" | "unavailable" | "done"
@@ -5655,25 +5655,25 @@ export type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?:
 export type CancelForceRequest = { task_ref: EntityId; reason?: string | null }
 /** `oneiron::context_board::agent_run_status::AgentRunStatus` */
 export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled"
-/** `oneiron::attempt_queue::run_signal::RunAskQuestion` */
+/** `oneiron::store::attempt_run_signal::RunAskQuestion` */
 export type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null }
-/** `oneiron::attempt_queue::run_signal::RunAskAnswerKind` */
+/** `oneiron::store::attempt_run_signal::RunAskAnswerKind` */
 export type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown"
-/** `oneiron::attempt_queue::run_signal::RunAskAnswer` */
+/** `oneiron::store::attempt_run_signal::RunAskAnswer` */
 export type RunAskAnswer = { who: string; answer: string; kind: RunAskAnswerKind; at: number }
-/** `oneiron::attempt_queue::run_signal::RunAsk` */
+/** `oneiron::store::attempt_run_signal::RunAsk` */
 export type RunAsk = { handle: string; questions: RunAskQuestion[]; answers: RunAskAnswer[] }
-/** `oneiron::attempt_queue::run_signal::RunSignalKind` */
+/** `oneiron::store::attempt_run_signal::RunSignalKind` */
 export type RunSignalKind = { Steer: { instruction: string } } | { Interject: { content: string } } | { Cancel: { standing: CancelStanding; reason?: string | null } } | { AskAnswer: { handle: string; who: string; answer: string; kind: RunAskAnswerKind } }
-/** `oneiron::attempt_queue::run_signal::RunBranchSignal` */
+/** `oneiron::store::attempt_run_signal::RunBranchSignal` */
 export type RunBranchSignal = { key: string; actor: string; kind: RunSignalKind; state: RunSignalState }
-/** `oneiron::attempt_queue::cancel::types::CancelMode` */
+/** `oneiron::store::attempt_cancel::CancelMode` */
 export type CancelMode = "landed" | "forced"
-/** `oneiron::attempt_queue::cancel::types::AttemptCancellation` */
+/** `oneiron::store::attempt_cancel::AttemptCancellation` */
 export type AttemptCancellation = { mode: CancelMode; grounds?: ForceCancelGrounds | null; actor: string; at: number; reason?: string | null; trigger?: LandingTrigger | null; reserve_units: number; reserve_spent_units: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelPressure` */
+/** `oneiron::store::attempt_cancel::AttemptCancelPressure` */
 export type AttemptCancelPressure = { requests?: number; rejections?: number; pending?: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelState` */
+/** `oneiron::store::attempt_cancel::AttemptCancelState` */
 export type AttemptCancelState = { landing?: AttemptLanding | null; resume_point?: AttemptResumePoint | null; cancellation?: AttemptCancellation | null; pressure?: AttemptCancelPressure; receipts?: AttemptCancelReceipt[]; reserve?: AttemptLandingReserve }
 /** `oneiron::task_verb::run_doors::RunBranchView` */
 export type RunBranchView = { branch: string; run_id?: string | null; state: AttemptState; agent_status: AgentRunStatus; attempt_count: number; result_ref?: string | null; last_error?: string | null; asks: RunAsk[]; signals: RunBranchSignal[]; cancel_state: AttemptCancelState }
@@ -6595,7 +6595,7 @@ export type ContextReceiptFields = { persona_compile_stamp: string; activated_me
 export type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields }
 /** `oneiron::store::attempt_manifest::ManifestKind` */
 export type ManifestKind = "skill_index" | "skill" | "actor_claim"
-/** `oneiron::vault::entity_revision::types::RevisionRef` */
+/** `oneiron::store::revision_ref::RevisionRef` */
 export type RevisionRef = number[]
 /** `oneiron::store::attempt_manifest::ManifestEntry` */
 export type ManifestEntry = { kind: ManifestKind; reference: string; version: string; at: number; revision?: [EntityId, RevisionRef] | null }
@@ -6993,7 +6993,7 @@ export type ConnectorCallStatusRequest = { call_ref: string }
 export type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply }
 /** `oneiron::memory::claim_admission::ScopedCommitRequest` */
 export type ScopedCommitRequest = { claims: ScopedClaimInput[] }
-/** `oneiron::receipt::refusal_reason::RefusalReason` */
+/** `oneiron::store::reference_refusal::RefusalReason` */
 export type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED"
 /** `oneiron_contracts::error::legal_hold::LegalHoldState` */
 export type LegalHoldState = "retained_for_law" | "use_restricted"
