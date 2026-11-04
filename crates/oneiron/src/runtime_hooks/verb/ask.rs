@@ -42,6 +42,11 @@ const PROCEED: &str = "proceed";
 const HOLD: &str = "hold";
 pub(super) const USED: &str =
     "this invocation's ask was already used; call again with a new invocation";
+/// A consumed-but-unfinished WRITE's honest answer (FIX 1443): its outcome
+/// is unknown because its call never finished, so the retry must use a new
+/// invocation instead of meeting the misleading "already used".
+pub(super) const UNKNOWN: &str =
+    "this invocation's ask was used but its call never finished; call again with a new invocation";
 /// The most bytes of JSON a drained call's saved result keeps for its
 /// caller's retry. Encoding stops past it.
 pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
@@ -284,11 +289,47 @@ pub(super) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
-        return match &row.outcome {
-            Some(outcome) if same => Ok(Retry::Stop(completed(call.invocation, outcome)?)),
-            _ => skipped(USED),
+        if let Some(outcome) = &row.outcome {
+            if same {
+                return Ok(Retry::Stop(completed(call.invocation, outcome)?));
+            }
+            return skipped(USED);
+        }
+        // FIX 1443: a consumed-but-unfinished READ re-opens inline and
+        // resumes, while the same state on a WRITE answers Skipped with an
+        // honest unknown-outcome reason instead of "already used".
+        if row.domain == VerbDomain::Write {
+            return skipped(UNKNOWN);
+        }
+        let token = AskToken {
+            key,
+            ask: row.ask,
+            hook: row.hook.clone(),
         };
+        let reopened = vault.with_write_txn_grouped(|txn| reopen_in_txn(vault, txn, &token))?;
+        if !reopened {
+            return skipped(USED);
+        }
+        return resume_from(vault, call, &row, key, turn);
     }
+    resume_from(vault, call, &row, key, turn)
+}
+
+/// The Open-path resume construction, shared by a fresh Open row and a
+/// consumed-but-unfinished READ row re-opened inline (FIX 1443).
+fn resume_from(
+    vault: &Vault,
+    call: &VerbCall,
+    row: &VerbAsk,
+    key: [u8; 16],
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<Retry> {
+    let skipped = |reason: &str| -> Result<Retry> {
+        Ok(Retry::Stop(VerbHookStop::Skipped {
+            hook: row.hook.clone(),
+            reason: reason.to_owned(),
+        }))
+    };
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
@@ -319,7 +360,7 @@ pub(super) fn retry(
         token: AskToken {
             key,
             ask: row.ask,
-            hook: row.hook,
+            hook: row.hook.clone(),
         },
     })
 }

@@ -66,7 +66,7 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
-use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
+use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
 mod named_pause;
 mod room_pause;
@@ -267,6 +267,9 @@ pub(super) struct SessionVerbAsk {
     pub(super) ask: EntityId,
     /// Set once a retry resumed the call on a proceed answer it used up.
     pub(super) used: bool,
+    /// Whether the asking hook reads (FIX 1443: a used-but-unfinished READ
+    /// re-opens inline) or writes (an honest unknown-outcome Skipped).
+    pub(super) domain: VerbDomain,
     /// The route a room's call ran on when its hook asked, in RAM only; a
     /// resume refuses once it no longer holds (FIX 5524). `None` with no room.
     pub(super) route: Option<PausedRoute>,

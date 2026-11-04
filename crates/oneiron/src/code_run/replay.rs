@@ -15,7 +15,7 @@ use super::payload::{
     decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
     self_call_request_value, self_dispatch_outcome_value,
 };
-use super::spawn_replay::{ReplayRequestMatch, replay_request_match};
+use super::spawn_replay::replay_request_match;
 use super::support::{
     code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
     validate_label, validate_text,
@@ -394,7 +394,10 @@ impl CodeRunBridgeCall {
         else {
             return None;
         };
-        let Value::Map(entries) = &self.request else {
+        // The bubble spoke the dispatched call: read the rewritten text when
+        // a hook rewrote it (FIX 1442).
+        let effective = self.rewritten_request.as_ref().unwrap_or(&self.request);
+        let Value::Map(entries) = effective else {
             return None;
         };
         entries
@@ -951,18 +954,9 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         // A stored request keeps the handles the side-row wall placed where
         // the live call still holds the secrets (OF-067). This cursor issues
         // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
-        // A rewritten call replays as it dispatched (FIX 1442): its rewritten
-        // request matches first, and the guest's call it replaced decides
-        // whenever the rewritten one does not hit.
-        let matched = match &stored.rewritten_request {
-            Some(rewritten)
-                if replay_request_match(stored.effect, rewritten, &request)?.is_hit() =>
-            {
-                ReplayRequestMatch::Hit
-            }
-            _ => replay_request_match(stored.effect, &stored.request, &request)?,
-        };
-        if !matched.is_hit() {
+        // A re-offered call meets its row by the guest's original request;
+        // hooks never run on replay (FIX 1442 H4: match stays on original).
+        if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A cursor can be built from an in-memory record that never passed the
