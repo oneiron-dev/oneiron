@@ -35,6 +35,7 @@ mod recall;
 mod recall_hyde;
 mod recall_rerank;
 pub(crate) mod removal_delivery;
+mod residence_work;
 mod resident_pump;
 mod run_host_door;
 mod space_move;

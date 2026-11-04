@@ -174,6 +174,17 @@ impl Vault {
         Ok(wtxn.commit()?)
     }
 
+    /// Persists `record` in the caller's txn; no generation check (FIX 587).
+    pub(crate) fn put_code_run_replay_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &CodeRunReplayRecord,
+    ) -> Result<()> {
+        let record = super::response_erase::fence_replay_in_txn(self, wtxn, Cow::Borrowed(record))?;
+        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
+        Ok(())
+    }
+
     /// Persists the replay record only if the stored row still matches `expected`.
     pub fn put_code_run_replay_record_if_generation(
         &self,
