@@ -265,7 +265,23 @@ impl Vault {
             record.call = None;
         }
         record.content_hash = parsed.record.content_hash;
-        let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
+        // FIX 12792: a kept undeclared non-Callable role is Native-shaped
+        // (the record carries it, as the carried delta does); Folder equality
+        // would refuse the later read-back. Declared, Callable, and
+        // unchanged-default cases keep the Folder path below.
+        let saved = if declared_role.is_none()
+            && declared_call.is_none()
+            && record.role != SkillRole::Callable
+            && record.role != parsed.record.role
+        {
+            super::folder::package_from_source(
+                &record,
+                parsed.files,
+                super::SkillPackageFormat::Native,
+            )?
+        } else {
+            HubPackage::new(record.clone(), parsed.files, parsed.capabilities)
+        };
         // Every other stored field was just derived from these exact files, so
         // only the kept call contract needs binding back to its tree: it must
         // still name a UTF-8 file the edit kept.
