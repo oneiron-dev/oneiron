@@ -31,7 +31,7 @@ use super::super::{REASON_DETECTED, SecretScanMode, is_container, secret_scan_mo
 use super::side_row::{SidePart, admit_side_parts};
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
-use crate::secret_custody::{KnownSweep, KnownValues};
+use crate::store::known_value_index::{KnownSweep, KnownValues};
 use crate::store::{BodyDir, BodyFacts, BodyFile, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES};
 
 /// The door's whole-read bound: a body within it was read whole by the
