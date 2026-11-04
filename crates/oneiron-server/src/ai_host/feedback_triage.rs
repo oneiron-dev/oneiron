@@ -380,6 +380,12 @@ fn advance(
         step
     };
     let waiting = matches!(&step, FeedbackTriageStep::Wait);
+    // FIX 12546 (L07-A asked 08:56, no answer by 09:26; rubric-1 fallback):
+    // an empty-split Repartition Ready means a complete level, nothing to run.
+    let repartition_empty = matches!(
+        &step,
+        FeedbackTriageStep::Repartition { splits, .. } if splits.is_empty()
+    );
     match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
         FeedbackTriageParkOutcome::Parked(_) => Ok(()),
         FeedbackTriageParkOutcome::Ready(fresh) if waiting => {
@@ -397,6 +403,14 @@ fn advance(
                     "feedback triage park outcome does not match its step",
                 )),
             }
+        }
+        FeedbackTriageParkOutcome::Ready(fresh) if repartition_empty => {
+            if fresh.owed() {
+                return Err(unavailable(
+                    "feedback triage Repartition returned an owed graph",
+                ));
+            }
+            Ok(())
         }
         FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
             "feedback triage park outcome does not match its step",
