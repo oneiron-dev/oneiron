@@ -20,6 +20,10 @@
 //! native id an earlier group reported back — never a guess. Each applied
 //! group's order is verified against its body state before the next group
 //! runs; any divergence refuses the export and nothing lands.
+//!
+//! DOCX allows one formatting revision per run, with no nested rPrChange.
+//! Overlapping authors keep their exact in-engine commits; export uses the
+//! whole-window default-author fallback. Disjoint spans stay native.
 
 use super::author_token::DOCX_AUTHOR_TOKEN_MARKER;
 use super::*;
