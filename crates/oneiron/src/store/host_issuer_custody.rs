@@ -20,7 +20,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::authority::HOST_ISSUER_SEED_BYTES;
+use crate::store::host_issuer_seed::HOST_ISSUER_SEED_BYTES;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::key_custody::{

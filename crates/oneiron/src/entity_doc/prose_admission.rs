@@ -26,9 +26,10 @@ use crate::EdgeActorClass;
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::gate::record_references::{
-    MAX_PROSE_LINKS, MAX_PROSE_SCAN_BYTES, NamedRecordRef, PROSE_LINK_SCHEME, ProseLink,
-    ReferenceRefusal, parse_record_links, validate_record_references,
+    validate_record_references,
 };
+use crate::store::record_links::{MAX_PROSE_LINKS, MAX_PROSE_SCAN_BYTES, PROSE_LINK_SCHEME, ProseLink, parse_record_links};
+use crate::store::record_references::{NamedRecordRef, ReferenceRefusal};
 use crate::memory::Memory;
 use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
 use crate::receipt::{receipt_reference_refusals};

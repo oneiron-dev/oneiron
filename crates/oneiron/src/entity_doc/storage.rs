@@ -366,7 +366,7 @@ impl Vault {
                 if *field != TextField::MapField("content".to_owned()) {
                     return Err(invalid("MESSAGE document edits only content"));
                 }
-                crate::gate::validate_canonical_witness_message_body(body)?;
+                crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
                 let original = crate::note::decode_note_body(body)?;

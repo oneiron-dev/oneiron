@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::EngineScan;
 #[cfg(test)]

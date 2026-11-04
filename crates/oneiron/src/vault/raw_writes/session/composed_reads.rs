@@ -11,7 +11,7 @@ use crate::PipelineBuilder;
 use crate::entity_id::EntityId;
 use crate::memory::Memory;
 use crate::ports::EntityStoreRead;
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 use crate::vault::edges::{ancestors_in, subtree_in, would_create_cycle_in};
 use oneiron_contracts::memory::MemoryResult;

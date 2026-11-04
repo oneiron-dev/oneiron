@@ -39,7 +39,7 @@ impl BatchBuilder<'_> {
     pub(crate) fn apply_ingested(
         self,
         wtxn: &mut RwTxn<'_>,
-        authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         self.apply_with_gate_mode(
@@ -74,7 +74,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
-        authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the

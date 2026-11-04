@@ -12,9 +12,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result, SecretError};
 use crate::gate::{
-    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
-    GateProvenanceHandles,
+    self, ExternalEffectGateInput, GateProvenanceHandles,
 };
+use crate::store::policy_record::{ExternalEffectPolicyRisk, GateActor};
+use crate::store::gate_reason::{GateOutcome};
 use crate::outbound::OutboundDispatchPipeline;
 use crate::ports::EntityStoreRead;
 use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};

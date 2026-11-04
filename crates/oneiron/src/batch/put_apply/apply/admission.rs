@@ -19,7 +19,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) pending_prompt: Option<&'a [EntityId]>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
-    pub(super) authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     /// The own-device lane the sync ingest door gave a replicated MESSAGE
     /// row, which the witness check reads for this row and these bytes only
     /// (FIX 9600).
@@ -79,7 +79,7 @@ pub(super) fn admit_put<'a>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
-    authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<Admission<'a>> {
     let PutRequest {

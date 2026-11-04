@@ -48,7 +48,7 @@ pub(crate) fn quote_birth_admits_in(
     };
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
-        || crate::gate::validate_canonical_witness_message_body(body).is_err()
+        || crate::store::witness_message_body::validate_canonical_witness_message_body(body).is_err()
     {
         return Ok(false);
     }
@@ -119,7 +119,7 @@ fn birth_message_in_txn(
         return Err(invalid("stream birth requires MESSAGE"));
     }
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    crate::gate::validate_canonical_witness_message_body(body)?;
+    crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
         .map_err(|_| Error::CorruptedIndex("message canonical body"))?;
     let rmpv::Value::Map(mut fields) = value else {

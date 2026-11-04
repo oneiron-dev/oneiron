@@ -8,7 +8,7 @@ use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 use crate::store::Store;
 use crate::temporal::TimeRange;
