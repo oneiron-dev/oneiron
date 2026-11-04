@@ -86,7 +86,7 @@ pub(crate) fn reserve<T>(
     let doubled = buf.capacity().saturating_mul(2).max(needed);
     let target = if layout_bytes::<T>(doubled).is_some() { doubled } else { needed };
     let bytes = layout_bytes::<T>(target).ok_or_else(unaddressable)?;
-    Ok(())
+    Ok(());
     let old = buf.capacity().saturating_mul(size_of::<T>());
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
