@@ -97,9 +97,9 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::attempt_id::AttemptId;
 
 mod attempt_delete_authority;
 mod attempt_delete_receipts;
