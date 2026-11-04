@@ -19,7 +19,7 @@ use oneiron::receipt::{
     ActionInputs, CallAttemptWitness, CallOutcome, CallReceiptInput, CallTransport,
 };
 use oneiron::runtime_hooks::VerbHookStop;
-use oneiron::skill_attribution::RunWriteToken;
+use oneiron::skill_attribution::run_write_token_of_origin;
 use tower::ServiceExt;
 
 use super::super::host_doors::support::with_calling_run_writes;
@@ -238,7 +238,7 @@ impl FacadeRowDoor {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
-        let run_writes = RunWriteToken::of_origin(origin);
+        let run_writes = run_write_token_of_origin(origin);
         let outer = *self.outer.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(auth) = &self.credential {
             let auth = auth.clone();
