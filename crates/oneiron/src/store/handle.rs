@@ -678,7 +678,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
-            /// ([`crate::scan_check::ScanCount::defer`]).
+            /// ([`crate::store::scan_count::ScanCount::defer`]).
             fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
@@ -746,7 +746,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
@@ -844,7 +844,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     if entities.get(wtxn, id.as_bytes())?.is_some() {
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
-    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let timestamp = crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
     let body = crate::gate::default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);

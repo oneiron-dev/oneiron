@@ -507,3 +507,15 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub(crate) mod scan_count;
+pub(crate) mod record_links;
+pub(crate) mod record_references;
+pub(crate) mod consent_bound;
+pub(crate) mod policy_record;
+pub(crate) mod gate_reason;
+pub(crate) mod authority_rows;
+
+pub(crate) mod principal_record;
+pub(crate) mod host_issuer_seed;
+pub(crate) mod witness_message_body;

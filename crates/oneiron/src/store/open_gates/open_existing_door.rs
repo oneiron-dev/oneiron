@@ -343,7 +343,7 @@ impl Store {
             actor_class: "system".to_owned(),
             actor_ref: None,
             content_kind: "policy_manifest".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
             grant_ref: None,
             diff_handle: id.as_bytes().to_vec(),
@@ -394,7 +394,7 @@ impl Store {
         if !open_seeds_default(&crate::gate::resolve_policy_manifest(self, wtxn)?) {
             return Ok(None);
         }
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
             &self.entities,
             &self.sync_state,
