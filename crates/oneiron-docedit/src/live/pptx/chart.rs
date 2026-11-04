@@ -516,7 +516,8 @@ fn plot_moved(
                 let count = side_series
                     .iter()
                     .filter(|line| {
-                        line.id.is_some_and(|mate| base_key(mate) == Some((family, nth)))
+                        line.id
+                            .is_some_and(|mate| base_key(mate) == Some((family, nth)))
                             && plot_key(side_family, line) == (family, place)
                     })
                     .count();
