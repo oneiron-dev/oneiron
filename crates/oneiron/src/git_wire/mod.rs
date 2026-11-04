@@ -119,9 +119,9 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, PushedHeadReceipt, TeardownReceiptMatch,
 };
 #[cfg(test)]
-use crate::codebase::RepoRef;
-#[cfg(test)]
 use crate::error::Error;
+#[cfg(test)]
+use crate::store::code_snapshot::RepoRef;
 #[cfg(test)]
 use std::ffi::OsString;
 #[cfg(test)]
