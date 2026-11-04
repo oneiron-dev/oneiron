@@ -323,6 +323,29 @@ pub(crate) fn seeded_system_agent_ids() -> Result<Vec<EntityId>> {
         .collect())
 }
 
+/// Whether the stored AGENT_DEF `body` at seeded row `id` is still the
+/// manifest seed: decode it and compare every field against the seed this
+/// module writes. Anything unreadable or unseeded answers false.
+pub(crate) fn seeded_row_matches_manifest(id: &EntityId, body: &[u8]) -> bool {
+    let Ok(stored) = decode_agent_definition(body) else {
+        return false;
+    };
+    let Ok(manifest) = system_agent_manifest() else {
+        return false;
+    };
+    let Some(seed) = manifest
+        .definitions
+        .iter()
+        .find(|seed| seed.entity_id.0 == *id)
+    else {
+        return false;
+    };
+    let Ok(expected) = seed.definition_row(None) else {
+        return false;
+    };
+    stored == expected
+}
+
 /// Canonical export-safe identity from the compiled seeded roster, never from
 /// user-editable AGENT_DEF display names or version text.
 pub(crate) fn system_export_identity(

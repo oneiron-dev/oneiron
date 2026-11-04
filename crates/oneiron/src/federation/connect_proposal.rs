@@ -222,8 +222,8 @@ pub(crate) fn drop_pending_connect_proposals_in_txn(
     Ok(())
 }
 
-/// The inbox's actor scrub (FIX 3520): an erased actor's proposals, and the
-/// decisions it made, leave with it.
+/// The inbox's scrub (FIX 3520): an erased actor's proposals, the decisions
+/// it made, and every row naming an erased entity leave with it.
 pub(crate) fn erase_connect_proposer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -232,7 +232,10 @@ pub(crate) fn erase_connect_proposer_in_txn(
     let mut named = Vec::new();
     for row in PROPOSALS.iter_from(&vault.store, txn, &[])? {
         let (key, row) = row?;
-        if row.proposer == *actor || row.decision.is_some_and(|decision| decision.by == *actor) {
+        if row.entity == *actor
+            || row.proposer == *actor
+            || row.decision.is_some_and(|decision| decision.by == *actor)
+        {
             named.push(key);
         }
     }
