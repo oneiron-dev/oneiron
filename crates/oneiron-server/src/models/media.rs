@@ -100,6 +100,8 @@ pub(super) enum MediaAnswer {
 
 /// A submitted job, its permit held open until the job ends.
 pub(super) struct HeldJob {
+    /// The actual managed worker held by this submit, released with the job.
+    pub(super) _worker: Option<oneiron_driver::WorkerLease>,
     pub(super) gate: MediaGate,
     pub(super) permit: Option<RunPermit>,
     /// Its offer's health permit, held while the job runs: a recovering
@@ -521,6 +523,7 @@ impl MediaRuntime {
             .as_ref()
             .and_then(|rests| rests.try_probe(&rung.offer.binding, &rung.wire_model).ok());
         Ok(HeldJob {
+            _worker: None,
             gate,
             permit: Some(permit),
             probe,
