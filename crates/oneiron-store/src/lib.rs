@@ -14,6 +14,7 @@ pub mod embedding_vocabulary;
 pub mod esign_rate_thresholds;
 pub mod file_secret_marks;
 pub mod heap_drop;
+pub mod graph_version;
 pub mod identity_hints;
 pub mod index_keys;
 pub mod key_material;

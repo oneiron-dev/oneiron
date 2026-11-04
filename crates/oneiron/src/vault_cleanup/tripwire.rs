@@ -353,12 +353,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 now,
             )?;
             // A ProposeFirst proposal waits in the owner's tray (FIX 9853).
-            crate::store::healer_oversight::routed_in_txn(
-                vault,
-                wtxn,
-                &proposal.id.to_hex(),
-                now,
-            )?;
+            crate::store::healer_oversight::routed_in_txn(vault, wtxn, &proposal.id.to_hex(), now)?;
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,
