@@ -776,6 +776,11 @@ pub(super) fn filter_window_doc(
     // Rule A: a birth crosses only beside an owner this filter shipped, and
     // only as far as `reach` lets it.
     copy_births_within(source, &out, reach)?;
+    // FIX 6870: a repo's manifest crosses only beside a CODE row this
+    // filter shipped, which already passed the grant's selector.
+    crate::sync::repo_manifests::copy_repo_manifest_heads(source, &out, |code| {
+        shipped.contains(code)
+    })?;
     crate::sync::asset_body::references::copy_refs_within(source, &out)?;
     // FIX 2902: a proved machine of this vault's takes, beside each shipped
     // row, the origin this vault's import judged its bytes by.

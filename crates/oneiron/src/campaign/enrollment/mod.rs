@@ -43,6 +43,9 @@ mod step_connector;
 mod storage;
 mod target;
 
+pub(crate) use self::approval::{
+    drop_enrollment_asks_of_call_in_txn, erase_enrollment_ask_actor_in_txn,
+};
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 pub(crate) use self::reconcile::{
     IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
@@ -63,6 +66,7 @@ pub use self::home_node::{
 pub use self::outbound_leg::{
     EnrollmentLegDrive, drive_enrollment_outbound_leg, enrollment_outbound_approval_digest,
 };
+pub(crate) use self::program::admit_campaign_leg_in_txn;
 pub use self::program::{
     AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
     CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,
@@ -73,7 +77,9 @@ pub use self::program::{
     campaign_program_step,
 };
 pub use self::program::{CampaignProgramAudience, campaign_programs_for_query};
-pub(crate) use self::program::{put_campaign_program, put_campaign_program_step};
+pub(crate) use self::program::{
+    put_campaign_program, put_campaign_program_step, transition_campaign_programs_in_txn,
+};
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,
     EnrollmentExecution, decode_enrollment_attempt_payload, derive_enrollment_outbound_request,

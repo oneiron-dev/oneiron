@@ -120,7 +120,8 @@ pub(super) fn dispatch_put_type(
                     &fixed.id,
                     crate::gate::ClaimGateWrite::plain(&body, fixed.write_envelope)
                         .with_transition(fixed.transition)
-                        .with_owner_authored(fixed.owner_authored),
+                        .with_owner_authored(fixed.owner_authored)
+                        .with_pending_prompt(fixed.pending_prompt),
                     policy,
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,
@@ -201,7 +202,7 @@ pub(super) fn dispatch_put_type(
         }
         dispatch.authority_entry_hash_pin = Some(entry_hash);
         dispatch.authority_entry_observation = Some(entry);
-    } else if crate::workspace_roster::is_project_revision_type(store, fixed.entity_type) {
+    } else if crate::store::project_kind::is_project_revision_type(store, fixed.entity_type) {
         let put = crate::workspace_roster::check_revision_put(
             store,
             wtxn,

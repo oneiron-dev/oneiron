@@ -14,6 +14,9 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// FIX 12004: one meeting card delivered to the owners' INBOX, a prep pack or a check-in with
+    /// its one morning re-ask, holding the lens as delivered. Key: id16(EVENT) + string (kind).
+    CALENDAR_INBOX_CARD: VaultMeta b"calendar.inbox-card.v1:" Named Admitted;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -37,7 +40,8 @@ side_tables! {
     /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
     /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw;
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+        => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;
@@ -265,6 +269,10 @@ side_tables! {
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
     CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
+    /// written when its seal is finalized, so a read finds the root by key, never by walking
+    /// the chain (FIX 7390, 7391). Key: id16.
+    CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
     CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
@@ -298,6 +306,11 @@ side_tables! {
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
+    /// One model call's evidence and replay record (FIX 12516), keyed by
+    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
+    /// evidence only: never an entity, BM25/vector/Dreamer input.
+    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
+        => crate::code_run::erase_model_call_actor_in_txn;
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it
@@ -412,6 +425,9 @@ side_tables! {
     /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
     /// send until the projection that releases it or the event's delete. Key: id16 (the event).
     COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
+    /// A durable send receipt the comm projector's import skipped, written when it first warned
+    /// about it: the reason and when. Node-local. Key: id16 (the receipt's TASK).
+    COMM_SKIPPED_SEND_RECEIPT: VaultMeta b"comm.skipped_send_receipt.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.
@@ -440,6 +456,10 @@ side_tables! {
     CONNECTOR_SLATE_SCOPE_SIGNAL: VaultMeta b"connector.grant_slate.scope_signal.v1/" Named;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
+    /// The qualification kit the owner's last successful qualify of a catalog key used, which an
+    /// accepted issuer revision's re-run qualifies its dependent rows with (FIX 9304). Key: id16
+    /// (catalog key).
+    CONNECTOR_QUALIFICATION_KIT: VaultMeta b"connector.qualification_kit.v1/" Named;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
     CONNECTOR_WAKE_DECISION: VaultMeta b"connector.wake.v1:" LegacyJson;
     /// Permanent catalog-name to key-id index; never deleted on key removal. Key: string(catalog

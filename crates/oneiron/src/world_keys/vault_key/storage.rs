@@ -90,7 +90,7 @@ impl Vault {
     /// elsewhere opens through an escrow wrap ([`Self::add_vault_key_escrow`]).
     /// True when the vault took it as new.
     pub fn admit_vault_key(&self, delivered: &[u8; 32]) -> Result<bool> {
-        let key = VaultDataKey(Zeroizing::new(*delivered));
+        let key = VaultDataKey::from_guarded(Zeroizing::new(*delivered));
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let created = self.with_write_txn(|txn| {
