@@ -37,9 +37,9 @@ use super::model::*;
 use super::notice_dispatch::EsignNotice;
 use super::outbound::{EsignOutboundVerb, OwnerSendAct, dispatch_marker_in};
 use crate::attempt_queue::AttemptRecord;
+use crate::outbound::EsignDeliveryCall;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_state::AttemptState;
-use crate::outbound::EsignDeliveryCall;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
