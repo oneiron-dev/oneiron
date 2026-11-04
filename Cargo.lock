@@ -8713,8 +8713,12 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "rmpv",
+ "rustix",
  "schemars 0.8.22",
  "serde",
+ "tracing",
+ "uuid",
+ "xxhash-rust",
  "zeroize",
 ]
 
