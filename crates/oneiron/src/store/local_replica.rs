@@ -41,7 +41,7 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::dreamer_runner::authority::is_base_agent_actor;
+use crate::store::base_agent::is_base_agent_actor;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -514,7 +514,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// refusal keeps the row, and so does a guard that cannot read it: keeping is
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
-    crate::task_authority::reject_fact_delete(store, txn, id).is_err()
+    crate::store::task_authority_guard::reject_fact_delete(store, txn, id).is_err()
         || store
             .delete_guards
             .refuse_revision_delete(store, txn, id)
@@ -606,7 +606,7 @@ fn remove_member(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .erase(id, store.env.info().last_txn_id);
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
     report.removed.push(*id);
     Ok(())
 }

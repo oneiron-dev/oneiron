@@ -246,7 +246,7 @@ pub(super) fn dispatch_put_type(
             fixed.occurred,
             data,
         )?;
-        crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
+        crate::store::diagnostic_record::admission::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
@@ -270,7 +270,7 @@ pub(super) fn dispatch_put_type(
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
-        crate::skill::resident::validate_owner_put_in_txn(
+        crate::store::skill_resident::validate_owner_put_in_txn(
             store,
             wtxn,
             &fixed.id,
@@ -287,11 +287,11 @@ pub(super) fn dispatch_put_type(
         )?;
         dispatch.new_skill_record = Some(decoded);
     } else if fixed.entity_type == ENTITY_TYPE_AGENT_DEF {
-        let decoded = crate::agent_def::decode_agent_definition(data)?;
+        let decoded = crate::store::agent_definition_codec::decode_agent_definition(data)?;
         // ONE-1890 `sys.*` reservation and the H215 id pin, at the one arm
         // that holds both the decoded body and its destination row id — ALL
         // puts, mirroring SKILL's decode-site capture of `new_skill_record`.
-        crate::agent_def::validate_reserved_logical_id(&fixed.id, &decoded)?;
+        crate::store::agent_manifest::validate_reserved_logical_id(&fixed.id, &decoded)?;
         agent_id_pin =
             crate::agent_def::agent_id_pin_for_put_in_txn(store, wtxn, &fixed.id, &decoded)?;
         dispatch.new_agent_definition = Some(decoded);
