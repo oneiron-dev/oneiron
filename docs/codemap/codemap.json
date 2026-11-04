@@ -27096,7 +27096,7 @@
      "path": "src/dreamer_consolidation/running_buckets.rs",
      "purpose": "The buckets a MACRO run holds once its preparation narrowed it (FIX 7729)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -32643,7 +32643,7 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 2,
       "struct": 2
      }
@@ -33121,7 +33121,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 48
+      "crate-vis": 50
      }
     },
     {
@@ -33270,7 +33270,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "KeepUndo",
@@ -51782,7 +51782,7 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
       "fn": 2,
       "struct": 9
@@ -51795,7 +51795,7 @@
      "path": "src/office_body/consent/live_edit.rs",
      "purpose": "Live DOCX/XLSX edit admission and grant lifecycle (FIX 596)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -51862,7 +51862,7 @@
      "path": "src/office_body/holder_ask/live_edit.rs",
      "purpose": "Live DOCX/XLSX edit holder asks and ACCEPT grant minting (FIX 596)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -79885,7 +79885,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -125193,7 +125193,7 @@
      "path": "src/projection.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 7,
       "struct": 1
