@@ -695,11 +695,18 @@ impl SpentNonces {
         }
         // The proof was judged on `clock`, read in an earlier snapshot: a
         // writer since may have moved the proof floor or `not_before` and let
-        // this nonce's row go (review #4484 Astra P1, 11-04 16:2x). Any move
+        // this nonce's row go (review #4484 Astra P1, 11-04 16:2x), or an
+        // owner's clock recovery may have set the clock back below it (Astra
+        // round 6): the clock read now, as `request_now_in_txn` reads it,
+        // must not stand below the one the proof was judged on. Any move
         // sends the request to the writer's path, which judges it afresh.
+        let live_high = nonces.live_high;
         let committed = match vault.store.env.read_txn() {
             Ok(txn) => (|| -> Result<bool> {
-                if proof_floor_in_txn(vault, &txn)? > clock.now
+                let floor = proof_floor_in_txn(vault, &txn)?;
+                let now = floor.max(vault.store.clock.wall_now()).max(live_high);
+                if floor > clock.now
+                    || now < clock.now
                     || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0) > clock.not_before
                 {
                     return Ok(true);
