@@ -1014,7 +1014,7 @@ async fn witness_off_record(
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let receipt = blocking(move || {
-        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+        off_record::witness(server.vault(), &owner, &request, server.embedder_slot().as_ref())
     })
     .await?;
     Ok(Json(receipt))
