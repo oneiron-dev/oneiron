@@ -206,7 +206,9 @@ pub(crate) fn remove_local_replica_window_in_txn(
     keep: KeepControls,
 ) -> Result<RemovedReplica> {
     let queued_writes =
-        crate::sync::queue::queued_window_update_count_in_txn(store, txn, window.as_str())?;
+        store
+            .sync_hooks
+            .queued_window_update_count_in_txn(store, txn, window.as_str())?;
     let mut report = RemovedReplica {
         queued_writes,
         ..RemovedReplica::default()
@@ -364,7 +366,11 @@ impl<'a> Census<'a> {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
             KeepReason::Pending
-        } else if crate::workspace_roster::reject_audience_edit_delete(self.store, txn, id).is_err()
+        } else if self
+            .store
+            .delete_guards
+            .reject_audience_edit_delete(self.store, txn, id)
+            .is_err()
         {
             // A kept audience edit stays whatever the caller keeps (FIX 5639).
             KeepReason::Guarded
@@ -509,12 +515,24 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
     crate::task_authority::reject_fact_delete(store, txn, id).is_err()
-        || crate::workspace_roster::refuse_revision_delete(store, txn, id).is_err()
-        || crate::workspace_roster::guard_goal_delete(store, txn, *id).is_err()
-        || crate::federation::reject_ruling_delete(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .refuse_revision_delete(store, txn, id)
+            .is_err()
+        || store
+            .delete_guards
+            .guard_goal_delete(store, txn, *id)
+            .is_err()
+        || store
+            .delete_guards
+            .reject_ruling_delete(store, txn, id)
+            .is_err()
         || crate::claim::history_store::reject_machine_history_delete(store, txn, id).is_err()
         || store.guard_pack_map_carrier_delete_in_txn(txn, id).is_err()
-        || crate::identity_topology::guard_batch_identity_delete_in_txn(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .guard_batch_identity_delete_in_txn(store, txn, id)
+            .is_err()
 }
 
 /// Tears one member's local rows. Every step is a local index or projection
@@ -601,7 +619,7 @@ fn remove_vectors(
 ) -> Result<()> {
     store.clear_pending_embedding(txn, id)?;
     // The member's queued embed job goes with its marker, in the same txn.
-    crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+    store.sync_hooks.delete_embed_job_in_txn(store, txn, id)?;
     if store.vectors.delete(txn, id.as_bytes())? {
         report.vectors += 1;
     }

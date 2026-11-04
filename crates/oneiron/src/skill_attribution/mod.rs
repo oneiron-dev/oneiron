@@ -40,7 +40,7 @@ pub use self::calibration::{
 };
 mod causes;
 pub use self::causes::AttributionCauseRecord;
-pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
+pub(crate) use self::causes::attempt_attribution_causes;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
@@ -83,7 +83,6 @@ pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
 mod positive;
-pub(crate) use self::positive::erase_positive_proposals_in_txn;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
@@ -93,11 +92,12 @@ pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
     withdraw_edit_proposal_in_txn,
 };
-mod row_ids;
-pub(crate) use self::row_ids::{attribution_judgment_row_ids, edit_proposal_row_ids};
+pub(crate) use oneiron_skill_attribution::row_ids::{
+    attribution_judgment_row_ids, edit_proposal_row_ids,
+};
 mod skill_erase;
 pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
+    erase_attribution_evidence_skill_in_txn,
     erase_scan_in_txn,
 };
 mod split;
@@ -105,7 +105,7 @@ pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
     unclear_floor_sourced,
 };
-mod types;
+use oneiron_skill_attribution::types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
 pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
