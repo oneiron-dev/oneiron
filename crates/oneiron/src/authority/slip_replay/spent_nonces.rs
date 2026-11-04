@@ -832,11 +832,15 @@ impl SpentNonces {
         // after a step back across the crash (review #4484 P1 x2). A record
         // that does not read is bounded by a readable one after it; one with
         // none after it bounds nothing, so the replay fails closed and the
-        // journal stays for the owner (11-04 16:05).
+        // journal stays for the owner (11-04 16:05; L02 16:14: unavailability
+        // over rollback). The owner's way back: move the journal aside, open,
+        // then revoke every capability slip issued before the journal's last
+        // write. A proof of the unbounded spend then meets a revoked slip,
+        // whatever its nonce.
         if unbounded {
             tracing::error!(
                 journal = %path.display(),
-                "the slip-spend journal's last complete record does not read and no record bounds its proof; the open fails"
+                "the slip-spend journal's last complete record does not read and no record bounds its proof; the open fails. To recover: move the journal aside, open, and revoke every capability slip issued before its last write"
             );
             return Err(Error::CorruptedIndex("slip-spend journal"));
         }
