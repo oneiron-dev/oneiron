@@ -249,6 +249,8 @@ pub struct SnapshotSkips {
     pub oversize: u64,
     /// What it was computed with was not named whole.
     pub unsupported: u64,
+    /// Its dependency set was imprecise (a world or author did not read).
+    pub imprecise: u64,
     /// It was too short to pay back its transfer.
     pub short: u64,
 }
