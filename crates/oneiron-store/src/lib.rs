@@ -4,6 +4,7 @@ pub mod bundle_generations;
 pub mod checkpoint_host_recipient;
 pub mod connector_key_status;
 pub mod file_secret_marks;
+pub mod identity_hints;
 pub mod key_material;
 pub mod model_decision;
 pub mod model_step_record;
