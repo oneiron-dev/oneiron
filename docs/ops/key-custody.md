@@ -35,6 +35,14 @@ Passes run right after every backup (`oneiron backup`, the `[backup]` schedule a
 `POST /v1/owner/backups`), when `serve` starts, and every minute while anything is pending, on a
 managed host too. A save or a backup never waits on a pass and never fails because of one.
 
+An Owners' vault deletion keeps the automatic folder beside the configured backups until
+`backup_retain_until` on the vault's clock. A standing legal hold defers the drop. After that
+deadline without a hold, the folder's copy of this lineage goes: its sealed head, keyless log,
+stages and temporary files. Its automatic publisher does not recreate it. The shared parent,
+other lineages, local keys and independent targets stay untouched. The target stays registered,
+but its current acknowledgement is cleared and its status says pending; this is not a member
+drain, a deletion acknowledgement or completion of outstanding custody obligations.
+
 ## The Hypnos outbox
 
 On a managed host, the engine stages a declared `outbox:<name>` member's exact batch
