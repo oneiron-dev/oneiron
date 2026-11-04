@@ -311,8 +311,10 @@ fn envelope_of(
             let mut encoded = Vec::new();
             rmpv::encode::write_value(&mut encoded, value)
                 .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))?;
-            rmp_serde::from_slice::<Vec<crate::ContentPart>>(&encoded)
-                .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))
+            rmp_serde::from_slice::<Vec<crate::store::witness_message_body::StoredMessagePart>>(
+                &encoded,
+            )
+            .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))
         })
         .transpose()?;
     let mut metadata = get("metadata").cloned();
