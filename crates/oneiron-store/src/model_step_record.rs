@@ -1,6 +1,6 @@
 //! Durable model-step claim vocabulary and progression values.
 
-use crate::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::{LlmResponse, ModelId};
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +89,7 @@ impl StepProgression {
         }
     }
 
-    pub(crate) const fn as_u8(self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         match self {
             Self::Started => 0,
             Self::ResponseReceived => 1,
@@ -98,7 +98,7 @@ impl StepProgression {
         }
     }
 
-    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Started),
             1 => Some(Self::ResponseReceived),
@@ -135,7 +135,7 @@ impl DreamerTrapKind {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "budget" => Some(Self::Budget),
             "consent" => Some(Self::Consent),
@@ -169,7 +169,7 @@ impl DreamerTrapState {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "created" => Some(Self::Created),
             "waiting" => Some(Self::Waiting),
@@ -179,7 +179,7 @@ impl DreamerTrapState {
         }
     }
 
-    pub(crate) const fn may_transition_to(self, next: Self) -> bool {
+    pub const fn may_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
             (Self::Created, Self::Waiting)
@@ -199,7 +199,7 @@ pub struct TrapRef {
     pub step_hash: [u8; 32],
 }
 
-pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
+pub const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
 
 /// Payload-free projection of the existing live checkpoint or terminal step claim.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -247,7 +247,7 @@ pub struct SettledStepView {
 }
 
 /// One settled step as a caller's own lane reads it (DOOR-141 PR3a).
-pub(crate) enum CallerSettledStep {
+pub enum CallerSettledStep {
     /// The terminal claim, and the response artifact it pins, read on the
     /// caller's lane: the step as stored.
     Readable(Box<SettledStepView>),

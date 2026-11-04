@@ -186,7 +186,7 @@ impl SlideReviewLabels {
 /// The managed anchor kept beside the comment, not only inside the exported
 /// file (ARCH-0077, "Managed anchor"): the typed view's slide identity and
 /// fingerprints, and for a shape unit its retained node and fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewAnchor {
     pub slide_part: String,
     pub sld_id: u32,
@@ -195,7 +195,7 @@ pub struct SlideReviewAnchor {
     pub shape: Option<ShapeReviewAnchor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ShapeReviewAnchor {
     /// The retained shape element: its part and document-order index.
     pub node_part: String,
@@ -206,7 +206,7 @@ pub struct ShapeReviewAnchor {
 
 /// Bound to its exported comment and exact source version. Settlement keeps
 /// this record with the consume-once receipt, not just a client-side preview.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideJudgment {
     pub thread_id: EntityId,
     pub target: PptxCommentTarget,
@@ -256,7 +256,7 @@ pub struct SlideJudgment {
 /// A located answer on its slide, in EMU from the slide's top-left corner: the
 /// answer's fractions of a host-rendered whole-slide image times the deck's
 /// slide size. A point is a box with no extent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlideLocation {
     pub slide_width: i64,
@@ -321,7 +321,7 @@ pub struct SlideReviewRun {
 /// clock (a cut, no rung able to take it), or the presence step's when it left
 /// a Box or Point question unanswered; none when the host had no image, or no
 /// rung reads one for a Box or Point question.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     pub decision: Option<TypedDecision>,
@@ -346,7 +346,7 @@ pub struct SlideUnitRefusal {
 
 /// On the wire as its variant name (`MissingShape`, ...), the words a
 /// review's refusals have always carried.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SlideUnitRefusalReason {
     /// No shape on the slide carries the creation id.
     MissingShape,
