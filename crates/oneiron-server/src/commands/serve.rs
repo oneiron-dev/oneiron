@@ -366,7 +366,9 @@ pub(crate) async fn build_server(
         .as_ref()
         .is_some_and(|models| models.extraction_egress)
     {
-        sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+        sync_server
+            .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+            .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true))
     } else {
         sync_server
     };

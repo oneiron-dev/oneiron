@@ -2970,6 +2970,54 @@ tagger probe succeeded provider=local label_count=53 links=false checkpoint_sha1
 endpoint, whose card names none. `stack_pinned` says whether the section
 pins `stack_sha16` too.
 
+### Network tagger endpoints
+
+The endpoint provider keeps its on-device default. To use infrastructure the
+owner controls, declare its locality explicitly and enable the existing host
+extraction opt-in:
+
+```toml
+[models]
+extraction_egress = true
+
+[oneironer]
+provider = "endpoint"
+url = "https://tagger.example"
+locality = "owner-server"
+checkpoint_sha16 = "0123456789abcdef"  # must match the actual served card
+label_count = 9                     # must match the actual served card
+```
+
+`locality` also accepts `on-device` (the default) and `third-party`. Its CLI
+and environment forms are `--oneironer-locality` and
+`ONEIRON_ONEIRONER_LOCALITY`. On-device endpoints must be loopback. Network
+hosts require HTTPS. All endpoint calls disable proxies and redirects.
+This transport adds no mandatory key configuration; an endpoint that requires
+a credential is not covered by this keyless transport.
+
+The host opt-in does not replace the vault admin's
+`PurposeDefaultTable.extraction_max_locality` bound. That bound must cover the
+endpoint's route. With a manifest, the effective Oneironer route must match
+the endpoint's declared locality, and its extraction encoder must name the
+served checkpoint revision. The model-name alias may differ. Without a
+manifest, the host's section selects the tagger, but the vault's bound and
+host permission still apply.
+
+Every actual network extract POST reads the current vault policy and invokes
+the native host predicate on the exact input being sent, including a plain
+resend after a compressed body is refused. Both synchronous and staged
+marker drains and the owner's Tag role invocation carry that vault context.
+Raw extraction/eval calls without it cannot send to a network endpoint.
+Witness shadowing and feedback redaction remain local-only. Model-card GETs
+carry no vault text and need no extraction permission.
+
+Programmatic hosts install `SyncServer::with_tagger_egress` with a typed
+`TaggerEgressPredicate`. An existing `with_extraction_egress` callback sees
+LLM requests only and does not authorize tagger inputs. Standard serve
+installs both callbacks under the same `[models] extraction_egress` flag.
+No source-read authority is minted by either callback; existing source,
+secret and off-record checks remain the callers' responsibility.
+
 ### Fetch a shipped release (`oneiron oneironer fetch`)
 
 The engine carries a catalogue of shipped tagger bundles. Each one is pinned

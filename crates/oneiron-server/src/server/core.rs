@@ -265,6 +265,8 @@ pub struct SyncServer {
     pub(crate) hyde_host: Arc<super::recall_hyde::HydeHost>,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    /// Host-native permission for each actual tagger POST, separate from LLM requests.
+    pub(crate) tagger_egress: Option<Arc<dyn oneiron::llm::TaggerEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
@@ -565,6 +567,16 @@ impl SyncServer {
         predicate: Arc<dyn oneiron::llm::ExtractionEgressPredicate>,
     ) -> Self {
         self.extraction_egress = Some(predicate);
+        self
+    }
+
+    /// Install the host's native tagger predicate; an LLM-only predicate
+    /// does not authorize a different payload type.
+    pub fn with_tagger_egress(
+        mut self,
+        predicate: Arc<dyn oneiron::llm::TaggerEgressPredicate>,
+    ) -> Self {
+        self.tagger_egress = Some(predicate);
         self
     }
 
