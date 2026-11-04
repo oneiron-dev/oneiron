@@ -98351,6 +98351,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "A1"
+     ],
+     "path": "src/a1.rs",
+     "purpose": "One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/bin/deck-gate-cases.rs",
      "purpose": "`deck-gate-cases`: the engine half of the OF-510 deck gate runner",
@@ -99205,7 +99219,7 @@
      "path": "src/lib.rs",
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 15,
       "mod": 16,
@@ -100322,7 +100336,7 @@
      "path": "src/xlsx_body.rs",
      "purpose": "SpreadsheetML workbook read and projection seam",
      "surface": {
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -100560,6 +100574,13 @@
     }
    ],
    "modules": {
+    "a1": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full…"
+    },
     "contract": {
      "files": 2,
      "impl_vault": false,
@@ -100696,7 +100717,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 157,
+   "source_files": 158,
    "test_files": 14
   },
   "oneiron-driver": {
