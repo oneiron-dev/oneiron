@@ -237,6 +237,7 @@ pub(crate) use claim_vad_owed::{
 };
 pub mod body_descriptor;
 mod commitment_due;
+pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
 pub mod decision_ask_role;
@@ -257,6 +258,13 @@ pub(crate) mod graph_version;
 pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
+pub mod receipt_row;
+pub mod owned_body;
+pub mod birth_record;
+pub(crate) mod claim_projection;
+pub(crate) mod claim_lineage;
+pub(crate) mod gate_receipt;
+pub mod reference_refusal;
 pub(crate) mod result_body_erasure;
 pub(crate) mod result_body_reader;
 pub(crate) mod result_body_rows;
@@ -506,6 +514,7 @@ pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 pub mod dispatch_attempt_kind;
 
 pub mod checkout_lease;
+pub mod contract_oracle;
 
 pub mod repo_mutation_record;
 
@@ -540,3 +549,15 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub(crate) mod scan_count;
+pub(crate) mod record_links;
+pub(crate) mod record_references;
+pub(crate) mod consent_bound;
+pub(crate) mod policy_record;
+pub(crate) mod gate_reason;
+pub(crate) mod authority_rows;
+
+pub(crate) mod principal_record;
+pub(crate) mod host_issuer_seed;
+pub(crate) mod witness_message_body;
