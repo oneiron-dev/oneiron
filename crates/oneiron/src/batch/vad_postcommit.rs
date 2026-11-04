@@ -39,6 +39,8 @@ pub(crate) struct PostcommitWork {
     /// Whether this transaction put or marked a notification, whose live
     /// queries wake only after it commits (FIX 3084).
     pub(crate) notifications_changed: bool,
+    /// NOTE documents invalidated only after this transaction commits.
+    pub(crate) note_document_ids: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -130,6 +132,18 @@ pub(crate) fn queue_task_updates(
             queued.task_ids.extend(ids);
         }
     });
+}
+
+impl Vault {
+    /// Queue a NOTE document invalidation for this transaction's owner.
+    /// No owner scope means no work; rollback or unwind discards the id.
+    pub(crate) fn queue_note_document_update_in_txn(&self, txn: &RwTxn<'_>, id: EntityId) {
+        PENDING_VAD.with(|pending| {
+            if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(self, txn)) {
+                queued.note_document_ids.insert(id);
+            }
+        });
+    }
 }
 
 /// Mark settled TASKs for the owner's post-commit peer-result wake (FIX 1140).

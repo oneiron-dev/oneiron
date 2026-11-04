@@ -437,6 +437,7 @@ fn seal_pad_in_txn(
 ) -> crate::error::Result<()> {
     if !crate::ports::TombstoneStore::port_tombstone_is_deleted(vault, txn, &pad)? {
         crate::note::seal_note_in_txn(vault, txn, pad, actor)?;
+        vault.queue_note_document_update_in_txn(txn, pad);
     }
     Ok(())
 }
