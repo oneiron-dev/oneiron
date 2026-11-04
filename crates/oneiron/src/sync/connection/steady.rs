@@ -100,6 +100,7 @@ impl SyncConnection {
                 .await
             {
                 if matches!(exit, LoopExit::Shutdown) {
+                    self.publish_leave_unqueued(debounce_buffer);
                     break exit;
                 }
                 return exit;

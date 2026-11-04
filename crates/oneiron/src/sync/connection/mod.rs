@@ -199,11 +199,11 @@ impl SyncConnection {
 
     /// Publishes the count of valid run-buffer updates an explicit leave arm
     /// discards unqueued (OF-158), then clears that buffer as the explicit
-    /// owner discard. Runs AFTER the arm's single-try `queue_on_exit`:
-    /// remaining valid-key entries never landed in `q:` (a Pause writes
-    /// nothing), so the durable discard cannot recount them; an admitted
-    /// flush drained the buffer, so this adds 0 and only the durable count
-    /// stands. Additive (`fetch_add`, never a storing overwrite) plus the
+    /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
+    /// writes nothing; an admitted flush drains the buffer, so this adds 0.
+    /// A leave that interrupts a send publishes its owned buffer directly,
+    /// without another queue admission. Additive (`fetch_add`, never a
+    /// storing overwrite) plus the
     /// synchronous clear means a later arm seeing the emptied buffer adds 0
     /// without touching the earlier publication. Non-waiting; runs BEFORE any
     /// `Close`/cleanup await. Leave arms only; non-leave shutdown never
