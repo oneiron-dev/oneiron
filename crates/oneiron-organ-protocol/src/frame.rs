@@ -26,7 +26,7 @@
 //! decodes into before that is built ([`FrameBooking`]).
 
 use std::io::{self, IoSlice, IoSliceMut};
-use std::mem::MaybeUninit;
+use std::mem::{MaybeUninit, size_of};
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
@@ -554,11 +554,20 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     // The room first, then the bytes: nothing is allocated for a frame its
     // receiver has not made room for.
     let mut held = booking.body(u64::from(len))?;
+    // The descriptors that rode on the first header, through the same lease:
+    // they landed before the body's room was made (FIX 12434).
+    let mut fds_booked = fds.len();
+    booking.fds(&mut held, fd_bytes(fds_booked))?;
     let mut body = Vec::new();
     recv_body(stream, wait, &mut body, len)?;
     while more {
         let (len, next) = recv_header(stream, wait, &mut fds)?;
         bound.check(len, body.len() as u64)?;
+        // Each continuation's descriptors too, including descriptor-only
+        // frames, which book no other room (FIX 12434).
+        let fresh = fds.len() - fds_booked;
+        fds_booked = fds.len();
+        booking.fds(&mut held, fd_bytes(fresh))?;
         // Scratch is a temporary full lease covering the old buffer
         // outliving its realloc, on floor and budget, released by drop;
         // skipped for descriptor-only (len 0) and fitting frames.
@@ -587,6 +596,11 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     drop(body);
     booking.body_gone(&mut held, total);
     Ok((message, fds, total, held))
+}
+
+/// What `count` received descriptors' vector room takes: one entry each.
+fn fd_bytes(count: usize) -> u64 {
+    (count as u64).saturating_mul(size_of::<OwnedFd>() as u64)
 }
 
 /// One frame's header, and the descriptors that rode on its first byte.

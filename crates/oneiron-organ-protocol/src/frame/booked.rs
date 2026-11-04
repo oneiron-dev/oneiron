@@ -51,6 +51,18 @@ pub trait FrameBooking {
     /// As [`Self::body`].
     fn scratch(&mut self, len: u64) -> Result<Self::Held, FrameError>;
 
+    /// Room for `bytes` of descriptor-vector and slot-vector room behind the
+    /// descriptors riding on the message's frames: booked after each frame's
+    /// header, so even a descriptor-only continuation frame, which books no
+    /// other room, pays for its landing vectors (FIX 12434). The default
+    /// books nothing.
+    ///
+    /// # Errors
+    /// As [`Self::body`].
+    fn fds(&mut self, _held: &mut Self::Held, _bytes: u64) -> Result<(), FrameError> {
+        Ok(())
+    }
+
     /// The message's `len` encoded bytes are gone; the value stays.
     fn body_gone(&mut self, held: &mut Self::Held, len: u64);
 }
