@@ -2761,7 +2761,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/type_feedback.rs` | src | s | 5 crate-vis | — | A step's type feedback on the executor (FIX 8277): its check started beside its program, its feedback kept… |
 | `src/engine_executor/types.rs` | src | m | 13 struct · 5 enum · 2 trait · 8 fn · 1 type · 5 const · 3 crate-vis | CallableProgram, EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, ExecutorLegibility, JsCodeModeHost +12 | Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types |
 | `src/engine_executor/wire.rs` | src | m | 7 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
-| `src/engine_store_hooks.rs` | src | L | 8 crate-vis | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
+| `src/engine_store_hooks.rs` | src | L | 9 crate-vis | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
 | `src/entity_doc/carried.rs` | src | m | 12 crate-vis | — | A MESSAGE's document between the owner's machines (FIX 853) |
 | `src/entity_doc/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint getter of entity documents (KS7-2): each entity's head, citation floors, forks, pins, purge… |
 | `src/entity_doc/checkpoint/documents.rs` | src | m | 4 crate-vis | — | The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates… |
@@ -5599,6 +5599,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 1 fn · 1 crate-vis | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/store/attempt_lease.rs` | src | s | 1 crate-vis | — | Lease-owner validation for queued-work storage ports |
 | `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
+| `src/store/attempt_operations.rs` | src | s | 2 crate-vis | — | The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and… |
 | `src/store/attempt_outcomes.rs` | src | s | 3 struct · 6 enum | AbandonAttempt, AbandonOutcome, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome, InterveneAttempt, InterveneOutcome +1 | What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim… |
 | `src/store/attempt_payload_retire.rs` | src | s | 1 crate-vis | — | Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it… |
 | `src/store/attempt_payload_route.rs` | src | s | 1 crate-vis | — | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
@@ -5840,7 +5841,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 124 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 126 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | DescriptionPolicy, MeasuredDescription, ModelDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
