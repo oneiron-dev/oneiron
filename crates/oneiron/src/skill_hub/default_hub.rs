@@ -116,6 +116,25 @@ impl Vault {
         })
     }
 
+    /// The installed holder of one default-hub skill: the loadable skill of
+    /// this `name` whose current bytes an eligible provenance claim ties to
+    /// the configured `skills/<name>` alias at the owner's pin. Pure vault
+    /// read, fail-closed: no fetch, no default rewrite.
+    pub(crate) fn default_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        let configured = self.default_skill_hub_in_txn(txn)?;
+        let root = &configured.skills.hub_ref;
+        let source = HubRef::new(
+            root.hub_id,
+            format!("{}/{}", root.ref_string, name),
+            root.pin.clone(),
+        )?;
+        self.installed_hub_skill_in_txn(txn, &source, name)
+    }
+
     fn check_default_skill_source_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
