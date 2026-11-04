@@ -96,10 +96,7 @@ pub(crate) use oneiron_skill_attribution::row_ids::{
     attribution_judgment_row_ids, edit_proposal_row_ids,
 };
 mod skill_erase;
-pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn,
-    erase_scan_in_txn,
-};
+pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;
 pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
@@ -165,9 +162,9 @@ mod run_writes;
 pub(crate) use run_writes::{
     RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
-    run_derivations,
+    run_derivations, run_write_token_from_lease,
 };
-pub use run_writes::{RunWriteToken, with_run_write_token};
+pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
