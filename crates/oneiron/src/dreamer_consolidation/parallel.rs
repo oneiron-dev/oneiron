@@ -9,12 +9,13 @@ use std::time::Instant;
 use rmpv::Value;
 
 use super::assembly::tournament_claim_of_verified;
+use super::branch::BranchAxes;
 use super::evidence::VerifiedCandidate;
 use super::executor::{ConsolidationExecutor, PartitionRun, extraction};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
-use super::resources::{BranchResources, FallbackOutputPin};
+use super::resources::{BranchResources, ExtractionSlice, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
@@ -47,6 +48,106 @@ use crate::{
     critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
     store::critic_lens::LensCatalog,
 };
+use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
+
+/// Where a partition's extraction prefix stopped: already finished (a
+/// checkpoint or a thing branch's own run), or extracted and waiting for
+/// its serial finish.
+pub(super) enum PartitionPrefix {
+    Done(PartitionRun),
+    Extracted(Box<ExtractedPartition>),
+}
+
+/// One partition's extracted replies, carried from its prefix into its
+/// serial finish: the slices as cut, the port's step per slice, and the
+/// mint namespace, branch axes and step subject the finish reads.
+pub(super) struct ExtractedPartition {
+    slices: Vec<ExtractionSlice>,
+    steps: Vec<SliceStep>,
+    namespace: MintNamespace,
+    axes: BranchAxes,
+    subject: crate::EntityId,
+    run_id: Option<String>,
+}
+
+/// What one slice's terminal step left, once its spend is accounted:
+/// the single classification the serial finish and the window arms
+/// that never reach a finish both tally by, so a paid extraction
+/// settles identically whichever arm accounts it (FIX 12487 round 1).
+enum SliceFate {
+    Finished {
+        response: LlmResponse,
+        failure_policy: Option<DreamerFailureDecision>,
+    },
+    Trapped,
+    Checkpoint,
+    Refused(String),
+}
+
+/// Accounts one slice step's outcome into `charges` and reports its
+/// fate. `record_terminal` and `record_usage` are the only charge
+/// sources for a partition (it registers no metered run line), so
+/// every paid outcome must pass here exactly once.
+fn tally_slice_outcome(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: [u8; 32],
+    outcome: DurableStepResult<StepOutcome>,
+    charges: &mut StepChargeTally,
+) -> Result<SliceFate> {
+    Ok(match outcome {
+        Ok(StepOutcome::Finished {
+            response,
+            failure_policy,
+            ..
+        }) => {
+            charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+            SliceFate::Finished {
+                response,
+                failure_policy,
+            }
+        }
+        Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
+        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+            charges.record_usage(&usage);
+            SliceFate::Checkpoint
+        }
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            SliceFate::Refused(format!("extraction reply refused: {}", errors.join("; ")))
+        }
+        Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
+            SliceFate::Checkpoint
+        }
+        Err(error) => SliceFate::Refused(error.to_string()),
+    })
+}
+
+/// Accounts an extracted prefix whose finish never tallies it (a
+/// window slot whose branch would not re-open, or whose extraction a
+/// changed prior set discards for a fresh run): the finish loop's own
+/// classification, so the paid steps settle beside their receipts
+/// instead of refunding at zero. Reports whether any slice trapped:
+/// that step already parked the attempt under its durable trap, so
+/// the caller must settle the trapped exit, never extract past it
+/// (FIX 12487 round 2).
+pub(super) fn tally_extracted_outcomes(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    extracted: ExtractedPartition,
+    charges: &mut StepChargeTally,
+) -> Result<bool> {
+    let mut trapped = false;
+    for SliceStep { step_hash, outcome } in extracted.steps {
+        if matches!(
+            tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?,
+            SliceFate::Trapped
+        ) {
+            trapped = true;
+        }
+    }
+    Ok(trapped)
+}
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -65,12 +166,39 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
+        match self
+            .extract_partition_prefix(payload_input, resources, ctx, attempt_id, run_id, charges)
+            .await?
+        {
+            PartitionPrefix::Done(run) => Ok(run),
+            PartitionPrefix::Extracted(extracted) => {
+                self.finish_partition_run(*extracted, resources, ctx, attempt_id, charges, stages)
+                    .await
+            }
+        }
+    }
+
+    /// The prefix a wake pass may run side by side across partitions
+    /// (FIX 12487): pin the neighbourhood, cut the slices, record the
+    /// read set and run the extraction port. Everything it writes is
+    /// scoped to this attempt (its memoized steps, its pin, its read
+    /// set); the first read of state another partition's commit could
+    /// change is in the serial finish.
+    pub(super) async fn extract_partition_prefix(
+        &self,
+        payload_input: &Value,
+        resources: &BranchResources<'_>,
+        ctx: &WakeAttemptContext<'_>,
+        attempt_id: AttemptId,
+        run_id: Option<String>,
+        charges: &mut StepChargeTally,
+    ) -> DurableStepResult<PartitionPrefix> {
         // A drain's pause parks the attempt before its preparation burns
         // more of the pass: its checkpoint exit resumes it. Only the pause
         // parks here: an expired deadline still runs its memoized steps
         // below, so a finished partition can land in its grace (FIX 11570).
         if ctx.cancel_requested() {
-            return Ok(PartitionRun::Checkpoint);
+            return Ok(PartitionPrefix::Done(PartitionRun::Checkpoint));
         }
         let branch = decode_partition_payload(payload_input)?;
         let turn_ids = branch.turn_ids();
@@ -168,7 +296,7 @@ impl ConsolidationExecutor<'_> {
                 attempt_id,
             };
             if let ThingPassEnd::Run(run) = self.thing_agent_pass(&pass, charges).await? {
-                return Ok(run);
+                return Ok(PartitionPrefix::Done(run));
             }
         }
         let steps = self
@@ -202,6 +330,38 @@ impl ConsolidationExecutor<'_> {
             )
             .into());
         }
+        Ok(PartitionPrefix::Extracted(Box::new(ExtractedPartition {
+            slices,
+            steps,
+            namespace,
+            axes,
+            subject,
+            run_id,
+        })))
+    }
+
+    /// The serial finish of one extracted partition: account the steps,
+    /// parse and mint, read corrections, build and resolve candidates.
+    /// `resources` is the branch as this finish opens it, so its live
+    /// reads (admitted priors, candidate signals) see exactly what a
+    /// serial run in this position would see.
+    pub(super) async fn finish_partition_run(
+        &mut self,
+        extracted: ExtractedPartition,
+        resources: &BranchResources<'_>,
+        ctx: &WakeAttemptContext<'_>,
+        attempt_id: AttemptId,
+        charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
+    ) -> DurableStepResult<PartitionRun> {
+        let ExtractedPartition {
+            slices,
+            steps,
+            namespace,
+            axes,
+            subject,
+            run_id,
+        } = extracted;
 
         // Account for ALL terminal siblings before examining any failure.
         // Successful replies are durable memos, so a failed slot can resume
@@ -211,31 +371,15 @@ impl ConsolidationExecutor<'_> {
         let mut trapped = false;
         let mut checkpoint = false;
         for (slice, SliceStep { step_hash, outcome }) in slices.iter().zip(steps) {
-            match outcome {
-                Ok(StepOutcome::Finished {
+            match tally_slice_outcome(ctx.vault, attempt_id, step_hash, outcome, charges)? {
+                SliceFate::Finished {
                     response,
                     failure_policy,
-                    ..
-                }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                    replies.push((slice, step_hash, response, failure_policy));
-                }
-                Ok(StepOutcome::Trapped { .. }) => trapped = true,
-                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                    charges.record_usage(&usage);
-                    checkpoint = true;
-                }
-                Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
-                    charges.record_usage(&usage);
-                    refused.get_or_insert_with(|| {
-                        format!("extraction reply refused: {}", errors.join("; "))
-                    });
-                }
-                Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
-                    checkpoint = true
-                }
-                Err(error) => {
-                    refused.get_or_insert_with(|| error.to_string());
+                } => replies.push((slice, step_hash, response, failure_policy)),
+                SliceFate::Trapped => trapped = true,
+                SliceFate::Checkpoint => checkpoint = true,
+                SliceFate::Refused(reason) => {
+                    refused.get_or_insert(reason);
                 }
             }
         }
@@ -325,6 +469,15 @@ impl ConsolidationExecutor<'_> {
         }
         // Which listed claim each candidate corrects is decided beside the
         // extraction, as one typed pack over every child's candidates.
+        let step_ctx = DurableStepContext {
+            vault: ctx.vault,
+            attempt_id,
+            run_id: run_id.clone(),
+            envelope_actor: self.actor,
+            subject,
+            deadline: Some(ctx.deadline),
+            now_ms: ctx.now_ms,
+        };
         let corrections_started = Instant::now();
         let decided = self
             .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)

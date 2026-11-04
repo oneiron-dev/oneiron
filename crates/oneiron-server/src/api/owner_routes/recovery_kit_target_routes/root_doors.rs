@@ -302,11 +302,12 @@ async fn confirm(
         let pieces = kit.pieces();
         let confirmed =
             vault.confirm_world_kit(&owner, &pieces, kit.passphrase.as_ref(), &carry)?;
+        let mirror_pending = confirmed.mirror_pending;
         Ok(RootWorkAnswer::of(
             vault,
             RootWorkDone::KitConfirmed {
                 kit: Box::new(confirmed),
-                mirror_pending: false,
+                mirror_pending,
             },
         ))
     })

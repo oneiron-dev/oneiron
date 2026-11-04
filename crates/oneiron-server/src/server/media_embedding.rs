@@ -166,6 +166,7 @@ fn llm_code(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::Auth) => "provider_auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
+        LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",
         LlmError::Fatal(_) => "invalid_request",
         LlmError::Retryable(_) => "provider_unavailable",
     }

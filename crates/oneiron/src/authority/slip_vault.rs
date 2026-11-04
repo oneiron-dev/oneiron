@@ -379,6 +379,8 @@ impl Vault {
 
     /// Log-derived minting key is the authority source, not a registry row or
     /// retained server secret. Admission and nonce consumption share a txn.
+    /// A slip minted since this handle opened is admitted without the writer
+    /// instead (FIX 12023 W0, [`Self::admit_capability_slip_request_in_memory`]).
     pub fn admit_capability_slip_request(
         &self,
         slip: &CapabilitySlip,
@@ -386,6 +388,12 @@ impl Vault {
         signature: &[u8],
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        if let Some(verified) =
+            self.admit_capability_slip_request_in_memory(slip, timestamp, signature, nonce)
+        {
+            return Ok(verified);
+        }
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
@@ -432,6 +440,53 @@ impl Vault {
         )?;
         self.receipt_support_use_in_txn(txn, verified.claims(), nonce, timestamp)?;
         Ok(verified)
+    }
+    /// [`Self::admit_capability_slip_request`] without the writer (FIX 12023
+    /// W0; Engine ruling 10-31 with L02's conditions). It judges the request
+    /// in one snapshot as the writer's path does, spends its nonce in memory
+    /// before the reply, in one step that also reads the committed nonce
+    /// rows, and queues the rows that writer would commit on the detached
+    /// door (`slip_replay::spent_nonces`). `Some` only for a request it
+    /// admitted: any other, refusals included, comes back `None` and is
+    /// judged on the writer's path, as today.
+    ///
+    /// It takes any slip once this handle's open has replayed the spend
+    /// journal (review #4484 P1-C): every nonce an earlier process spent is
+    /// then a committed row this step reads, or one the replay landed, or
+    /// below the floor a failed replay raised; with no support delegation,
+    /// whose use receipt commits before the reply; on a vault this process
+    /// serves under its writer lease; once an admission has committed the
+    /// proof clock's floor.
+    fn admit_capability_slip_request_in_memory(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Option<VerifiedSlip> {
+        let door = self.spent_nonces.door(self)?;
+        // The snapshot ends before the spend opens its own under its lock:
+        // a thread holds one reader at a time.
+        let (verified, now, expires_at, clock) = {
+            let txn = self.store.env.read_txn().ok()?;
+            let clock = super::slip_replay::committed_request_now_in_txn(self, &txn).ok()??;
+            let fold = self.authority_view_readonly_in_txn(&txn).ok()?;
+            let mint = fold.slips.mints.get(&slip.claims.slip_id)?;
+            let now = self.instant_in_txn(&txn).ok()?.secs();
+            let challenge = super::slip_replay::request_challenge(timestamp, nonce, clock).ok()?;
+            let verified = slip
+                .verify(&mint.signer, &fold, now, &challenge, signature)
+                .ok()?;
+            let verified = self.admitted_slip_view_in_txn(&txn, verified, now).ok()?;
+            if verified.claims().single_use || verified.claims().delegation.is_some() {
+                return None;
+            }
+            (verified, now, mint.action.claims.expires_at, clock)
+        };
+        let spent =
+            super::slip_replay::SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
+        door.spend(spent, now, expires_at, clock)
+            .then_some(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.
     pub fn verify_logged_capability_slip_request(
@@ -629,6 +684,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

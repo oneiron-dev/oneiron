@@ -40,6 +40,147 @@ pub struct GateDecisionReadContext {
     /// The record's own read position, kept for a record that may never
     /// have landed. `None` when the record's position is its `about` rows'.
     pub position: Option<GateReadPosition>,
+    /// Writer anchors (FIX 11000 PARTLY): subject-ancestry thread turns and
+    /// reached roots/rooms plus body and prompt-source worlds, content-free
+    /// ids only. `None` when the writer attached none (rows written before
+    /// anchors, or writers outside the anchor scheme): today's verdicts
+    /// stand. `Some(incomplete())` when the writer attempted the capture
+    /// and proved nothing: denies. Only `Some(complete)` with nonempty
+    /// worlds is later readable. Never a Grant, facets, or the writer's
+    /// session room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchors: Option<GateReadAnchors>,
+}
+
+/// One placed private-thread turn (FIX 11000): the thread `root` and the
+/// `turn` in it. Content-free ids only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GateThreadAnchor {
+    /// The thread root.
+    pub root: EntityId,
+    /// The turn placed in it.
+    pub turn: EntityId,
+}
+
+/// Writer-captured anchors for one read context (FIX 11000 PARTLY).
+///
+/// Fields are private so only [`Self::complete`] and [`Self::incomplete`]
+/// ever build one: `complete` carries the full Engine-required set
+/// (subject-ancestry placed turns + reached roots/rooms + body and
+/// prompt-source worlds, base explicit, sorted and deduped), while
+/// `incomplete` is the single empty value for every unknown, ambiguous,
+/// cyclic, malformed, unsupported, or errored capture. A later kept path
+/// must deny unless `is_complete` holds and `worlds` is nonempty; it must
+/// never treat a partial set as complete, nor read an empty `worlds` as a
+/// vacuous pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateReadAnchors {
+    /// True only when the Engine-required set is fully captured.
+    #[serde(default)]
+    complete: bool,
+    /// Placed (root, turn) pairs under CONTENT.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    threads: Vec<GateThreadAnchor>,
+    /// Reached thread roots under CURRENT.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reached: Vec<EntityId>,
+    /// Reached rooms via subject ancestry; never the writer session room.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rooms: Vec<EntityId>,
+    /// Body world plus prompt-source worlds; base stored explicitly, never
+    /// empty when complete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    worlds: Vec<EntityId>,
+}
+
+impl GateReadAnchors {
+    /// The complete Engine-required set, sorted and deduped by the caller.
+    /// `worlds` must carry at least the base world.
+    #[must_use]
+    pub fn complete(
+        threads: Vec<GateThreadAnchor>,
+        reached: Vec<EntityId>,
+        rooms: Vec<EntityId>,
+        worlds: Vec<EntityId>,
+    ) -> Self {
+        debug_assert!(
+            !worlds.is_empty(),
+            "complete anchors carry at least the base world"
+        );
+        Self {
+            complete: true,
+            threads,
+            reached,
+            rooms,
+            worlds,
+        }
+    }
+
+    /// The single incomplete value: empty and never readable. Returned for
+    /// every unknown, ambiguous, cyclic, malformed, unsupported, or errored
+    /// capture, so no partial set can read as complete.
+    #[must_use]
+    pub fn incomplete() -> Self {
+        Self {
+            complete: false,
+            threads: Vec::new(),
+            reached: Vec::new(),
+            rooms: Vec::new(),
+            worlds: Vec::new(),
+        }
+    }
+
+    /// Whether the writer captured nothing (incomplete and all empty),
+    /// so the wire key omits and old bytes stay byte-identical.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.complete
+            && self.threads.is_empty()
+            && self.reached.is_empty()
+            && self.rooms.is_empty()
+            && self.worlds.is_empty()
+    }
+
+    /// Whether the Engine-required set is fully captured. A kept path must
+    /// still require nonempty `worlds`.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+
+    /// Placed (root, turn) pairs under CONTENT.
+    #[must_use]
+    pub fn threads(&self) -> &[GateThreadAnchor] {
+        &self.threads
+    }
+
+    /// Reached thread roots under CURRENT.
+    #[must_use]
+    pub fn reached(&self) -> &[EntityId] {
+        &self.reached
+    }
+
+    /// Reached rooms via subject ancestry.
+    #[must_use]
+    pub fn rooms(&self) -> &[EntityId] {
+        &self.rooms
+    }
+
+    /// Body world plus prompt-source worlds.
+    #[must_use]
+    pub fn worlds(&self) -> &[EntityId] {
+        &self.worlds
+    }
+
+    /// Whether any anchor names `id`.
+    fn names(&self, id: &EntityId) -> bool {
+        self.threads
+            .iter()
+            .any(|anchor| anchor.root == *id || anchor.turn == *id)
+            || self.reached.contains(id)
+            || self.rooms.contains(id)
+            || self.worlds.contains(id)
+    }
 }
 
 /// A record's own read position, as its write stamped it.
@@ -253,7 +394,8 @@ impl GateDecisionContext {
     }
 
     /// Whether any part names `id`: a read context's record, an `about` row,
-    /// its principal, its relationship, or its scope selector's bytes.
+    /// its anchors, its principal, its relationship, or its scope selector's
+    /// bytes.
     pub(super) fn names(&self, id: &EntityId) -> bool {
         self.read.iter().any(|read| read.names(id))
     }
@@ -272,13 +414,16 @@ impl GateDecisionContext {
 
 impl GateDecisionReadContext {
     /// The read context of a record whose position is its `about` rows'.
-    /// `None` when it names no row, so nothing would prove its scope.
+    /// `None` when it names no row, so nothing would prove its scope. The
+    /// writer attaches anchors later via [`Self::with_anchors`]; until then
+    /// there are none.
     #[must_use]
     pub fn about(record: Option<EntityId>, about: Vec<EntityId>) -> Option<Self> {
         (!about.is_empty()).then_some(Self {
             record,
             about,
             position: None,
+            anchors: None,
         })
     }
 
@@ -339,12 +484,28 @@ impl GateDecisionReadContext {
                     stale: body.stale,
                 }),
             }),
+            anchors: None,
         })
+    }
+
+    /// This read context with writer `anchors` attached (FIX 11000 PARTLY).
+    /// Call only on an existing `Some` read context; never to invent one
+    /// where `claim`/`about` returned `None`. The attached value records
+    /// the attempt itself: `incomplete()` denies later, it never reads as
+    /// "the writer attached nothing".
+    #[must_use]
+    pub fn with_anchors(mut self, anchors: GateReadAnchors) -> Self {
+        self.anchors = Some(anchors);
+        self
     }
 
     fn names(&self, id: &EntityId) -> bool {
         self.record == Some(*id)
             || self.about.contains(id)
+            || self
+                .anchors
+                .as_ref()
+                .is_some_and(|anchors| anchors.names(id))
             || self.position.as_ref().is_some_and(|position| {
                 position.claim.as_ref().is_some_and(|claim| {
                     claim.principal == Some(*id)
