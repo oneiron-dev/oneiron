@@ -151,6 +151,11 @@ pub struct QueueCommandReceipt {
     pub signal: Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    /// The bytes of each output file the command declared that it left,
+    /// by its declared path (FIX 7235); a declared file it did not leave
+    /// is absent.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub declared_outputs: BTreeMap<String, Vec<u8>>,
 }
 
 impl QueueCommandReceipt {
@@ -284,6 +289,41 @@ pub trait QueueCheckTreeSource {
     /// # Errors
     /// An object store read failure.
     fn blob(&self, oid: &str) -> Result<Vec<u8>>;
+
+    /// Hands `visit` each of `oids`' exact bytes in order, with its index;
+    /// `visit` answers whether to read on. An object store reads them in
+    /// bounded batches (FIX 7229); this default reads one at a time.
+    /// `Ok(false)` when `visit` stopped the read.
+    ///
+    /// # Errors
+    /// An object store read failure, or an error `visit` answered.
+    fn blobs(
+        &self,
+        oids: &[&str],
+        visit: &mut dyn FnMut(usize, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        for (index, oid) in oids.iter().enumerate() {
+            if !visit(index, &self.blob(oid)?)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Hands `visit` the pinned `commit`'s commit object and every tree
+    /// object under it, raw, each with its Git type: with the files' blobs,
+    /// a fresh local-only object store for the guest (FIX 7228). `visit`
+    /// answers whether to read on. The default ships none.
+    ///
+    /// # Errors
+    /// An object store read failure, or a commit that names another tree.
+    fn git_objects(
+        &self,
+        _commit: &str,
+        _visit: &mut dyn FnMut(&str, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        Ok(true)
+    }
 }
 
 /// One execution request: the target and its pinned tree.

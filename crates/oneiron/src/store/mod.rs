@@ -127,11 +127,17 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod canonical_document;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
-pub mod conversation_record;
+pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub use scope_stamps::StoreScopeStamps;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
@@ -139,11 +145,14 @@ pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -151,7 +160,7 @@ pub mod repo_fork;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
-pub mod retained_memory;
+pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
 #[cfg(feature = "sync")]
@@ -201,11 +210,17 @@ mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
 mod gate_decision;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
 pub(crate) mod graph_version;
+pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
 pub mod row_birth;
+pub(crate) mod pending_custody_revoke;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
@@ -219,6 +234,7 @@ mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub mod world_registration_keys;
+pub(crate) mod world_pad_rows;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -247,6 +263,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;

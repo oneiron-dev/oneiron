@@ -94,8 +94,8 @@ pub use driver::{
 };
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
-    EPOCH_SUMMARY_MAX_DERIVED_EDGES, EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
@@ -548,6 +548,11 @@ pub(crate) fn record_turn_session_membership_in_txn(
     SESSION_TURNS.put(store, wtxn, &(session, *turn), &[1])?;
     Ok(Some(session))
 }
+
+/// The width a conversation window's `DerivedFrom` set was once cut at; nothing
+/// cuts it now (OF-013), and only the tests still name it.
+#[cfg(test)]
+const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 
 #[cfg(test)]
 mod tests;

@@ -46,7 +46,7 @@ mod selection_codec;
 mod selection_resolution;
 mod selection_rules;
 mod selection_storage;
-mod selection_vocabulary;
+use oneiron_authority::channel_selection_vocabulary as selection_vocabulary;
 
 pub use self::selection_resolution::{
     ChannelIdentityCandidate, ChannelIdentitySelectionDecision, ChannelIdentitySelectionError,

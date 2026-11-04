@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::AssetBodyFacts;
 use super::stage::{FileFromStart, StagedAssetBody};
 use crate::error::{Error, Result};
-use crate::secret_custody::KnownValues;
+use crate::store::known_value_index::KnownValues;
 use crate::store::{BodyDir, BodyMint, BodySpill};
 
 /// One ASSET body being received: the bytes so far, spilled to a temp file
