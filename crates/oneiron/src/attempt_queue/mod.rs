@@ -80,9 +80,9 @@ pub use types::{
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
 pub(crate) use payload_erase::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
+    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
-    erase_model_step_failure_reasons_in_txn, retire_attempt_payload_in_txn,
+    erase_model_step_failure_reasons_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
@@ -99,12 +99,8 @@ pub(crate) fn encode_admitted_signal_record(
     payload_erase::scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
     encoding::encode_admitted_record(vault, wtxn, record)
 }
-pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
-    validate::validate_cancel_actor(actor)?;
-    validate::validate_optional_failure_reason(reason)
-}
 
-pub(crate) use engine::dreamer_run_root_id_in_txn;
+pub(crate) use crate::store::attempt_record_codec::signal_validators::validate_signal_cancel;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
 #[cfg_attr(not(test), allow(unused_imports))]
