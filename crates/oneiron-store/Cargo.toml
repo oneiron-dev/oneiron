@@ -8,6 +8,15 @@ description = "Store layer of the oneiron engine"
 repository.workspace = true
 
 [dependencies]
+blake3 = { workspace = true, features = ["zeroize"] }
+getrandom = { version = "=0.4.3", features = ["sys_rng"] }
+heed = { workspace = true }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+rmpv = { workspace = true, features = ["with-serde"] }
+schemars = "=0.8.22"
+serde = { workspace = true }
+zeroize = "1"
 
 [lints]
 workspace = true

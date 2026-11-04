@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1270 code-mode rows (1230 host rows, 40 run rows), 4475 declarations.
-// Replies: 1075 fully typed, 183 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1271 code-mode rows (1231 host rows, 40 run rows), 4479 declarations.
+// Replies: 1076 fully typed, 183 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -1944,8 +1944,8 @@ declare namespace Sdk {
   type LegalHoldActorKind = "owner" | "member" | "agent" | "timer" | "host" | "unattributed";
   type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; lifted_at?: number | null; owner_told?: boolean; requires_non_use?: boolean };
   type LegalHoldWidenRequest = { hold_id: EntityId; targets: LegalHoldTarget[] };
-  type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_confirmed" | "erase_completed" | "lifted";
-  type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
+  type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_confirmed" | "erase_withdrawn" | "erase_completed" | "lifted";
+  type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "owner_withdrew" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
   type ShownCustomerHold = { hold_id: EntityId; targets: LegalHoldTarget[]; placed_by?: string | null; placed_at: number; matter_ref?: string | null };
   type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
@@ -1956,6 +1956,10 @@ declare namespace Sdk {
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
+  type LegalHoldWithdrawEraseRequest = { records: EntityId[] };
+  type EraseWithdrawal = "withdrawn" | "not_waiting" | "confirmed_by_another_owner" | "under_way";
+  type LegalHoldWithdrawnErase = { record: EntityId; status: EraseWithdrawal };
+  type LegalHoldErasesWithdrawn = { records: LegalHoldWithdrawnErase[] };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
   type CourtesyDeleteSent = { request: string; pages: string[]; pact: string; recipient: string; status: string; created: string; updated: string };
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
@@ -2419,7 +2423,7 @@ declare namespace Sdk {
   type CodeUnitBlameView = { path: string; symbol: string; version: CodeUnitVersionView; spans: CodeSpanView[] };
   type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] };
   type CodeProposalViewRequest = { proposal_ref: string };
-  type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected";
+  type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected" | "Superseded";
   type CodeProposedStamp = { actor_ref?: string | null; session_ref?: string | null; provenance_claim_ref?: string | null; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
   type CodeFilePresence = { present: boolean; mode?: number | null };
   type CodeFileMetadataEdit = { path: string; expected: CodeFilePresence; replacement: CodeFilePresence; new_path?: string | null };
@@ -3250,7 +3254,7 @@ declare namespace Sdk {
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
+  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
   type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string };
@@ -6354,6 +6358,8 @@ declare const vault: Sdk.VaultHost & {
     place(input: Sdk.LegalHoldPlaceRequest): Promise<Sdk.LegalHold | StoredResult>;
     /** Adds targets to one of the owner's standing customer legal holds. */
     widen(input: Sdk.LegalHoldWidenRequest): Promise<Sdk.LegalHold | StoredResult>;
+    /** The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting. */
+    withdraw_erase(input: Sdk.LegalHoldWithdrawEraseRequest): Promise<Sdk.LegalHoldErasesWithdrawn | StoredResult>;
   };
   lenses: {
     /** The owner selects a proposed lens revision for its pack slot. */
