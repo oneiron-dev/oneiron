@@ -1,5 +1,6 @@
 //! Physical cleanup and disk inventory for the durable bundle-work record.
 use super::*;
+use crate::sync::residence::{bundle_stage::SealedBundleStaged, sealed_digest_from_hex};
 
 /// Removes one obsolete physical part, with its cleanup progress in the same
 /// writer. This requires no caller authority because it only pays a deletion
@@ -19,10 +20,9 @@ pub(super) fn cleanup_one(vault: &Vault, only: Option<[u8; 32]>) -> Result<bool>
             let record: Record = serde_json::from_slice(&raw).map_err(|_| Error::InvalidKey)?;
             if record.terminal() && !record.cleanup_done {
                 let key = std::str::from_utf8(&key).map_err(|_| Error::InvalidKey)?;
-                let id = super::sealed_digest_from_hex(
-                    key.strip_prefix(WORK_PREFIX).ok_or(Error::InvalidKey)?,
-                )
-                .ok_or(Error::InvalidKey)?;
+                let id =
+                    sealed_digest_from_hex(key.strip_prefix(WORK_PREFIX).ok_or(Error::InvalidKey)?)
+                        .ok_or(Error::InvalidKey)?;
                 selected = Some((id, record));
                 break;
             }
@@ -84,7 +84,7 @@ pub(super) fn cleanup_one(vault: &Vault, only: Option<[u8; 32]>) -> Result<bool>
 pub(in crate::sync::residence::bundle) fn stages_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<Vec<super::super::bundle_stage::SealedBundleStaged>> {
+) -> Result<Vec<SealedBundleStaged>> {
     let mut stages = Vec::new();
     for row in WORK.iter_raw_from(&vault.store, txn, WORK_PREFIX.as_bytes())? {
         let (key, raw) = row?;
@@ -93,12 +93,11 @@ pub(in crate::sync::residence::bundle) fn stages_in(
             continue;
         }
         let key = std::str::from_utf8(&key).map_err(|_| Error::InvalidKey)?;
-        let id =
-            super::sealed_digest_from_hex(key.strip_prefix(WORK_PREFIX).ok_or(Error::InvalidKey)?)
-                .ok_or(Error::InvalidKey)?;
+        let id = sealed_digest_from_hex(key.strip_prefix(WORK_PREFIX).ok_or(Error::InvalidKey)?)
+            .ok_or(Error::InvalidKey)?;
         for index in 0..2 {
             let stage = record.stage(index)?;
-            stages.push(super::super::bundle_stage::SealedBundleStaged {
+            stages.push(SealedBundleStaged {
                 machine: record.executor,
                 object: object(index),
                 total: stage.total,
