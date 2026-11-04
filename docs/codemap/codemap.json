@@ -33197,7 +33197,7 @@
      "path": "src/embed/release.rs",
      "purpose": "Which pending rows may leave this device, judged row by row (FIX 9486): the release a host asks before it…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -54826,9 +54826,9 @@
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -60142,7 +60142,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/reads.rs",
@@ -65847,8 +65847,8 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 9
+      "crate-vis": 5,
+      "fn": 10
      }
     },
     {
@@ -71025,7 +71025,7 @@
       "const": 10,
       "crate-vis": 9,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 9,
       "trait": 3,
       "type": 1
@@ -79963,7 +79963,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 24,
+      "fn": 25,
       "struct": 1
      }
     },
@@ -91216,7 +91216,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6275,
    "test_files": 900
@@ -110822,13 +110822,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invoke.rs",
      "purpose": "How a facade row invokes its door: in the caller's room turn, on a scoped credential",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -125753,7 +125753,6 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
-      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -125774,7 +125773,6 @@
       "ArtifactServeTier",
       "ArtifactUnitReceipt",
       "ArtifactUnitView",
-      "ArtifactUnits",
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
@@ -125866,10 +125864,6 @@
       "BatchStopCause",
       "BeginMessageStreamRequest",
       "BillingAccountFiling",
-      "BindingMoveLink",
-      "BindingMoveState",
-      "BindingNotApplied",
-      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -126010,7 +126004,6 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
-      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -126071,14 +126064,12 @@
       "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
-      "CandleParityCheck",
       "Care",
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
       "CatastropheClass",
       "CategoryField",
-      "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
       "ChannelIdentityBindRequest",
@@ -126152,8 +126143,6 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
-      "CheckpointFileKind",
-      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -126702,11 +126691,9 @@
       "DecisionBandLearnRequest",
       "DecisionBandReadRequest",
       "DecisionClass",
-      "DecisionDial",
       "DecisionMedia",
       "DecisionMediaRef",
       "DecisionQuestion",
-      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -126891,7 +126878,6 @@
       "EditNoteRequest",
       "EffectReceipt",
       "EmbeddingMatchEvidence",
-      "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
       "EmbeddingSpaceMoveChecked",
@@ -126903,7 +126889,6 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
-      "EmbeddingSpacesView",
       "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
@@ -126961,7 +126946,6 @@
       "EsignSigningSignatureView",
       "EsignVoidRequest",
       "EstimateLabels",
-      "EstimateWindow",
       "EvalAuthoringInventory",
       "EvalAuthoringRef",
       "EvalAuthoringReport",
@@ -127024,7 +127008,6 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
-      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExportTransferPiece",
@@ -127190,7 +127173,6 @@
       "FreeTimeSchedule",
       "FreeTimeSpendView",
       "FreeTimeSplit",
-      "FrozenReadLane",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -127330,7 +127312,6 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
-      "HeldOutResult",
       "HeldOutSelection",
       "HolderExportRequest",
       "HolderExportState",
@@ -127376,7 +127357,6 @@
       "HostedPassEvidence",
       "HostedPlaneAttestation",
       "HostedRelayDecision",
-      "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
       "HubConsentReceipt",
@@ -127554,6 +127534,7 @@
       "LearningCellKey",
       "LearningCellView",
       "LearningChoiceValue",
+      "LearningEstimateWindow",
       "LearningEvidenceView",
       "LearningHeadView",
       "LearningMeanValue",
@@ -128290,7 +128271,6 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
-      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -128311,7 +128291,6 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
-      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -128513,22 +128492,14 @@
       "QualificationLimits",
       "QualificationPlan",
       "Quarantine",
-      "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersPage",
       "QuestionAnswersReply",
       "QuestionAnswersRequest",
-      "QuestionAskerClass",
-      "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteriaCriterion",
       "QuestionCriteriaString",
-      "QuestionDefinitionDecisionQuestion",
-      "QuestionDefinitionDecisionQuestionInput",
-      "QuestionEditRequest",
-      "QuestionExportCheck",
-      "QuestionMedia",
       "QuestionOutcomeWindowsRequest",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -128537,7 +128508,6 @@
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
-      "QuestionRecord",
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
@@ -128602,7 +128572,6 @@
       "RecordedStep",
       "RecordingGap",
       "RecordingGapKind",
-      "RefreshPolicy",
       "RefusalDial",
       "RefusalLevel",
       "RefusalOutcome",
@@ -128857,7 +128826,6 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
-      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -129412,7 +129380,6 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
-      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -129534,7 +129501,6 @@
       "SupportHolderClass",
       "SupportRepair",
       "SurfaceBand",
-      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -129634,6 +129600,7 @@
       "TaskTtl",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
+      "TaskTypeRefTypeRef",
       "TaskTypeTreePin",
       "TaskTypeTreePinReceipt",
       "TaskTypeTreeRead",
@@ -129793,7 +129760,6 @@
       "Vad",
       "VadAnnotationSource",
       "VadBadge",
-      "VectorEvidenceFloors",
       "VectorPutReceipt",
       "VectorPutRequest",
       "VectorRefinement",
@@ -130004,8 +129970,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1094,
-      "struct": 3327
+      "enum": 1085,
+      "struct": 3302
      }
     },
     {
