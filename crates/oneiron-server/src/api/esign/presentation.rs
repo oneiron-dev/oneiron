@@ -2,6 +2,7 @@
 use super::editor_auth::{EditorDesk, EditorIngress};
 use super::parse_lease;
 use super::*;
+use axum::body::HttpBody as _;
 use axum::extract::{FromRequest, Request};
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
 use oneiron::blob_artifact::esign::{EsignField, FieldValue};
@@ -195,13 +196,48 @@ pub(super) async fn upload_geometry(
                 .extensions()
                 .get::<Arc<OwnedSemaphorePermit>>()
                 .cloned();
+            // The native HTTP/1 decoder bounds this body by Content-Length.
+            // A transfer-encoded or unknown-length body keeps its existing path.
+            let exact_bytes = if matches!(
+                request.version(),
+                axum::http::Version::HTTP_10 | axum::http::Version::HTTP_11
+            ) && !request.headers().contains_key(header::TRANSFER_ENCODING)
+            {
+                request
+                    .headers()
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|bytes| *bytes <= ANONYMOUS_GEOMETRY_BODY_BYTES as u64)
+                    .filter(|bytes| request.body().size_hint().exact() == Some(*bytes))
+            } else {
+                None
+            };
+            let reserved = if let Some(bytes) = exact_bytes {
+                let input_memory = memory.clone();
+                let deadline = Instant::now() + super::ingress::MEMORY_WAIT;
+                match tokio::task::spawn_blocking(move || input_memory.lease(bytes, deadline)).await
+                {
+                    Ok(Ok(lease)) => Some((lease, deadline, bytes)),
+                    Ok(Err(refusal)) => return super::ingress::memory_refused(refusal),
+                    Err(_) => return refused(),
+                }
+            } else {
+                None
+            };
             let body = match axum::body::Bytes::from_request(request, &server).await {
                 Ok(body) => body,
                 Err(rejection) => return rejection.into_response(),
             };
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes)
+                match reserved {
+                    Some((mut lease, deadline, bytes)) => {
+                        lease.materialized(bytes, body.len() as u64);
+                        parse_lease::inspected(lease, deadline, &body, stream_decode_bytes)
+                    }
+                    None => parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes),
+                }
             })
             .await
             {
