@@ -153,13 +153,18 @@ fn answer(
             if answer.is_empty() {
                 return Ok(());
             }
-            vault.save_connector_reply_body(
-                event_id,
+            let Some(kept) = vault.save_connector_reply_body(
+                &job.event,
                 agent,
                 REPLY_REF,
                 answer,
                 super::super::unix_now(),
             )?
+            else {
+                result.reason = Some(Error::EntityNotFound.to_string());
+                return Ok(());
+            };
+            kept
         }
     };
     result.body_ref = Some(kept.content_ref.clone());

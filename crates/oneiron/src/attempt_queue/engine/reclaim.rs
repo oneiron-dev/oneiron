@@ -178,6 +178,13 @@ impl AttemptQueue<'_> {
                         )?;
                         self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
                         self.notify_settled_in_txn(&mut wtxn, &record)?;
+                        // FIX 900: a landing expired into a force cancel
+                        // settles its spend lease in the same write (OF-532);
+                        // idempotent, a no-op when unmetered.
+                        if let Some(vault) = self.vault {
+                            crate::agent_dispatch::AgentDispatcher::new(vault)
+                                .settle_child_in_txn(&mut wtxn, &record.id, input.now)?;
+                        }
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                         report.landing_force_cancelled += 1;
