@@ -315,7 +315,7 @@ impl Arms {
                 let no_record = no_record_at_arrival
                     || vault.model_call_keeps_no_record_for(None, Some(principal));
                 let evidence_run = run.initiated_by(Some(principal));
-                crate::api::llm::record_raw_response(
+                crate::api::record_raw_response(
                     vault,
                     &call.ladder,
                     &evidence_run,
