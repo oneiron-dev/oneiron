@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 137] = [
+    pub const ALL: [Self; 138] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -142,6 +142,7 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::RequestedResultRows,
         Self::TournamentLineageRows,
     ];
 
@@ -284,6 +285,7 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::RequestedResultRows => "limits.requested_result_rows",
             Self::TournamentLineageRows => "limits.tournament_lineage_rows",
         }
     }
@@ -494,6 +496,10 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Two to the twentieth: far above any page a door serves in
+            // ordinary use. Past it the row asks, and the whole requested
+            // count is served.
+            Self::RequestedResultRows => 1_048_576,
             // The per-call hop budget the tournament walk defers past (FIX 9581).
             Self::TournamentLineageRows => 4_096,
         }

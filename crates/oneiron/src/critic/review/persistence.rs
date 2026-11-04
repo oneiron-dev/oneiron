@@ -14,6 +14,11 @@ pub(super) use dissent_rows::{
 /// identity tuple. Key: hash32.
 const RESULT: SideTable<[u8; 32], StoredReview, Named> =
     SideTable::new(&side_table::CRITIC_REVIEW_RESULT);
+/// Whether a masked copy of a `CRITIC_REVIEW_RESULT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn critic_review_result_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredReview, Named>(bytes)
+}
 
 /// Index from a review verdict claim id back to its [`RESULT`] row key: the exact bytes
 /// [`RESULT::key_bytes`](SideTable::key_bytes) gives for the hash, unchanged since before the
