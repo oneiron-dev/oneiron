@@ -1086,6 +1086,16 @@ export_facade! {
     let output = client.self_inbox_get(&input)?;
     crate::codec::lift_record("self.inbox.get", &output)
 };
+"self.inbox.reply" => fn self_inbox_reply(&self, input: InboxReplyRequest) -> InboxReplyReceipt = |client| {
+    let input: oneiron::agent_inbox_lens::InboxReplyRequest = crate::codec::lower_record("self.inbox.reply", input)?;
+    let output = client.self_inbox_reply(&input)?;
+    crate::codec::lift_record("self.inbox.reply", &output)
+};
+"self.inbox.reply.status" => fn self_inbox_reply_status(&self, input: InboxReplyStatusRequest) -> InboxReplyJobStatus = |client| {
+    let input: oneiron::agent_inbox_lens::InboxReplyStatusRequest = crate::codec::lower_record("self.inbox.reply.status", input)?;
+    let output = client.self_inbox_reply_status(&input)?;
+    crate::codec::lift_record("self.inbox.reply.status", &output)
+};
 "self.inbox.done" => fn self_inbox_done(&self, input: InboxItemRequest) -> InboxItemMarked = |client| {
     let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.done", input)?;
     let output = client.self_inbox_done(&input)?;

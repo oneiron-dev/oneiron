@@ -225,6 +225,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.link.corrections", post(facade_route))
         .route("/self.inbox.lens", post(facade_route))
         .route("/self.inbox.get", post(facade_route))
+        .route("/self.inbox.reply", post(facade_route))
+        .route("/self.inbox.reply.status", post(facade_route))
         .route("/self.inbox.done", post(facade_route))
         .route("/self.inbox.later", post(facade_route))
         .route("/vault.skills.bootstrap", post(facade_route))

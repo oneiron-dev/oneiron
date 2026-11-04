@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1224 facade rows, 4443 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1176.
+// UniFFI census: 1226 facade rows, 4449 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1178.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -15943,6 +15943,12 @@ pub struct InboxItemMessage {
     pub channel: String,
     #[serde(rename = "payload_ref")]
     pub payload_ref: String,
+    #[serde(
+        rename = "reply_event_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reply_event_ref: Option<String>,
     #[serde(rename = "occurred_at")]
     pub occurred_at: u64,
     #[serde(rename = "text")]
@@ -15966,6 +15972,106 @@ pub struct InboxItemView {
     pub notification: Option<NotificationRow>,
     #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<GeneratedLens>,
+}
+
+/// `oneiron::agent_inbox_lens::reply::InboxReplyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InboxReplyRequest {
+    #[serde(rename = "item_id")]
+    pub item_id: String,
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::outbound::reply_job::ConnectorReplyStage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorReplyStage {
+    #[serde(rename = "no_reply")]
+    NoReply,
+    #[serde(rename = "dispatched")]
+    Dispatched,
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "ambiguous")]
+    Ambiguous,
+    #[serde(rename = "fault")]
+    Fault,
+}
+
+/// `oneiron::outbound::reply_job::ConnectorReplyJobResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorReplyJobResult {
+    #[serde(rename = "stage")]
+    pub stage: ConnectorReplyStage,
+    #[serde(rename = "body_ref", default, skip_serializing_if = "Option::is_none")]
+    pub body_ref: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    #[serde(
+        rename = "gate_reason_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gate_reason_codes: Option<Vec<String>>,
+    #[serde(rename = "actual_units")]
+    pub actual_units: u64,
+    #[serde(
+        rename = "witness_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub witness_refs: Option<Vec<String>>,
+    #[serde(
+        rename = "witness_repair",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub witness_repair: Option<String>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(
+        rename = "waits_on_owner",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub waits_on_owner: Option<bool>,
+}
+
+/// `oneiron::agent_inbox_lens::reply::InboxReplyJobStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxReplyJobStatus {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "results")]
+    pub results: Vec<ConnectorReplyJobResult>,
+}
+
+/// `oneiron::agent_inbox_lens::reply::InboxReplyReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxReplyReceipt {
+    #[serde(rename = "item_id")]
+    pub item_id: String,
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "job")]
+    pub job: InboxReplyJobStatus,
+}
+
+/// `oneiron::agent_inbox_lens::reply::InboxReplyStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InboxReplyStatusRequest {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
 }
 
 /// `oneiron::agent_inbox_lens::read_state::InboxItemMarked`.

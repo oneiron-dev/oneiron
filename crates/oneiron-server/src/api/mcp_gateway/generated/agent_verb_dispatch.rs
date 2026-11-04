@@ -365,6 +365,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.link.corrections" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.lens" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.get" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.reply" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.reply.status" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.done" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.later" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.bootstrap" => a.spec.clone().ok_or_else(invalid),
@@ -2217,6 +2219,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.reply" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.reply.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.done" => {
@@ -9000,6 +9008,22 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::agent_inbox_lens::InboxItemRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.reply" => {
+            let input: oneiron::agent_inbox_lens::InboxReplyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_reply(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.reply.status" => {
+            let input: oneiron::agent_inbox_lens::InboxReplyStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_reply_status(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

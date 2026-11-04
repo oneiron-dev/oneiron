@@ -221,6 +221,8 @@ pub enum AgentVerb {
     VaultWeaveLinkCorrections,
     SelfInboxLens,
     SelfInboxGet,
+    SelfInboxReply,
+    SelfInboxReplyStatus,
     SelfInboxDone,
     SelfInboxLater,
     VaultSkillsBootstrap,
@@ -1470,6 +1472,8 @@ impl AgentVerb {
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
         Self::SelfInboxGet,
+        Self::SelfInboxReply,
+        Self::SelfInboxReplyStatus,
         Self::SelfInboxDone,
         Self::SelfInboxLater,
         Self::VaultSkillsBootstrap,
@@ -2722,6 +2726,8 @@ impl AgentVerb {
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
             Self::SelfInboxGet => "self.inbox.get",
+            Self::SelfInboxReply => "self.inbox.reply",
+            Self::SelfInboxReplyStatus => "self.inbox.reply.status",
             Self::SelfInboxDone => "self.inbox.done",
             Self::SelfInboxLater => "self.inbox.later",
             Self::VaultSkillsBootstrap => "vault.skills.bootstrap",
@@ -4007,6 +4013,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
                 | Self::SelfInboxGet
+                | Self::SelfInboxReply
+                | Self::SelfInboxReplyStatus
                 | Self::SelfInboxDone
                 | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
@@ -5285,6 +5293,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
                 | Self::SelfInboxGet
+                | Self::SelfInboxReply
+                | Self::SelfInboxReplyStatus
                 | Self::SelfInboxDone
                 | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
@@ -6708,6 +6718,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
                 | Self::SelfInboxGet
+                | Self::SelfInboxReply
+                | Self::SelfInboxReplyStatus
                 | Self::SelfInboxDone
                 | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
@@ -7778,6 +7790,7 @@ impl AgentVerb {
                 | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::SelfInboxGet
+                | Self::SelfInboxReply
                 | Self::SelfInboxDone
                 | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
@@ -8662,6 +8675,8 @@ impl AgentVerb {
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
             Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxReply => &["spec"],
+            Self::SelfInboxReplyStatus => &["spec"],
             Self::SelfInboxDone => &["spec"],
             Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
@@ -9912,6 +9927,8 @@ impl AgentVerb {
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
             Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxReply => &["spec"],
+            Self::SelfInboxReplyStatus => &["spec"],
             Self::SelfInboxDone => &["spec"],
             Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
@@ -11590,6 +11607,12 @@ impl AgentVerb {
             }
             Self::SelfInboxGet => {
                 "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."
+            }
+            Self::SelfInboxReply => {
+                "Queues exact text for a get-returned reply_event_ref. Reuse request_ref and text to retry; use a new request_ref for a follow-up. Returns the durable job, not delivery; leaves inbound read state unchanged."
+            }
+            Self::SelfInboxReplyStatus => {
+                "Reads the bound actor's reply job and its existing results. Dispatched does not mean delivered: inspect the exact outcome, including held, failed or ambiguous."
             }
             Self::SelfInboxDone => {
                 "Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."

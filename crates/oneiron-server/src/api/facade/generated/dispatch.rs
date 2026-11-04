@@ -6567,6 +6567,50 @@ async fn self_inbox_get(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_inbox_reply(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.inbox.reply",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_inbox_reply_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.inbox.reply.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn self_inbox_done(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39275,6 +39319,8 @@ async fn call_verb_row(
         }
         "self.inbox.lens" => Box::pin(self_inbox_lens(server, call, input)).await,
         "self.inbox.get" => Box::pin(self_inbox_get(server, call, input)).await,
+        "self.inbox.reply" => Box::pin(self_inbox_reply(server, call, input)).await,
+        "self.inbox.reply.status" => Box::pin(self_inbox_reply_status(server, call, input)).await,
         "self.inbox.done" => Box::pin(self_inbox_done(server, call, input)).await,
         "self.inbox.later" => Box::pin(self_inbox_later(server, call, input)).await,
         "vault.skills.bootstrap" => Box::pin(vault_skills_bootstrap(server, call, input)).await,

@@ -19,7 +19,7 @@ use oneiron::connector_key::events::ConnectorEvent;
 use oneiron::dreamer_runner::connector_event::{
     ConnectorEventReplyHandoff, ConnectorEventResponder, ConnectorEventWake,
 };
-use oneiron::outbound::ConnectorReplyJob;
+use oneiron::outbound::{ConnectorReplyJob, ConnectorReplyJobSource};
 use oneiron::surface_event::{SurfaceConnectorPayload, SurfaceEventDispatchRoute};
 use oneiron::{EntityId, Vault};
 
@@ -67,8 +67,10 @@ impl ConnectorEventResponder for ServedConnectorResponder {
         let job = ConnectorReplyJob {
             agent: wake.agent,
             event: wake.event.clone(),
-            parent_attempt: parent,
-            budget_steering: wake.budget_steering.clone(),
+            source: ConnectorReplyJobSource::Generated {
+                parent_attempt: parent,
+                budget_steering: wake.budget_steering.clone(),
+            },
         };
         let job = vault.enqueue_connector_reply_job(&job, now)?;
         Ok(ConnectorEventReplyHandoff::Queued { job })

@@ -82,11 +82,35 @@ fn answer(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     let agent = job.agent;
-    let Some(origin) = super::answerable_origin(&job.event, agent)? else {
-        return Ok(());
+    let origin = if job.chosen_text().is_some() {
+        let Ok(origin) = SurfaceConnectorPayload::from_connector_event(&job.event) else {
+            // Erase leaves a queued job without its event payload.
+            return Ok(());
+        };
+        if origin.actor()? != agent
+            || !matches!(
+                origin.action,
+                oneiron::surface_event::SurfaceEventAction::Message
+            )
+            || matches!(
+                origin.route,
+                oneiron::surface_event::SurfaceEventDispatchRoute::ObservedSourceEnrichment
+            )
+        {
+            return Err(Error::InvalidConfig(
+                "chosen reply has no addressed message".to_owned(),
+            ));
+        }
+        origin
+    } else {
+        let Some(origin) = super::answerable_origin(&job.event, agent)? else {
+            return Ok(());
+        };
+        origin
     };
     let event_id = job.event.event_id.as_str();
-    let kept = match vault.connector_reply_body(event_id, agent, REPLY_REF)? {
+    let reply_ref = job.reply_ref();
+    let kept = match vault.connector_reply_body(event_id, agent, reply_ref)? {
         Some(kept) => {
             // A rerun: the words are kept. The message's witness is tried
             // again, never in the send's way.
@@ -99,73 +123,108 @@ fn answer(
             }
             kept
         }
-        None => {
-            let definition = match AgentDispatcher::new(vault)
-                .dispatchable_definition(&AgentDispatchTarget::Custom(agent))
-            {
-                Ok(definition) => definition,
-                // An absent, disabled or unapproved agent writes no reply.
-                Err(error @ Error::Artifact(_)) => {
-                    tracing::info!(%error, agent = %agent.to_hex(), "connector event's agent cannot answer");
+        None => match job.chosen_text() {
+            Some(answer) => {
+                match inbound_text(vault, &origin) {
+                    Ok(Some(text)) => witness(result, "inbound", || {
+                        vault.witness_connector_inbound(
+                            agent,
+                            &origin,
+                            &text,
+                            super::super::unix_now(),
+                        )
+                    }),
+                    Ok(None) => {}
+                    Err(error) => owe_repair(result, "inbound", &error),
+                }
+                // The queue already holds these exact words. After a crash,
+                // reclaim keeps this request rather than generating another.
+                vault.save_connector_reply_body(
+                    event_id,
+                    agent,
+                    reply_ref,
+                    answer,
+                    super::super::unix_now(),
+                )?
+            }
+            None => {
+                let definition = match AgentDispatcher::new(vault)
+                    .dispatchable_definition(&AgentDispatchTarget::Custom(agent))
+                {
+                    Ok(definition) => definition,
+                    // An absent, disabled or unapproved agent writes no reply.
+                    Err(error @ Error::Artifact(_)) => {
+                        tracing::info!(%error, agent = %agent.to_hex(), "connector event's agent cannot answer");
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error),
+                };
+                let Some(text) = inbound_text(vault, &origin)? else {
+                    // No words to answer: a body the vault no longer holds, or
+                    // an event with none.
+                    return Ok(());
+                };
+                witness(result, "inbound", || {
+                    vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
+                });
+                // The whole conversation so far, as the agent's lane admits it;
+                // one the vault cannot read answers from the message alone.
+                let mut context: Vec<LlmMessage> = match vault
+                    .connector_conversation_history(agent, &origin, REPLY_REF)
+                {
+                    Ok(history) => history.iter().map(history_message).collect(),
+                    Err(error) => {
+                        tracing::warn!(%error, "connector reply history did not read; the reply goes on");
+                        Vec::new()
+                    }
+                };
+                // The budget messages the wake's charge fired are the engine's
+                // own words, not the inbound's: they lead the turn (FIX 3761).
+                if !job.budget_steering().is_empty() {
+                    context.insert(
+                        0,
+                        message(LlmMessageRole::System, job.budget_steering().join("\n")),
+                    );
+                }
+                context.push(message(
+                    LlmMessageRole::User,
+                    briefing(&origin, event_id, &text),
+                ));
+                let answer = generate(
+                    server,
+                    runtime,
+                    agent,
+                    &definition,
+                    context,
+                    reply_run_id(agent, event_id),
+                    result,
+                )?;
+                let answer = answer.trim();
+                if answer.is_empty() {
                     return Ok(());
                 }
-                Err(error) => return Err(error),
-            };
-            let Some(text) = inbound_text(vault, &origin)? else {
-                // No words to answer: a body the vault no longer holds, or
-                // an event with none.
-                return Ok(());
-            };
-            witness(result, "inbound", || {
-                vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
-            });
-            // The whole conversation so far, as the agent's lane admits it;
-            // one the vault cannot read answers from the message alone.
-            let mut context: Vec<LlmMessage> = match vault
-                .connector_conversation_history(agent, &origin, REPLY_REF)
-            {
-                Ok(history) => history.iter().map(history_message).collect(),
-                Err(error) => {
-                    tracing::warn!(%error, "connector reply history did not read; the reply goes on");
-                    Vec::new()
-                }
-            };
-            // The budget messages the wake's charge fired are the engine's
-            // own words, not the inbound's: they lead the turn (FIX 3761).
-            if !job.budget_steering.is_empty() {
-                context.insert(
-                    0,
-                    message(LlmMessageRole::System, job.budget_steering.join("\n")),
-                );
+                vault.save_connector_reply_body(
+                    event_id,
+                    agent,
+                    reply_ref,
+                    answer,
+                    super::super::unix_now(),
+                )?
             }
-            context.push(message(
-                LlmMessageRole::User,
-                briefing(&origin, event_id, &text),
-            ));
-            let answer = generate(
-                server,
-                runtime,
-                agent,
-                &definition,
-                context,
-                reply_run_id(agent, event_id),
-                result,
-            )?;
-            let answer = answer.trim();
-            if answer.is_empty() {
-                return Ok(());
-            }
-            vault.save_connector_reply_body(
-                event_id,
-                agent,
-                REPLY_REF,
-                answer,
-                super::super::unix_now(),
-            )?
-        }
+        },
     };
+    if let Some(chosen) = job.chosen_text()
+        && vault
+            .connector_reply_body_text(&kept.content_ref)?
+            .as_deref()
+            != Some(chosen)
+    {
+        return Err(Error::InvariantViolation(
+            "chosen reply body does not match its request",
+        ));
+    }
     result.body_ref = Some(kept.content_ref.clone());
-    let reply = reply_of(agent, &origin.channel, kept);
+    let reply = reply_of(agent, &origin.channel, reply_ref, kept);
     let mut sink = OwnedServedChannelSink::new(
         Arc::clone(vault),
         server.config.line.monthly_push_allowance(),
@@ -203,7 +262,7 @@ fn answer(
                 vault.witness_connector_reply(
                     agent,
                     &origin,
-                    REPLY_REF,
+                    reply_ref,
                     &text,
                     reply.occurred_at,
                     super::super::unix_now(),
@@ -325,7 +384,12 @@ fn reply_run_id(agent: EntityId, event_id: &str) -> String {
     format!("{REPLY_PURPOSE}:{}", &hasher.finalize().to_hex()[..32])
 }
 
-fn reply_of(agent: EntityId, channel: &str, kept: ConnectorReplyBody) -> ConnectorReply {
+fn reply_of(
+    agent: EntityId,
+    channel: &str,
+    reply_ref: &str,
+    kept: ConnectorReplyBody,
+) -> ConnectorReply {
     let verb = if channel == oneiron::linkedin_connector::LINKEDIN_CHANNEL {
         LINKEDIN_REPLY_VERB
     } else {
@@ -333,7 +397,7 @@ fn reply_of(agent: EntityId, channel: &str, kept: ConnectorReplyBody) -> Connect
     };
     ConnectorReply {
         agent,
-        reply_ref: REPLY_REF.to_owned(),
+        reply_ref: reply_ref.to_owned(),
         verb: verb.to_owned(),
         content_ref: kept.content_ref,
         occurred_at: kept.written_at,

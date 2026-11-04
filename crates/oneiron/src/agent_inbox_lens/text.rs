@@ -17,6 +17,9 @@ pub enum InboxTextSource {
     ProviderEvent {
         channel: String,
         payload_ref: String,
+        /// Exact `ConnectorEvent.event_id` of this actor's genuine frozen wake
+        /// for the message, when one matched; `None` leaves reads unchanged.
+        reply_event_ref: Option<String>,
     },
 }
 
@@ -75,6 +78,12 @@ impl Vault {
             return Ok(resolved);
         };
         read.persist_grant_clock()?;
+        // Stable reply anchors, resolved once per call: entry key to the
+        // connector event id this actor's wake froze for it.
+        let anchors = self.surface_reply_anchors_for_actor(actor).unwrap_or_else(|error| {
+            tracing::warn!(%error, "inbox reply anchors unavailable; message text remains readable");
+            BTreeMap::new()
+        });
         // The actor's own slice, as `agent_inbox_slice` folds it, and the
         // entries each folded row stands for.
         let entries = self.agent_inbox_entries(Some(actor))?;
@@ -124,11 +133,24 @@ impl Vault {
                 let Some(text) = self.read_provider_event_text(&facts.channel, payload_ref)? else {
                     continue;
                 };
+                // Pin this message's own source event: the anchor counts only
+                // when it names this exact entry's body and time, never the
+                // folded row's newest message.
+                let reply_event_ref = match anchors.get(entry.item_id.as_str()) {
+                    Some(anchor)
+                        if anchor.0.as_deref() == Some(payload_ref)
+                            && anchor.1 == entry.occurred_at =>
+                    {
+                        Some(anchor.2.clone())
+                    }
+                    _ => None,
+                };
                 messages.push(ResolvedInboxMessage {
                     identity_ref,
                     source: InboxTextSource::ProviderEvent {
                         channel: facts.channel,
                         payload_ref: payload_ref.to_owned(),
+                        reply_event_ref,
                     },
                     occurred_at: entry.occurred_at,
                     text,

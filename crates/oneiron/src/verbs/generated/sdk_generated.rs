@@ -1167,6 +1167,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.reply",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxReplyRequest,
+                >(),
+            ),
+            (
+                "self.inbox.reply.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxReplyStatusRequest,
+                >(),
+            ),
+            (
                 "self.inbox.done",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_inbox_lens::InboxItemRequest,
@@ -12128,6 +12140,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.inbox.reply" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.reply.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.inbox.done" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19867,6 +19893,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.inbox.get" => {
             let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
         }
+        "self.inbox.reply" => {
+            let _input: crate::agent_inbox_lens::InboxReplyRequest = decode(value.clone())?;
+        }
+        "self.inbox.reply.status" => {
+            let _input: crate::agent_inbox_lens::InboxReplyStatusRequest = decode(value.clone())?;
+        }
         "self.inbox.done" => {
             let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
         }
@@ -23774,6 +23806,8 @@ pub fn invoke(
         }
         "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
         "self.inbox.get" => encode(self_inbox_get(memory, decode(value)?)?),
+        "self.inbox.reply" => encode(self_inbox_reply(memory, decode(value)?)?),
+        "self.inbox.reply.status" => encode(self_inbox_reply_status(memory, decode(value)?)?),
         "self.inbox.done" => encode(self_inbox_done(memory, decode(value)?)?),
         "self.inbox.later" => encode(self_inbox_later(memory, decode(value)?)?),
         "vault.skills.bootstrap" => encode(vault_skills_bootstrap(memory, decode(value)?)?),
@@ -27785,6 +27819,18 @@ pub fn self_inbox_get(
     input: crate::agent_inbox_lens::InboxItemRequest,
 ) -> MemoryResult<crate::agent_inbox_lens::InboxItemView> {
     memory.inbox_item_get(&input)
+}
+pub fn self_inbox_reply(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxReplyRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxReplyReceipt> {
+    memory.inbox_item_reply(&input)
+}
+pub fn self_inbox_reply_status(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxReplyStatusRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxReplyJobStatus> {
+    memory.inbox_reply_status(&input)
 }
 pub fn self_inbox_done(
     memory: &Memory<'_>,

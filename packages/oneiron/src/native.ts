@@ -251,6 +251,8 @@ vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
 selfInboxGet(input: unknown): unknown
+selfInboxReply(input: unknown): unknown
+selfInboxReplyStatus(input: unknown): unknown
 selfInboxDone(input: unknown): unknown
 selfInboxLater(input: unknown): unknown
 vaultSkillsBootstrap(input: unknown): unknown

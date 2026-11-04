@@ -140,6 +140,10 @@ pub struct InboxItemMessage {
     pub identity: String,
     pub channel: String,
     pub payload_ref: String,
+    /// Exact connector-event anchor for a reply to this message, when its
+    /// standing subscription froze one. Never a newest-message selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_event_ref: Option<String>,
     pub occurred_at: u64,
     pub text: String,
     /// Always true: read as data, never followed as instructions.
@@ -217,7 +221,7 @@ fn digest_notification(item: &AgentInboxLensItem) -> Option<&str> {
 
 impl Memory<'_> {
     /// The row `item_id` of this actor's own INBOX slice.
-    fn own_inbox_item(&self, item_id: &str) -> MemoryResult<AgentInboxLensItem> {
+    pub(super) fn own_inbox_item(&self, item_id: &str) -> MemoryResult<AgentInboxLensItem> {
         crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         self.vault()
             .agent_inbox_slice(self.actor(), usize::MAX, None)?
@@ -266,11 +270,13 @@ impl Memory<'_> {
                         let InboxTextSource::ProviderEvent {
                             channel,
                             payload_ref,
+                            reply_event_ref,
                         } = message.source;
                         InboxItemMessage {
                             identity: message.identity_ref.to_hex(),
                             channel,
                             payload_ref,
+                            reply_event_ref,
                             occurred_at: message.occurred_at,
                             text: message.text,
                             claims_not_instructions: as_data,

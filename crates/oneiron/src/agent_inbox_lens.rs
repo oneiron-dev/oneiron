@@ -514,12 +514,16 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 
 mod inbound;
 mod read_state;
+mod reply;
 pub use read_state::{
     AgentInboxBoardSlice, AgentInboxReadState, InboxItemLaterRequest, InboxItemMarked,
     InboxItemMessage, InboxItemRequest, InboxItemView,
 };
 pub(crate) use read_state::{
     agent_inbox_row_done_in_txn, erase_agent_inbox_read_marks_actor_in_txn,
+};
+pub use reply::{
+    InboxReplyJobStatus, InboxReplyReceipt, InboxReplyRequest, InboxReplyStatusRequest,
 };
 mod serve;
 pub use serve::*;
