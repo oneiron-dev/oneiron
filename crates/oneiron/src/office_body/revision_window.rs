@@ -602,7 +602,16 @@ impl Vault {
             )?;
             for (index, binding) in projection.authors.iter().enumerate() {
                 let key = (*artifact, version.version, index as u64);
-                EXPORT_AUTHORS.put(&self.store, wtxn, &key, binding)?;
+                // Erased-wins at commit time (FIX 595 review): a contributor
+                // erased after the receipts were read must not be restored
+                // here; store None for erased actors, like the merge path.
+                let mut binding = binding.clone();
+                if let Some(actor) = binding.actor
+                    && self.carrier_actor_erased_in_txn(wtxn, &actor)?
+                {
+                    binding.actor = None;
+                }
+                EXPORT_AUTHORS.put(&self.store, wtxn, &key, &binding)?;
             }
             Ok(OfficeBodyExport {
                 frontier: head.frontier.clone(),

@@ -54,14 +54,27 @@ pub(crate) fn live_edit_effect(artifact: &EntityId, editor: &EntityId) -> Result
 /// none does. The candidate mirrors the merge path exactly, so only
 /// class-agnostic `entity.office.edit` grants cover it.
 pub(crate) fn covering_live_grant(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
     grants: &[(StandingConsentGrant, Option<EntityId>)],
     excluded: &BTreeSet<EntityId>,
     artifact: &EntityId,
     editor: &EntityId,
 ) -> Result<Option<String>> {
+    // Live coverage only (FIX 596 review): the issuer must still be a live
+    // vault owner. An erased (or otherwise non-live) issuer's grant no
+    // longer covers, even though the row is still Active.
+    let mut live: Vec<(StandingConsentGrant, Option<EntityId>)> = Vec::new();
+    for (grant, issuer) in grants {
+        if issuer.is_some_and(|issuer| {
+            crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &issuer).unwrap_or(false)
+        }) {
+            live.push((grant.clone(), *issuer));
+        }
+    }
     super::covering_grant_for(
         OFFICE_LIVE_EDIT_OPERATION,
-        grants,
+        &live,
         excluded,
         artifact,
         editor,
@@ -96,7 +109,8 @@ pub(crate) fn live_edit_admission_in_txn(
     // Vacuous today (only owners mint action grants, and owners bypass), and
     // load-bearing if a non-owner mint path ever appears.
     let excluded = BTreeSet::from([*editor]);
-    if let Some(grant_ref) = covering_live_grant(&grants, &excluded, artifact, editor)? {
+    if let Some(grant_ref) = covering_live_grant(vault, txn, &grants, &excluded, artifact, editor)?
+    {
         return Ok(LiveEditAdmission::Grant { grant_ref });
     }
     Ok(LiveEditAdmission::NeedsAsk)
@@ -128,7 +142,13 @@ pub(crate) fn identical_live_edit_grant_active_in_txn(
 ) -> Result<bool> {
     let bound = office_bound(artifact, editor)?.digest();
     for (grant, issuer) in issued_grants(vault, txn)? {
-        if issuer.is_some_and(|issuer| issuer != *editor) && grant.bound().digest() == bound {
+        // Same live-issuer rule as coverage (FIX 596 review): an erased
+        // issuer's identical row must not wedge the ask into a skip.
+        let live = issuer.is_some_and(|issuer| {
+            crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &issuer).unwrap_or(false)
+        });
+        if live && issuer.is_some_and(|issuer| issuer != *editor) && grant.bound().digest() == bound
+        {
             return Ok(true);
         }
     }
