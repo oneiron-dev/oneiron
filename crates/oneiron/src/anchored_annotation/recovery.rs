@@ -193,10 +193,9 @@ impl DocxReanchor {
         else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) =
-            pair_paragraph(before, after, index, self.shares_ids, false) else {
-                return ReanchorOutcome::Drifted;
-            };
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids, false) else {
+            return ReanchorOutcome::Drifted;
+        };
         let new = &after.blocks[paired];
         match remap_span(
             &before.blocks[index].text,
@@ -295,10 +294,9 @@ impl HtmlReanchor {
         else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) =
-            pair_paragraph(before, after, index, self.shares_ids, true) else {
-                return ReanchorOutcome::Drifted;
-            };
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids, true) else {
+            return ReanchorOutcome::Drifted;
+        };
         let new = &after.blocks[paired];
         if after
             .blocks

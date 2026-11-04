@@ -141,12 +141,15 @@ pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -252,6 +255,8 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
