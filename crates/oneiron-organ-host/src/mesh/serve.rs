@@ -23,7 +23,7 @@ use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
-use crate::resource_memory::MemoryGrow;
+use crate::resource_memory::{FloorLease, MemoryGrow};
 use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
@@ -306,7 +306,7 @@ impl OrganService {
         &self,
         carried: &Carried,
         deadline: Instant,
-    ) -> Result<Option<Box<dyn Send>>, String> {
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
         let Carried::Staged { .. } = carried else {
             return Ok(None);
         };
@@ -324,7 +324,7 @@ impl OrganService {
         &self,
         carried: &Carried,
         deadline: Instant,
-    ) -> Result<Option<Box<dyn Send>>, String> {
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
         let (Carried::Staged { len, .. }, Some(floor)) = (carried, self.host.floor()) else {
             return Ok(None);
         };
@@ -411,7 +411,7 @@ struct Forward {
     /// The serving host admits staged answer bytes before they are read.
     service: OrganService,
     /// Answer leases live until the call that made the asks ends.
-    held: std::sync::Mutex<Vec<Box<dyn Send>>>,
+    held: std::sync::Mutex<Vec<Box<dyn FloorLease>>>,
 }
 
 impl Forward {

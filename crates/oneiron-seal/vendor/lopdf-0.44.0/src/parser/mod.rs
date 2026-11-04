@@ -957,7 +957,8 @@ startxref
 153804\x20
 %%EOF
 ";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 15),
             Err(err) => panic!("unexpected {:?}", err),
         }
@@ -1070,7 +1071,8 @@ EI";
     fn xref_trailing_space_after_keyword() {
         // Some PDF generators emit "xref \n" with a trailing space.
         let input = b"xref \n0 3\n0000000000 65535 f \n0000000017 00000 n \n0000000081 00000 n \ntrailer\n<</Size 3/Root 1 0 R>>\nstartxref\n175\n%%EOF\n";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 2),
             Err(err) => panic!("xref with trailing space should parse: {:?}", err),
         }
