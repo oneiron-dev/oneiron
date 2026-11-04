@@ -2,7 +2,7 @@
 
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -195,7 +195,7 @@ impl Vault {
         let mut nulled = false;
         let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
         for id in ids {
-            if whole_vault_export_excludes_entity(self, id)? {
+            if whole_vault_export_excludes_entity_in_txn(&self.store, &txn, id)? {
                 continue;
             }
             let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
@@ -229,7 +229,7 @@ impl Vault {
                 bytes,
                 |source, _| {
                     Ok(exported.contains(source)
-                        && !whole_vault_export_excludes_entity(self, source)?)
+                        && !whole_vault_export_excludes_entity_in_txn(&self.store, &txn, source)?)
                 },
             )? == Some(false)
             {

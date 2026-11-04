@@ -1095,6 +1095,10 @@ export class Oneiron {
         /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
         set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
       },
+      callable: {
+        /** The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing. */
+        amend: (input: Facade.CallableAmendRequest): Facade.CallableAmendReceipt => this.#call(() => this.#client.vaultSkillsCallableAmend(input) as Facade.CallableAmendReceipt),
+      },
       /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
       pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
       outcomes: {
@@ -1766,6 +1770,8 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+      /** The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting. */
+      withdraw_erase: (input: Facade.LegalHoldWithdrawEraseRequest): Facade.LegalHoldErasesWithdrawn => this.#call(() => this.#client.vaultLegalHoldsWithdrawErase(input) as Facade.LegalHoldErasesWithdrawn),
     },
     courtesy_delete: {
       /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
@@ -3228,6 +3234,12 @@ export class Oneiron {
       }),
       /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.selfInboxLens(input) as Facade.InboxLensPage),
+      /** Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done. */
+      get: (input: Facade.InboxItemRequest): Facade.InboxItemView => this.#call(() => this.#client.selfInboxGet(input) as Facade.InboxItemView),
+      /** Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it. */
+      done: (input: Facade.InboxItemRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxDone(input) as Facade.InboxItemMarked),
+      /** Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it. */
+      later: (input: Facade.InboxItemLaterRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxLater(input) as Facade.InboxItemMarked),
     },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),

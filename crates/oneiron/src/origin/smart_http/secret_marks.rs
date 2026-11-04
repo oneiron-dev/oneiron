@@ -256,11 +256,13 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
     }
 
     fn open_spool(&self) -> Result<MarkSpool> {
+        // The plans carry key bytes: no copy outlives the spool (FIX 8030).
         let held = HeldBytes::new(
             ORIGIN_COMMAND_SECTION_MEMORY_BYTES,
             origin_door_root(self.vault).ok(),
         )
-        .with_floor(self.floor.cloned());
+        .with_floor(self.floor.cloned())
+        .wiping();
         Ok(MarkSpool {
             marks: HeldMarks {
                 held,

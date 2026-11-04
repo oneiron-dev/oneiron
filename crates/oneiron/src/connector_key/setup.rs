@@ -37,6 +37,8 @@ use crate::{EntityId, Vault};
 // An agent's `allow`, put to the owner as a decision ask.
 mod allow_ask;
 mod grants;
+// A built-in channel's isolated probe replies (FIX 710).
+mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
 mod sent_check;
 
@@ -61,6 +63,14 @@ const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+// Identity scopes can accompany Google's Gmail grant without adding mail access.
+const GMAIL_IDENTITY_SCOPES: [&str; 5] = [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+];
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -103,6 +113,20 @@ pub trait PackConnectionVerifier {
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
     ) -> std::result::Result<PackConnectionEvidence, String>;
+
+    /// The host's isolated probe of `check`, a built-in channel's connection
+    /// (FIX 710): the channel's own read-only identity call, each read on a
+    /// transport of its own, never a send and never a vault write. `None`
+    /// when this host has no client for the channel; the built-in then
+    /// qualifies on its checked setup.
+    fn builtin_probe<'a>(
+        &'a self,
+        vault: &'a Vault,
+        check: PackConnectionCheck<'a>,
+    ) -> Option<Box<dyn QualificationConnector + 'a>> {
+        let _ = (vault, check);
+        None
+    }
 }
 
 /// The read-only provider checks the engine ships for its built-in packs.
@@ -527,7 +551,8 @@ fn connection_bound(
 }
 
 /// The provider's word against the owner's: an account must be named, and
-/// reported scopes must be exactly the allowed ones.
+/// reported scopes must be allowed, apart from undeclared Google identity
+/// scopes accompanying a Gmail grant. Declared-but-declined scopes still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
     allowed: &[String],
@@ -554,7 +579,11 @@ fn judge_evidence(
         let unexplained: Vec<&str> = held
             .iter()
             .copied()
-            .filter(|scope| !explained.contains(scope))
+            .filter(|scope| {
+                !explained.contains(scope)
+                    && !(declared.verify == GMAIL_PROFILE_CHECK
+                        && GMAIL_IDENTITY_SCOPES.contains(scope))
+            })
             .collect();
         let declined: Vec<&str> = held
             .iter()

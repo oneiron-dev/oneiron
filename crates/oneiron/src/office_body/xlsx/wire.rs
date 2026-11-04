@@ -151,6 +151,20 @@ pub(super) fn encode_tables(tables: &[XlsxTable]) -> Result<LoroValue> {
         .map_err(|_| invalid("XLSX body tables"))
 }
 
+/// A sheet's rows and columns with their own size or format, as JSON.
+pub(super) fn encode_lines(rows: &[XlsxLines], columns: &[XlsxLines]) -> Result<LoroValue> {
+    serde_json::to_string(&(rows, columns))
+        .map(LoroValue::from)
+        .map_err(|_| invalid("XLSX body rows and columns"))
+}
+
+pub(super) fn decode_lines(value: &LoroValue) -> Result<(Vec<XlsxLines>, Vec<XlsxLines>)> {
+    let LoroValue::String(json) = value else {
+        return Err(invalid("XLSX body rows and columns"));
+    };
+    serde_json::from_str(&json.to_string()).map_err(|_| invalid("XLSX body rows and columns"))
+}
+
 pub(super) fn encode_axes(axes: &[(String, XlsxAxisEdit)]) -> Vec<LoroValue> {
     axes.iter()
         .map(|(key, edit)| {

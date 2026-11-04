@@ -177,7 +177,7 @@ pub(super) fn handle_document(
             // FIX 10829: one under a whole-text copy's or a re-released copy
             // id's own row id that builds on its copy lineage edits it too.
             let source = source.or_else(|| lineage_edit(server, &document, entity, payload));
-            match source {
+            let held = match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
                     selector_grant_scope(),
@@ -185,22 +185,33 @@ pub(super) fn handle_document(
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
                 ),
-                None => document.import_from_peer(
-                    kind,
-                    payload,
-                    selector_grant_scope(),
-                    &request.selector,
-                    peer,
-                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
-                ),
+                None => document
+                    .import_from_peer(
+                        kind,
+                        payload,
+                        selector_grant_scope(),
+                        &request.selector,
+                        peer,
+                        |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    )
+                    .map(|()| None),
             }
             .map_err(storage_error)?;
-            let vv = ack_vector(server, &document, source)?;
+            // FIX 10598: a held copy edit is acknowledged with the vector its
+            // held operations are in, so the device stops sending it, and is
+            // never relayed: nothing of it landed.
+            let vv = match &held {
+                Some(vector) => vector.clone(),
+                None => ack_vector(server, &document, source)?,
+            };
             drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document ack"))?;
             let _ = direct.send(ack);
+            if held.is_some() {
+                return Ok(());
+            }
             let frame = transport::encode_document(entity, kind, payload)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document frame"))?;
@@ -449,6 +460,10 @@ pub(super) fn document_delivery_retrying(
             }
             continue;
         }
+        // FIX 10730: a marked source's notice reaches its copy-id subscribers as the copy.
+        out.extend(super::document_copy::copy_notice_frame(
+            server, state, &doc, &principal, peer, retry,
+        ));
         if let Some(request) = state.documents.get(&doc.entity)
             && request.selector.member_ref == principal
         {
@@ -521,7 +536,7 @@ pub(super) fn document_delivery_retrying(
 
 /// Whether a document's open ended at its turn's deadline: a notice is tried
 /// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
-fn waited_out(error: &oneiron::Error) -> bool {
+pub(super) fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
 }
 
@@ -623,7 +638,7 @@ pub(super) fn retry_later(
 }
 
 /// The notice of one document, to queue again.
-fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
+pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     transport::encode_document(doc.entity, doc.kind, doc.payload)
         .into_result()
         .ok()

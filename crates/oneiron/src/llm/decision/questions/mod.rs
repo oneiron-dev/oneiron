@@ -75,7 +75,7 @@ pub use refresh::{
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
-pub(crate) use refresh::{principal_actor, standing_asker_for_question};
+pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub(crate) use response_custody::{typed_question_carriage, typed_question_owners};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};

@@ -7,17 +7,22 @@
 
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
-pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+pub(crate) use fingerprint::{
+    invalidate_blob_fingerprint, prepare_binary_blob_artifact_birth, prepare_blob_artifact_birth,
+};
 mod docs;
 mod docs_deep;
 mod docs_import;
 mod summary_ladder;
 pub use docs::{
-    DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
-    docs_semantic_segments,
+    DOCS_EXPORT_SOURCE_ID, DOCS_SEGMENT_MAX_BYTES, DocsExport, DocsExportSource, DocsPage,
+    DocsSegment, docs_extraction_id, docs_semantic_segments,
 };
 pub(crate) use docs_deep::invalidate_docs_source_before_put;
-pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
+pub use docs_deep::{
+    DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepReview, DocsDeepReviewClaim,
+    DocsDeepTrigger,
+};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
