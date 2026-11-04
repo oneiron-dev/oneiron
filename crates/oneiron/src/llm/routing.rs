@@ -29,6 +29,7 @@ use crate::{
 };
 
 mod decisions;
+pub use crate::store::model_description_rows::MeasuredDescription;
 pub use decisions::{DescriptionDecisions, DescriptionNotes};
 // FIX 9922: every candidate's complete grade rides with each routed outcome.
 mod readings;
@@ -45,11 +46,6 @@ pub(crate) fn llm_description_policy_accepts_masked(bytes: &[u8]) -> bool {
 
 const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
-/// Whether a masked copy of a `LLM_DESCRIPTION_MEASUREMENTS` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn llm_description_measurements_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<BTreeMap<ModelId, MeasuredDescription>, LegacyJson>(bytes)
-}
 
 const REASKS: SideTable<String, DescriptionReask, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_REASK);
@@ -147,15 +143,6 @@ impl DescriptionPolicy {
         }
         Ok(())
     }
-}
-
-/// Vault-measured real-task evidence, never substituted for an owner's line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeasuredDescription {
-    pub model: ModelId,
-    pub text: String,
-    pub quality_millionths: u32,
 }
 
 /// Overrides filter the description candidates; they never bypass judgment.

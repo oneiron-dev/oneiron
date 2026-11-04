@@ -30,6 +30,7 @@ mod eval_cohort;
 mod explain;
 mod fanout_launch;
 mod federation;
+#[cfg(feature = "sync")]
 mod federation_burst;
 mod feedback;
 mod files;
@@ -448,6 +449,7 @@ pub use self::eval_cohort::*;
 pub use self::explain::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
+#[cfg(feature = "sync")]
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
