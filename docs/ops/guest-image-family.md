@@ -522,9 +522,13 @@ operator's part.
    The shared bound-release observer also emits one `tracing::info!` with
    the selected image digest, manifest state, fact codes and admitted bit;
    this is observation only, not a launch-policy change. A Hypnos import is
-   meant to run it as well (LC builds that call). Today no host-owned binding
-   from an image to its manifest exists, so every launch records
-   `image_release_manifest_absent` and `image_signature_unavailable`. A
+   meant to run it as well (LC builds that call). The binding is host-owned:
+   `ONEIRON_IMAGE_RELEASE_BINDINGS` names a JSON map from the selected image
+   identity to its `image-release.json` (and envelope), read at every launch
+   and never cached (`images/manifest.md` Launch). A launch with no map entry
+   for its image records `image_release_manifest_absent` and
+   `image_signature_unavailable`. Live hosts still need LC's provisioning map
+   (FIX 9427); until it lands, their launches record absent. A
    signed manifest with no verifier configured records
    `image_signature_unverifiable`.
 5. **Policy.** `IMAGE_SIGNATURE_POLICY` is `ObserveOnly`, so these facts
