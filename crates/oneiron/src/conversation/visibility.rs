@@ -9,7 +9,8 @@ use crate::{
         ENTITY_TYPE_TURN,
     },
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Mutex;
 
 mod covers;
 mod private_sources;
@@ -24,10 +25,76 @@ pub(crate) use private_sources::{
 pub(crate) struct AudienceCache {
     rows: BTreeMap<(EntityId, u64), Vec<MembershipRow>>,
     ledger_reads: usize,
+    /// Own-entry windows kept for one committed snapshot ([`OwnWindows`]).
+    own_windows: Mutex<OwnWindows>,
 }
+
+/// An unbound reader's own windows per `(room, reader)`
+/// ([`crate::workspace_roster::own_room_windows_in_txn`]), for the one
+/// committed snapshot `at` names. That door reads only the snapshot (the
+/// room's record, roster and ledger) and the vault's fixed posture, so every
+/// row of one recall that sits in a room shares its answer; each row still
+/// tests its own time against them.
+#[derive(Default)]
+struct OwnWindows {
+    windows: HashMap<(EntityId, EntityId), Option<Vec<MembershipWindow>>>,
+    /// The snapshot `windows` holds, and whether that snapshot keeps any.
+    at: Option<(usize, bool)>,
+}
+
+/// Whether a row that occurred at `at` stands inside one of `windows`: no
+/// windows bind it at all (not on the roster, or a derived roster).
+fn own_windows_admit(windows: &Option<Vec<MembershipWindow>>, at: u64) -> bool {
+    windows
+        .as_ref()
+        .is_none_or(|windows| windows.iter().any(|w| w.contains(at)))
+}
+
 impl AudienceCache {
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads
+    }
+
+    /// Whether the own-entry windows may be served and kept for `txn`,
+    /// emptied when `txn` reads another snapshot. As the policy fold's
+    /// per-snapshot cache: a write never keeps any (its staged rows can move
+    /// a roster under it, and an aborted write's id is reused), and a
+    /// transaction keeps them only when a probe shows it reads the committed
+    /// snapshot, which a write transaction (one past it) never does. The
+    /// probe runs once per snapshot, on its own thread: a second read
+    /// transaction on this one fails while `txn` lives. A poisoned lock
+    /// keeps nothing.
+    fn own_windows_keep(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
+        if crate::store::active_write_txn_depth() > 0 {
+            return false;
+        }
+        let Ok(mut own) = self.own_windows.lock() else {
+            return false;
+        };
+        let id = txn.id();
+        if let Some((kept, keeps)) = own.at
+            && kept == id
+        {
+            return keeps;
+        }
+        own.windows.clear();
+        let committed = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    vault
+                        .store
+                        .env
+                        .read_txn()
+                        .ok()
+                        .map(|committed| committed.id())
+                })
+                .join()
+                .ok()
+                .flatten()
+        });
+        let keeps = committed == Some(id);
+        own.at = Some((id, keeps));
+        keeps
     }
 }
 impl AudienceCache {
@@ -103,6 +170,7 @@ impl AudienceCache {
             }
         }
         let mut seen = BTreeSet::from([id]);
+        let keep = self.own_windows_keep(vault, txn);
         while let Some((id, bytes)) = pending.pop() {
             let Some(h) = EntityMetadataHeader::parse(&bytes) else {
                 return Ok(false);
@@ -112,10 +180,32 @@ impl AudienceCache {
                 if room == id {
                     continue;
                 }
-                match crate::workspace_roster::own_room_windows_in_txn(vault, txn, room, reader) {
-                    Ok(None) => {}
-                    Ok(Some(windows)) if windows.iter().any(|w| w.contains(h.occurred_start)) => {}
-                    Ok(Some(_)) | Err(_) => return Ok(false),
+                let kept = keep
+                    .then(|| {
+                        let own = self.own_windows.lock().ok()?;
+                        own.windows
+                            .get(&(room, reader))
+                            .map(|windows| own_windows_admit(windows, h.occurred_start))
+                    })
+                    .flatten();
+                let admits = match kept {
+                    Some(admits) => admits,
+                    None => {
+                        // A door that errs omits the row, and keeps nothing.
+                        let Ok(windows) = crate::workspace_roster::own_room_windows_in_txn(
+                            vault, txn, room, reader,
+                        ) else {
+                            return Ok(false);
+                        };
+                        let admits = own_windows_admit(&windows, h.occurred_start);
+                        if keep && let Ok(mut own) = self.own_windows.lock() {
+                            own.windows.insert((room, reader), windows);
+                        }
+                        admits
+                    }
+                };
+                if !admits {
+                    return Ok(false);
                 }
             }
             let mut sources =
