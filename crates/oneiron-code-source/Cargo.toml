@@ -1,0 +1,24 @@
+[package]
+name = "oneiron-code-source"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Host-side preparation of oneiron code-mode programs: TypeScript stripped by Oxc, JavaScript passed through"
+repository.workspace = true
+
+[dependencies]
+blake3 = { workspace = true, features = ["zeroize"] }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_codegen = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_semantic = { workspace = true }
+oxc_span = { workspace = true }
+oxc_transformer = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[lints]
+workspace = true
