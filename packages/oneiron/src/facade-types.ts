@@ -136,7 +136,7 @@ export type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sea
 export type ScratchpadSealRequest = { session_id: string }
 /** `oneiron::verbs::self_verbs::DiaryEntryRequest` */
 export type DiaryEntryRequest = { content: string; kind?: string | null }
-/** `oneiron::lens::record_ref::RecordRef` */
+/** `oneiron::store::record_ref::RecordRef` */
 export type RecordRef = { kind: string; id: string; short_id?: string | null; label: string }
 /** `oneiron::verbs::self_verbs::DiaryEntryReceipt` */
 export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null }
@@ -4884,7 +4884,7 @@ export type CodeSymbolsDeclared = { declaration: CodeSymbolLeaseView; blockers: 
 export type CodeSymbolsTaskRequest = { task: EntityId }
 /** `oneiron::memory::code_doors::types::CodeSymbolsReleased` */
 export type CodeSymbolsReleased = { task: EntityId; released: boolean }
-/** `oneiron::code_document::types::CodeOpProvenance` */
+/** `oneiron::store::code_document_receipt::CodeOpProvenance` */
 export type CodeOpProvenance = { turn?: EntityId | null; activity?: EntityId | null; intent?: EntityId | null; substrate_ref?: EntityId | null; reasoning_effort?: string | null }
 /** `oneiron::store::critic_lens::CriticLens` */
 export type CriticLens = { id: string; prompt_contract: string; output_schema: string; hard_check: boolean; domain: string }
