@@ -314,10 +314,11 @@ impl Restore<'_> {
         .ok()?
         .ok()??;
         lifecycle::count(Counted::Open);
+        let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
         let opened_capacity = u64::try_from(opened.capacity()).unwrap_or(u64::MAX);
         let plaintext = host_reserved.hold(self.key.anchor.vault, opened, opened_capacity);
         // Count the buffer before awaiting more credit; its region is not allocated yet.
-        host_reserved.ensure(self.record.plaintext_bytes).await?;
+        host_reserved.ensure(opened_len).await?;
         Some(plaintext)
     }
 
