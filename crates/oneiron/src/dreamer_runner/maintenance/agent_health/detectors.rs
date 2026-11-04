@@ -405,6 +405,9 @@ pub(super) fn duplicate_findings(
             let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
+            if settled(record.state) && record.settled_at.is_none_or(|at| at < since) {
+                continue;
+            }
             if found.contains(record.id.as_bytes()) || cheap(record, dispatch)? {
                 continue;
             }
