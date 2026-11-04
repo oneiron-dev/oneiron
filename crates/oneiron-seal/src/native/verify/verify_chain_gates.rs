@@ -207,13 +207,10 @@ fn classify_missing_material_root(
     {
         return Ok(());
     }
-    memory.admit_len::<EmbeddedCert>(covered.len())?;
-    let mut provisional = Vec::with_capacity(covered.len());
-    for c in covered {
-        if let Some(cert) = EmbeddedCert::from_der(&c.der, memory)? {
-            provisional.push(cert);
-        }
-    }
+    let provisional: Vec<_> = covered
+        .iter()
+        .filter_map(|c| EmbeddedCert::from_der(&c.der))
+        .collect();
     let mut probe = Checks::new();
     verify_dss(doc, &provisional, covered, at, memory, &mut probe)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
@@ -285,15 +282,12 @@ pub(crate) fn verify_document(
         VerifyFindingCode::InvalidPdfRevision,
     );
     let anchors = anchors(ctx.config);
-    memory
-        .admit_len::<EmbeddedCert>(ctx.config.trust_anchors_der.len())
-        .map_err(memory_refused)?;
-    let mut anchor_certs = Vec::with_capacity(ctx.config.trust_anchors_der.len());
-    for d in &ctx.config.trust_anchors_der {
-        if let Some(cert) = EmbeddedCert::from_der(d, &memory).map_err(memory_refused)? {
-            anchor_certs.push(cert);
-        }
-    }
+    let anchor_certs: Vec<EmbeddedCert> = ctx
+        .config
+        .trust_anchors_der
+        .iter()
+        .filter_map(|d| EmbeddedCert::from_der(d))
+        .collect();
     // Stage 1: bind every envelope to the already-proven xref chain and
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
@@ -312,20 +306,16 @@ pub(crate) fn verify_document(
                 index + 1 == sigs.len(),
             )
         })
-        .collect::<Result<Vec<_>, SealError>>()?;
+        .collect();
     let dss_end = dss_revision_end(&doc, bytes);
     let mut covered = Vec::new();
     for envelope in &envelopes {
-        memory
-            .admit_len::<EmbeddedCert>(envelope.covered.len())
-            .map_err(memory_refused)?;
-        for cert in &envelope.covered {
-            if let Some(reparsed) =
-                EmbeddedCert::from_der(&cert.der, &memory).map_err(memory_refused)?
-            {
-                covered.push(reparsed);
-            }
-        }
+        covered.extend(
+            envelope
+                .covered
+                .iter()
+                .filter_map(|cert| EmbeddedCert::from_der(&cert.der)),
+        );
     }
     let decoded = verify_dss(
         &doc,
@@ -379,29 +369,21 @@ pub(crate) fn verify_document(
             envelopes[index].checks.extend(path.list);
         }
         let mut material = Vec::new();
-        memory
-            .admit_len::<EmbeddedCert>(envelopes[index].covered.len())
-            .map_err(memory_refused)?;
-        for cert in &envelopes[index].covered {
-            if let Some(reparsed) =
-                EmbeddedCert::from_der(&cert.der, &memory).map_err(memory_refused)?
-            {
-                material.push(reparsed);
-            }
-        }
+        material.extend(
+            envelopes[index]
+                .covered
+                .iter()
+                .filter_map(|cert| EmbeddedCert::from_der(&cert.der)),
+        );
         if let Some(archive) = &archival
             && let Some(proof) = envelopes[archive.timestamp].time_proof.as_ref()
         {
-            memory
-                .admit_len::<EmbeddedCert>(proof.tsa_chain_ders.len())
-                .map_err(memory_refused)?;
-            for der in &proof.tsa_chain_ders {
-                if let Some(reparsed) =
-                    EmbeddedCert::from_der(der, &memory).map_err(memory_refused)?
-                {
-                    material.push(reparsed);
-                }
-            }
+            material.extend(
+                proof
+                    .tsa_chain_ders
+                    .iter()
+                    .filter_map(|der| EmbeddedCert::from_der(der)),
+            );
         }
         let mut material_checks = Checks::new();
         let decoded = verify_dss(
