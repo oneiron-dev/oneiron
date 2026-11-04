@@ -14,7 +14,7 @@ use oneiron::memory::MemoryResult;
 use oneiron::note::{
     FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan,
     FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
-    ImportedNoteStanding, NameOnlyFile,
+    ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
 };
 use oneiron::task_verb::sdk::{
     self, FilesLimitCrossed, FilesOriginalsUnkept, FilesRescanView, FilesSourceAttachAnswer,
@@ -294,8 +294,28 @@ pub(crate) fn rescan(
     let mut titles = TitleCounts::default();
     let mut new = Vec::new();
     let mut present = Vec::new();
+    // Secret-scan-refused files a Files source holds by name, one row per
+    // file: parts share their file's.
+    let mut refused_held = HashSet::new();
     for (note, standing) in notes.iter_mut().zip(&standings) {
         let markdown = std::mem::take(&mut note.markdown);
+        // A refused file is held by its name when its path scans clean
+        // (FIX 10244): the write door keeps no row for a path-dirty file
+        // and rows a path-clean one, so the refused bytes are never kept
+        // or landed. Refused links stay out of every resolver already.
+        if *standing == ImportedNoteStanding::Refused && source.files.is_some() {
+            if let Some(read) = facts.get(note.file()) {
+                if refused_held.insert(note.file().to_owned()) {
+                    name_only.push(NameOnlyFile {
+                        path: note.file().to_owned(),
+                        why: NameOnlyReason::Refused,
+                        facts: *read,
+                        original: None,
+                    });
+                }
+                continue;
+            }
+        }
         if *standing != ImportedNoteStanding::New {
             present.push(FolderFile {
                 path: note.path.clone(),
