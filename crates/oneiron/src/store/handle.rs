@@ -249,6 +249,9 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The engine's record-scope stamp hooks, supplied by the open door with
+    /// the delete guards.
+    pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,

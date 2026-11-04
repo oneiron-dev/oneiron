@@ -447,7 +447,9 @@ impl Vault {
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
             .port_entity_scrub(wtxn, id, scrubbed, mutation_recorded_at)?;
-        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
+        self.store
+            .scope_stamps
+            .retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         crate::embed::erase_turn_vectors_in_txn(

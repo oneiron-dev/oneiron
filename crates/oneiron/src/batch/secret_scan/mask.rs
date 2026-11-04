@@ -210,12 +210,9 @@ pub(in crate::batch) struct MaskedFiles(Vec<EntityId>);
 impl MaskedFiles {
     pub(in crate::batch) fn restrict(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
         for id in self.0 {
-            crate::federation::record_scope::restrict_stamp_in_txn(
-                store,
-                wtxn,
-                id,
-                MASKED_FILE_BAND,
-            )?;
+            store
+                .scope_stamps
+                .restrict_stamp_in_txn(store, wtxn, id, MASKED_FILE_BAND)?;
         }
         Ok(())
     }
