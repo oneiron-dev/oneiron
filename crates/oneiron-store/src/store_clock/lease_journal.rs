@@ -2,7 +2,7 @@
 //! L02 11-04 13:53 = A).
 //!
 //! A decision past the committed lease judges without waiting for the writer
-//! ([`crate::store::Store::authorization_now`]), and the lease's renewal
+//! (`Store::authorization_now` in the engine), and the lease's renewal
 //! commits after it. Before such a decision's time is returned, a bound that
 //! covers it, the time plus [`AUTHORIZATION_LEASE_SECS`], is appended to the
 //! environment's `clock-lease.journal` and fdatasynced, off the LMDB writer:
@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::AUTHORIZATION_LEASE_SECS;
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 /// The journal's file, in the environment's root beside the slip-spend
 /// journal.
@@ -49,7 +49,7 @@ const RECORD_MAGIC: &[u8; 4] = b"OCL1";
 /// The owned open's journal. Its store's clock holds it, so it lives and
 /// closes with that store (review #4484 P2, 11-04 16:05): no registry, and no
 /// descriptor beyond the directory's between appends.
-pub(crate) struct LeaseJournal {
+pub struct LeaseJournal {
     path: PathBuf,
     /// The directory this open opened, which every open of the journal goes
     /// through on unix.
@@ -88,7 +88,7 @@ impl LeaseJournal {
     /// appended and fdatasynced. `false` on any failure, said in a warn: the
     /// caller renews the lease in its writer before it judges (condition 2;
     /// L02 11-04 15:16).
-    pub(super) fn cover(&self, now: u64) -> bool {
+    pub fn cover(&self, now: u64) -> bool {
         if self.pid != std::process::id() {
             return false;
         }
@@ -243,7 +243,7 @@ fn parse_record(bytes: &[u8]) -> Option<u64> {
 /// only rise through the file); with none after it, or when the file does not
 /// read, nothing bounds it and this fails, closed (review #4484 Astra P1,
 /// 11-04 16:2x: a write time is no bound after a wall step back).
-pub(super) fn journaled_bound(root: &Path) -> Result<u64> {
+pub fn journaled_bound(root: &Path) -> Result<u64> {
     let path = root.join(LEASE_JOURNAL_FILE);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
@@ -281,14 +281,14 @@ pub(super) fn journaled_bound(root: &Path) -> Result<u64> {
 /// The owned open's replay (condition 3): the journal this open appends to,
 /// and the bound its records hold, for the caller to commit into the clock
 /// floor before any admission, and the journal to truncate once it has.
-pub(super) fn replay_at_open(root: &Path) -> Result<(Arc<LeaseJournal>, u64)> {
+pub fn replay_at_open(root: &Path) -> Result<(Arc<LeaseJournal>, u64)> {
     let bound = journaled_bound(root)?;
     Ok((Arc::new(LeaseJournal::open(root)?), bound))
 }
 
 /// Empties the journal after its bound committed. A failed truncate leaves
 /// records at or below the committed floor, which replay harmlessly.
-pub(super) fn truncate_after_replay(journal: &LeaseJournal) {
+pub fn truncate_after_replay(journal: &LeaseJournal) {
     if let Err(error) = journal.truncate() {
         tracing::warn!(%error, "the replayed clock lease journal did not truncate");
     }

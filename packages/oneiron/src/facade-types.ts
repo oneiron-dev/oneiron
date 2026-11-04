@@ -2704,7 +2704,7 @@ export type SharedReceiptRequest = { receipt_id: string }
 export type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: string; recipient: string; change: SharedVaultChange; completed_at: number }
 /** `oneiron::federation::shared_act::SharedVaultDeletion` */
 export type SharedVaultDeletion = { vault_id: string; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number }
-/** `oneiron::federation::org_admin::OrgAdminPower` */
+/** `oneiron::batch::shared_vault_write::OrgAdminPower` */
 export type OrgAdminPower = "add_member" | "remove_member" | "assign_role" | "reset_shared_project_access"
 /** `oneiron::federation::org_admin::OrgAdminPolicy` */
 export type OrgAdminPolicy = { org_ref: ScopeId; admin_refs: ScopeId[]; powers: OrgAdminPower[] }

@@ -7178,10 +7178,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/home_room_project.rs",
+     "purpose": "The project a home-room body names, read by an importer to order a room after its project",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 13
      }
     },
@@ -7332,7 +7342,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 40,
       "mod": 1,
       "re-export": 3
      }
@@ -7584,6 +7594,16 @@
      "notable": [],
      "path": "src/batch/recovery_shell.rs",
      "purpose": "Header-only recovery of a retained soft-delete shell, never a body put",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/row_put.rs",
+     "purpose": "What a put is to the row it writes, as the record-scope stamp reads it",
      "surface": {
       "crate-vis": 1
      }
@@ -8136,6 +8156,20 @@
      "purpose": "A room's delete of a row only it staged (FIX 10763, FIX 11932, FIX 12012)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OrgAdminPower",
+      "SharedVaultWrite"
+     ],
+     "path": "src/batch/shared_vault_write.rs",
+     "purpose": "A requested shared-vault mutation and the closed organization-administration vocabulary it names",
+     "surface": {
+      "enum": 2,
+      "fn": 2
      }
     },
     {
@@ -12914,20 +12948,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ChannelIdentityShape",
-      "SelfHeldShape"
-     ],
-     "path": "src/channel_identity/shape.rs",
-     "purpose": "ChannelIdentity addressability shapes with wire serde",
-     "surface": {
-      "enum": 2,
-      "fn": 5
-     }
-    },
-    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -13169,28 +13189,6 @@
      "path": "src/channel_identity_lifecycle/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ChannelIdentityCapabilityMatrix",
-      "ChannelIdentityDisclosureClass",
-      "ChannelIdentityManifest",
-      "ChannelIdentityManifestError",
-      "ChannelIdentityMintability",
-      "ChannelIdentityPolicyRisk",
-      "ChannelIdentityReceiveCapabilities",
-      "ChannelIdentityReputationSignal"
-     ],
-     "path": "src/channel_identity_manifest.rs",
-     "purpose": "Channel identity capability manifests (OF-347 CID-4)",
-     "surface": {
-      "const": 1,
-      "enum": 4,
-      "fn": 9,
-      "struct": 4
-     }
     },
     {
      "bucket": "m",
@@ -24788,6 +24786,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/archive_role.rs",
+     "purpose": "The role an archive delete was admitted under, as a delete's receipts and gate reason codes name it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/checkpoint_payload.rs",
      "purpose": "The deletion side of the checkpoint payload compartments (KS7-4, FIX 5688): which compartments a deleted…",
      "surface": {
@@ -25053,6 +25061,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/delete_bearing_update.rs",
+     "purpose": "The opaque delete-bearing delta a tombstone commit queues, and its single constructor",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/derived_rows.rs",
      "purpose": "Rows a record feeds outside the generic index set, torn with the record",
      "surface": {
@@ -25246,7 +25264,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 40,
       "re-export": 13
      }
     },
@@ -25431,6 +25449,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/window_document_format.rs",
+     "purpose": "The window-document format marker a native NOTE carrier writes, read by the publish path to choose a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/withdrawn.rs",
      "purpose": "A withdrawn record's Shell generation (FIX 931)",
      "surface": {
@@ -25491,48 +25519,11 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "OutboundScheduleContext"
-     ],
-     "path": "src/delivery_window/schedule_context.rs",
-     "purpose": "Host-supplied civil time and delivery level for an outbound schedule",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/delivery_window/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "DeliveryWindowApnsInterruptionLevel",
-      "DeliveryWindowAppliesTo",
-      "DeliveryWindowContextCondition",
-      "DeliveryWindowDecision",
-      "DeliveryWindowLadderRung",
-      "DeliveryWindowMatch",
-      "DeliveryWindowResolution",
-      "DeliveryWindowResolvedLevel",
-      "DeliveryWindowVerbClass"
-     ],
-     "path": "src/delivery_window/types.rs",
-     "purpose": "Claim predicates, key consts, decision/ladder enums and resolution structs",
-     "surface": {
-      "const": 6,
-      "crate-vis": 13,
-      "enum": 7,
-      "fn": 14,
-      "struct": 2
-     }
     },
     {
      "bucket": "s",
@@ -35413,7 +35404,7 @@
      "path": "src/federation/archive_delete.rs",
      "purpose": "Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4), judged from the vault's own rows…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -35709,15 +35700,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "MembershipStanding",
-      "SharedVaultWrite"
+      "MembershipStanding"
      ],
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
       "crate-vis": 10,
-      "enum": 2,
-      "fn": 1
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -35735,7 +35726,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "mod": 2,
       "re-export": 19
      }
@@ -35745,14 +35736,14 @@
      "kind": "src",
      "notable": [
       "OrgAdminError",
-      "OrgAdminPolicy",
-      "OrgAdminPower"
+      "OrgAdminPolicy"
      ],
      "path": "src/federation/org_admin.rs",
      "purpose": "Closed organization-administration powers",
      "surface": {
-      "enum": 2,
-      "fn": 9,
+      "enum": 1,
+      "fn": 7,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -42671,8 +42662,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 207,
-      "re-export": 97
+      "mod": 206,
+      "re-export": 98
      }
     },
     {
@@ -52783,6 +52774,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/git_ref_change.rs",
+     "purpose": "One ref a checkout push moves and the paths that move changes, as the smart-HTTP door reads them back and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53063,7 +53064,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 16,
       "re-export": 5
      }
@@ -58110,37 +58111,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "Clock",
-      "IdGen",
-      "StoreClock"
-     ],
+     "notable": [],
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 19,
-      "fn": 8,
-      "struct": 1,
-      "trait": 2
+      "crate-vis": 11,
+      "fn": 3,
+      "re-export": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/ports/time/lease_journal.rs",
-     "purpose": "The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A)",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/ports/time/tests.rs",
-     "purpose": "The store clock's reads, observed through what a caller gets back",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -70237,21 +70215,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HostHoldsRecipient",
-      "HostHoldsSealing"
-     ],
-     "path": "src/store/checkpoint_host_recipient.rs",
-     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members",
-     "surface": {
-      "enum": 1,
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/store/checkpoint_payload/capture.rs",
      "purpose": "The compartments a capture seals its owners under (KS7-5): each owner's active incarnation, or a newly…",
@@ -71529,7 +71492,7 @@
      "purpose": "Declared entity identity hints and their lookup index",
      "surface": {
       "crate-vis": 6,
-      "fn": 1
+      "re-export": 1
      }
     },
     {
@@ -72194,8 +72157,18 @@
      "path": "src/store/loro_document.rs",
      "purpose": "Loro byte-map operations and document codecs used by storage readers",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/loro_tombstones.rs",
+     "purpose": "The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -72222,9 +72195,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 61,
-      "mod": 75,
-      "re-export": 23
+      "crate-vis": 64,
+      "mod": 74,
+      "re-export": 24
      }
     },
     {
@@ -72590,6 +72563,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/project_kind.rs",
+     "purpose": "The run-time kind lookups for PROJECT and its revision companion: the pack and short-id prefixes they are…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProposalSpoolClaim",
       "ProposalSpoolFloor",
@@ -72743,6 +72726,16 @@
      "purpose": "The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/replica_edge_key.rs",
+     "purpose": "The CRDT map key of an edge in a window document",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -74206,7 +74199,8 @@
      "purpose": "Identity topology ingest, endpoint hydration, and edge key/value helpers",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -75938,7 +75932,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -77870,7 +77864,7 @@
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -85640,7 +85634,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 1,
       "re-export": 22
      }
@@ -85971,7 +85965,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 46,
+      "crate-vis": 45,
       "enum": 3,
       "fn": 19,
       "re-export": 16,
@@ -86155,7 +86149,7 @@
      "path": "src/workspace_roster/project/revision.rs",
      "purpose": "Immutable, content-addressed project revisions (decision 8)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -87502,19 +87496,16 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "VaultPageSeal"
-     ],
+     "notable": [],
      "path": "src/world_keys/page_seal.rs",
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
-      "fn": 13,
-      "re-export": 2,
-      "struct": 1
+      "crate-vis": 18,
+      "fn": 10,
+      "re-export": 3
      }
     },
     {
@@ -87737,7 +87728,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 17,
       "re-export": 3
      }
     },
@@ -89744,7 +89735,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 179,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89814,7 +89805,7 @@
      "purpose": "CRM pack engine-side registration home"
     },
     "channel_identity": {
-     "files": 23,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89833,13 +89824,6 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)"
-    },
-    "channel_identity_manifest": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
      "files": 36,
@@ -90122,16 +90106,16 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 55,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 deletion/redaction contract types"
     },
     "delivery_window": {
-     "files": 9,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
@@ -90591,7 +90575,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90675,7 +90659,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 51,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90997,7 +90981,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 322,
+     "files": 324,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91249,10 +91233,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 142,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6303,
-   "test_files": 899
+   "source_files": 6307,
+   "test_files": 898
   },
   "oneiron-android": {
    "files": [
@@ -91978,6 +91962,42 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ChannelIdentityCapabilityMatrix",
+      "ChannelIdentityDisclosureClass",
+      "ChannelIdentityManifest",
+      "ChannelIdentityManifestError",
+      "ChannelIdentityMintability",
+      "ChannelIdentityPolicyRisk",
+      "ChannelIdentityReceiveCapabilities",
+      "ChannelIdentityReputationSignal"
+     ],
+     "path": "src/channel_identity_manifest.rs",
+     "purpose": "Channel identity capability manifests (OF-347 CID-4)",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 9,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChannelIdentityShape",
+      "SelfHeldShape"
+     ],
+     "path": "src/channel_identity_shape.rs",
+     "purpose": "ChannelIdentity addressability shapes with wire serde",
+     "surface": {
+      "enum": 2,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/credential_door.rs",
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself",
@@ -92111,7 +92131,7 @@
      "path": "src/lib.rs",
      "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
      "surface": {
-      "mod": 4
+      "mod": 6
      }
     },
     {
@@ -92148,6 +92168,20 @@
      "layout": "dir",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…"
     },
+    "channel_identity_manifest": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Channel identity capability manifests (OF-347 CID-4)"
+    },
+    "channel_identity_shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "ChannelIdentity addressability shapes with wire serde"
+    },
     "credential_door": {
      "files": 1,
      "impl_vault": false,
@@ -92172,7 +92206,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 53,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-base": {
@@ -98411,6 +98445,80 @@
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
    "source_files": 22,
    "test_files": 8
+  },
+  "oneiron-delivery-vocabulary": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/delivery_window/mod.rs",
+     "purpose": "The delivery-window modules moved out of `oneiron::delivery_window`",
+     "surface": {
+      "mod": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundScheduleContext"
+     ],
+     "path": "src/delivery_window/schedule_context.rs",
+     "purpose": "Host-supplied civil time and delivery level for an outbound schedule",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeliveryWindowApnsInterruptionLevel",
+      "DeliveryWindowAppliesTo",
+      "DeliveryWindowContextCondition",
+      "DeliveryWindowDecision",
+      "DeliveryWindowLadderRung",
+      "DeliveryWindowMatch",
+      "DeliveryWindowResolution",
+      "DeliveryWindowResolvedLevel",
+      "DeliveryWindowVerbClass"
+     ],
+     "path": "src/delivery_window/types.rs",
+     "purpose": "Claim predicates, key consts, decision/ladder enums and resolution structs",
+     "surface": {
+      "const": 18,
+      "enum": 7,
+      "fn": 15,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and…",
+     "surface": {
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "delivery_window": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The delivery-window modules moved out of `oneiron::delivery_window`"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and…",
+   "source_files": 4,
+   "test_files": 0
   },
   "oneiron-docedit": {
    "files": [
@@ -126586,6 +126694,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostHoldsRecipient",
+      "HostHoldsSealing"
+     ],
+     "path": "src/checkpoint_host_recipient.rs",
+     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConnectorKeyStatus"
      ],
      "path": "src/connector_key_status.rs",
@@ -126616,6 +126739,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/identity_hints.rs",
+     "purpose": "Per-kind declared identity fields (human-facing identity hints)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WorldKeyDestroyCause",
       "WorldKeyDestruction"
@@ -126635,7 +126768,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 10
+      "mod": 14
      }
     },
     {
@@ -126926,6 +127059,65 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Clock",
+      "IdGen",
+      "LeaseRenewal",
+      "StoreClock"
+     ],
+     "path": "src/store_clock.rs",
+     "purpose": "Per-store clock and id source",
+     "surface": {
+      "const": 1,
+      "fn": 20,
+      "mod": 1,
+      "struct": 2,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LeaseJournal"
+     ],
+     "path": "src/store_clock/lease_journal.rs",
+     "purpose": "The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store_clock/tests.rs",
+     "purpose": "The store clock's reads, observed through what a caller gets back",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealOrigin",
+      "VaultDataKey",
+      "VaultPageSeal",
+      "WrapDigest"
+     ],
+     "path": "src/vault_page_seal.rs",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 17,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -126948,6 +127140,13 @@
      "layout": "file",
      "purpose": "Bundle generation identity, upload cadence and retirement selection"
     },
+    "checkpoint_host_recipient": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
@@ -126961,6 +127160,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
+    },
+    "identity_hints": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Per-kind declared identity fields (human-facing identity hints)"
     },
     "key_material": {
      "files": 1,
@@ -127004,6 +127210,20 @@
      "layout": "file",
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
     },
+    "store_clock": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Per-store clock and id source"
+    },
+    "vault_page_seal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -127014,8 +127234,8 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 23,
-   "test_files": 0
+   "source_files": 28,
+   "test_files": 1
   },
   "oneiron-uniffi": {
    "files": [
