@@ -1,9 +1,9 @@
 //! PACK data for provenance-aware claim ordering. Visibility gates run first.
+use crate::error::Result;
 use crate::serialize::context_entity::ContextEntity;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
-use oneiron_contracts::claim::ClaimSource;
-use crate::error::Result;
 use crate::{EntityId, Error};
+use oneiron_contracts::claim::ClaimSource;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -172,9 +172,9 @@ pub(crate) fn question_key(body: &ClaimBody) -> Option<[u8; 32]> {
         Some(id) => hasher.update(&[1]).update(id.as_bytes()),
         None => hasher.update(&[0]),
     };
-    hasher.update(&crate::write_envelope::claim_body::relationship_scope_transcript(
-        question.rel.as_ref(),
-    ));
+    hasher.update(
+        &crate::write_envelope::claim_body::relationship_scope_transcript(question.rel.as_ref()),
+    );
     hasher.update(question.project.as_bytes());
     hasher.update(question.facet.as_bytes());
     hasher.update(&question.scope);
