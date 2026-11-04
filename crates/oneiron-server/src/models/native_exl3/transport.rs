@@ -443,22 +443,22 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
     } else {
         // A failed spawn drops the closure, and the lease and grant with it.
         let _ = std::thread::Builder::new()
-        .name("exl3-keep-lease".to_owned())
-        .spawn(move || {
-            let wait = async move {
-                if let Some(lease) = &lease {
-                    lease.revocation().await;
+            .name("exl3-keep-lease".to_owned())
+            .spawn(move || {
+                let wait = async move {
+                    if let Some(lease) = &lease {
+                        lease.revocation().await;
+                    }
+                    drop((lease, grant));
+                };
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(wait),
+                    Err(_) => drop(wait),
                 }
-                drop((lease, grant));
-            };
-            match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(wait),
-                Err(_) => drop(wait),
-            }
-        });
+            });
     }
 }
 
