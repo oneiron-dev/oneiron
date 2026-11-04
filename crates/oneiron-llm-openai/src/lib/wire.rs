@@ -443,6 +443,7 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: reasoning_tokens,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     }
 }
 
