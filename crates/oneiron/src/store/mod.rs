@@ -281,6 +281,7 @@ pub mod skill_hub_predicates;
 pub mod skill_package;
 pub(crate) mod skill_refinement_custody;
 pub(crate) mod skill_source_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
 pub(crate) mod task_body_checks;
