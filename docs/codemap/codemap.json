@@ -44045,7 +44045,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 17,
       "mod": 11,
       "re-export": 27
      }
@@ -44071,7 +44071,6 @@
      "path": "src/llm/model_stream.rs",
      "purpose": "Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach…",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 12
@@ -71891,7 +71890,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 77,
+      "crate-vis": 78,
       "mod": 77,
       "re-export": 29
      }
@@ -71907,6 +71906,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/model_stream_row.rs",
+     "purpose": "The durable row of one shared model stream (`MODEL_STREAM`): its owner, stable key, frozen request and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -89767,7 +89776,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 346,
+     "files": 347,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90007,7 +90016,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6235,
+   "source_files": 6236,
    "test_files": 898
   },
   "oneiron-android": {
