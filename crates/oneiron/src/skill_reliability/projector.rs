@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::Vault;
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::EVIDENCE;
+use crate::claim::learning_evidence::EvidenceRow;
 use crate::claim::learning_evidence::EvidenceSource;
 use crate::claim::learning_evidence::LearningEvidence;
 use crate::claim::learning_evidence::Observation;
@@ -74,6 +75,85 @@ pub(super) fn receipt_query(receipt: &ReceiptRecord) -> Result<SkillReliabilityQ
     };
     query.validate()?;
     Ok(query)
+}
+
+/// The person's mirror of an anchored restatement keeps the held credit
+/// cell's coordinates (REVIEW-4322 P1): the attempt receipt's axis defaults
+/// to quality, while the credited outcome may stand on another axis, so the
+/// person row moves only subject and executor, never coordinates.
+fn anchored_person_cell(held: &LearningCell, person: EntityId) -> Option<LearningCell> {
+    let (Some(type_ref), Some(axis)) = (held.type_ref.clone(), held.axis.clone()) else {
+        return None;
+    };
+    let cell = LearningCell::new(
+        crate::learning::LearningPredicate::Reliability,
+        person,
+    )
+    .executor(person.to_hex())
+    .type_ref(type_ref)
+    .axis(axis)
+    .project(held.project);
+    cell.validate().ok()?;
+    Some(cell)
+}
+
+/// Whether `stored` already holds at least `evidence` (REVIEW-4322 P1): one
+/// credit names several subjects, and each subject's projection restates the
+/// same person row, so the maximum stands — a win over any loss, otherwise
+/// the heavier weight.
+fn person_row_dominates(stored: &EvidenceRow, evidence: &LearningEvidence) -> bool {
+    match (&stored.observation, &evidence.observation) {
+        (Observation::Success(true), Observation::Success(false)) => true,
+        (Observation::Success(false), Observation::Success(true)) => false,
+        (Observation::Success(_), Observation::Success(_)) => stored.weight >= evidence.weight,
+        _ => false,
+    }
+}
+
+/// Records person evidence keeping the strongest standing observation
+/// (REVIEW-4322 P1): a weaker restatement from another credited subject
+/// leaves the row alone instead of overwriting it.
+fn record_person_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    evidence: &LearningEvidence,
+    at: u64,
+    changed: &mut BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    let digest = cell.digest();
+    let key = (digest, evidence.receipt.clone());
+    if let Some(stored) = EVIDENCE.get(&vault.store, txn, &key)?
+        && person_row_dominates(&stored, evidence)
+    {
+        return Ok(());
+    }
+    crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, at)?;
+    changed.remove(&digest);
+    Ok(())
+}
+
+/// Withdraws a person row only while it still holds this skill's restatement
+/// (REVIEW-4322 P1): another skill's stronger row for the same receipt
+/// survives, and that skill's own projection rewrites a row this pass
+/// removed.
+fn withdraw_person_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    held: &EvidenceRow,
+    receipt: &str,
+    now: u64,
+    changed: &mut BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    let digest = cell.digest();
+    let key = (digest, receipt.to_owned());
+    if EVIDENCE.get(&vault.store, txn, &key)? != Some(held.clone()) {
+        return Ok(());
+    }
+    crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, cell, receipt, now)?;
+    changed.remove(&digest);
+    Ok(())
 }
 
 /// Projects `learning.reliability` over one SK-04 attribution pass.
@@ -273,18 +353,29 @@ pub(super) fn project_in_txn(
     let mut anchored_writes = Vec::new();
     let mut anchored_withdrawals = Vec::new();
     // The same anchored restatements under person cells (FIX 8968): the
-    // attempt beside each write, so the person's cell needs no re-read.
-    let mut anchored_person_writes: Vec<(String, LearningEvidence)> = Vec::new();
-    let mut anchored_person_withdrawals: Vec<(String, String)> = Vec::new();
+    // attempt beside each write for the person, the held cell for its
+    // coordinates, so the person's cell needs no re-read.
+    let mut anchored_person_writes: Vec<(LearningCell, String, LearningEvidence)> = Vec::new();
+    let mut anchored_person_withdrawals: Vec<(LearningCell, String, String, EvidenceRow)> =
+        Vec::new();
     for held in &anchored {
         match effective_evidence_in_txn(vault, txn, held, &amended)? {
             AnchoredEffect::Stand => {}
             AnchoredEffect::Record(evidence) => {
-                anchored_person_writes.push((held.attempt.clone(), evidence.clone()));
+                anchored_person_writes.push((
+                    held.cell.clone(),
+                    held.attempt.clone(),
+                    evidence.clone(),
+                ));
                 anchored_writes.push((held.cell.clone(), evidence));
             }
             AnchoredEffect::Withdraw => {
-                anchored_person_withdrawals.push((held.receipt.clone(), held.attempt.clone()));
+                anchored_person_withdrawals.push((
+                    held.cell.clone(),
+                    held.receipt.clone(),
+                    held.attempt.clone(),
+                    held.row.clone(),
+                ));
                 anchored_withdrawals.push((held.cell.clone(), held.receipt.clone()));
             }
         }
@@ -468,8 +559,14 @@ pub(super) fn project_in_txn(
                     &parents,
                     crate::learning::EstimateForm::Beta,
                 )?;
-                crate::learning::record_evidence_in_txn(vault, txn, &person_cell, &evidence, at)?;
-                changed.remove(&person_cell.digest());
+                record_person_evidence_in_txn(
+                    vault,
+                    txn,
+                    &person_cell,
+                    &evidence,
+                    at,
+                    &mut changed,
+                )?;
             }
         }
     }
@@ -501,8 +598,10 @@ pub(super) fn project_in_txn(
         crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
         changed.remove(&cell.digest());
     }
-    // The same anchored restatements under person cells (FIX 8968).
-    for (attempt_ref, evidence) in anchored_person_writes {
+    // The same anchored restatements under person cells (FIX 8968): the
+    // person comes from the attempt, the coordinates from the held credit
+    // cell, and the maximum observation across credited subjects stands.
+    for (held, attempt_ref, evidence) in anchored_person_writes {
         let Some(attempt) =
             crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &attempt_ref)?
         else {
@@ -517,13 +616,9 @@ pub(super) fn project_in_txn(
             continue;
         };
         let query = receipt_query(&attempt)?;
-        let person_cell =
-            LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
-                .executor(person.to_hex())
-                .type_ref(query.type_ref.clone())
-                .axis(query.axis.clone())
-                .project(query.project);
-        person_cell.validate()?;
+        let Some(person_cell) = anchored_person_cell(&held, person) else {
+            continue;
+        };
         crate::learning::prior::capture_borrowed_prior_in_txn(
             vault,
             txn,
@@ -531,15 +626,16 @@ pub(super) fn project_in_txn(
             &query.type_parents,
             crate::learning::EstimateForm::Beta,
         )?;
-        crate::learning::record_evidence_in_txn(vault, txn, &person_cell, &evidence, at)?;
-        changed.remove(&person_cell.digest());
+        record_person_evidence_in_txn(vault, txn, &person_cell, &evidence, at, &mut changed)?;
     }
     for (cell, receipt) in anchored_withdrawals {
         crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &cell, &receipt, at)?;
         changed.remove(&cell.digest());
     }
-    // The same anchored withdrawals under person cells (FIX 8968).
-    for (receipt, attempt_ref) in anchored_person_withdrawals {
+    // The same anchored withdrawals under person cells (FIX 8968): the
+    // person comes from the attempt, the coordinates from the held credit
+    // cell, and a row another skill still stands on survives.
+    for (held, receipt, attempt_ref, row) in anchored_person_withdrawals {
         let Some(attempt) =
             crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &attempt_ref)?
         else {
@@ -553,21 +649,10 @@ pub(super) fn project_in_txn(
         else {
             continue;
         };
-        let query = receipt_query(&attempt)?;
-        let person_cell =
-            LearningCell::new(crate::learning::LearningPredicate::Reliability, person)
-                .executor(person.to_hex())
-                .type_ref(query.type_ref.clone())
-                .axis(query.axis.clone())
-                .project(query.project);
-        crate::learning::evidence::withdraw_evidence_in_txn(
-            vault,
-            txn,
-            &person_cell,
-            &receipt,
-            at,
-        )?;
-        changed.remove(&person_cell.digest());
+        let Some(person_cell) = anchored_person_cell(&held, person) else {
+            continue;
+        };
+        withdraw_person_evidence_in_txn(vault, txn, &person_cell, &row, &receipt, at, &mut changed)?;
     }
     for digest in changed {
         project_cell_in_txn(vault, txn, &digest, at)?;

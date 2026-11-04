@@ -115,12 +115,12 @@ pub(super) fn read_window(
     let mut inserted: Vec<InsertedRun> = Vec::new();
     let mut deleted: Vec<DeletedRun> = Vec::new();
     let body = ContainerID::new_root(BODY_TEXT, ContainerType::Text);
-    let mut ops_ins = 0_u32;
+    let mut hidden_ins = 0_u32;
     let mut ops_del = 0_u32;
     for (_, span) in &record.ops_by_actor {
-        let (span_ins, span_del) = change_ops_mass(document, span, &body);
-        ops_ins = ops_ins.saturating_add(span_ins);
-        ops_del = ops_del.saturating_add(span_del);
+        let (span_hidden_ins, span_hidden_del) = change_ops_mass(document, span, &body);
+        hidden_ins = hidden_ins.saturating_add(span_hidden_ins);
+        ops_del = ops_del.saturating_add(span_hidden_del);
         let mut cursor = 0_usize;
         let mut site: Option<Site> = None;
         for delta in change_deltas(document, span, &body)? {
@@ -194,13 +194,15 @@ pub(super) fn read_window(
         .iter()
         .fold(0_u32, |total, run| total.saturating_add(run.mass));
     let moved = pair_moves(&deleted, &inserted);
-    // Within-change churn (FIX 11536): what the ops wrote over the net diff.
-    // The diff keeps the content pairing reads; the ops repair only the mass,
-    // and only upward — a smaller ops insert total means the diff's site
-    // separators already charge more, so there is no insert churn to add.
-    // Delete churn is the collapsed same-change hidden mass measured below,
-    // never a raw ops length minus the diff's collapsed mass.
-    let churn_ins = ops_ins.saturating_sub(ins);
+    // Within-change churn (FIX 11536, REVIEW-4322 P1): what the ops wrote
+    // over the net diff. The diff keeps the content pairing reads; the hidden
+    // insert lane counts same-change typed-then-deleted fragments directly —
+    // never the ops total minus the net lane, whose site separator charges
+    // would eat the hidden mass (insert x, delete x, retain a "y " prefix
+    // leaves ops_ins == net ins while the x insert is gone but its delete is
+    // charged). Delete churn is the collapsed same-change hidden mass
+    // measured below, never a raw ops length minus the diff's collapsed mass.
+    let churn_ins = hidden_ins;
     let churn_del = ops_del;
     let kept: String = chars
         .iter()
@@ -295,20 +297,23 @@ fn change_deltas(
         .unwrap_or_default())
 }
 
-/// The authored mass one recorded change wrote to the body, read from the
-/// change's own JSON ops (FIX 11536): every insert's text and the collapsed
-/// mass of text inserted and deleted by that same change, so typing and
-/// deleting inside one commit counts even when the net [`change_deltas`] diff
-/// cannot see it. Deletes of older text stay in the diff lane.
+/// The hidden mass one recorded change wrote to the body, read from the
+/// change's own JSON ops (FIX 11536, REVIEW-4322 P1): the collapsed mass of
+/// text inserted and deleted by that same change, so typing and deleting
+/// inside one commit counts on both sides even when the net
+/// [`change_deltas`] diff cannot see it. Deletes of older text stay in the
+/// diff lane.
 ///
 /// Only `Text` insert and delete ops on the body container count; `Mark` ops
 /// are style, not text, and other containers are not the proposal body. A
 /// delete names its first character's id, so same-change inserts supply the
-/// deleted fragments' text and both lanes use the same collapsed frame.
+/// deleted fragments' text and both lanes use the same collapsed frame. The
+/// insert side counts the same fragments directly: the deleted fragment is
+/// exactly the typed text, so its mass is the hidden insert mass.
 fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (u32, u32) {
     let end = span.counter.saturating_add_unsigned(span.len);
     let id_span = IdSpan::new(span.peer_id, span.counter, end);
-    let mut ins = 0_u32;
+    let mut hidden_ins = 0_u32;
     let mut hidden_del = 0_u32;
     for change in document.doc.export_json_in_id_span(id_span) {
         let mut inserts = Vec::new();
@@ -317,7 +322,6 @@ fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (
                 continue;
             }
             if let JsonOpContent::Text(JsonTextOp::Insert { text, .. }) = &op.content {
-                ins = ins.saturating_add(collapsed_len(text));
                 inserts.push((op.counter, text.chars().collect::<Vec<_>>()));
             }
         }
@@ -348,11 +352,12 @@ fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (
                 let from = (overlap_start - insert_start) as usize;
                 let to = (overlap_end - insert_start) as usize;
                 let fragment: String = run[from..to].iter().collect();
+                hidden_ins = hidden_ins.saturating_add(collapsed_len(&fragment));
                 hidden_del = hidden_del.saturating_add(collapsed_len(&fragment));
             }
         }
     }
-    (ins, hidden_del)
+    (hidden_ins, hidden_del)
 }
 
 /// Charges relocated: a deleted run of proposal text paired with a kept
