@@ -116,9 +116,9 @@ fn dictionary_node<'a>(
     Ok(())
 }
 
-fn traverse<'a>(
+fn traverse(
     limits: &SealResourceLimits,
-    mut pending: Vec<&'a Object>,
+    mut pending: Vec<&Object>,
 ) -> Result<(), SealMemoryRefusal> {
     while let Some(object) = pending.pop() {
         match object {
