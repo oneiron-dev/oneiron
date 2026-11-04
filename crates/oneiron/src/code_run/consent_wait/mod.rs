@@ -30,6 +30,7 @@ mod host;
 mod ledger;
 mod replay;
 mod settle;
+mod standing_offer;
 mod types;
 
 pub(crate) use self::binding::{
@@ -49,6 +50,7 @@ pub(crate) use self::settle::{
     original_authority_holds_in_txn, refuse_code_consent_wait_in_txn,
     settle_code_consent_wait_listing_in_txn,
 };
+pub use self::standing_offer::CodeConsentStandingOffer;
 pub use self::types::{
     CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentChoice,
     CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,

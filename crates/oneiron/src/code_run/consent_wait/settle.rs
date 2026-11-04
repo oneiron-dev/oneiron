@@ -255,29 +255,44 @@ fn answer_in_txn(
         });
     }
     let digest = EffectDigest::from_bytes(row.binding.effect_digest);
+    let mut standing_grant = None;
     let (decision, remembered) = match input.choice {
         CodeConsentChoice::Deny => (vault.deny_consent_in_txn(txn, owner, digest)?, None),
         CodeConsentChoice::ApproveOnce => (vault.approve_once_in_txn(txn, owner, digest)?, None),
         CodeConsentChoice::ApproveAndStopAsking => {
-            let offer = row
-                .binding
-                .remember_offer
-                .clone()
-                .ok_or(Error::ConcurrentWrite(
-                    "this code consent wait offers no stop asking",
+            if let Some(offer) = row.binding.remember_offer.clone() {
+                let revision = crate::connector_key::stop_asking_tool_in_txn(
+                    vault,
+                    txn,
+                    owner,
+                    offer.slate_ref,
+                    offer.slate_revision,
+                    &offer.tool,
+                )?;
+                (
+                    vault.approve_once_in_txn(txn, owner, digest)?,
+                    Some((offer.slate_ref, revision)),
+                )
+            } else {
+                let offer = row
+                    .binding
+                    .standing_offer
+                    .as_ref()
+                    .ok_or(Error::ConcurrentWrite(
+                        "this code consent wait offers no stop asking",
+                    ))?;
+                if super::binding::binding_digest(&row.binding) != row.binding.binding_digest {
+                    return Err(Error::ConcurrentWrite(
+                        "code consent standing offer changed",
+                    ));
+                }
+                let receipt = vault.create_standing_grant_in_txn(txn, owner, offer.bound()?)?;
+                let grant_ref = receipt.grant_ref().ok_or(Error::InvariantViolation(
+                    "a standing grant creation returned no grant reference",
                 ))?;
-            let revision = crate::connector_key::stop_asking_tool_in_txn(
-                vault,
-                txn,
-                owner,
-                offer.slate_ref,
-                offer.slate_revision,
-                &offer.tool,
-            )?;
-            (
-                vault.approve_once_in_txn(txn, owner, digest)?,
-                Some((offer.slate_ref, revision)),
-            )
+                standing_grant = Some((grant_ref, receipt.decision_id()));
+                (vault.approve_once_in_txn(txn, owner, digest)?, None)
+            }
         }
     };
     row.answer = Some(CodeConsentAnswerStamp {
@@ -288,6 +303,7 @@ fn answer_in_txn(
         authentication: owner.decision_id(),
         decision: decision.decision_id(),
         remembered,
+        standing_grant,
         policy_frontier: code_consent_policy_basis_in_txn(vault, txn)?,
         answered_at_ms: now_ms(),
     });
@@ -585,7 +601,9 @@ pub(crate) fn offered_choices(binding: &CodeConsentBinding) -> Vec<CodeConsentCh
     CodeConsentChoice::ALL
         .into_iter()
         .filter(|choice| {
-            *choice != CodeConsentChoice::ApproveAndStopAsking || binding.remember_offer.is_some()
+            *choice != CodeConsentChoice::ApproveAndStopAsking
+                || binding.remember_offer.is_some()
+                || binding.standing_offer.is_some()
         })
         .collect()
 }
@@ -609,6 +627,7 @@ fn view_of(
         hold_reasons: row.binding.hold_reasons.clone(),
         ask: row.ask,
         options: offered_choices(&row.binding),
+        standing_offer: row.binding.standing_offer.clone(),
         sealed: row
             .checkpoint
             .as_ref()
@@ -619,6 +638,18 @@ fn view_of(
             .answer
             .as_ref()
             .map(|answer| format!("gate:{}", answer.decision.to_hex())),
+        standing_grant_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(grant_ref, _)| grant_ref.clone())
+        }),
+        standing_receipt_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(_, receipt)| format!("gate:{}", receipt.to_hex()))
+        }),
         outcome: row.settlement.as_ref().map(|settled| settled.outcome),
         settlement_receipt: row
             .settlement

@@ -167,6 +167,7 @@ impl Memory<'_> {
             pending: CodeConsentPendingEffect::BrowserAction(action),
             hold_reasons: vec![hold.to_owned()],
             remember_offer: None,
+            standing_offer: None,
         };
         let minted = vault.with_write_txn(|txn| {
             mint_code_consent_wait_in_txn(vault, txn, draft, |_| Some(digest))
