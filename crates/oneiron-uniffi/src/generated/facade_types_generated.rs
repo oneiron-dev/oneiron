@@ -387,7 +387,7 @@ pub struct CommitmentCloseRequest {
     pub evidence_turn_refs: Vec<String>,
 }
 
-/// `oneiron::memory::web_acquisition::door::WebFetchRequest`.
+/// `oneiron_web_fetch::web_acquisition::door::WebFetchRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WebFetchRequest {
@@ -395,7 +395,7 @@ pub struct WebFetchRequest {
     pub url: String,
 }
 
-/// `oneiron::memory::web_acquisition::RendererKind`.
+/// `oneiron_web_fetch::web_acquisition::RendererKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RendererKind {
     #[serde(rename = "readability")]
@@ -406,7 +406,7 @@ pub enum RendererKind {
     Firecrawl,
 }
 
-/// `oneiron::memory::web_acquisition::FetchResult`.
+/// `oneiron_web_fetch::web_acquisition::FetchResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FetchResult {
@@ -424,7 +424,7 @@ pub struct FetchResult {
     pub renderer: RendererKind,
 }
 
-/// `oneiron::memory::web_acquisition::CrawlScope`.
+/// `oneiron_web_fetch::web_acquisition::CrawlScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CrawlScope {
     #[serde(rename = "same_site")]
@@ -433,7 +433,7 @@ pub enum CrawlScope {
     CrossSite,
 }
 
-/// `oneiron::memory::web_acquisition::door::WebCrawlRequest`.
+/// `oneiron_web_fetch::web_acquisition::door::WebCrawlRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WebCrawlRequest {
@@ -445,7 +445,7 @@ pub struct WebCrawlRequest {
     pub scope: Option<CrawlScope>,
 }
 
-/// `oneiron::memory::web_acquisition::CrawlPageFailure`.
+/// `oneiron_web_fetch::web_acquisition::CrawlPageFailure`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CrawlPageFailure {
     #[serde(rename = "url")]
@@ -454,7 +454,7 @@ pub struct CrawlPageFailure {
     pub reason: String,
 }
 
-/// `oneiron::memory::web_acquisition::CrawlCompletion`.
+/// `oneiron_web_fetch::web_acquisition::CrawlCompletion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "status")]
 pub enum CrawlCompletion {
@@ -467,7 +467,7 @@ pub enum CrawlCompletion {
     },
 }
 
-/// `oneiron::memory::web_acquisition::CrawlResult`.
+/// `oneiron_web_fetch::web_acquisition::CrawlResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CrawlResult {
     #[serde(rename = "pages")]

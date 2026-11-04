@@ -7950,6 +7950,7 @@ dependencies = [
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -8748,6 +8749,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
