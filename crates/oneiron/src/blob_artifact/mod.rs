@@ -35,6 +35,7 @@ pub(crate) mod checkpoint;
 mod create;
 pub mod deck_creation;
 mod deck_doors;
+pub(crate) mod erase;
 mod family;
 mod holders;
 mod lifecycle;
@@ -61,6 +62,7 @@ pub use self::deck_doors::{
     DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection,
     DeckRejectionCheck, DeckRejectionReport,
 };
+pub(crate) use self::erase::project_version_erased_in_txn;
 pub(crate) use self::family::hash_hex;
 pub use self::family::{
     ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,

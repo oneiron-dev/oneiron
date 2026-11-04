@@ -36,6 +36,7 @@ use super::widen_record::invalid;
 
 mod ancestry;
 mod closed_scope;
+mod late_spend;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
 
@@ -140,6 +141,8 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent: None,
+            calibration_sample: None,
+            exploration_attempt: None,
             payer,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -276,6 +279,8 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent,
+            calibration_sample: None,
+            exploration_attempt: None,
             payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -310,6 +315,8 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent,
+            calibration_sample: None,
+            exploration_attempt: None,
             payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
@@ -517,6 +524,7 @@ impl AgentDispatcher<'_> {
         let released = scope
             .cap_units
             .saturating_sub(scope.spent_units.saturating_add(scope.held_units));
+        let mut settled_ancestors = Vec::new();
         let charged_to = match &scope.parent {
             None => None,
             Some(_) => {
@@ -531,6 +539,9 @@ impl AgentDispatcher<'_> {
                     .saturating_sub(scope.cap_units)
                     .saturating_add(scope.held_units);
                 host.spent_units = host.spent_units.saturating_add(scope.spent_units);
+                if host.state == SpendState::Closed {
+                    settled_ancestors.push(host.scope.clone());
+                }
                 SCOPE.put(&self.vault.store, txn, &host.scope.0, &host)?;
                 // Each closed hard scope passed keeps its subtree's tally the
                 // same way: the host alone pays, so nothing counts twice.
@@ -540,13 +551,36 @@ impl AgentDispatcher<'_> {
                         .saturating_sub(scope.cap_units)
                         .saturating_add(scope.held_units);
                     boundary.spent_units = boundary.spent_units.saturating_add(scope.spent_units);
+                    settled_ancestors.push(boundary.scope.clone());
                     SCOPE.put(&self.vault.store, txn, &boundary.scope.0, &boundary)?;
                 }
                 Some(host.scope)
             }
         };
+        if scope.spent_units > 0 {
+            self.tally_closed_receipts_in_txn(
+                txn,
+                &scope,
+                scope.spent_units,
+                &mut settled_ancestors,
+            )?;
+            for ancestor in settled_ancestors {
+                self.revise_settled_scope_in_txn(txn, &ancestor)?;
+            }
+        }
         scope.state = SpendState::Closed;
         scope.closed_at = Some(now);
+        scope.exploration_attempt = Some(*child);
+        scope.calibration_sample = match scope.agent {
+            Some(agent) => Some(self.fold_spend_sample_in_txn(
+                txn,
+                agent,
+                &scope.unit,
+                scope.spent_units,
+                now,
+            )?),
+            None => None,
+        };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         // A run an exploration trial routed is charged what it spent.
         crate::skill::settle_exploration_route_in_txn(
@@ -556,9 +590,6 @@ impl AgentDispatcher<'_> {
             &scope.unit,
             scope.spent_units,
         )?;
-        if let Some(agent) = scope.agent {
-            self.fold_spend_sample_in_txn(txn, agent, &scope.unit, scope.spent_units, now)?;
-        }
         Ok(Some(SpendSettlement {
             scope: id,
             charged_to,
@@ -593,9 +624,31 @@ impl AgentDispatcher<'_> {
             units
         };
         let mut target = self.make_local_in_txn(txn, target, drawn)?;
+        let mut settled: Vec<_> = boundaries.iter().map(|row| row.scope.clone()).collect();
+        if target.state == SpendState::Closed {
+            settled.push(target.scope.clone());
+        }
         target.spent_units = target.spent_units.saturating_add(units);
         SCOPE.put(&self.vault.store, txn, &target.scope.0, &target)?;
         closed_scope::tally_through(self, txn, boundaries, units)?;
+        if units > 0 {
+            let mut named = SCOPE
+                .get(&self.vault.store, txn, &scope.0)?
+                .ok_or_else(|| invalid("spend scope is missing"))?;
+            if named.state == SpendState::Closed && !settled.contains(scope) {
+                // A closed soft child is neither the booking host nor a
+                // hard boundary, but keeps its own truthful settled total.
+                named.spent_units = named.spent_units.saturating_add(units);
+                SCOPE.put(&self.vault.store, txn, &scope.0, &named)?;
+                settled.push(scope.clone());
+            }
+            if named.state == SpendState::Closed {
+                self.tally_closed_receipts_in_txn(txn, &named, units, &mut settled)?;
+            }
+            for id in settled {
+                self.revise_settled_scope_in_txn(txn, &id)?;
+            }
+        }
         // The spend reports what a read reports after it, the closed
         // boundaries' room included (FIX 11095).
         let booking = self.booking_in_txn(txn, scope)?;
