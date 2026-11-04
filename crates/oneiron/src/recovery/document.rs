@@ -328,7 +328,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 2,
+            container_schema_version: 3,
             analyzer_manifest_blake3: [0; 32],
         },
         suppressed_tasks: Vec::new(),

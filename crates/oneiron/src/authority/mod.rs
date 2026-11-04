@@ -140,6 +140,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
 mod support_receipt;
