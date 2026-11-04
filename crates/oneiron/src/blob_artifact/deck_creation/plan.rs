@@ -89,7 +89,7 @@ pub struct DeckRect {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckFit {
     pub policy: DeckFitPolicy,
-    pub estimates: Vec<crate::edit_roundtrip::deck_create::CreatedEstimate>,
+    pub estimates: Vec<crate::blob_artifact::deck_creation::record::CreatedEstimate>,
     pub alternatives: Vec<DeckFallback>,
 }
 
@@ -233,7 +233,7 @@ impl DeckPlanView {
                             .fit
                             .estimates
                             .iter()
-                            .map(|e| crate::edit_roundtrip::deck_create::CreatedEstimate {
+                            .map(|e| crate::blob_artifact::deck_creation::record::CreatedEstimate {
                                 block: e.block.clone(),
                                 need: e.need,
                                 room: e.room,
