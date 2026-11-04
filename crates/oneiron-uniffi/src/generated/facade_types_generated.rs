@@ -21509,7 +21509,7 @@ pub struct SharedVaultDeletion {
     pub backup_retain_until: u64,
 }
 
-/// `oneiron::federation::org_admin::OrgAdminPower`.
+/// `oneiron::batch::shared_vault_write::OrgAdminPower`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OrgAdminPower {
     #[serde(rename = "add_member")]
