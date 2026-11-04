@@ -66,9 +66,13 @@ impl Vault {
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, wtxn, id)?;
         // Its scope outlives the row, for the tombstone's export (FIX 10161).
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
         // A deleted or erased pack source halts the catalog routes bound to
@@ -137,7 +141,9 @@ impl Vault {
             self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
         }
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
-        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
+        self.store
+            .delete_guards
+            .retire_goal_for_delete(self, wtxn, *id)?;
         // An erased row takes the space probes written from it, and leaves the
         // targets of those it only answers (FIX 9829).
         if erase {
@@ -245,7 +251,9 @@ impl Vault {
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
-        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .refuse_revision_delete(&self.store, wtxn, id)?;
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
         // A deleted or erased pack source halts the catalog routes bound to
@@ -278,10 +286,14 @@ impl Vault {
         // An erased message's turns stop matching its words (see the purge).
         let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
-        crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, wtxn, id)?;
         // A carried history read no longer stands for an erased control (FIX
         // 4296), as a delete's deindex does; the row is still here to read.
         crate::claim::history_seal::scatter_index_seal_for_delete(&self.store, wtxn, id)?;
@@ -292,7 +304,9 @@ impl Vault {
         crate::dreamer_wake::erase_in_txn(&self.store, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
-        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
+        self.store
+            .delete_guards
+            .retire_goal_for_delete(self, wtxn, *id)?;
         // An erase's scrub takes the space probes written from the row too
         // (FIX 9829; see the purge); a delete keeps them for its restore.
         if erase {
@@ -307,8 +321,10 @@ impl Vault {
             self.store.clock.now_recorded_at(),
             erase,
         )?;
-        let (room_had_vector, room_had_graph, room_neighbors) =
-            crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
+        let (room_had_vector, room_had_graph, room_neighbors) = self
+            .store
+            .delete_guards
+            .deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
@@ -445,7 +461,9 @@ impl Vault {
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
             .port_entity_scrub(wtxn, id, scrubbed, mutation_recorded_at)?;
-        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
+        self.store
+            .scope_stamps
+            .retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         crate::embed::erase_turn_vectors_in_txn(

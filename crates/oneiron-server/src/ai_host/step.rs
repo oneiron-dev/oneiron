@@ -32,7 +32,7 @@ use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
     WorkClass,
-    run_admission::{RunAdmission, WorkPhysical},
+    run_admission::{RunAdmission, WorkPhysical, forget_work_parent, take_work_parent},
 };
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
@@ -231,6 +231,10 @@ impl StepRunner {
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
+        // Nothing can parent on this try's ticket anymore (FIX 11960).
+        if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
+            forget_work_parent(&entity);
+        }
     }
 
     /// Runs on the pump thread, which owns `runtime`: blocking on the model
@@ -651,6 +655,22 @@ impl StepRunner {
             } else {
                 WorkPhysical::Paid
             };
+            // This try runs as its attempt: its admission records the ticket
+            // under it, and a retry parents on the ticket its source took
+            // (FIX 11960). Either conversion failing parents nothing.
+            context.entity = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()).ok();
+            // A parent resolves only against the admission its ticket was
+            // taken on (FIX 11960): the pair travels together, and the
+            // admit filters a stale admission's number out. The take
+            // consumes the source mapping: the retry's takeover supersedes
+            // it, and the source leaks no entry.
+            let (admission, parent) = attempt
+                .retry_of
+                .and_then(|retry| oneiron::EntityId::from_bytes(*retry.as_bytes()).ok())
+                .and_then(|entity| take_work_parent(&entity))
+                .unzip();
+            context.parent_admission = admission;
+            context.parent = parent;
             context
         });
         // The admitted request is the step's replay capsule (FIX 3028),
@@ -803,6 +823,7 @@ fn record_workflow_response(
     } else {
         Vec::new()
     };
+    let call_metadata = response.usage.call_metadata.as_ref();
     let record = ModelCallRecord {
         schema: MODEL_CALL_SCHEMA,
         attempt: attempt_entity,
@@ -821,10 +842,12 @@ fn record_workflow_response(
         organization: None,
         project: None,
         credential_id: None,
-        response_id: None,
+        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
         thread_id: None,
-        previous_response_id: None,
-        store: None,
+        previous_response_id: call_metadata
+            .and_then(|metadata| metadata.previous_response_id.clone()),
+        store: call_metadata.and_then(|metadata| metadata.store),
+        endpoint: call_metadata.map(|metadata| metadata.endpoint),
         captured_at: vault.now_recorded_at(),
         receipt_ref: None,
         actor: Some(actor.entity_ref()),
