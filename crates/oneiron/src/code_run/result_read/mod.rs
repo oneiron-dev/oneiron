@@ -475,7 +475,10 @@ pub(crate) fn resolve<'r>(
     match reference {
         JsResultRef::Name(name) => {
             let binding = live.iter().find(|binding| binding.name == *name)?;
-            let output = outputs.find(|output| output.handle == binding.handle)?;
+            let output = outputs.find(|output| {
+                output.handle == binding.handle
+                    && (binding.path.is_empty() || output.path == binding.path)
+            })?;
             Some((output.clone(), Some(binding.name.clone())))
         }
         JsResultRef::Handle(handle) => {
@@ -483,7 +486,10 @@ pub(crate) fn resolve<'r>(
             let name = live
                 .iter()
                 .rev()
-                .find(|binding| binding.handle == output.handle)
+                .find(|binding| {
+                    binding.handle == output.handle
+                        && (binding.path.is_empty() || binding.path == output.path)
+                })
                 .map(|binding| binding.name.clone());
             Some((output.clone(), name))
         }

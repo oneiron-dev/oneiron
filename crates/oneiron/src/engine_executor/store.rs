@@ -74,6 +74,7 @@ pub(super) fn bind_published_output(
     record.bindings.push(CodeRunResultBinding::new(
         name.clone(),
         output.handle.clone(),
+        output.path.clone(),
     ));
     digest_bindings.push((name, output.handle.clone()));
 }

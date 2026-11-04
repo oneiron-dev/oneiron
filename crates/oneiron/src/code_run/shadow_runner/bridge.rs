@@ -169,6 +169,10 @@ pub(crate) struct ShadowBridgeHost<'a> {
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     watch: LimitWatch,
     streams: ArmStreams,
+    /// The run's full output count as the step started (FIX 1393
+    /// follow-up): the base the arm's store ordinals count from, the same
+    /// base live execution counts from — every output, not only results.
+    output_ordinal_base: usize,
     /// The run's results, those before the step first, then the arm's own.
     results: Vec<ArmResult>,
     /// The run's result names before the step.
@@ -222,6 +226,7 @@ impl<'a> ShadowBridgeHost<'a> {
             reads,
             watch: LimitWatch::new(limits),
             streams: ArmStreams::default(),
+            output_ordinal_base: prepared.prefix.outputs.len(),
             results,
             bindings: prepared.prefix.bindings.clone(),
             bound: Vec::new(),
@@ -304,10 +309,10 @@ impl<'a> ShadowBridgeHost<'a> {
             .unwrap_or_default()
     }
 
-    /// Binds `name` to the result `handle`; a rebind replaces the name's
-    /// entry in place.
-    fn bind(&mut self, name: String, handle: String) {
-        let binding = CodeRunResultBinding::new(name, handle);
+    /// Binds `name` to the result `handle` at its occurrence `path`; a
+    /// rebind replaces the name's entry in place.
+    fn bind(&mut self, name: String, handle: String, path: String) {
+        let binding = CodeRunResultBinding::new(name, handle, path);
         match self.bound.iter_mut().find(|held| held.name == binding.name) {
             Some(held) => *held = binding,
             None => self.bound.push(binding),
@@ -367,7 +372,12 @@ impl<'a> ShadowBridgeHost<'a> {
         name: Option<String>,
         inherit: &[Taint],
     ) -> Result<(CodeRunRawOutput, Value)> {
-        let ordinal = self.results.len();
+        // The same ordinal live execution names this store with (FIX 1393):
+        // the step-start full-output base plus the arm's own stores so far.
+        // A replayed store then reuses its frozen occurrence and taint
+        // instead of colliding with a later ordinal.
+        let ordinal =
+            self.output_ordinal_base + self.results.iter().filter(|held| held.own).count();
         let (output, secret) = self.store.finish_named(
             |digest| store_result_output_path(digest, ordinal),
             sink,
@@ -391,7 +401,7 @@ impl<'a> ShadowBridgeHost<'a> {
             }
         };
         let name = name.unwrap_or_else(|| self.next_auto_name());
-        self.bind(name.clone(), output.handle.clone());
+        self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = match ResultRead::in_arm(self.run_id, output.clone(), Some(name), None, taint) {
             Ok(read) => read.arm_card(self.store)?,
             Err(_) => return Err(Error::InvariantViolation("a whole result has no range")),

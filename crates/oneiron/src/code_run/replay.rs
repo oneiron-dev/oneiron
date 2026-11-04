@@ -595,6 +595,12 @@ pub struct CodeRunReplayRecord {
 pub struct CodeRunResultBinding {
     pub name: String,
     pub handle: String,
+    /// The occurrence path the name was bound to (FIX 1393 follow-up): two
+    /// stores of the same bytes are two occurrences under one handle, and a
+    /// name resolves to its own occurrence, never the first with its bytes.
+    /// Empty on rows bound before occurrences were recorded; those match any
+    /// occurrence with their handle, as before.
+    pub path: String,
 }
 
 impl CodeRunResultBinding {
@@ -602,10 +608,11 @@ impl CodeRunResultBinding {
     pub const MAX_NAME_LEN: usize = 64;
 
     #[must_use]
-    pub fn new(name: impl Into<String>, handle: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, handle: impl Into<String>, path: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             handle: handle.into(),
+            path: path.into(),
         }
     }
 

@@ -27,10 +27,10 @@ impl RecordingJsHost<'_, '_> {
             .unwrap_or_default()
     }
 
-    /// Binds `name` to the result `handle` for the record; a rebind replaces
-    /// the name's entry in place.
-    pub(super) fn bind(&mut self, name: String, handle: String) {
-        let binding = CodeRunResultBinding::new(name, handle);
+    /// Binds `name` to the result `handle` at its occurrence `path` for the
+    /// record; a rebind replaces the name's entry in place.
+    pub(super) fn bind(&mut self, name: String, handle: String, path: String) {
+        let binding = CodeRunResultBinding::new(name, handle, path);
         match self.bound.iter_mut().find(|held| held.name == binding.name) {
             Some(held) => *held = binding,
             None => self.bound.push(binding),
@@ -211,7 +211,7 @@ impl RecordingJsHost<'_, '_> {
             self.captured.push(output.clone());
         }
         let name = name.unwrap_or_else(|| self.next_auto_name());
-        self.bind(name.clone(), output.handle.clone());
+        self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = result_card(storage, self.run_id, &output, Some(name.as_str()))?;
         Ok((output, card))
     }
@@ -524,6 +524,17 @@ impl RecordingJsHost<'_, '_> {
             if offset > output.raw_len {
                 return Err(Error::InvalidConfig(
                     "stored result offset exceeds its body".into(),
+                ));
+            }
+            // A raw chunk is the occurrence's bytes: a tainted occurrence
+            // (a secret mark reads tainted) refuses here, as its facets do.
+            if storage
+                .code_run_result_taint(Some(self.run_id), output)?
+                .0
+                .is_tainted()
+            {
+                return Err(Error::InvalidConfig(
+                    "stored result read refused: tainted".into(),
                 ));
             }
             return storage

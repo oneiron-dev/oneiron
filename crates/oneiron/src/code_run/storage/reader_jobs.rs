@@ -1326,7 +1326,11 @@ impl ExecutorStorage<'_> {
             record.outputs.push(output.clone());
         }
         let binding =
-            crate::code_run::CodeRunResultBinding::new(SUMMARY_RESULT_NAME, output.handle.clone());
+            crate::code_run::CodeRunResultBinding::new(
+                SUMMARY_RESULT_NAME,
+                output.handle.clone(),
+                output.path.clone(),
+            );
         match record
             .bindings
             .iter_mut()
