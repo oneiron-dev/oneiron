@@ -109,6 +109,11 @@ pub struct GmailMessageMetadata {
     /// thread id stays a payload ref; these join the passport graph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_headers: Option<EmailThreadHeaders>,
+    /// The `Subject` header, when the host wire read one. A header, so the
+    /// header-only intake may carry it; the STOP check reads it back through
+    /// the archived provider email. No body text ever rides here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 impl GmailMessageMetadata {
@@ -135,6 +140,7 @@ impl GmailMessageMetadata {
             internal_date_secs,
             placement,
             thread_headers: None,
+            subject: None,
         }
     }
 
@@ -142,6 +148,13 @@ impl GmailMessageMetadata {
     #[must_use]
     pub fn with_thread_headers(mut self, headers: EmailThreadHeaders) -> Self {
         self.thread_headers = Some(headers);
+        self
+    }
+
+    /// Attaches the host-read `Subject` header.
+    #[must_use]
+    pub fn with_subject(mut self, subject: impl Into<String>) -> Self {
+        self.subject = Some(subject.into());
         self
     }
 
@@ -155,8 +168,10 @@ impl GmailMessageMetadata {
     /// Normalizes Gmail-native fields into the shared email inbound payload.
     ///
     /// Gmail's message id becomes the provider event id and its thread id the
-    /// payload ref, so the delegated path reaches routing in exactly the same
-    /// envelope a dedicated ESP webhook does.
+    /// payload ref the archive keeps for replies; the run door archives this
+    /// inbound, so routing carries the archive's ref. The `Subject` header
+    /// becomes the inbound's subject while `reply_top_text` stays empty: the
+    /// intake is header-only, so a Gmail STOP is a subject STOP.
     ///
     /// # Errors
     ///
@@ -188,6 +203,7 @@ impl GmailMessageMetadata {
         .with_payload_ref(format!("{GMAIL_THREAD_PAYLOAD_PREFIX}{thread_id}"))
         .with_header_mailbox(self.from);
         inbound.thread_headers = self.thread_headers;
+        inbound.subject = self.subject;
         validate_email_inbound_metadata(&inbound)?;
         Ok(inbound)
     }

@@ -47,17 +47,16 @@ impl Vault {
         let floor =
             crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
         let mut live = Vec::new();
-        for id in standing_outbound_grant_ids_for_principal(&self.store, &txn, &principal_ref)? {
-            let Some(grant) = standing_outbound_grant_in_txn(&self.store, &txn, &id)? else {
-                continue;
-            };
-            if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&floor) {
+        for grant in
+            standing_outbound_grants_for_principal_in_txn(&self.store, &txn, &principal_ref)?
+        {
+            if !grant.is_active_under_policy(&floor) {
                 continue;
             }
             if let Some(scope) = grant.scope.scoped_mcp_grant()
                 && server.as_deref() == Some(scope.server)
             {
-                live.push((scope.tool.to_owned(), id, scope.data_class_ceiling));
+                live.push((scope.tool.to_owned(), grant.id, scope.data_class_ceiling));
             }
         }
         let rows = slate

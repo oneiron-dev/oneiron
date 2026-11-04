@@ -79,14 +79,16 @@ mod remote_task;
 mod reply_read;
 mod resume;
 mod sent;
+mod served_calls;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
+pub(crate) use served_calls::ServerConnectorCalls;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -250,47 +252,6 @@ impl ServedConnectorCallHost {
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
         presenting.send(&self.vault, &exchange, row, presented)
     }
-
-    /// The elicitation this send declares, or `None`: a call the engine
-    /// bound no caller to, a revision with no elicitation shape, an
-    /// unreadable key ref or setting, and a key set to `never allow` all
-    /// declare none. A call that names a custody record declares it too: its
-    /// door clears the presented value from each question and every later
-    /// reply (FIX 3843).
-    fn declared<'a>(
-        &'a self,
-        call: &'a FrozenOutboundCall,
-        view: &FrozenToolCallView,
-    ) -> Option<Declared<'a>> {
-        let caller = self.caller.as_ref()?;
-        let revision = view.protocol_revision()?;
-        let capability = elicitation_capability(revision)?;
-        let intake = Intake::of(revision)?;
-        let key_ref = EntityId::from_hex(view.key_ref()?).ok()?;
-        let principal = EntityId::from_hex(&caller.principal_ref).ok()?;
-        match self.vault.connector_elicitation_setting(&key_ref) {
-            Ok(setting) if setting != SlateDisposition::NeverAllow => {}
-            _ => return None,
-        }
-        Some(Declared {
-            capability,
-            intake,
-            call,
-            vault: &self.vault,
-            registry: &self.elicitations,
-            binding: QuestionBinding {
-                principal,
-                grant_id: caller.grant_id,
-                key_ref,
-                parent_intent: call.intent_id().copied(),
-                name: caller.name.clone(),
-                server: view.server().to_owned(),
-                tool: view.tool().to_owned(),
-                endpoint: view.endpoint().to_owned(),
-                revision: revision.to_owned(),
-            },
-        })
-    }
 }
 
 impl ServedConnectorCallHost {
@@ -390,41 +351,6 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         // The row kept the round; its resume state goes beside it (FIX 9157).
         if let Some(resume) = self.resume.take().filter(|_| bound) {
             resume.keep(&self.vault, handle, &call_ref);
-        }
-    }
-}
-
-/// The client capability one pinned revision declares for elicitation:
-/// 2025-06-18 an empty object, 2025-11-25 and 2026-07-28 form mode alone,
-/// so URL mode stays undeclared; `None` for any other revision.
-fn elicitation_capability(revision: &str) -> Option<Value> {
-    match revision {
-        "2025-06-18" => Some(json!({})),
-        "2025-11-25" | "2026-07-28" => {
-            let mut modes = Map::new();
-            modes.insert(wire::FORM.to_owned(), json!({}));
-            Some(Value::Object(modes))
-        }
-        _ => None,
-    }
-}
-
-/// How a revision carries a connector's questions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Intake {
-    /// `elicitation/create` requests on the reply stream.
-    Stream,
-    /// A `tools/call` result that asks for input, answered by the same call
-    /// again.
-    Retry,
-}
-
-impl Intake {
-    fn of(revision: &str) -> Option<Self> {
-        match revision {
-            "2025-06-18" | "2025-11-25" => Some(Self::Stream),
-            "2026-07-28" => Some(Self::Retry),
-            _ => None,
         }
     }
 }

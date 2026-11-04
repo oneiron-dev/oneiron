@@ -229,7 +229,11 @@ pub(super) fn dispatch_put_type(
         )?;
         crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
-        crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
+        // A standing outbound grant is a standing consent Grant row; no
+        // entity of this kind is written.
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            fixed.entity_type,
+        )));
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::write_envelope::profile_snapshot::validate_psych_profile_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {

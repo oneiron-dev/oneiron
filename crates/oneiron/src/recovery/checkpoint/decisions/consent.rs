@@ -13,11 +13,10 @@ use crate::channel_identity_provider::native_mail;
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimSubject, PREDICATE_COREFERENCE_SHARE_CONSENT};
 use crate::delivery_window::{DELIVERY_WINDOW_CLAIM_PREDICATES, DeliveryWindowPolicyClaim};
 use crate::edge::EdgeKind;
-use crate::outbound_grant::{StandingOutboundGrantScope, standing_outbound_grant_in_txn};
+use crate::outbound_grant::{StandingOutboundGrantScope, standing_outbound_grants_in_txn};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_PERSON,
 };
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
@@ -429,17 +428,12 @@ impl Decision for CalendarInviteConsent {
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
             parties.extend(crate::comm::comm_party_keys_in_txn(&vault.store, &txn)?);
-            for id in vault
-                .store
-                .port_entity_ids_by_type(&txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?
-            {
-                match standing_outbound_grant_in_txn(&vault.store, &txn, &id?)?
-                    .map(|grant| grant.scope)
-                {
-                    Some(StandingOutboundGrantScope::Contact { contact_ref }) => {
+            for grant in standing_outbound_grants_in_txn(&vault.store, &txn)? {
+                match grant.scope {
+                    StandingOutboundGrantScope::Contact { contact_ref } => {
                         subjects.extend(spelling(&contact_ref));
                     }
-                    Some(StandingOutboundGrantScope::BookingPageInvites { .. }) => pages = true,
+                    StandingOutboundGrantScope::BookingPageInvites { .. } => pages = true,
                     _ => {}
                 }
             }
@@ -522,13 +516,7 @@ impl Decision for CalendarInviteSendConsent {
         let mut events = BTreeSet::new();
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            for id in vault
-                .store
-                .port_entity_ids_by_type(&txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?
-            {
-                let Some(grant) = standing_outbound_grant_in_txn(&vault.store, &txn, &id?)? else {
-                    continue;
-                };
+            for grant in standing_outbound_grants_in_txn(&vault.store, &txn)? {
                 let Ok(actor) = EntityId::from_hex(&grant.principal_ref) else {
                     continue;
                 };

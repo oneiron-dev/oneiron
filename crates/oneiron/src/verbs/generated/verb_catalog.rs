@@ -11815,7 +11815,7 @@ impl AgentVerb {
                 "The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."
             }
             Self::VaultConnectorsSubscriptionsPut => {
-                "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."
+                "The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer."
             }
             Self::VaultConnectorsSubscriptionsList => {
                 "An agent's connector event subscriptions, standing and revoked, for the owner."

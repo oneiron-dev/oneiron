@@ -13,6 +13,9 @@ use super::normalize_keys::{
     counterparty_key, event_hash, first_conversation_thread_id, normalize_non_blank,
     normalize_thread_id, optional_section_text, section_references, thread_id_from_payload_url,
 };
+use super::page_text::{
+    conversation_ends_with_message, conversation_message_occurrence_count, page_text_occurrences,
+};
 use super::{
     DEFAULT_LINKEDIN_SEND_VERIFY_ATTEMPTS, LINKEDIN_CHANNEL, LINKEDIN_MCP_SEND_MESSAGE_TOOL,
     LINKEDIN_SEND_DM_VERB, LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS,
@@ -20,12 +23,13 @@ use super::{
     MAX_LINKEDIN_ERROR_CODE_BYTES, MAX_LINKEDIN_INTENT_REF_BYTES, MAX_LINKEDIN_MESSAGE_TEXT_BYTES,
     MAX_LINKEDIN_RECIPIENT_KEY_BYTES, MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS,
     RECEIPT_FIELD_ARTIFACT_THREAD_MESSAGE_REF, RECEIPT_FIELD_DUPLICATE_SEND_GUARD,
-    RECEIPT_FIELD_LINKEDIN_THREAD_REF, RECEIPT_FIELD_POST_SEND_MATCH_COUNT,
+    RECEIPT_FIELD_LINKEDIN_THREAD_REF, RECEIPT_FIELD_PAGE_TEXT_MATCHES_AFTER,
+    RECEIPT_FIELD_PAGE_TEXT_MATCHES_BEFORE, RECEIPT_FIELD_POST_SEND_MATCH_COUNT,
     RECEIPT_FIELD_PRE_SEND_MATCH_COUNT, RECEIPT_FIELD_RETRY_WINDOW,
     RECEIPT_FIELD_SEND_MESSAGE_CALLED, RECEIPT_FIELD_SEND_MESSAGE_RESULT,
     RECEIPT_FIELD_SEND_MESSAGE_RETURN_TRUSTED, RECEIPT_FIELD_SEND_MESSAGE_TOOL_ERROR,
     RECEIPT_FIELD_VERIFICATION_ATTEMPTS, RECEIPT_FIELD_VERIFICATION_STATE,
-    RECEIPT_FIELD_VERIFY_TOOL,
+    RECEIPT_FIELD_VERIFY_EVIDENCE, RECEIPT_FIELD_VERIFY_TOOL,
 };
 
 /// Host-resolved plan for one `linkedin.send_dm` intent.
@@ -94,13 +98,21 @@ pub struct LinkedInMcpSendMessageRequest {
     pub intent_ref: String,
 }
 
+/// The start of a transport error code that says the tool was never called
+/// (a connector call held or refused before it sent): a `send_message` that
+/// fails so is a certain non-delivery.
+pub const LINKEDIN_TOOL_NOT_SENT_PREFIX: &str = "not_sent:";
+
 /// Minimal host transport used by the verified-send sink.
 ///
 /// Implementors should return stable error codes, not raw provider output or
-/// secrets. A `send_message` result is never success on its own: the message
-/// id it names (a `message` object's id, or a top-level `message_id`) is what
-/// verification looks for in the transcript, and a result naming none leaves
-/// the send ambiguous.
+/// secrets; a code starting with [`LINKEDIN_TOOL_NOT_SENT_PREFIX`] says the
+/// tool was never called. A `send_message` result is never success on its
+/// own: the message id it names (a `message` object's id, or a top-level
+/// `message_id`) is what verification looks for in a structured transcript.
+/// Page text names no ids: there verification looks for the sent words in
+/// turns not the counterparty's, more often than the page read before the
+/// send showed them (FIX 12329). Anything else leaves the send ambiguous.
 pub trait LinkedInMcpSendTransport {
     fn send_message(
         &mut self,
@@ -226,6 +238,9 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         );
 
         let self_key = self.adapter.receiving_address_or_handle().to_owned();
+        // On page text, how often the words stood in turns not the
+        // counterparty's before the send.
+        let pre_send_page: Option<usize>;
         let (pre_send_match_count, pre_send_ids) =
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
@@ -233,6 +248,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                     // sender or text: a message that was already there, even
                     // one edited to the text since, is never the new send.
                     let pre_send_ids = transcript_message_ids(&output, &plan.thread_id);
+                    pre_send_page = page_text_occurrences(&output, plan, &self_key);
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
                         Ok(Some(observation)) => {
@@ -365,6 +381,13 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                 sent_id
             }
             Err(err) => {
+                // A tool never called delivered nothing.
+                if err.starts_with(LINKEDIN_TOOL_NOT_SENT_PREFIX) {
+                    fields.insert(
+                        RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                        "false".to_owned(),
+                    );
+                }
                 fields.insert(
                     RECEIPT_FIELD_SEND_MESSAGE_RESULT.to_owned(),
                     "failed".to_owned(),
@@ -394,16 +417,50 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         for attempt in 1..=plan.max_observation_attempts {
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
+                    // Page text names no ids (FIX 12329): delivered means the
+                    // page read after the send shows the words in turns not
+                    // the counterparty's more often than the page read
+                    // before it did.
+                    if let Some(before) = pre_send_page
+                        && let Some(after) = page_text_occurrences(&output, plan, &self_key)
+                        && after > before
+                    {
+                        fields.insert(
+                            RECEIPT_FIELD_VERIFY_EVIDENCE.to_owned(),
+                            "page_text".to_owned(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_PAGE_TEXT_MATCHES_BEFORE.to_owned(),
+                            before.to_string(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_PAGE_TEXT_MATCHES_AFTER.to_owned(),
+                            after.to_string(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
+                            "content_observed".to_owned(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
+                            attempt.to_string(),
+                        );
+                        return OutboundExecutionOutcome::delivered_to_channel(
+                            linkedin_thread_message_ref(&plan.thread_id, &plan.message_text),
+                        )
+                        .with_receipt_fields(fields);
+                    }
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
-                        // Delivered means the transcript holds the message the
-                        // send named, as one this seat sent with the text, and
-                        // the precheck did not show it. Text the transcript
-                        // does not attribute proves nothing (the recipient can
-                        // write the same words), and neither does an own
-                        // message the send did not name: pages can overlap
-                        // and slide, so where a message sits on one is never
-                        // evidence that it is new.
+                        // In a structured transcript, delivered means it holds
+                        // the message the send named, as one this seat sent
+                        // with the text, and the precheck did not show it.
+                        // Text the transcript does not attribute proves
+                        // nothing (the recipient can write the same words),
+                        // and neither does an own message the send did not
+                        // name: pages can overlap and slide, so where a
+                        // message sits on one is never evidence that it is
+                        // new.
                         Ok(Some(observation))
                             if sent_id.as_deref().is_some_and(|sent| {
                                 observation.own_ids.iter().any(|own| own == sent)
@@ -656,57 +713,6 @@ fn attributed_observation(
         own_tail_id: tail.1,
         own_ids,
     })
-}
-
-fn conversation_message_occurrence_count(conversation_text: &str, message_text: &str) -> usize {
-    let message = normalize_whitespace(message_text);
-    if message.is_empty() {
-        return 0;
-    }
-    let conversation_lines = conversation_text
-        .lines()
-        .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    if conversation_lines.is_empty() {
-        return 0;
-    }
-    let message_line_count = message_text
-        .lines()
-        .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .count()
-        .max(1);
-    if message_line_count > conversation_lines.len() {
-        return 0;
-    }
-    conversation_lines
-        .windows(message_line_count)
-        .filter(|window| normalize_whitespace(&window.join(" ")) == message)
-        .count()
-}
-
-fn conversation_ends_with_message(conversation_text: &str, message_text: &str) -> bool {
-    let message = normalize_whitespace(message_text);
-    if message.is_empty() {
-        return false;
-    }
-    let conversation_lines = conversation_text
-        .lines()
-        .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    let message_line_count = message_text
-        .lines()
-        .map(normalize_whitespace)
-        .filter(|line| !line.is_empty())
-        .count()
-        .max(1);
-    if message_line_count > conversation_lines.len() {
-        return false;
-    }
-    let tail = conversation_lines[conversation_lines.len() - message_line_count..].join(" ");
-    normalize_whitespace(&tail) == message
 }
 
 pub(super) fn normalize_whitespace(value: &str) -> String {

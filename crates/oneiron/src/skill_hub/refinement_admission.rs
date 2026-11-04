@@ -56,6 +56,8 @@ pub(super) struct RefinementControl {
     pub(super) base_binding: String,
     pub(super) proposal_binding: String,
     pub(super) state: RefinementState,
+    /// How many times the local gate has refused this candidate.
+    pub(super) refusals: u32,
 }
 impl RefinementControl {
     pub(super) fn claim(
@@ -74,6 +76,7 @@ impl RefinementControl {
             base_binding,
             proposal_binding,
             state: RefinementState::Pending,
+            refusals: 0,
         }
     }
     pub(super) fn skill(
@@ -91,6 +94,16 @@ impl RefinementControl {
             base_binding,
             proposal_binding,
             state: RefinementState::Pending,
+            refusals: 0,
+        }
+    }
+    /// Records the local gate's ruling: admitted, or one more refusal.
+    pub(super) fn rule(&mut self, accepted: bool) {
+        if accepted {
+            self.state = RefinementState::Admitted;
+        } else {
+            self.state = RefinementState::Refused;
+            self.refusals = self.refusals.saturating_add(1);
         }
     }
 }

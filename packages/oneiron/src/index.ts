@@ -1277,7 +1277,7 @@ export class Oneiron {
         reask_issuer: (input: Facade.ConnectorIssuerReaskRequest): Facade.ConnectorCredentialBindingView => this.#call(() => this.#client.vaultConnectorsSlatesReaskIssuer(input) as Facade.ConnectorCredentialBindingView),
       },
       subscriptions: {
-        /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+        /** The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer. */
         put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
         /** An agent's connector event subscriptions, standing and revoked, for the owner. */
         list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),

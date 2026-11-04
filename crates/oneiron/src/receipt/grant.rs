@@ -15,12 +15,11 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, decode_standing_outbound_grant_body,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grants_in_txn,
 };
 use crate::persona_snapshot::{PersonaSnapshotExportRecord, decode_persona_snapshot_export_body};
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
 };
 
 /// Query for the OF-367 RS6.5 standing outbound-grants lens.
@@ -47,14 +46,13 @@ pub struct StandingOutboundGrantsLens {
     pub grants: Vec<StandingOutboundGrantLensRow>,
 }
 
-/// One standing outbound-grant row for the grants page.
+/// One standing outbound-grant row for the grants page: its standing consent
+/// Grant row, by the registry's reference, and the grant id its capability
+/// keys and page dispatch name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandingOutboundGrantLensRow {
     pub grant_ref: String,
-    pub origin_component_id: String,
-    pub origin_action_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin_receipt_ref: Option<String>,
+    pub grant_id: String,
     pub scope_dial: String,
     pub status: String,
     pub stale: bool,
@@ -67,7 +65,8 @@ pub struct StandingOutboundGrantLensRow {
     pub revoke_action: StandingOutboundGrantRevokeAction,
 }
 
-/// Host-interpreted one-tap revoke command for a grants lens row.
+/// Host-interpreted one-tap revoke command for a grants lens row: the
+/// consent registry's revoke door.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandingOutboundGrantRevokeAction {
     pub command: String,
@@ -82,10 +81,6 @@ pub(super) fn standing_outbound_grants_lens(
         return Ok(StandingOutboundGrantsLens { grants: Vec::new() });
     }
 
-    let policy_floor = {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
-    };
     let receipt_records = if query.receipt_limit_per_grant == 0 {
         Vec::new()
     } else {
@@ -96,25 +91,24 @@ pub(super) fn standing_outbound_grants_lens(
         ))?
     };
 
-    let rtxn = vault.store.env.read_txn()?;
-    let mut rows = Vec::new();
-    scan_entities_by_type(
-        vault,
-        &rtxn,
-        ENTITY_TYPE_OUTBOUND_GRANT,
-        "outbound grant type index",
-        |id, _header, body| {
-            let grant = decode_standing_outbound_grant_body(body)?;
-            rows.push(standing_outbound_grant_lens_row(
-                id,
-                &grant,
-                &policy_floor,
-                &receipt_records,
-                query.receipt_limit_per_grant,
-            ));
-            Ok(())
-        },
-    )?;
+    let (policy_floor, grants) = {
+        let rtxn = vault.store.env.read_txn()?;
+        (
+            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?,
+            standing_outbound_grants_in_txn(&vault.store, &rtxn)?,
+        )
+    };
+    let mut rows = Vec::with_capacity(grants.len());
+    for grant in &grants {
+        let history = OutboundGrantHistory::read(vault, grant)?;
+        rows.push(standing_outbound_grant_lens_row(
+            grant,
+            &history,
+            &policy_floor,
+            &receipt_records,
+            query.receipt_limit_per_grant,
+        ));
+    }
     rows.sort_by(|left, right| {
         right
             .created_at
@@ -125,33 +119,62 @@ pub(super) fn standing_outbound_grants_lens(
     Ok(StandingOutboundGrantsLens { grants: rows })
 }
 
+/// What a standing outbound grant's consent receipts say about it: when it
+/// was last used and when it was revoked, read from its Used and Revoked
+/// receipts, since its row keeps neither.
+struct OutboundGrantHistory {
+    last_used_at: Option<u64>,
+    revoked_at: Option<u64>,
+}
+
+impl OutboundGrantHistory {
+    fn read(vault: &Vault, grant: &StandingOutboundGrant) -> Result<Self> {
+        // Newest first: the first of each reason is the latest.
+        let records = vault
+            .store
+            .gate_decisions_for_grant_ref(&grant.grant_ref())?;
+        let latest = |reason: &str| {
+            records
+                .iter()
+                .find(|record| record.reason_codes.iter().any(|code| code == reason))
+                .map(|record| record.created_at)
+        };
+        Ok(Self {
+            last_used_at: latest(crate::consent::CONSENT_REASON_STANDING_USED),
+            revoked_at: if grant.is_active() {
+                None
+            } else {
+                latest(crate::consent::CONSENT_REASON_REVOKED)
+            },
+        })
+    }
+}
+
 fn standing_outbound_grant_lens_row(
-    id: EntityId,
     grant: &StandingOutboundGrant,
+    history: &OutboundGrantHistory,
     policy_floor: &[u8; 32],
     receipt_records: &[ReceiptRecord],
     receipt_limit: usize,
 ) -> StandingOutboundGrantLensRow {
-    let grant_ref = format!("grant:{}", id.to_hex());
-    let stale = !grant.is_active_under_policy(policy_floor) && grant.revoked_at.is_none();
+    let grant_ref = grant.grant_ref();
+    let stale = grant.is_active() && !grant.is_active_under_policy(policy_floor);
     StandingOutboundGrantLensRow {
         grant_ref: grant_ref.clone(),
-        origin_component_id: grant.origin_component_id.clone(),
-        origin_action_id: grant.origin_action_id.clone(),
-        origin_receipt_ref: grant.origin_receipt_ref.clone(),
+        grant_id: grant.id.to_hex(),
         scope_dial: grant.scope.dial_label().to_owned(),
         status: grant.status.as_str().to_owned(),
         stale,
         created_at: grant.created_at,
-        last_used_at: grant.last_used_at,
-        revoked_at: grant.revoked_at,
+        last_used_at: history.last_used_at,
+        revoked_at: history.revoked_at,
         receipt_join: project_receipts_by_grant_limited(
             grant_ref.clone(),
             receipt_records.iter().cloned(),
             receipt_limit,
         ),
         revoke_action: StandingOutboundGrantRevokeAction {
-            command: "revoke_standing_outbound_grant".to_owned(),
+            command: crate::consent::CONSENT_REVOKE_COMMAND.to_owned(),
             grant_ref,
         },
     }
@@ -230,80 +253,67 @@ fn access_grant_receipt(
     }
 }
 
+/// Each standing outbound grant's ScopedRead receipts: its creation and,
+/// once revoked, its revocation, at the times its consent Approved and
+/// Revoked receipts record. It reads its own snapshots, so it runs outside
+/// any read transaction the caller holds.
 pub(super) fn outbound_grant_receipts(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
+    let grants = {
+        let rtxn = vault.store.env.read_txn()?;
+        standing_outbound_grants_in_txn(&vault.store, &rtxn)?
+    };
     let mut receipts = Vec::new();
-    scan_entities_by_type(
-        vault,
-        txn,
-        ENTITY_TYPE_OUTBOUND_GRANT,
-        "outbound grant type index",
-        |id, _header, body| {
-            let grant = decode_standing_outbound_grant_body(body)?;
-            let created = outbound_grant_receipt(id, &grant, grant.created_at, "active", "created");
-            if query.matches(&created) {
-                receipts.push(created);
+    for grant in &grants {
+        let history = OutboundGrantHistory::read(vault, grant)?;
+        let created =
+            outbound_grant_receipt(grant, &history, grant.created_at, "active", "created");
+        if query.matches(&created) {
+            receipts.push(created);
+        }
+        if let Some(revoked_at) = history.revoked_at {
+            let revoked = outbound_grant_receipt(grant, &history, revoked_at, "revoked", "revoked");
+            if query.matches(&revoked) {
+                receipts.push(revoked);
             }
-            if let Some(revoked_at) = grant.revoked_at {
-                let revoked = outbound_grant_receipt(id, &grant, revoked_at, "revoked", "revoked");
-                if query.matches(&revoked) {
-                    receipts.push(revoked);
-                }
-            }
-            Ok(())
-        },
-    )?;
+        }
+    }
     Ok(receipts)
 }
 
 fn outbound_grant_receipt(
-    id: EntityId,
     grant: &StandingOutboundGrant,
+    history: &OutboundGrantHistory,
     occurred_at: u64,
     outcome: &str,
     event_name: &str,
 ) -> ReceiptRecord {
-    let grant_ref = format!("grant:{}", id.to_hex());
+    let grant_ref = grant.grant_ref();
     let mut fields = BTreeMap::new();
     fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
+    fields.insert("grant_id".to_owned(), grant.id.to_hex());
     fields.insert("status".to_owned(), grant.status.as_str().to_owned());
     fields.insert("scope_dial".to_owned(), grant.scope.dial_label().to_owned());
     fields.insert(
-        "origin_component_id".to_owned(),
-        grant.origin_component_id.clone(),
-    );
-    fields.insert(
-        "origin_action_id".to_owned(),
-        grant.origin_action_id.clone(),
-    );
-    fields.insert(
-        "binding_diff_handle".to_owned(),
-        hex_lower(&grant.binding_diff_handle),
-    );
-    fields.insert(
         "read_frontier_hash".to_owned(),
-        hex_lower(&grant.read_frontier_hash),
+        hex_lower(&grant.policy_frontier),
     );
-    if let Some(origin_receipt_ref) = grant.origin_receipt_ref.as_ref() {
-        fields.insert("origin_receipt_ref".to_owned(), origin_receipt_ref.clone());
-    }
-    if let Some(last_used_at) = grant.last_used_at {
+    if let Some(last_used_at) = history.last_used_at {
         fields.insert("last_used_at".to_owned(), last_used_at.to_string());
     }
     append_outbound_grant_scope_fields(&mut fields, &grant.scope);
 
     ReceiptRecord {
-        receipt_id: format!("scoped_read:{grant_ref}:{event_name}"),
+        receipt_id: format!("scoped_read:grant:{grant_ref}:{event_name}"),
         receipt_kind: ReceiptKind::ScopedRead,
         occurred_at,
         actor: Some(grant.principal_ref.clone()),
         on_behalf_of: None,
         outcome: outcome.to_owned(),
         job_ref: outbound_grant_job_ref(&grant.scope),
-        trigger_ref: Some(grant_ref),
+        trigger_ref: Some(format!("grant:{grant_ref}")),
         policy_trace: Vec::new(),
         fields,
     }
@@ -528,16 +538,6 @@ fn append_outbound_grant_scope_fields(
     scope: &StandingOutboundGrantScope,
 ) {
     match scope {
-        StandingOutboundGrantScope::ChannelIdentityEnvelope {
-            identity_ref,
-            envelope_ref,
-            verb_class,
-        } => {
-            fields.insert("scope".to_owned(), "channel_identity_envelope".to_owned());
-            fields.insert("identity_ref".to_owned(), identity_ref.to_hex());
-            fields.insert("envelope_ref".to_owned(), envelope_ref.to_hex());
-            fields.insert("verb_class".to_owned(), verb_class.clone());
-        }
         StandingOutboundGrantScope::ArtifactPublish { artifact } => {
             fields.insert("scope".to_owned(), "artifact_publish".to_owned());
             fields.insert("artifact".to_owned(), artifact.clone());
@@ -590,9 +590,9 @@ fn append_outbound_grant_scope_fields(
             );
         }
         StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
-            // Token parity with the codec's `SCOPE_KIND_BOOKING_PAGE_INVITES`:
-            // the audit surface and the stored row spell the scope the same
-            // way, and the field name is the scope payload's own field name.
+            // Token parity with the dial's label: the audit surface and the
+            // grants lens spell the scope the same way, and the field name is
+            // the scope payload's own field name.
             fields.insert("scope".to_owned(), "booking_page_invites".to_owned());
             fields.insert("page_ref".to_owned(), page_ref.to_hex());
         }

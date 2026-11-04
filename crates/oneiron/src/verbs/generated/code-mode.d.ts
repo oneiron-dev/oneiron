@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4498 declarations.
+// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4499 declarations.
 // Replies: 1087 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: none.
@@ -1159,7 +1159,8 @@ declare namespace Sdk {
   type HookReplayCompare = "same" | "differs" | "incomplete";
   type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string };
   type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
-  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean };
+  type HubHookGoldenRun = { index: number; verb: string; ran: boolean; passed: boolean };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean; golden: HubHookGoldenRun[] };
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackTextFile = { path: string; text: string };
   type PackBytesFile = { path: string; content_base64: string };
@@ -5814,7 +5815,7 @@ declare const vault: Sdk.VaultHost & {
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
       list(input: Sdk.ChannelSubscriptionsRequest): Promise<Sdk.ChannelSubscriptions | StoredResult>;
-      /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+      /** The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer. */
       put(input: Sdk.ChannelSubscriptionRequest): Promise<Sdk.ChannelMessageSubscription | StoredResult>;
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;

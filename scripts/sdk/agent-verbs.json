@@ -4725,7 +4725,7 @@
     },
     {
       "name": "vault.connectors.subscriptions.put",
-      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
       "output": "crate::connector_key::ChannelMessageSubscription",
       "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",

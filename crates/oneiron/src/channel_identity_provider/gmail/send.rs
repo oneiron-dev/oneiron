@@ -554,6 +554,15 @@ impl<'a, W> GmailSendSink<'a, W> {
         self.plans.insert(plan.content_ref.clone(), plan);
     }
 
+    /// Registers a plan the served sink composed from the typed outbound
+    /// content `content_ref` names, under that ref: the send's approval binds
+    /// the content ref, and the plan's body is the text it loads (FIX 1168).
+    #[must_use]
+    pub fn with_content_plan(mut self, content_ref: &str, plan: GmailSendPlan) -> Self {
+        self.plans.insert(content_ref.to_owned(), plan);
+        self
+    }
+
     /// The plan a content ref names, if registered.
     #[must_use]
     pub fn plan(&self, content_ref: &str) -> Option<&GmailSendPlan> {
