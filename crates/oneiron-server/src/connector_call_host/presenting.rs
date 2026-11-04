@@ -22,6 +22,7 @@
 //! (CONNECTOR_PRESENT_BY_RECORD_ID).
 
 use oneiron::limit_ask::EngineLimit;
+use oneiron::secret_lease::ConnectorGrantRedemption;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -97,18 +98,44 @@ impl ServedConnectorCallHost {
 
 impl Presenting {
     /// Runs `exchange` with this credential, inside its door, and clears
-    /// what came back there. `presented` is what the door released.
+    /// what came back there. `presented` is what the door released. `row`
+    /// is the call's governing key and tool: their durable issuer binding is
+    /// read before the door opens, so a held send opens no door and counts
+    /// no grant redemption (FIX 12097), and again inside the door, the last
+    /// point before the credential leaves. While an issuer change the owner
+    /// has not accepted holds the row, nothing is presented or sent (FIX
+    /// 9303).
     pub(super) fn send(
         self,
         vault: &Vault,
         exchange: &Exchange<'_>,
+        row: Option<(&EntityId, &str)>,
         presented: &mut Option<SentPresentation>,
     ) -> Sent {
+        if let Some((key_ref, tool)) = row {
+            match vault.connector_issuer_hold(key_ref, tool) {
+                Ok(Some(reason)) => return Sent::held(reason),
+                Ok(None) => {}
+                // A binding that cannot be read sends nothing, as the read
+                // inside the door answers it.
+                Err(error) => {
+                    tracing::warn!(%error, "connector issuer binding not read");
+                    return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None);
+                }
+            }
+        }
         let Some(door) = self.door else {
             return exchange.run(None, None);
         };
         let mut sent = None;
+        let mut held = None;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {
+            if let Some((key_ref, tool)) = row {
+                held = vault.connector_issuer_hold(key_ref, tool)?;
+                if held.is_some() {
+                    return Ok(());
+                }
+            }
             let header = authorization_header(value)?;
             let value = SentValue::new(value, &self.text);
             sent = Some(exchange.run(Some(header), Some(&value)).cleared(&value));
@@ -120,11 +147,28 @@ impl Presenting {
                 grant,
                 target,
                 custody,
-            } => vault
-                .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                .map(|redeemed| {
-                    custody.map(|custody| SentPresentation::cleared(custody, redeemed.generation))
-                }),
+            } => match row {
+                Some((key_ref, tool)) => match vault.redeem_connector_grant_at_door(
+                    &grant,
+                    &target,
+                    key_ref,
+                    tool,
+                    &mut present,
+                ) {
+                    Ok(ConnectorGrantRedemption::Redeemed(redeemed)) => Ok(custody
+                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
+                    Ok(ConnectorGrantRedemption::Held { reason }) => {
+                        return Sent::held(reason);
+                    }
+                    Err(error) => Err(error),
+                },
+                None => vault
+                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                    .map(|redeemed| {
+                        custody
+                            .map(|custody| SentPresentation::cleared(custody, redeemed.generation))
+                    }),
+            },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
@@ -137,6 +181,11 @@ impl Presenting {
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
             Door::Unresolved => Ok(None),
         };
+        // A held row presented nothing to the connector: the send answers
+        // with its hold (FIX 9303).
+        if let Some(reason) = held {
+            return Sent::held(reason);
+        }
         // A typed secret refusal at any door answers as its typed refusal
         // (FIX 6673, FIX 11565); any other door error keeps today's
         // transport answer.
@@ -171,9 +220,24 @@ impl Presenting {
     /// Presents this credential again, inside its door, for a live exchange
     /// taken up after a restart (FIX 9157): the callback only rebuilds the
     /// header and the clearing value, and nothing is sent here. A grant door
-    /// counts the redemption as a send. `None` when the door refuses it or
-    /// the route's secret names no live record.
-    pub(super) fn present_again(self, vault: &Vault) -> Option<Presented> {
+    /// counts the redemption as a send, unless the call's row meets an
+    /// issuer hold, which counts nothing. `None` when the door refuses it,
+    /// the row is held, or the route's secret names no live record.
+    pub(super) fn present_again(
+        self,
+        vault: &Vault,
+        row: Option<(&EntityId, &str)>,
+    ) -> Option<Presented> {
+        if let Some((key_ref, tool)) = row {
+            match vault.connector_issuer_hold(key_ref, tool) {
+                Ok(None) => {}
+                Ok(Some(_)) => return None,
+                Err(error) => {
+                    tracing::warn!(%error, "connector issuer binding not read");
+                    return None;
+                }
+            }
+        }
         let Some(door) = self.door else {
             return Some(Presented {
                 auth: None,
@@ -190,9 +254,24 @@ impl Presenting {
         };
         let effector = self.effector.as_str();
         let opened = match door {
-            Door::Grant { grant, target, .. } => vault
-                .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                .is_ok(),
+            Door::Grant { grant, target, .. } => match row {
+                Some((key_ref, tool)) => {
+                    match vault.redeem_connector_grant_at_door(
+                        &grant,
+                        &target,
+                        key_ref,
+                        tool,
+                        &mut present,
+                    ) {
+                        Ok(ConnectorGrantRedemption::Redeemed(_)) => true,
+                        Ok(ConnectorGrantRedemption::Held { .. }) => return None,
+                        Err(_) => false,
+                    }
+                }
+                None => vault
+                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                    .is_ok(),
+            },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .is_ok(),

@@ -11,13 +11,15 @@
 //! the key file, and the custody door lends it to each signature, recorded
 //! as a use (FIX 1297). `ONEIRON_SEAL_TRUST` names the trust anchors (PEM;
 //! the chain's last certificate when unset),
-//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal; B-B without one),
-//! and `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
+//! `ONEIRON_SEAL_TSA` a timestamp authority (a B-T seal, B-LT with revocation origins; B-B without one),
+//! `ONEIRON_SEAL_CRL_ORIGINS` and `ONEIRON_SEAL_OCSP_ORIGINS` comma-separated
+//! origins whose revocation material the seal may fetch, and
+//! `ONEIRON_SEAL_URL` the signing page the evidence names (the sign page
 //! at the host's public origin when unset). A managed vault reads no
 //! environment, so its supervisor passes the same settings per vault as
 //! `--seal-key-file` (or `--seal-key-handle`), `--seal-chain-file`,
-//! `--seal-trust-file`, `--seal-tsa-url`, `--seal-signing-url` and
-//! `--seal-organ` (FIX 3487).
+//! `--seal-trust-file`, `--seal-tsa-url`, `--seal-crl-origins`,
+//! `--seal-ocsp-origins`, `--seal-signing-url` and `--seal-organ` (FIX 3487).
 //! The seal organ is the build an installed pack carries for this platform,
 //! written under `ONEIRON_ORGAN_DIR`, or the program `ONEIRON_SEAL_ORGAN`
 //! (`--seal-organ`) names. A pack build follows the packs: when the
@@ -51,6 +53,8 @@ const KEY_HANDLE: SettingName = ("ONEIRON_SEAL_KEY_HANDLE", "--seal-key-handle")
 const CHAIN: SettingName = ("ONEIRON_SEAL_CHAIN", "--seal-chain-file");
 const TRUST: SettingName = ("ONEIRON_SEAL_TRUST", "--seal-trust-file");
 const TSA: SettingName = ("ONEIRON_SEAL_TSA", "--seal-tsa-url");
+const CRL_ORIGINS: SettingName = ("ONEIRON_SEAL_CRL_ORIGINS", "--seal-crl-origins");
+const OCSP_ORIGINS: SettingName = ("ONEIRON_SEAL_OCSP_ORIGINS", "--seal-ocsp-origins");
 const URL: SettingName = ("ONEIRON_SEAL_URL", "--seal-signing-url");
 const ORGAN: SettingName = ("ONEIRON_SEAL_ORGAN", "--seal-organ");
 
@@ -69,6 +73,10 @@ pub(crate) struct SealConfig {
     pub(crate) trust: Option<PathBuf>,
     /// A timestamp authority's URL: a B-T seal, B-B without one.
     pub(crate) tsa: Option<String>,
+    /// Origins whose certificate revocation lists the seal may fetch.
+    pub(crate) crl_origins: Vec<String>,
+    /// Origins whose OCSP responders the seal may query.
+    pub(crate) ocsp_origins: Vec<String>,
     /// The signing page the evidence names.
     pub(crate) signing_url: Option<String>,
     /// The seal organ's program, in place of an installed pack's build.
@@ -81,12 +89,21 @@ impl SealConfig {
     /// The `ONEIRON_SEAL_*` environment.
     pub(crate) fn from_env() -> Self {
         let text = |(name, _): SettingName| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let list = |setting| {
+            text(setting)
+                .map(|value| {
+                    crate::config::normalize_list(value.split(',').map(str::to_owned).collect())
+                })
+                .unwrap_or_default()
+        };
         Self {
             key: env_path(KEY),
             key_handle: text(KEY_HANDLE),
             chain: env_path(CHAIN),
             trust: env_path(TRUST),
             tsa: text(TSA),
+            crl_origins: list(CRL_ORIGINS),
+            ocsp_origins: list(OCSP_ORIGINS),
             signing_url: text(URL),
             organ: env_path(ORGAN),
             argv: false,
@@ -219,13 +236,18 @@ fn tick(
         }
     };
     let mut settings = SealSettings::new(anchors, "esign.seal");
+    let revocation = !seal.crl_origins.is_empty() || !seal.ocsp_origins.is_empty();
     let profile = match tsa {
         Some(url) => {
             settings.timestamp_authorities.push(SealTsa {
                 url,
                 policy_oid: None,
             });
-            SealProfile::BaselineT
+            if revocation {
+                SealProfile::BaselineLt
+            } else {
+                SealProfile::BaselineT
+            }
         }
         None => SealProfile::BaselineB,
     };
@@ -376,24 +398,38 @@ fn follow_seal_pack(server: &SyncServer, seen: &mut Option<Vec<PackInstallReceip
     *seen = Some(installs);
 }
 
-/// Where the seal may fetch: its timestamp authority's origin.
+/// One exact origin a configured URL admits to the seal's fetch grant.
+fn fetch_origin(
+    seal: &SealConfig,
+    setting: SettingName,
+    value: &str,
+) -> Result<FetchOrigin, String> {
+    let name = seal.name(setting);
+    let url = reqwest::Url::parse(value).map_err(|_| format!("{name} is not a URL"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("{name} names no host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| format!("{name} names no port"))?;
+    Ok(FetchOrigin::new(url.scheme(), host, port))
+}
+
+/// Where the seal may fetch: its timestamp authority and configured
+/// certificate-revocation origins (FIX 1298).
 fn fetch_grant(seal: &SealConfig, tsa: Option<&str>) -> Result<FetchGrant, String> {
     let mut grant = FetchGrant {
         max_bytes: FETCH_MAX_BYTES,
         ..FetchGrant::default()
     };
     if let Some(tsa) = tsa {
-        let name = seal.name(TSA);
-        let url = reqwest::Url::parse(tsa).map_err(|_| format!("{name} is not a URL"))?;
-        let host = url
-            .host_str()
-            .ok_or_else(|| format!("{name} names no host"))?;
-        let port = url
-            .port_or_known_default()
-            .ok_or_else(|| format!("{name} names no port"))?;
-        grant
-            .origins
-            .push(FetchOrigin::new(url.scheme(), host, port));
+        grant.origins.push(fetch_origin(seal, TSA, tsa)?);
+    }
+    for value in &seal.crl_origins {
+        grant.origins.push(fetch_origin(seal, CRL_ORIGINS, value)?);
+    }
+    for value in &seal.ocsp_origins {
+        grant.origins.push(fetch_origin(seal, OCSP_ORIGINS, value)?);
     }
     Ok(grant)
 }

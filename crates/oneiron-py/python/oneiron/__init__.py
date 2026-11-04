@@ -2843,6 +2843,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def exclude(self, spec):
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_exclude(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3197,6 +3200,9 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+        def withdraw_erase(self, spec):
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_withdraw_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5823,6 +5829,15 @@ class Oneiron:
         def lens(self, spec):
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
             return json.loads(_translate(lambda: self._client.self_inbox_lens(json.dumps(spec))))
+        def get(self, spec):
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+            return json.loads(_translate(lambda: self._client.self_inbox_get(json.dumps(spec))))
+        def done(self, spec):
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+            return json.loads(_translate(lambda: self._client.self_inbox_done(json.dumps(spec))))
+        def later(self, spec):
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
+            return json.loads(_translate(lambda: self._client.self_inbox_later(json.dumps(spec))))
     class _SelfInboxConcernVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

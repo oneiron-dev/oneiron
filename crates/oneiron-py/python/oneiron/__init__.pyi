@@ -1897,6 +1897,8 @@ class Oneiron:
             """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
         def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+        def exclude(self, spec: Facade.FilesSourceExcludeRequest) -> Facade.FilesSourceExcludeAnswer:
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
@@ -2109,6 +2111,8 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
+        def withdraw_erase(self, spec: Facade.LegalHoldWithdrawEraseRequest) -> Facade.LegalHoldErasesWithdrawn:
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
@@ -3639,6 +3643,12 @@ class Oneiron:
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
+        def get(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemView:
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+        def done(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemMarked:
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+        def later(self, spec: Facade.InboxItemLaterRequest) -> Facade.InboxItemMarked:
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
     class _SelfInboxConcernVerbs:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...

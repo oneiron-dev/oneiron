@@ -387,6 +387,12 @@ fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
         FileReadiness::NameOnly { .. } => None,
     };
     let meta = file.meta;
+    // The row keeps when it first saw the file; ledgers written before it
+    // still carry it on the meta (REVIEW-4381 P1).
+    let first_seen_at = match file.first_seen_at {
+        0 => meta.map(|meta| meta.first_seen_at),
+        seen => Some(seen),
+    };
     FilesFileView {
         handle: FileHandle {
             source,
@@ -399,7 +405,7 @@ fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
         revision,
         bytes: meta.map(|meta| meta.bytes),
         modified_at: meta.map(|meta| meta.modified_at),
-        first_seen_at: meta.map(|meta| meta.first_seen_at),
+        first_seen_at,
         indexed_at: meta.and_then(|meta| meta.indexed_at),
     }
 }

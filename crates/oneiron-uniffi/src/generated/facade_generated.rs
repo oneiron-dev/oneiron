@@ -1081,6 +1081,21 @@ export_facade! {
     let output = client.self_inbox_lens(&input)?;
     crate::codec::lift_record("self.inbox.lens", &output)
 };
+"self.inbox.get" => fn self_inbox_get(&self, input: InboxItemRequest) -> InboxItemView = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.get", input)?;
+    let output = client.self_inbox_get(&input)?;
+    crate::codec::lift_record("self.inbox.get", &output)
+};
+"self.inbox.done" => fn self_inbox_done(&self, input: InboxItemRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.done", input)?;
+    let output = client.self_inbox_done(&input)?;
+    crate::codec::lift_record("self.inbox.done", &output)
+};
+"self.inbox.later" => fn self_inbox_later(&self, input: InboxItemLaterRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemLaterRequest = crate::codec::lower_record("self.inbox.later", input)?;
+    let output = client.self_inbox_later(&input)?;
+    crate::codec::lift_record("self.inbox.later", &output)
+};
 "vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
     let output = client.vault_skills_bootstrap(&input)?;
@@ -1986,6 +2001,11 @@ export_facade! {
     let output = client.vault_files_sources_files(&input)?;
     crate::codec::lift_record("vault.files.sources.files", &output)
 };
+"vault.files.sources.exclude" => fn vault_files_sources_exclude(&self, input: FilesSourceExcludeRequest) -> FilesSourceExcludeAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceExcludeRequest = crate::codec::lower_record("vault.files.sources.exclude", input)?;
+    let output = client.vault_files_sources_exclude(&input)?;
+    crate::codec::lift_record("vault.files.sources.exclude", &output)
+};
 "vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
     let output = client.vault_residence_mode(&input)?;
@@ -2490,6 +2510,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest = crate::codec::lower_record("vault.legal_holds.lift_and_erase", input)?;
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::lift_record("vault.legal_holds.lift_and_erase", &output)
+};
+"vault.legal_holds.withdraw_erase" => fn vault_legal_holds_withdraw_erase(&self, input: LegalHoldWithdrawEraseRequest) -> LegalHoldErasesWithdrawn = |client| {
+    let input: oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest = crate::codec::lower_record("vault.legal_holds.withdraw_erase", input)?;
+    let output = client.vault_legal_holds_withdraw_erase(&input)?;
+    crate::codec::lift_record("vault.legal_holds.withdraw_erase", &output)
 };
 "vault.courtesy_delete.send" => fn vault_courtesy_delete_send(&self, input: CourtesyDeleteSendRequest) -> CourtesyDeleteSent = |client| {
     let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest = crate::codec::lower_record("vault.courtesy_delete.send", input)?;

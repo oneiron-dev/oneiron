@@ -28,8 +28,8 @@ use super::{ConflictKind, OfficeBodyDiff, invalid, loro_kind, open_fork, three_w
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, EffectFacts,
-    GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentDecision,
+    EffectFacts, GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -41,6 +41,14 @@ use crate::typed_body::{
     merge_admitted_typed_body_fork_in_txn,
 };
 use crate::write_envelope::WriteActor;
+
+mod live_edit;
+pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::{
+    admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
+    live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,
+    office_effect_for, office_scope,
+};
 
 /// The action class a standing grant names to land an actor's office fork on
 /// an artifact without a person's word.
@@ -715,23 +723,7 @@ fn issued_grants(
 /// The landing of `opener`'s work on `artifact` as the one consent evaluator
 /// reads it: `opener` editing the artifact under the office edit class.
 fn office_effect(artifact: &EntityId, opener: &EntityId) -> Result<ComposedEffect> {
-    ComposedEffect::new(EffectFacts::new(OFFICE_MERGE_OPERATION)?)
-        .with_action_requirement(office_bound(artifact, opener)?)
-}
-
-fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
-    let (class, envelope) = office_scope(artifact)?;
-    GrantBound::action(ActorBound::new(opener.to_hex())?, class, envelope)
-}
-
-/// The scope of office edits to `artifact`: what a standing grant names to
-/// land a fork there, and whose holders a waiting member is asked of.
-pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
-    let target = format!("entity:{}", artifact.to_hex());
-    Ok((
-        ActionClass::new(OFFICE_BODY_EDIT_CLASS)?,
-        ActionEnvelope::new([target.clone()])?.with_target(target)?,
-    ))
+    office_effect_for(OFFICE_MERGE_OPERATION, artifact, opener)
 }
 
 /// The ref of a standing grant that lands `opener`'s work on `artifact`,
@@ -742,13 +734,27 @@ fn covering_grant(
     artifact: &EntityId,
     opener: &EntityId,
 ) -> Result<Option<String>> {
+    covering_grant_for(OFFICE_MERGE_OPERATION, grants, excluded, artifact, opener)
+}
+
+fn covering_grant_for(
+    operation: &str,
+    grants: &[(StandingConsentGrant, Option<EntityId>)],
+    excluded: &BTreeSet<EntityId>,
+    artifact: &EntityId,
+    subject: &EntityId,
+) -> Result<Option<String>> {
     let eligible: Vec<StandingConsentGrant> = grants
         .iter()
         .filter(|(_, issuer)| issuer.is_some_and(|issuer| !excluded.contains(&issuer)))
         .map(|(grant, _)| grant.clone())
         .collect();
-    let bound = office_bound(artifact, opener)?;
-    if evaluate_consent(&office_effect(artifact, opener)?, None, &eligible) != ConsentDecision::Auto
+    let bound = office_bound(artifact, subject)?;
+    if evaluate_consent(
+        &office_effect_for(operation, artifact, subject)?,
+        None,
+        &eligible,
+    ) != ConsentDecision::Auto
     {
         return Ok(None);
     }

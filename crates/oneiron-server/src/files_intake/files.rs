@@ -65,18 +65,37 @@ fn excludes(exclude: &[String], path: &str) -> bool {
     })
 }
 
+/// Whether `dir` still names the retained vault: following links, as the
+/// vault root is canonical. A renamed-away spelling, or a replacement
+/// directory reusing it, no longer matches (REVIEW-4381 P1).
+#[cfg(unix)]
+fn still_names_vault(dir: &Path, vault: (u64, u64)) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(dir)
+        .map(|meta| (meta.dev(), meta.ino()) == vault)
+        .unwrap_or(false)
+}
+
+/// No identity off unix: every string still applies.
+#[cfg(not(unix))]
+fn still_names_vault(_dir: &Path, _vault: (u64, u64)) -> bool {
+    true
+}
+
 /// Every file under `folder` that `exclude` leaves, in path order: its
 /// notes, a file past the note bound as its parts, and the files it holds
 /// by name only. A file whose size and mtime both match `prior`'s record is
-/// not read (FIX 1365). `vault_dir` is this vault's own folder: a source
-/// that holds it passes over everything in it, so the vault never ingests
-/// itself (FIX 10249).
+/// not read (FIX 1365). `vault_dir` is this vault's own folder and
+/// `vault_id` its retained identity: a source that holds the vault passes
+/// over everything in it, so the vault never ingests itself (FIX 10249).
+/// Strings that no longer name the retained vault exclude nothing.
 pub(super) fn read_files(
     folder: &Path,
     exclude: &[String],
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
     vault_dir: Option<&Path>,
+    vault_id: Option<(u64, u64)>,
 ) -> anyhow::Result<FilesRead> {
     let mut read = FilesRead::default();
     // The vault's folder as given and canonical: shown paths spell the
@@ -93,6 +112,15 @@ pub(super) fn read_files(
             dirs
         })
         .unwrap_or_default();
+    // A vault renamed after open leaves its old spelling behind: strings
+    // that no longer name the retained vault exclude nothing, and a
+    // replacement directory at the old path reads as ordinary documents.
+    // The descriptor-bound walk still passes over the real vault wherever
+    // it lives. Without an identity every string still applies.
+    let vault_dirs: Vec<std::path::PathBuf> = vault_dirs
+        .into_iter()
+        .filter(|dir| vault_id.is_none_or(|id| still_names_vault(dir, id)))
+        .collect();
     // The walk opens the folder as the host holds it now, following a root
     // symlink: a source folder swapped for a link into the vault would
     // otherwise read the vault under the link's spelling, which neither the
@@ -104,20 +132,41 @@ pub(super) fn read_files(
     let covers = vault_dirs
         .iter()
         .any(|dir| folder_root == *dir || folder_root.starts_with(dir));
-    read.vault_covers_folder = covers;
+    // Set once the identity-bound walk reports: a root at or under the
+    // vault by descriptor identity covers the folder too (REVIEW-4381 P1).
+    // The root itself may be a link the person gave (theirs to follow):
+    // entries then spell the given root while their bytes live under the
+    // bound one, so a vault under the bound root would pass over uncompared
+    // (a root swapped for the vault's parent reads the vault under the given
+    // spelling). Compare through the bound root too (REVIEW-4381 P1). Links
+    // below the root are never followed, so no deeper spelling can mismatch.
+    let bound_under_vault = |shown: &Path| {
+        if folder_root.as_path() == folder {
+            return false;
+        }
+        let Ok(rel) = shown.strip_prefix(folder) else {
+            return false;
+        };
+        let bound = folder_root.join(rel);
+        vault_dirs
+            .iter()
+            .any(|dir| bound == *dir || bound.starts_with(dir))
+    };
     let excluded = |shown: &Path| {
         covers
             || vault_dirs
                 .iter()
                 .any(|dir| shown == dir || shown.starts_with(dir))
+            || bound_under_vault(shown)
             || relative(folder, shown).is_some_and(|path| excludes(exclude, &path))
     };
     let mut unopened = Vec::new();
     let mut unopened_at = |shown: &Path| unopened.push(shown.to_path_buf());
     let mut unopened_dirs = Vec::new();
     let mut unopened_dir_at = |shown: &Path| unopened_dirs.push(shown.to_path_buf());
-    super::walk_files(
+    let identity_covers = super::walk_files(
         folder,
+        vault_id,
         &excluded,
         &mut unopened_at,
         &mut unopened_dir_at,
@@ -129,6 +178,7 @@ pub(super) fn read_files(
             read_file(path, file, shown, counts, &mut read, prior)
         },
     )?;
+    read.vault_covers_folder = covers || identity_covers;
     for shown in &unopened_dirs {
         match relative(folder, shown) {
             Some(path) => read.unopened_dirs.push(path),
@@ -143,7 +193,7 @@ pub(super) fn read_files(
             counts.unreadable_name += 1;
             continue;
         };
-        if let Some(file) = reopened(folder, &path) {
+        if let Some(file) = reopened(folder, &path, vault_id) {
             read_file(path, file, &shown, counts, &mut read, prior)?;
             continue;
         }
@@ -252,15 +302,19 @@ fn original(file: File, shown: &Path, path: &str) -> Option<OriginalBytes> {
 
 /// The file at `path` below `folder`, opened again after the walk, every
 /// folder on the way relative to the one above it and never through a link
-/// (FIX 11588); `None` when it still does not open.
+/// (FIX 11588); `None` when it still does not open — or when the retry
+/// lands at or under the vault, whose root may have been replaced after
+/// the checked walk (REVIEW-4381 P1).
 #[cfg(unix)]
-fn reopened(folder: &Path, path: &str) -> Option<File> {
-    super::confined::open_below(folder, Path::new(path))
-        .ok()
-        .map(|(_, file)| file)
+fn reopened(folder: &Path, path: &str, vault: Option<(u64, u64)>) -> Option<File> {
+    let (dir, file) = super::confined::open_below(folder, Path::new(path)).ok()?;
+    if vault.is_some_and(|vault| super::confined::under_vault_dir(&dir, vault)) {
+        return None;
+    }
+    Some(file)
 }
 
 #[cfg(not(unix))]
-fn reopened(_folder: &Path, _path: &str) -> Option<File> {
+fn reopened(_folder: &Path, _path: &str, _vault: Option<(u64, u64)>) -> Option<File> {
     None
 }
