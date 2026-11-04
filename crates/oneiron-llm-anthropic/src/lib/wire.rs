@@ -393,6 +393,7 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     }
 }
 
