@@ -321,15 +321,27 @@ impl PipelineBuilder<'_> {
             prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
-        let mut exact_posting_matches_scope = |id: &EntityId| {
-            pipeline_candidate_matches_filters_and_gate(
+        // A fetch round that reads on asks again for every posting an earlier
+        // round judged, in the same snapshot and filters: each answer, true or
+        // false, is kept for this scan's rounds, as the temporal channel keeps
+        // its rows' (`ReadableRows`); an error is never kept (L15 recall
+        // speed).
+        let mut posting_answers: std::collections::HashMap<EntityId, bool> =
+            std::collections::HashMap::new();
+        let mut exact_posting_matches_scope = |id: &EntityId| -> Result<bool> {
+            if let Some(&matches) = posting_answers.get(id) {
+                return Ok(matches);
+            }
+            let matches = pipeline_candidate_matches_filters_and_gate(
                 &self.read,
                 rtxn,
                 id,
                 inputs.filter_config,
                 stage_metadata,
                 &mut prefix_probe_claim_gate,
-            )
+            )?;
+            posting_answers.insert(*id, matches);
+            Ok(matches)
         };
         let text_query = inputs
             .hyde_expansion
