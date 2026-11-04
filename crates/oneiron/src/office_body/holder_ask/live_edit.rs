@@ -60,11 +60,11 @@ const LIVE_EDIT_OPTIONS: [(&str, LiveEditAnswer, &str); 2] = [
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LiveEditRoute {
-    pub(super) artifact: EntityId,
-    pub(super) editor: EntityId,
+    pub(crate) artifact: EntityId,
+    pub(crate) editor: EntityId,
     /// The owners asked, sorted; only their words answer.
-    pub(super) owners: Vec<EntityId>,
-    pub(super) revision: u64,
+    pub(crate) owners: Vec<EntityId>,
+    pub(crate) revision: u64,
 }
 
 /// `ask group` → the live-edit route it carries (FIX 596).
