@@ -7,7 +7,9 @@
 
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
-pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+pub(crate) use fingerprint::{
+    invalidate_blob_fingerprint, prepare_binary_blob_artifact_birth, prepare_blob_artifact_birth,
+};
 mod docs;
 mod docs_deep;
 mod docs_import;

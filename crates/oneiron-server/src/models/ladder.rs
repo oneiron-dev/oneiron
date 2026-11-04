@@ -1227,6 +1227,19 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_exact`], asking `may_send` as
+    /// [`Self::generate_while`] does, on the vault's longest wait (FIX 11749).
+    pub async fn generate_exact_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LlmResponse> {
+        self.generate_exact_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_within`] for a caller that must know the model it
     /// named is the one that answered (an exact-model decision, OF-184):
     /// only a ladder that is one picked model takes the call, and no owner's
