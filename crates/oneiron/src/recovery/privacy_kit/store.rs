@@ -66,15 +66,21 @@ impl KitPieceStore {
     /// pair, replacing the piece kept there. A tail that does not write after its
     /// head did empties the pair: half a piece is no piece. A current or pending
     /// pair's piece kept names this install by the vault id alone (FIX 12054, 12055).
-    /// A data-key kit reissue overwrites its current pair in place, so its
-    /// install name is written first: a naming failure keeps the old piece
-    /// instead of aborting issuance after it is gone (REVIEW-4473 P1). Every
-    /// other pair keeps the write-then-name order, so a naming failure after
-    /// the write keeps settle's pending-pair behavior (REVIEW-4370 P1).
+    /// A data-key reissue overwrites its current pair in place, so an empty or
+    /// already-correct install name is settled before that write: a naming failure
+    /// keeps the old piece (REVIEW-4473 P1). When another install owns the name,
+    /// its switch waits until the new pair is complete. Every other pair keeps
+    /// write-then-name order, so settle retains its pending pair on a naming
+    /// failure (REVIEW-4370 P1). An already-correct name is not rewritten.
     pub(crate) fn put(&self, piece: &KitPiece, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
-        let name_first = matches!(pair, KitPiecePair::Current(KitSecretKind::VaultKey));
+        let prior_install = match install_name(pair) {
+            Some((slot, _)) => piece_install(&*self.keystore, &self.vault_id, slot)?,
+            None => None,
+        };
+        let name_first = matches!(pair, KitPiecePair::Current(KitSecretKind::VaultKey))
+            && !prior_install.is_some_and(|install| install != self.install);
         if name_first {
-            self.name_install(pair)?;
+            self.name_install(pair, prior_install)?;
         }
         let [head, tail] = self.slots(pair);
         let bytes = piece.slot_bytes();
@@ -88,7 +94,7 @@ impl KitPieceStore {
             return Err(error);
         }
         if !name_first {
-            self.name_install(pair)?;
+            self.name_install(pair, prior_install)?;
         }
         Ok(())
     }
@@ -139,10 +145,17 @@ impl KitPieceStore {
     /// logged and returned: the piece stays kept in its slots, but the keep
     /// reports failed, so the caller keeps the pair it moved from (settle
     /// retains the pending pair) instead of dropping it.
-    fn name_install(&self, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
+    fn name_install(
+        &self,
+        pair: KitPiecePair,
+        prior_install: Option<[u8; INSTALL]>,
+    ) -> oneiron_keystore::Result<()> {
         let Some((slot, kit_kind)) = install_name(pair) else {
             return Ok(());
         };
+        if prior_install == Some(self.install) {
+            return Ok(());
+        }
         let mut bytes = [0u8; SLOT];
         bytes[..INSTALL].copy_from_slice(&self.install);
         if let Err(error) = self.write(&install_slot(self.vault_id, slot), &bytes) {
