@@ -9,26 +9,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::run_admission::{AllocationRef, ResidentLedger, ResidentShare, ResidentStanding};
-use crate::side_table::{self, Named, SideTable};
+use crate::store::resident_budget_rows::{RESIDENTS, ResidentRow};
 use crate::{EntityId, Result, Vault};
-
-/// One resident's share and depletion. Key: id16 (the resident).
-const RESIDENTS: SideTable<EntityId, ResidentRow, Named> =
-    SideTable::new(&side_table::BUDGET_RESIDENT_SHARE);
-
-/// One resident's row: the owner's share setting, and its depletion on the
-/// allocation generation it last drew on.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResidentRow {
-    share: ResidentShare,
-    /// The allocation the counts below are on; `None` before any charge.
-    allocation: Option<AllocationRef>,
-    used_units: u64,
-    overdraft_units: u64,
-    /// How many settled calls charged past the share.
-    overdrafts: u64,
-}
 
 impl ResidentRow {
     /// The counts on `allocation`: none once a newer generation is live.
@@ -189,14 +171,4 @@ impl Vault {
             })
             .collect())
     }
-}
-
-/// An actor's erase removes its resident row (FIX 3520).
-pub(crate) fn erase_resident_share_actor_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    RESIDENTS.delete(&vault.store, txn, actor)?;
-    Ok(())
 }
