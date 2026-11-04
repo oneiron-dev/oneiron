@@ -2,7 +2,7 @@
 
 use crate::config::VaultConfig;
 use crate::error::{Error, Result};
-use crate::store::{RawDatabases, Store};
+use crate::store::{RawDatabases, Store, StoreDeleteGuards};
 
 use super::embedding_transform_gates::{
     persist_embedding_transform_if_missing, preflight_embedding_transform,
@@ -20,8 +20,9 @@ pub(super) fn create_preflight(
     registered_path: RegisteredPath,
     config: &VaultConfig,
     seed_mode: DefaultPolicySeedMode,
+    delete_guards: &'static dyn StoreDeleteGuards,
 ) -> Result<Store> {
-    let store = Store::assemble(env, raw, registered_path, config)?;
+    let store = Store::assemble(env, raw, registered_path, config, delete_guards)?;
 
     // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
     // fails closed before the HNSW compat check below can compare it.
