@@ -150,7 +150,7 @@ pub(super) fn stage_put_projections(
     // A workflow's `[limits]` rows ask only once every fallible step of its
     // put is staged (Rule 5).
     if let Some(definition) = dispatch.new_workflow.as_ref() {
-        crate::agent_def::workflow::measure_workflow_limits(&store.limit_watch, definition);
+        crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
         portable_agent_source,
