@@ -213,8 +213,7 @@ impl Channel {
                     } else {
                         let rest = length.saturating_sub(partial.payload.len() as u64);
                         Need::Payload(
-                            usize::try_from(rest)
-                                .map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK)),
+                            usize::try_from(rest).map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK)),
                         )
                     }
                 }
