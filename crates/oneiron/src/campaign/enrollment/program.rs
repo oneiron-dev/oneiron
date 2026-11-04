@@ -494,6 +494,62 @@ fn program_enrolls_in_txn(
         .is_none_or(|definition| definition.lifecycle == CampaignLifecycle::Active))
 }
 
+/// P1-2 #4499: the campaign leg's under-writer lifecycle recheck.
+///
+/// The enrollment leg prepares its gate input from live rows, then the
+/// chokepoint admits under its own writer; a pause that commits in between
+/// must stop the send. Both writers call this under the same transaction
+/// that would record the decision (New) or re-govern the retry (live
+/// retry), so a refusal records nothing new and sends nothing.
+///
+/// Scoped by the gate's existing `ApprovalTarget::Campaign` facts only:
+/// any other effect passes through with no storage read. A campaign leg
+/// must still bind to its program, and both the campaign and the program
+/// must still enroll (`program_enrolls_in_txn`, so definition-less raw
+/// rows keep today's pass-through), and an authored step the program
+/// dropped still fails closed. No version lock: the facts carry no
+/// definition version, and a pause already flips lifecycle text, which
+/// this recheck reads.
+///
+/// # Errors
+///
+/// `IntentLedgerError::InvalidInput` when the leg is not a sendable
+/// campaign leg now; storage failures surface as `IntentLedgerError::Engine`.
+pub(crate) fn admit_campaign_leg_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    gate: &crate::gate::ExternalEffectGateInput,
+) -> std::result::Result<(), crate::outbound_intent_ledger::IntentLedgerError> {
+    use crate::gate::ApprovalTarget;
+    use crate::outbound_intent_ledger::IntentLedgerError;
+
+    let Some(ApprovalTarget::Campaign(facts)) = gate.provenance.approval_target.as_ref() else {
+        return Ok(());
+    };
+    let campaign_kind = campaign_type_byte(vault)?;
+    let Some((program, definition)) = stored_program_in_txn(vault, txn, facts.program_ref)? else {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    };
+    if program.campaign_ref != facts.campaign_ref {
+        return Err(IntentLedgerError::InvalidInput(
+            "campaign program does not belong to the prepared campaign",
+        ));
+    }
+    if !program_enrolls_in_txn(vault, txn, campaign_kind, &program)? {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    }
+    if definition.is_some_and(|definition| !definition.step_refs.contains(&facts.step_ref)) {
+        return Err(IntentLedgerError::InvalidInput(
+            "the step is no longer part of its campaign program",
+        ));
+    }
+    Ok(())
+}
+
 /// Everything one checked definition write lands.
 struct ProgramWrite<'a> {
     campaign_kind: u8,

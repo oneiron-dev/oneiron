@@ -66,6 +66,7 @@ pub use self::home_node::{
 pub use self::outbound_leg::{
     EnrollmentLegDrive, drive_enrollment_outbound_leg, enrollment_outbound_approval_digest,
 };
+pub(crate) use self::program::admit_campaign_leg_in_txn;
 pub use self::program::{
     AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
     CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,

@@ -273,13 +273,26 @@ pub(crate) fn dispatch(
     auth.require_unrestricted_record_scope()?;
     auth.require(scope)?;
     let actor = surface_actor(auth)?;
-    let facade = super::credential_memory(
-        &server.vault,
-        Some(auth),
-        actor,
-        oneiron::EdgeActorClass::Human,
-    )
-    .at(auth.locality());
+    let actor_class = if verb == SELF_CAMPAIGN_LAUNCH {
+        match auth.actor_class() {
+            Some("human") => oneiron::EdgeActorClass::Human,
+            Some("agent") => oneiron::EdgeActorClass::Agent,
+            Some("system") => oneiron::EdgeActorClass::System,
+            _ => {
+                return Err(ApiError::new(
+                    "campaign launch requires an authenticated actor class",
+                    ApiErrorDetails::Forbidden {
+                        required_scope: None,
+                    },
+                    ["Present a bearer slip carrying actor_class=<human|agent|system>."],
+                ));
+            }
+        }
+    } else {
+        oneiron::EdgeActorClass::Human
+    };
+    let facade =
+        super::credential_memory(&server.vault, Some(auth), actor, actor_class).at(auth.locality());
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {
@@ -305,10 +318,9 @@ pub(crate) fn dispatch(
 /// than defaulted to some ambient owner: "the trust root" is not a person, and
 /// records owned by a rotating secret would be unreachable after rotation.
 ///
-/// The class is `Human` because `principal_ref` is the third-party PERSON
-/// binding (OF-365 ILD-1). The engine, not this file, decides whether the
-/// asserted class holds — `verify_actor_binding` rejects a principal whose
-/// stored entity type does not admit it, and that check is the authority.
+/// Non-launch verbs use `Human` for the third-party PERSON binding (OF-365
+/// ILD-1); launch takes its class from the authenticated credential. The engine
+/// validates that the principal's stored entity type admits the asserted class.
 pub(crate) fn surface_actor(auth: &CoreAuth) -> Result<oneiron::EntityId, ApiError> {
     let principal_ref = auth.principal_ref().ok_or_else(|| {
         ApiError::new(
