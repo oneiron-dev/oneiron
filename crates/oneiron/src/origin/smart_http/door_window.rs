@@ -287,14 +287,15 @@ fn scan_window(
         true,
         context.scan,
         &mut |at, blob| {
-            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&blob.path, &blob.content)
-            {
+            let path = decode_tip_path(&blob.path)?;
+            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&path, &blob.content) {
                 lfs_pointers.push(pointer);
                 pointer_moves.push(at.cloned());
             }
             if let Some(scan) = scan.as_mut() {
                 scan.blob(&blob, Framed::Tip(at));
             }
+            Ok(())
         },
     )?;
     let ref_lfs_pointers = request
@@ -379,7 +380,10 @@ pub(super) fn for_each_framed_blob(
     scan: ScanBounds,
     each: &mut dyn FnMut(PushedBlob),
 ) -> std::result::Result<(), InputRefused> {
-    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| each(blob))
+    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| {
+        each(blob);
+        Ok(())
+    })
 }
 
 /// The entries of `items`, one per pointer of a push, that one ref is held
@@ -418,7 +422,7 @@ fn read_framed_stream(
     terminated: bool,
     moves: bool,
     scan: ScanBounds,
-    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob),
+    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob) -> std::result::Result<(), InputRefused>,
 ) -> std::result::Result<(), InputRefused> {
     let mut header = Vec::new();
     let mut at = None;
@@ -440,10 +444,6 @@ fn read_framed_stream(
             continue;
         }
         let (oid, len, path) = parse_blob_record_header(header)?;
-        // TIP ONLY (FIX20 PART): the tip stream frames `git diff-tree --raw`
-        // text, so a quoted tip path is git's C-quoted form; history labels
-        // are cat-file `%(rest)` and stay verbatim.
-        let path = if moves { decode_tip_path(&path)? } else { path };
         if len > scan.blob_bytes() {
             return Err(InputRefused::BlobTooLarge);
         }
@@ -459,7 +459,7 @@ fn read_framed_stream(
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }
-        each(at.as_ref(), PushedBlob { path, oid, content });
+        each(at.as_ref(), PushedBlob { path, oid, content })?;
     }
 }
 
