@@ -4285,15 +4285,15 @@ export type LearningBetaValue = { alpha: number; beta: number }
 export type LearningMeanValue = { mean: number; spread: number }
 /** `oneiron::learning::doors::MeasuredLearningValue` */
 export type MeasuredLearningValue = { form: "beta"; value: LearningBetaValue } | { form: "mean"; value: LearningMeanValue } | { form: "counts"; value: Record<string, number> }
-/** `oneiron::claim::learning_estimate::PriorOrigin` */
+/** `oneiron_base::learning_estimate::PriorOrigin` */
 export type PriorOrigin = "shipped" | "provenance" | "carried" | "parent" | "model" | "seed"
 /** `oneiron::learning::doors::LearningPriorValue` */
 export type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>
 /** `oneiron::learning::doors::LearningPriorView` */
 export type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null }
-/** `oneiron::claim::learning_estimate::EstimateLabels` */
+/** `oneiron_base::learning_estimate::EstimateLabels` */
 export type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null }
-/** `oneiron::claim::learning_estimate::Window` */
+/** `oneiron_base::learning_estimate::Window` */
 export type LearningEstimateWindow = { half_life: number }
 /** `oneiron::learning::doors::MeasuredLearningEstimate` */
 export type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: LearningEstimateWindow; ver: string }
@@ -8137,13 +8137,13 @@ export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: Entit
 export type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest` */
 export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null }
-/** `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext` */
+/** `oneiron_authority::channel_selection_vocabulary::RelationshipContext` */
 export type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space"
 /** `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope` */
 export type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string }
-/** `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace` */
+/** `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace` */
 export type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant"
-/** `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind` */
+/** `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind` */
 export type SelectionRuleWriterKind = "system_default" | "owner" | "agent"
 /** `oneiron::channel_identity_selection::selection_rules::ChannelIdentitySelectionRule` */
 export type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind }
