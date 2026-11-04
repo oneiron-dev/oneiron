@@ -5,6 +5,8 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+pub(crate) mod agent_knowledge_format;
+pub(crate) mod agent_knowledge_selection;
 mod archive_index;
 mod archive_project;
 mod archive_read;
@@ -66,6 +68,8 @@ pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
+mod home_room_project;
+pub(crate) use home_room_project::project_room_dependency;
 mod provenance_import;
 mod result_reserve;
 mod secret_supplement;

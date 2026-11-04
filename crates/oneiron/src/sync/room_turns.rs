@@ -37,7 +37,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_TURNS_MAP: &str = "room_turns";
 
 /// The largest turn row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 20;
+use super::room_parts::ROOM_TURN_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("room turn row refused: {reason}"))
@@ -264,6 +264,22 @@ pub(crate) fn scrub_deleted_room_turns(
             } else if actor_erased_here(vault, &rtxn, &turn)? {
                 turn.actor = ERASED_CALL_IDENTITY.to_owned();
                 erased.push((map_key, encode(&turn)?));
+            }
+        }
+        // FIX 12127: a manifest whose parts never all land drops with the
+        // row it stands for, its room read from this vault's turn for it.
+        for (key, _) in super::room_parts::waiting_manifests(&map) {
+            let Ok(id) = EntityId::from_hex(&key) else {
+                continue;
+            };
+            let Some(turn) = replicated_turn_in(vault, &rtxn, id)? else {
+                continue;
+            };
+            let Ok(room) = EntityId::from_hex(&turn.room_id) else {
+                continue;
+            };
+            if crate::ports::removed_in_txn(&vault.store, &rtxn, &room)? {
+                doomed.push(key);
             }
         }
     }

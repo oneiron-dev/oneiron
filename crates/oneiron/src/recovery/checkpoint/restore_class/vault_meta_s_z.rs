@@ -40,6 +40,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
+    (&t::SECRET_HANDLE_LABEL, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
@@ -88,6 +89,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::POLICY_SETTING_ACT, LIVE),
+    (&t::ACCESS_GRANT_OWNER_ACT, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::ROOM_THREADS_ADMIN_DELETE, LIVE),
@@ -359,6 +361,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // The owner's digest settings and their change history are his content,
     // as the digest schedule is (FIX 5495).
     (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
+    (&t::WEAVE_DIGEST_CHANNEL_OVERRIDE, CONTENT),
     (&t::WEAVE_DIGEST_SETTING_CHANGE, CONTENT),
     (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),

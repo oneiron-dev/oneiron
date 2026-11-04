@@ -159,19 +159,19 @@ pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
     settled_step_usage_in_txn, terminal_step_identity,
 };
-pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
     DispatchRelease, FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend,
-    LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage,
-    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole,
-    LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError,
-    ModelLocality, ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    UnsupportedCapability,
+    LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, PinnedConfigViolation,
+    PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, SingleRouteBackend,
+    SingleSend, SpentKind, TierPrecedence, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -208,9 +208,6 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::model_stream::model_stream_accepts_masked;
-pub(crate) use self::registry::llm_score_diffs_accepts_masked;
-pub(crate) use self::routing::llm_description_measurements_accepts_masked;
 pub(crate) use self::routing::llm_description_policy_accepts_masked;
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
 pub(crate) use self::seat::llm_model_description_accepts_masked;

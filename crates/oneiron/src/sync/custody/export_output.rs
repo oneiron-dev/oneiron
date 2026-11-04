@@ -25,7 +25,7 @@
 //! - A copy past one row rides in numbered parts by these same rules, and
 //!   is joined before it is judged (FIX 12063, `parts`).
 
-mod parts;
+pub(super) mod parts;
 
 use std::collections::BTreeSet;
 

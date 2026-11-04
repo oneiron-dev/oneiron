@@ -52,7 +52,7 @@ use oneiron::blob_artifact::esign::{
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::seal::SealRevisionClassification;
 use oneiron_organ_protocol::{
-    ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32,
+    ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32, Value,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,9 @@ use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
 use self::fetch::TimedFetch;
-use self::observe::{measure_asks, measure_input, measure_output, measure_report};
+use self::observe::{
+    measure_asks, measure_input, measure_operation_id, measure_output, measure_report,
+};
 use crate::error::{HostError, Unavailable};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
@@ -193,8 +195,8 @@ impl SealSettings {
 /// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`,
 /// and `seal_memory_asks` for its own buffers) measure them, so the grant's generic thresholds are the wire's own. Its
 /// memory is a floor: each call is sized by what it lends, and grows. Its
-/// frames are bounded by the wire's own `u32` length alone, and its outputs
-/// by the PDF format bound.
+/// messages take as many frames as they need, and its outputs are bounded
+/// by the PDF format bound alone.
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
@@ -367,6 +369,10 @@ enum FailureReply {
     InputInvalid {
         code: String,
     },
+    /// The engine's largest revision held too little for the CMS.
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl VerdictReply {
@@ -412,6 +418,7 @@ impl FailureReply {
                 EsignSealerError::Unavailable { retry_after_ms }
             }
             Self::InputInvalid { code } => EsignSealerError::InputInvalid { code },
+            Self::ContentsShort { needed } => EsignSealerError::ContentsShort { needed },
         }
     }
 }
@@ -454,7 +461,7 @@ impl HostedSealer<'_> {
         })
     }
 
-    fn call(&self, verb: &str, schema: u32, args: rmpv::Value) -> OrganCall {
+    fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
         OrganCall {
             organ: self.settings.organ.clone(),
             verb: verb.to_owned(),
@@ -506,6 +513,7 @@ impl EsignSealer for HostedSealer<'_> {
             signature_revisions: call.revision_args(),
         })
         .map_err(|_| reply_invalid())?;
+        measure_operation_id(self.vault, &request.operation_id);
         measure_input(self.vault, &input.pdf);
         let lent = vec![
             LentInput {
@@ -705,15 +713,11 @@ fn name<T: Serialize>(value: &T) -> String {
 }
 
 /// MessagePack with named fields, so the organ reads it by name.
-fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, AskRefusal> {
-    let failed =
-        |err: &dyn std::fmt::Display| AskRefusal::new(AskCode::Failed, format!("encode: {err}"));
-    let bytes = rmp_serde::to_vec_named(value).map_err(|err| failed(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| failed(&err))
+fn to_value<T: Serialize>(value: &T) -> Result<Value, AskRefusal> {
+    oneiron_organ_protocol::to_value(value)
+        .map_err(|err| AskRefusal::new(AskCode::Failed, format!("encode: {err}")))
 }
 
-fn from_value<T: DeserializeOwned>(value: &rmpv::Value) -> Result<T, EsignSealerError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|_| reply_invalid())?;
-    rmp_serde::from_slice(&bytes).map_err(|_| reply_invalid())
+fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, EsignSealerError> {
+    oneiron_organ_protocol::from_value(value).map_err(|_| reply_invalid())
 }

@@ -1,8 +1,12 @@
 //! The OpenAPI schemas of the connector admission writes (FIX 11611):
 //! `POST /v1/owner/connectors/register`, `/slate/accept`, `/qualify`,
-//! `/refresh` and `/enabled`. [`super`] is already past the file-size bar,
-//! so their schema fns live here, beside the route files' own.
+//! `/refresh` and `/enabled`, and of the charter routes (FIX 11680).
+//! [`super`] is already past the file-size bar, so their schema fns live
+//! here, beside the route files' own.
 
+use super::charter::{
+    CharterApproveRequest, CharterDiscardRequest, CharterProposeRequest, CharterView,
+};
 use super::{
     AcceptRequest, AttestRequest, EnabledRequest, KeyView, QualifyRequest, RefreshRequest,
     Refreshed, RegisterRequest, Registered, SlateView,
@@ -66,4 +70,29 @@ pub(crate) fn refreshed_schema() -> serde_json::Value {
 /// [`EnabledRequest`].
 pub(crate) fn enabled_request_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<EnabledRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/charter/propose`'s body
+/// (FIX 11680): [`CharterProposeRequest`]. Each charter route answers
+/// [`CharterView`].
+pub(crate) fn propose_charter_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CharterProposeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/charter/approve`'s body
+/// (FIX 11680): [`CharterApproveRequest`].
+pub(crate) fn approve_charter_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CharterApproveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/charter/discard`'s body
+/// (FIX 11680): [`CharterDiscardRequest`].
+pub(crate) fn discard_charter_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CharterDiscardRequest>()
+}
+
+/// The OpenAPI schema of every charter route's answer (FIX 11680):
+/// [`CharterView`].
+pub(crate) fn charter_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CharterView>()
 }

@@ -41,6 +41,10 @@ side_tables! {
         [refs: WIDEN_INTENT_REFS];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw;
+    /// OF-414: one agent's read state of one row of its own INBOX (open, later, done), the row's
+    /// newest entry time when written and when. Key: id16(actor) + string (row handle).
+    AGENT_INBOX_READ_MARK: VaultMeta b"agent.inbox.read_mark.v1\0" Named Engine
+        => crate::agent_inbox_lens::erase_agent_inbox_read_marks_actor_in_txn;
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw;
     /// Durable saved-composition record for one inert multi-step workflow wrapper attempt. Key: id16.
@@ -219,13 +223,15 @@ side_tables! {
     /// deck transaction (ARCH-0077 managed id history). Key: id16.
     BLOB_ARTIFACT_DECK_ID_MARKS: VaultMeta b"blob_artifact:deck_id_marks:v1:" Named;
     /// Blob artifact head version. Key: id16.
-    BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
+    BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw
+        => crate::blob_artifact::erase::erase_blob_artifact_version_actor_in_txn;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
     BLOB_ARTIFACT_HIGHWATER: VaultMeta b"blob_artifact:highwater:v1:" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
-    BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw;
+    BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw
+        => crate::blob_artifact::erase::erase_blob_artifact_version_actor_in_txn;
     /// Which artifacts hold which bytes: one row per artifact and content hash a `blob.version`
     /// claim named here, replicated claims included, kept until the artifact's delete. Key:
     /// bytes32 + id16 (artifact).

@@ -20,7 +20,8 @@
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
 //! decision names as evidence, each neighbour it left out and the
-//! principal it was asked for; a question's principal, units and artifacts.
+//! principal it was asked for; a question's principal, units, artifacts and
+//! saved lane's named rows (records caveat, then room facets).
 //! A standing question, its head, its backfills and its artifact asks live
 //! in side tables, which hold no row.
 use std::sync::Arc;
@@ -99,9 +100,10 @@ async fn vault_graph_ask_answer(
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
         let budget = question_call_budget(server.vault(), input.unit_deadline_ms)?;
         let dial = server.decision_host().dial(ceiling);
-        let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?
-            .with_posture(input.posture)
-            .with_criteria(input.criteria.unwrap_or_default());
+        let mut answerer =
+            LadderGraphAnswerer::new(&server, asker, dial, budget, auth.off_record_session())?
+                .with_posture(input.posture)
+                .with_criteria(input.criteria.unwrap_or_default());
         match run_graph_ask_receipted(
             &lane,
             asker,
@@ -443,7 +445,7 @@ async fn vault_questions_refresh_answer(
             &bands,
             |record, actor| {
                 Ok(
-                    HostUnitDecider::new(&server, actor.actor_class(), "vault.artifacts.ask")
+                    HostUnitDecider::new(&server, actor.actor_class(), "vault.artifacts.ask", None)
                         .with_question(&record.definition),
                 )
             },
@@ -566,8 +568,9 @@ fn outcome_rows(outcome: &GraphAskOutcome) -> Vec<EntityId> {
         .collect()
 }
 
-/// The rows a standing question names: its principal, its units and the
-/// artifacts it asks.
+/// The rows a standing question names: its principal, its units, the
+/// artifacts it asks and its saved lane's named rows (records caveat, then
+/// room facets; FIX 12286).
 fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
     std::iter::once(record.principal)
         .chain(record.definition.units.iter().copied())
@@ -578,6 +581,7 @@ fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
                 .iter()
                 .map(|artifact| artifact.artifact),
         )
+        .chain(record.read_lane.named_rows())
         .collect()
 }
 
