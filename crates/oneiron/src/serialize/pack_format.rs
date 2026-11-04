@@ -24,4 +24,3 @@ pub enum FieldProfile {
     Standard,
     Full,
 }
-

@@ -85,4 +85,3 @@ impl AffectRetrievalPolicy {
         query.filter(|_| self.emotion_weight > 0.0)
     }
 }
-
