@@ -212,6 +212,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "seal-crl-origins",
+        |args| args.seal_crl_origins.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-ocsp-origins",
+        |args| args.seal_ocsp_origins.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "seal-signing-url",
         |args| args.seal_signing_url.is_some(),
         ArgvUse::Read,
