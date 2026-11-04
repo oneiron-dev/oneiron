@@ -192,11 +192,29 @@ fn restore_over_with(
     // fresh incarnation of it, and so keeps its tier.
     let mut target = config.clone();
     target.page_seal = restore_target_seal(RestoreTarget::Beside(config.page_seal.as_ref()))?;
+    // The original restore holds the same per-staging claim lock from before
+    // its staging becomes visible through archive publication, rename and
+    // cleanup (round-2 P1): a claimant that scans this staging takes the
+    // lock only once this restore is done with it, and otherwise leaves the
+    // staging and archive mirrors untouched.
+    let Some(parent) = vault_path.parent() else {
+        anyhow::bail!("vault path {} has no parent", vault_path.display());
+    };
+    let claim_guard = match take_staging_claim_lock(parent, &name, &stamp) {
+        Some(guard) => guard,
+        None => {
+            anyhow::bail!(
+                "the staging claim for {} is already held; try again",
+                vault_path.display()
+            );
+        }
+    };
     let staging = Owned::create(vault_path.with_file_name(format!(".{name}.restore-{stamp}")))?;
     let live = match oneiron::Vault::open_owned(vault_path, config) {
         Ok(live) => live,
         Err(error) => {
             staging.remove();
+            claim_guard.release();
             return Err(match error {
                 oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => {
                     anyhow::anyhow!(
@@ -221,6 +239,7 @@ fn restore_over_with(
         Ok(restored) => restored,
         Err(error) => {
             staging.remove();
+            claim_guard.release();
             anyhow::bail!("backup {} does not restore: {error}", backup.display());
         }
     };
@@ -229,6 +248,7 @@ fn restore_over_with(
         Err(error) => {
             drop(restored);
             staging.remove();
+            claim_guard.release();
             return Err(error);
         }
     };
@@ -240,6 +260,7 @@ fn restore_over_with(
         Err(error) => {
             drop(restored);
             staging.remove();
+            claim_guard.release();
             anyhow::bail!("the restored copy's page-seal mirrors were not staged: {error}");
         }
     };
@@ -271,6 +292,7 @@ fn restore_over_with(
             );
         }
         staging.remove();
+        claim_guard.release();
         anyhow::bail!(
             "cannot swap the restored copy into {} ({error}); nothing was moved, and the vault \
              there stays live only at that path",
@@ -291,6 +313,7 @@ fn restore_over_with(
     let previous = match named {
         Ok(()) => {
             staging.remove();
+            claim_guard.release();
             previous
         }
         Err(_) => {
@@ -408,15 +431,19 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, Strin
 /// on #4518): two restores reaching the same staging take it in turn, and
 /// the contender leaves the staging and archive mirrors untouched instead
 /// of deleting the winner's archive mirror on its failed rename. The lock
-/// file is unlinked when the guard drops, on every path; the held-open file
-/// (and its flock on unix) lasts until then.
+/// file stays while the staging directory may still exist, so every taker
+/// meets the same inode (unlinking on drop would let a contender lock a
+/// fresh inode while the winner still holds the old one); the held-open
+/// file (and its flock on unix) lasts until the guard drops.
 struct StagingClaimGuard {
     _held: std::fs::File,
     path: PathBuf,
 }
 
-impl Drop for StagingClaimGuard {
-    fn drop(&mut self) {
+impl StagingClaimGuard {
+    /// Unlinks the lock file; call only once the staging directory is gone,
+    /// so no later taker can meet a live staging under a fresh inode.
+    fn release(self) {
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -425,8 +452,8 @@ impl Drop for StagingClaimGuard {
 /// and takes it nonblocking-exclusive. `None` means the claim is already
 /// held: the caller leaves the staging and archive mirrors untouched. On
 /// unix the flock releases if the holder dies, so no stale lock survives a
-/// crash; elsewhere the create is exclusive and the guard unlinks the file
-/// when the claim ends.
+/// crash; elsewhere the create is exclusive and the file stays until the
+/// staging is gone and the holder releases it.
 fn take_staging_claim_lock(
     parent: &Path,
     name: &str,
@@ -543,11 +570,11 @@ fn claim_staged_archive(
     // reach the same leftover staging take it in turn, and the contender
     // leaves the staging and archive mirrors untouched instead of deleting
     // the winner's archive mirror on its failed rename.
-    let _claim_guard = match take_staging_claim_lock(parent, name, stamp_text) {
+    let claim_guard = match take_staging_claim_lock(parent, name, stamp_text) {
         Some(guard) => guard,
         None => {
             let note = format!(
-                "an earlier interrupted restore left its staging directory {}                  whole: its claim is already held, so the staging and archive                  mirrors are left untouched",
+                "the staging directory {} is already claimed by another                  restore, so the staging and archive mirrors are left untouched",
                 staging.display()
             );
             tracing::warn!(staging = %staging.display(), "{note}");
@@ -662,6 +689,9 @@ fn claim_staged_archive(
             "a claimed restore's staging directory is left where it is"
         );
         residue = true;
+    } else {
+        // The staging is gone, so the lock file may go too.
+        claim_guard.release();
     }
     if let Err(error) = sync_dir(parent) {
         tracing::warn!(
