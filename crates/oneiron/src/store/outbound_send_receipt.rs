@@ -46,6 +46,11 @@ pub(crate) fn send_receipt_summary_accepts_masked(bytes: &[u8]) -> bool {
 pub(super) const SEND_RECEIPT_AUDIT: SideTable<(EntityId, [u8; 32]), Vec<u8>, Raw> =
     SideTable::new(&side_table::SEND_RECEIPT_ATTEMPT_AUDIT);
 
+/// The store relays the caller's encoded audit bytes without re-encoding them.
+pub(crate) fn send_receipt_attempt_audit_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Vec<u8>, Raw>(bytes)
+}
+
 const SEND_IDEMPOTENCY: SideTable<[u8; 32], SendIdempotencyValue, Raw> =
     SideTable::new(&side_table::SEND_IDEMPOTENCY_INDEX);
 

@@ -31,6 +31,7 @@ use super::{
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::lens::{RecordRefPreview, ResolveRecordRefRequest};
+use crate::limit_ask::EngineLimit;
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
 use crate::receipt::ServedForm;
 use crate::session_overlay::RouteTarget;
@@ -518,6 +519,10 @@ pub(crate) fn scoped_session_text(
         crate::limit_ask::EngineLimit::RecallQueryBytes,
         query.len() as u64,
     );
+    // The count this room search serves, asked after the denial check and
+    // before any clock or index work. Best effort: the search serves its
+    // rows either way.
+    let _ = vault.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
     lane.persist_grant_clock()?;
     let scores = {
         let txn = vault.store.env.read_txn()?;

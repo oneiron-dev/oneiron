@@ -10,6 +10,7 @@ use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::query_expansion::{
     CompletionCandidate, CompletionRequest, EvidenceVerdict, HydeRequest, ground_query,
     normalized_subqueries,
@@ -215,6 +216,12 @@ impl PipelineBuilder<'_> {
                 );
             }
         }
+        // The one final count this execution serves, measured after every
+        // applicable validation and before any paid expansion or scoring.
+        // Best effort: the run serves its rows either way.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
 
         let hyde_expansion = match hyde_request {
             None => None,

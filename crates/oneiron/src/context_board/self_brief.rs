@@ -183,7 +183,7 @@ impl SelfBrief {
     /// recipient and working-set row it names, each indexed skill with the
     /// rows its reliability stands on, and every person on `people`, the
     /// roster it was described with, shown or counted, with each actor that
-    /// speaks as one and, under an `about` line, every CLAIM about them. The
+    /// speaks as one and the exact contributors of its selected `about` line. The
     /// run's host-held scope, classes, budget and clock are no rows.
     ///
     /// # Errors
@@ -200,11 +200,13 @@ impl SelfBrief {
                 vault, &skill.id,
             )?);
         }
-        for person in people.map(People::rows).unwrap_or_default() {
-            rows.push(person.person);
-            rows.extend(person.actors.iter().copied());
-            if person.about.is_some() {
-                rows.extend(vault.claims_for_subject(&person.person)?);
+        if let Some(people) = people {
+            for person in people.rows() {
+                rows.push(person.person);
+                rows.extend(person.actors.iter().copied());
+                if person.about.is_some() {
+                    rows.extend_from_slice(people.about_sources(person.person));
+                }
             }
         }
         rows.sort_unstable_by_key(|id| *id.as_bytes());

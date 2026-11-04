@@ -37,9 +37,9 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
-pub mod host_memory;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
@@ -62,7 +62,7 @@ pub mod registry {
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
 pub use oneiron_base::request_limits;
-pub mod heap_drop;
+pub use oneiron_store::heap_drop;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) use oneiron_store::session_overlay;

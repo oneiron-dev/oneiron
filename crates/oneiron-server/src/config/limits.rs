@@ -399,6 +399,7 @@ impl LimitsConfig {
             community_cache_bytes,
             connector_manifest_entries,
             recall_query_bytes,
+            requested_result_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -648,6 +649,7 @@ impl LimitsConfig {
                 connector_manifest_entries,
             ),
             (EngineLimit::RecallQueryBytes, recall_query_bytes),
+            (EngineLimit::RequestedResultRows, requested_result_rows),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

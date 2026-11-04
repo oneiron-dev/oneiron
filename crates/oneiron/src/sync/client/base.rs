@@ -45,6 +45,8 @@ pub struct SyncClient {
     /// machine's credentials from a cleartext server.
     pub(crate) cleartext_withhold_logged: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    /// Transient retry scheduling; subscriptions and pending edits remain durable.
+    pub(crate) document_retries: Mutex<HashSet<crate::EntityId>>,
     pub(crate) client_id: u64,
     pub(crate) config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
@@ -175,6 +177,7 @@ impl SyncClient {
             note_session_bound: false,
             cleartext_withhold_logged: false,
             document_updates,
+            document_retries: Mutex::default(),
             vault,
             manager,
             root_doc,
