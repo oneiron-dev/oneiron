@@ -152,23 +152,6 @@ impl PipelineBuilder<'_> {
         // closed here, before any channel work, like the boost above.
         validate_access_factor_overrides(self.access_factor_overrides)?;
 
-        // Measure the resolved channel inputs once, before expansion or
-        // scoring. Outer recall and binding doors do not measure again.
-        if let Some((query, _)) = self.text_search.as_ref() {
-            self.vault.measure_limit(
-                crate::limit_ask::EngineLimit::RecallQueryBytes,
-                query.len() as u64,
-            );
-        }
-        if let Some(codes) = self.phonetic_search.as_ref() {
-            for query in codes {
-                self.vault.measure_limit(
-                    crate::limit_ask::EngineLimit::RecallQueryBytes,
-                    query.len() as u64,
-                );
-            }
-        }
-
         // RET-010 rerank knobs fail closed before any channel work, in the
         // same spirit as the rank profile above: an invalid `top_n` or a
         // missing query is a caller bug even when the block would be empty
@@ -195,7 +178,7 @@ impl PipelineBuilder<'_> {
             }
         };
 
-        let hyde_expansion = match self.hyde.as_ref() {
+        let hyde_request = match self.hyde.as_ref() {
             None => None,
             Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
@@ -206,10 +189,37 @@ impl PipelineBuilder<'_> {
                     ));
                 };
                 let query = ground_query(template, grounding)?;
-                let expansion = expander.expand(&HydeRequest {
-                    query,
-                    max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
-                })?;
+                Some((
+                    expander,
+                    HydeRequest {
+                        query,
+                        max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
+                    },
+                ))
+            }
+        };
+
+        // Measure the resolved channel inputs once, before expansion or
+        // scoring. Outer recall and binding doors do not measure again.
+        if let Some((query, _)) = self.text_search.as_ref() {
+            self.vault.measure_limit(
+                crate::limit_ask::EngineLimit::RecallQueryBytes,
+                query.len() as u64,
+            );
+        }
+        if let Some(codes) = self.phonetic_search.as_ref() {
+            for query in codes {
+                self.vault.measure_limit(
+                    crate::limit_ask::EngineLimit::RecallQueryBytes,
+                    query.len() as u64,
+                );
+            }
+        }
+
+        let hyde_expansion = match hyde_request {
+            None => None,
+            Some((expander, request)) => {
+                let expansion = expander.expand(&request)?;
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
                 Some(expansion)
             }
