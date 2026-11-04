@@ -50,6 +50,7 @@ impl Vault {
             ))?
             .require_relationship_grants(Some(actor));
         let reader = self.scoped_read(key).for_destination(destination);
+        reader.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let head = self.commitment_head_in_txn(&txn, &reminder.instance_id)?;
         let Some(current_body) = self.get_claim_in_txn(&txn, &head)? else {

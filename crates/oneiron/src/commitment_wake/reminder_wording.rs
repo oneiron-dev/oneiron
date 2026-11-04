@@ -14,8 +14,10 @@
 //! (FIX 12167).
 
 mod attempt;
+mod output;
 mod source;
 
+pub(crate) use output::wording_source_binding;
 pub use source::{CommitmentReminderWordingRead, CommitmentReminderWordingSource};
 
 use serde::{Deserialize, Serialize};

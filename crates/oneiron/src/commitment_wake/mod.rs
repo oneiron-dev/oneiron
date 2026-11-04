@@ -43,6 +43,7 @@ mod wake_proposal;
 pub use self::reminder::{
     COMMITMENT_REMINDER_CONTENT_PREFIX, CommitmentReminderPlanner, CommitmentReminderRoute,
 };
+pub(crate) use self::reminder_wording::wording_source_binding;
 pub use self::reminder_wording::{
     COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND, COMMITMENT_REMINDER_WORDING_MAX_BYTES,
     CommitmentReminderVoice, CommitmentReminderWorder, CommitmentReminderWordingPayload,

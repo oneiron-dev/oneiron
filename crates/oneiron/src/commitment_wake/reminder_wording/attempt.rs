@@ -2,9 +2,13 @@
 
 use super::*;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
+use crate::blob_artifact::hash_hex;
 use crate::error::ArtifactError;
 use crate::ports::{EntityRecord, EntityStore, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
+use crate::write_envelope::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+};
 
 fn transition(state: &'static str) -> Error {
     ArtifactError::InvalidAttemptQueueTransition {
@@ -21,6 +25,9 @@ impl Vault {
     /// they are consistency evidence, never read authority. The lease,
     /// frozen payload, source revision and approval are checked beside the
     /// artifact mutation in one writer. The raw filing API is unchanged.
+    /// The filed version carries the pin as its MadeBy source binding
+    /// (FIX 4997): the source row as its input, the revision as its params
+    /// hash, under the attempt kind's process identity.
     ///
     /// # Errors
     ///
@@ -124,13 +131,59 @@ impl Vault {
                 WORDING_RUN_PREFIX
             };
             let authority = self.dreamer_authority_in_txn(txn, now)?;
-            self.append_blob_artifact_version_in_txn(
+            let provenance = BlobVersionProvenance::AgentRun {
+                run_ref: format!("{run_prefix}{content_ref}"),
+            };
+            // FIX 4997: the version carries the fenced source it quotes —
+            // the source row as its MadeBy input, the row's revision as its
+            // params hash — under the attempt kind's process identity, so a
+            // served read judges the persisted binding through its own lane.
+            let params_hash = hash_hex(&source_revision);
+            // The append dedupes a byte-identical head before the envelope
+            // binds: the same binding retries into the head, while different
+            // bytes, source, revision, identity or provenance fork a new
+            // version off it instead of coalescing into it.
+            let fork_parent = match crate::blob_artifact::read_blob_artifact_head_in_txn(
+                &self.store,
                 txn,
                 &artifact_id,
-                text.as_bytes(),
-                &BlobVersionProvenance::AgentRun {
-                    run_ref: format!("{run_prefix}{content_ref}"),
+            )? {
+                Some(head) if *blake3::hash(text.as_bytes()).as_bytes() == head.content_hash => {
+                    let same = head.provenance == provenance
+                        && head.made_by.process.identity
+                            == COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND
+                        && head.made_by.process.params_hash == params_hash
+                        && head.made_by.inputs.as_slice()
+                            == [MadeByInput {
+                                row: source_head,
+                                role: MadeByInputRole::Input,
+                            }];
+                    (!same).then_some(head.version)
+                }
+                _ => None,
+            };
+            let made_by = MadeBy {
+                inputs: vec![MadeByInput {
+                    row: source_head,
+                    role: MadeByInputRole::Input,
+                }],
+                process: MadeByProcess {
+                    actor: authority.entity_ref(),
+                    class: MadeByClass::Concluded,
+                    identity: COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND.to_owned(),
+                    version: "1".to_owned(),
+                    params_hash,
                 },
+                at: now,
+                trigger: None,
+            };
+            self.append_blob_artifact_version_made_by_in_txn(
+                txn,
+                &artifact_id,
+                fork_parent,
+                text.as_bytes(),
+                &provenance,
+                &made_by,
                 authority,
                 at,
                 now,

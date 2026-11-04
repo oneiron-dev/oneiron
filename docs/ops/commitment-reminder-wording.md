@@ -42,7 +42,8 @@ The consumer uses the actual native Dreamer system principal with the existing
 strict relationship-grant scoped reader. Resolving that principal grants no
 read privilege. Model configuration is not a memory grant.
 
-Each model offer reads the actual current commitment head through native scoped
+Each model offer observes the authorization clock before opening its source
+snapshot. It reads the actual current commitment head through native scoped
 admission bound to that offer's destination. The admitted words, route offset,
 read receipt, and model-world verdict share one read transaction. A missing or
 closed reminder is distinct from a withheld source. No owner key or unscoped
@@ -62,7 +63,20 @@ and version append. A stale worker cannot publish through this door.
 
 The existing approval-prefix rule is unchanged: wording filed after approval
 is kept under the unsent prefix, never substituted for the approved send text.
-The raw filing API and the fixed-reminder/send paths remain available unchanged.
+Both kinds of model-worded version retain the exact admitted source head and
+revision in the existing version provenance receipt. That receipt records a
+source; it does not grant permission to read it or prove model-run capture.
+
+Served exports pin the exact version before checking its source binding through
+the actual caller's read lane. A later head or a mutable artifact name cannot
+replace that version's source contract. Source admission is separate from an
+artifact's own-row coverage; an artifact reference is not a grant on its inputs.
+The check does not introduce an input-visibility rule for unrelated artifacts.
+
+The raw filing API still accepts privileged caller-owned text. It does not
+invent a source revision for that text and is not a fallback for model output
+whose source is withheld. The fixed-reminder/send paths remain available
+unchanged.
 
 A model, source, configuration, budget, or filing error schedules a new try
 through the native retry door. `attempt_count` fences a lease; it is not a retry
@@ -76,5 +90,8 @@ work. These paths use the existing attempt lifecycle, not a second status store.
 
 Artifact filing and final queue settlement are separate operations. A crash
 between them can repeat model work; the artifact identity remains tied to the
-same frozen reminder and identical head content deduplicates. No atomic
-artifact-plus-queue or runtime proof is implied by this implementation.
+same frozen reminder. Identical bytes with the same native source binding
+deduplicate. Identical bytes with a different source or revision require a new
+version through the existing explicit-parent append, rather than silently
+reusing another source's version. No atomic artifact-plus-queue or runtime
+proof is implied by this implementation.
