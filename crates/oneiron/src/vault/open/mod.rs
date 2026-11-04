@@ -24,6 +24,12 @@ use self::config_validation::validate_open_config;
 /// profile reads at every profile level.
 const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
+/// The delete guards every open door below passes to its store: the one place
+/// the vault names the engine's implementation.
+fn engine_delete_guards() -> &'static dyn crate::store::StoreDeleteGuards {
+    &crate::engine_delete_guards::ENGINE_DELETE_GUARDS
+}
+
 /// The pinned id of the embedded default owner actor (ONE-1441 WIRE-P1).
 ///
 /// Minted ids are opaque ULIDs; this one comes from the one derived-id rule
@@ -162,7 +168,8 @@ impl Vault {
     }
 
     fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
-        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
+        let store =
+            Store::open_with_writer_lease(canonical, &config, &lease, engine_delete_guards())?;
         // Only the lease holder writes bodies, so what a writer left half
         // done is debris now: unfinished temp files and the bodies of
         // off-record sessions, none of which outlived its process.
@@ -208,7 +215,7 @@ impl Vault {
         // the vault's own bytes, and passed into the store open so the exact
         // analyzer comparison happens before any write transaction exists.
         let analyzer = discover_analyzer(&config)?;
-        let store = Store::open_existing(path, &config, &analyzer)?;
+        let store = Store::open_existing(path, &config, &analyzer, engine_delete_guards())?;
         Self::assemble_open(
             store,
             config,
@@ -491,9 +498,11 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let store = match seed_mode {
-            DefaultPolicySeedMode::Required => Store::open(path, &config)?,
+            DefaultPolicySeedMode::Required => Store::open(path, &config, engine_delete_guards())?,
             #[cfg(feature = "test-support")]
-            DefaultPolicySeedMode::TestUnseeded => Store::open_unseeded_for_test(path, &config)?,
+            DefaultPolicySeedMode::TestUnseeded => {
+                Store::open_unseeded_for_test(path, &config, engine_delete_guards())?
+            }
         };
         Self::finish_open(store, config, seed_mode)
     }

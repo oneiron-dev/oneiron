@@ -727,6 +727,7 @@ fn usage(
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     })
 }
 
@@ -750,6 +751,7 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     }
 }
 
@@ -782,6 +784,7 @@ fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     }
 }
 
