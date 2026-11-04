@@ -412,7 +412,7 @@ impl<'v> DocumentWriter<'v> {
             &self.skills,
             &self.knowledge,
             &tail.agent_fork_hashes,
-            crate::agent_def::KnowledgeFormat::CURRENT,
+            crate::batch::export::agent_knowledge_format::KnowledgeFormat::CURRENT,
         )?;
         for bundle in &bundles {
             self.ledger
