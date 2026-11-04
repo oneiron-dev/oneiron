@@ -380,12 +380,12 @@ fn advance(
         step
     };
     let waiting = matches!(&step, FeedbackTriageStep::Wait);
-    // FIX 12546 (L07-A asked 08:56, no answer by 09:26; rubric-1 fallback):
-    // an empty-split Repartition Ready means a complete level, nothing to run.
-    let repartition_empty = matches!(
-        &step,
-        FeedbackTriageStep::Repartition { splits, .. } if splits.is_empty()
-    );
+    // FIX 12546 (L07-A YES-with-conditions H1-H7 09:20): planned pin of an
+    // empty-split Repartition; emptiness alone never implies complete.
+    let repartition_pin = match &step {
+        FeedbackTriageStep::Repartition { pin, splits } if splits.is_empty() => Some(pin.clone()),
+        _ => None,
+    };
     match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
         FeedbackTriageParkOutcome::Parked(_) => Ok(()),
         FeedbackTriageParkOutcome::Ready(fresh) if waiting => {
@@ -404,13 +404,20 @@ fn advance(
                 )),
             }
         }
-        FeedbackTriageParkOutcome::Ready(fresh) if repartition_empty => {
-            if fresh.owed() {
-                return Err(unavailable(
-                    "feedback triage Repartition returned an owed graph",
-                ));
+        FeedbackTriageParkOutcome::Ready(fresh)
+            if repartition_pin.as_ref().is_some_and(|pin| {
+                !fresh.owed() && fresh.generation == work.generation && fresh.pin == *pin
+            }) =>
+        {
+            let Some(step) = finish(&fresh)? else {
+                return Ok(());
+            };
+            match vault.park_coach_feedback_triage(run.admitted, step, run.now)? {
+                FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+                FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+                    "feedback triage park outcome does not match its step",
+                )),
             }
-            Ok(())
         }
         FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
             "feedback triage park outcome does not match its step",
