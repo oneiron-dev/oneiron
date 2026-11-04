@@ -5469,7 +5469,7 @@ async fn execute_agent_verb_row(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     crate::api::facade::run_write_polls::scoped(
         run_writes,
         execute_agent_verb_row_on(

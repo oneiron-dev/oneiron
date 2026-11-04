@@ -8,6 +8,7 @@ pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 mod run;
+pub use crate::store::seat_model_description::ModelDescription;
 pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
@@ -28,11 +29,6 @@ use crate::{
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
     SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
-/// Whether a masked copy of a `LLM_MODEL_DESCRIPTION` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn llm_model_description_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<ModelDescription, LegacyJson>(bytes)
-}
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
@@ -81,20 +77,6 @@ fn served_admits(
     locality: ModelLocality,
 ) -> bool {
     served.is_none_or(|set| set.get(model).is_some_and(|at| *at == locality))
-}
-
-/// A description is keyed by the fully revisioned model ID. Absence is not a
-/// recommendation; the router cannot judge an undocumented model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelDescription {
-    pub model: ModelId,
-    /// Capability profile, not a provider, tier or model-family name.
-    pub facet: String,
-    pub owner: Option<String>,
-    pub measured: Option<String>,
-    pub benchmarks: Option<String>,
-    pub vendor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
