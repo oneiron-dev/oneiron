@@ -42,11 +42,14 @@ pub struct GateDecisionReadContext {
     pub position: Option<GateReadPosition>,
     /// Writer anchors (FIX 11000 PARTLY): subject-ancestry thread turns and
     /// reached roots/rooms plus body and prompt-source worlds, content-free
-    /// ids only. `incomplete()` when the writer proved nothing; only
-    /// `complete` with nonempty worlds is later readable. Never a Grant,
-    /// facets, or the writer's session room.
-    #[serde(default, skip_serializing_if = "GateReadAnchors::is_empty")]
-    pub anchors: GateReadAnchors,
+    /// ids only. `None` when the writer attached none (rows written before
+    /// anchors, or writers outside the anchor scheme): today's verdicts
+    /// stand. `Some(incomplete())` when the writer attempted the capture
+    /// and proved nothing: denies. Only `Some(complete)` with nonempty
+    /// worlds is later readable. Never a Grant, facets, or the writer's
+    /// session room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchors: Option<GateReadAnchors>,
 }
 
 /// One placed private-thread turn (FIX 11000): the thread `root` and the
@@ -411,14 +414,16 @@ impl GateDecisionContext {
 
 impl GateDecisionReadContext {
     /// The read context of a record whose position is its `about` rows'.
-    /// `None` when it names no row, so nothing would prove its scope.
+    /// `None` when it names no row, so nothing would prove its scope. The
+    /// writer attaches anchors later via [`Self::with_anchors`]; until then
+    /// there are none.
     #[must_use]
     pub fn about(record: Option<EntityId>, about: Vec<EntityId>) -> Option<Self> {
         (!about.is_empty()).then_some(Self {
             record,
             about,
             position: None,
-            anchors: GateReadAnchors::incomplete(),
+            anchors: None,
         })
     }
 
@@ -479,23 +484,28 @@ impl GateDecisionReadContext {
                     stale: body.stale,
                 }),
             }),
-            anchors: GateReadAnchors::incomplete(),
+            anchors: None,
         })
     }
 
     /// This read context with writer `anchors` attached (FIX 11000 PARTLY).
     /// Call only on an existing `Some` read context; never to invent one
-    /// where `claim`/`about` returned `None`.
+    /// where `claim`/`about` returned `None`. The attached value records
+    /// the attempt itself: `incomplete()` denies later, it never reads as
+    /// "the writer attached nothing".
     #[must_use]
     pub fn with_anchors(mut self, anchors: GateReadAnchors) -> Self {
-        self.anchors = anchors;
+        self.anchors = Some(anchors);
         self
     }
 
     fn names(&self, id: &EntityId) -> bool {
         self.record == Some(*id)
             || self.about.contains(id)
-            || self.anchors.names(id)
+            || self
+                .anchors
+                .as_ref()
+                .is_some_and(|anchors| anchors.names(id))
             || self.position.as_ref().is_some_and(|position| {
                 position.claim.as_ref().is_some_and(|claim| {
                     claim.principal == Some(*id)

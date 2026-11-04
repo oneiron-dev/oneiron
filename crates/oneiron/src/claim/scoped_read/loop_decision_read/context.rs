@@ -82,17 +82,18 @@ impl<'v> ScopedRead<'v> {
             dependencies.extend(context.position.iter().flat_map(position_rows));
             // FIX 11000 PARTLY: the admission stands on the anchor ids too,
             // so a recheck reads the item again when one of them changes.
-            // Empty anchors (old rows) add nothing.
-            dependencies.extend(
-                context
-                    .anchors
-                    .threads()
-                    .iter()
-                    .flat_map(|anchor| [anchor.root, anchor.turn]),
-            );
-            dependencies.extend(context.anchors.reached().iter().copied());
-            dependencies.extend(context.anchors.rooms().iter().copied());
-            dependencies.extend(context.anchors.worlds().iter().copied());
+            // Writers that attached none (old rows) add nothing.
+            if let Some(anchors) = &context.anchors {
+                dependencies.extend(
+                    anchors
+                        .threads()
+                        .iter()
+                        .flat_map(|anchor| [anchor.root, anchor.turn]),
+                );
+                dependencies.extend(anchors.reached().iter().copied());
+                dependencies.extend(anchors.rooms().iter().copied());
+                dependencies.extend(anchors.worlds().iter().copied());
+            }
         }
         Ok(Some(KeptAdmission {
             about: about.into_iter().collect(),
@@ -107,9 +108,10 @@ impl<'v> ScopedRead<'v> {
     /// facet and guest conjuncts and that position, with no status, evidence
     /// or landing asked (FIX 10999); and one that never landed sits where the
     /// reader's Scope, grants and relationships read it. Writer anchors
-    /// (FIX 11000 PARTLY) bind the writer-proof arms: incomplete anchors
-    /// deny, and complete anchors additionally meet today's live conjuncts;
-    /// the stored-row arm keeps today's verdicts.
+    /// (FIX 11000 PARTLY) bind the writer-proof arms: an explicit
+    /// incomplete capture denies, and a complete capture additionally meets
+    /// today's live conjuncts; contexts whose writer attached none keep
+    /// today's verdicts, and the stored-row arm keeps today's verdicts.
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -159,17 +161,18 @@ impl<'v> ScopedRead<'v> {
             // FIX 11000 PARTLY: the kept position also stands on the
             // writer's anchors. The row conjuncts above keep today's
             // verdicts; only the writer-proof step below is anchor-bound.
-            if !self.loop_anchors_admitted_in(txn, &context.anchors)? {
+            if !self.loop_anchors_admitted_in(txn, context.anchors.as_ref())? {
                 return Ok(false);
             }
             return self.loop_position_admitted_in(txn, read, Some(&record), position);
         }
         match &context.position {
             // FIX 11000 PARTLY: a context with no position admits only
-            // past the writer's anchors; anchor-less contexts keep Ok(true).
-            None => self.loop_anchors_admitted_in(txn, &context.anchors),
+            // past the writer's anchors; contexts whose writer attached
+            // none keep Ok(true), explicit incomplete captures deny.
+            None => self.loop_anchors_admitted_in(txn, context.anchors.as_ref()),
             Some(position) => {
-                if !self.loop_anchors_admitted_in(txn, &context.anchors)? {
+                if !self.loop_anchors_admitted_in(txn, context.anchors.as_ref())? {
                     return Ok(false);
                 }
                 self.loop_position_admitted_in(txn, read, context.record.as_ref(), position)
@@ -178,34 +181,43 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// Writer anchors on the kept position's admission (FIX 11000 PARTLY).
-    /// True when the writer attached none, so old rows keep today's
-    /// verdicts. Otherwise only complete anchors with nonempty worlds
-    /// admit, and every anchor id meets today's live audience/peer/thread
-    /// device conjuncts (`audience_readable_in`: device, private threads,
-    /// own entry, and past narrowing the room/world ceilings with the
-    /// audience and peer reads). Incomplete or empty-world anchors deny, as
-    /// a missing ancestry does today. Anchor worlds contribute the nonempty
-    /// gate; their window-time refinement stays PARTLY. Content-free: only
-    /// id readability is asked, never body text.
+    /// `None` (the writer attached none: rows written before anchors, or
+    /// writers outside the anchor scheme) keeps today's verdicts. An
+    /// explicit incomplete capture, or complete with empty worlds, denies:
+    /// failed, cyclic, unsupported and unknown-pending-birth captures never
+    /// admit through the writer-proof arms. Otherwise thread roots (placed
+    /// pairs' roots and reached roots) stand structurally under CURRENT —
+    /// the row exists, but root-turn content visibility never gates the
+    /// placed turn (FIX 10999) — while placed turns and rooms stand under
+    /// CONTENT through today's audience read. Anchor worlds contribute the
+    /// nonempty gate; their window-time refinement stays PARTLY.
+    /// Content-free: only id readability is asked, never body text.
     fn loop_anchors_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        anchors: &GateReadAnchors,
+        anchors: Option<&GateReadAnchors>,
     ) -> Result<bool> {
-        if anchors.is_empty() {
+        let Some(anchors) = anchors else {
             return Ok(true);
-        }
+        };
         if !anchors.is_complete() || anchors.worlds().is_empty() {
             return Ok(false);
         }
-        for id in anchors
-            .threads()
-            .iter()
-            .flat_map(|anchor| [anchor.root, anchor.turn])
-            .chain(anchors.reached().iter().copied())
-            .chain(anchors.rooms().iter().copied())
-        {
-            if !self.audience_readable_in(txn, &id)? {
+        for anchor in anchors.threads() {
+            if self.entity_record_in(txn, &anchor.root)?.is_none() {
+                return Ok(false);
+            }
+            if !self.audience_readable_in(txn, &anchor.turn)? {
+                return Ok(false);
+            }
+        }
+        for root in anchors.reached() {
+            if self.entity_record_in(txn, root)?.is_none() {
+                return Ok(false);
+            }
+        }
+        for room in anchors.rooms() {
+            if !self.audience_readable_in(txn, room)? {
                 return Ok(false);
             }
         }

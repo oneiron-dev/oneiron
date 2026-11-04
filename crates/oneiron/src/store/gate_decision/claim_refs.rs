@@ -127,6 +127,27 @@ impl Store {
         UNAPPLIED_PREFLIGHT.contains(self, txn, &decision_id)
     }
 
+    /// The union of every settlement-kind bundle's member refs bound to
+    /// `claim` (FIX 11002): the complete member set a settlement bound, so
+    /// a revert that restores nothing (HoldBoth/Dismiss) still binds the
+    /// original members and their erases discover the revert receipt.
+    pub(crate) fn settlement_bundle_member_refs_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+        kind: &str,
+    ) -> Result<Vec<[u8; 16]>> {
+        let mut refs = Vec::new();
+        for record in self.bundle_gate_decisions_for_claim_in_txn(txn, claim_id)? {
+            if record.content_kind == kind {
+                refs.extend(self.gate_decision_claim_refs_in_txn(txn, record.decision_id)?);
+            }
+        }
+        refs.sort_unstable();
+        refs.dedup();
+        Ok(refs)
+    }
+
     /// Per-constituent discovery used by erasure and conflict receipts'
     /// answering chains; other claim receipt readers must not mistake a
     /// bundle receipt for a claim verdict.

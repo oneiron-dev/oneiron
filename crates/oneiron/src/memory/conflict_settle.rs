@@ -27,7 +27,7 @@ pub use candidate_decisions::{
 use std::cell::Cell;
 
 use super::authorship::*;
-use super::{Memory, MemoryResult};
+use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
@@ -531,14 +531,27 @@ impl Memory<'_> {
             self.conflict_review_owner(txn, owner)?;
             let actor = WriteActor::new(self.actor, self.actor_class);
             let reverted = revert_settlement_in_txn(self.vault, txn, resolved, actor, now)?;
+            // FIX 11002: a HoldBoth/Dismiss revert restores nothing, so its
+            // bundle would bind only resolved+marker and erases of the
+            // original members could not discover it. Union the original
+            // settlement's complete member refs first.
+            let settlement_refs = self.vault.store.settlement_bundle_member_refs_in_txn(
+                &*txn,
+                resolved.as_bytes(),
+                KIND,
+            )?;
             let mut members = Vec::with_capacity(
                 3 + reverted.restored.len()
                     + reverted.copied.len() * 2
                     + reverted.left_closed.len()
-                    + usize::from(reverted.retracted.is_some()),
+                    + usize::from(reverted.retracted.is_some())
+                    + settlement_refs.len(),
             );
             members.push(resolved);
             members.push(reverted.marker);
+            for member in settlement_refs {
+                members.push(EntityId::from_bytes(member).map_err(MemoryError::from)?);
+            }
             members.extend(reverted.restored.iter().copied());
             for (member, copy) in &reverted.copied {
                 members.push(*member);
