@@ -16,6 +16,69 @@ use super::settle::now_ms;
 use super::types::{CodeConsentPrincipal, CodeConsentWaitRow};
 
 impl Vault {
+    /// Reuses this frozen intent's consumed approval under its current live binding.
+    /// The send boundary holds the same writer; this admits and spends nothing.
+    pub(crate) fn code_consent_retry_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+        wait_id: EntityId,
+    ) -> Result<bool> {
+        let Some(row) = read_code_consent_wait_in_txn(self, txn, wait_id)? else {
+            return Ok(false);
+        };
+        if !row.approved_unsettled()
+            || row.consumption.is_some()
+            || row
+                .admission
+                .as_ref()
+                .is_none_or(|admission| admission.intent_id != record.id)
+        {
+            return Ok(false);
+        }
+        eligible(&row)?;
+        let active = row.active_binding();
+        if let Some(credential) = row.active_credential() {
+            let verified = match self.invocation_slip_in_txn(txn, &credential.witness) {
+                Ok(verified) => verified,
+                Err(Error::Record(crate::error::RecordError::InvalidAuthorityLogBody(_))) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            };
+            let claims = verified.claims();
+            if active
+                .original
+                .opener_slip
+                .is_some_and(|slip| slip != claims.slip_id)
+                || credential.instrument.as_ref().is_some_and(|instrument| {
+                    instrument.slip() != Some(claims.slip_id) || instrument.vault != claims.vault_id
+                })
+            {
+                return Ok(false);
+            }
+        }
+        let (effect, _) = match crate::outbound_consent::code_wait_rebind_effects_in_txn(
+            self,
+            txn,
+            &row,
+            &active.binding_digest,
+            &active.binding_digest,
+        ) {
+            Ok(effects) => effects,
+            Err(IntentLedgerError::InvalidInput(_)) => return Ok(false),
+            Err(IntentLedgerError::Engine(error)) => return Err(error),
+            Err(IntentLedgerError::InvalidRecord(reason)) => {
+                return Err(Error::CorruptedIndex(reason));
+            }
+            Err(error) => return Err(Error::InvalidConfig(error.to_string())),
+        };
+        if effect.as_bytes() != &active.effect_digest {
+            return Ok(false);
+        }
+        self.code_wait_consumed_approval_in_txn(txn, &row, &effect)
+    }
+
     /// Keeps the original holder's actual successor request, with no authority change.
     pub(crate) fn prepare_code_consent_rebind(
         &self,

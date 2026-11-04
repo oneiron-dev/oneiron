@@ -4,6 +4,26 @@ use super::*;
 use crate::code_run::CodeConsentWaitRow;
 
 impl Vault {
+    /// The consumed marker of this exact admission, never a fresh authorization.
+    pub(crate) fn code_wait_consumed_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: &CodeConsentWaitRow,
+        digest: &EffectDigest,
+    ) -> Result<bool> {
+        let Some((consumed, decision)) = row.consumed_approval() else {
+            return Ok(false);
+        };
+        if consumed != *digest.as_bytes() {
+            return Ok(false);
+        }
+        Ok(APPROVE_ONCE_MARKERS
+            .get(&self.store, txn, digest.as_bytes())?
+            .is_some_and(|marker| {
+                marker.state == CONSENT_APPROVE_ONCE_SPENT && marker.decision_id == decision
+            }))
+    }
+
     /// Records a live owner's explicit rebind act. The wait's writer has proved
     /// the frozen target and actual holder succession; no other admission gets
     /// an available authorization from this act.
