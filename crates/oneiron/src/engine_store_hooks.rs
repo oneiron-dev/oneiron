@@ -670,4 +670,40 @@ impl StoreActorScrubs for EngineActorScrubs {
     ) -> Result<()> {
         crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn erase_mirror_control_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_mirror_control_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_mirror_event_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_mirror_event_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_effect_approval_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_effect_approval_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_effect_authorized_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_effect_authorized_actor_in_txn(vault, wtxn, actor)
+    }
 }
