@@ -2,7 +2,16 @@
 //! Entry: `named_sheet_cells`.
 //! Definitions live here; judgment_cells forwards its crate-visible entry.
 
+mod bounded;
+
 use super::*;
+use bounded::{
+    Bounds, checkpoint, cover_scratch, cover_scratch_estimate, hand_retained,
+    named_sheet_part_retained, reserve_retained, reserve_retained_estimate, retained_invalid,
+};
+use oneiron_docedit::resource::{Resources, bytes_of, wide};
+use oneiron_docedit::retained_opc::{Limits, Package as RetainedPackage};
+use std::time::Instant;
 
 /// The saved values of the cells `wanted` selects on one named sheet: the
 /// stored value, or a formula with its saved cache. Nothing is recalculated.
@@ -14,9 +23,71 @@ pub(crate) fn named_sheet_cells(
     let pkg = opc::read(bytes)?;
     let part = named_sheet_part(&pkg, sheet_name)?;
     let sheet = pkg.part(&part).ok_or_else(invalid)?;
+    let shared_xml = pkg.part("xl/sharedStrings.xml");
+    let mut shared_cache = BTreeMap::new();
+    let mut bounds: Option<Bounds<'_>> = None;
+    parse_sheet(sheet, wanted, shared_xml, &mut shared_cache, &mut bounds)
+}
+
+/// Deadline-checked sparse read of one named sheet (FIX 9817, source-only).
+/// Same grid semantics as [`named_sheet_cells`], but the package opens under
+/// `limits`/`resources` and every long loop, relationship resolution,
+/// shared-string scan and growing allocation checkpoints `deadline` and the
+/// port, reserving before it allocates. A typed machine floor is a real
+/// failure; an expired `deadline` is the existing timed-out read
+/// (`Error::Io` with `TimedOut`) for the caller to turn into an explicit
+/// partial. Never reads the whole book.
+pub(crate) fn named_sheet_cells_until(
+    bytes: &[u8],
+    sheet_name: &str,
+    wanted: &dyn Fn(&CellRef) -> bool,
+    limits: Limits,
+    resources: &Resources,
+    deadline: Instant,
+) -> Result<BTreeMap<CellRef, CellValue>> {
+    let mut bounds: Option<Bounds<'_>> = Some(Bounds::new(resources, deadline));
+    // Explicit clock before admission: `MeasuringPort` ignores deadlines.
+    checkpoint(&bounds)?;
+    let pkg = RetainedPackage::open(bytes, limits, resources).map_err(retained_invalid)?;
+    checkpoint(&bounds)?;
+    let part = named_sheet_part_retained(&pkg, sheet_name, &mut bounds)?;
+    checkpoint(&bounds)?;
+    let sheet = pkg
+        .part(part.as_str())
+        .map_err(retained_invalid)?
+        .ok_or_else(invalid)?;
+    checkpoint(&bounds)?;
+    // Shared strings once, decoded on demand and cached by index.
+    let shared_bytes = pkg.part("xl/sharedStrings.xml").map_err(retained_invalid)?;
+    checkpoint(&bounds)?;
+    let mut shared_cache = BTreeMap::new();
+    parse_sheet(
+        sheet.as_slice(),
+        wanted,
+        shared_bytes.as_deref(),
+        &mut shared_cache,
+        &mut bounds,
+    )
+}
+
+/// Shared worksheet grid parser for both readers: only worksheet-namespace
+/// cells under `sheetData`/`row` become grid values. `bounds=None` is the
+/// legacy path (no checkpoints, no reservations); `Some` checkpoints the
+/// explicit deadline and the port on every event and reserves before every
+/// growing allocation.
+fn parse_sheet(
+    sheet: &[u8],
+    wanted: &dyn Fn(&CellRef) -> bool,
+    shared_xml: Option<&[u8]>,
+    shared_cache: &mut BTreeMap<usize, String>,
+    bounds: &mut Option<Bounds<'_>>,
+) -> Result<BTreeMap<CellRef, CellValue>> {
+    checkpoint(bounds)?;
+    cover_scratch(bounds, wide(sheet.len().min(1024)))?;
     let mut cells = BTreeMap::new();
     let mut reader = NsReader::from_reader(sheet);
     let mut current: Option<CellRead> = None;
+    let mut in_cell = false;
     let mut capture: Option<&'static str> = None;
     let mut inline_string = false;
     let mut inline_run = false;
@@ -25,6 +96,7 @@ pub(crate) fn named_sheet_cells(
     let mut depth = 0usize;
     let mut root_seen = false;
     loop {
+        checkpoint(bounds)?;
         let event = reader.read_event().map_err(|_| invalid())?;
         if let Event::Start(tag) = &event {
             depth += 1;
@@ -48,7 +120,7 @@ pub(crate) fn named_sheet_cells(
                     return Err(invalid());
                 }
                 row = Some(
-                    attributes(&tag)?
+                    attributes(&tag, bounds)?
                         .get("r")
                         .ok_or_else(invalid)?
                         .parse::<u32>()
@@ -56,47 +128,59 @@ pub(crate) fn named_sheet_cells(
                 );
             }
             Event::Start(tag) if depth == 4 && sheet_tag(&reader, &tag, "c") && row.is_some() => {
-                if current.is_some() {
+                if in_cell {
                     return Err(invalid());
                 }
-                let attrs = attributes(&tag)?;
+                let attrs = attributes(&tag, bounds)?;
                 let cell =
                     CellRef::parse(attrs.get("r").ok_or_else(invalid)?).map_err(|_| invalid())?;
                 if Some(cell.row) != row {
                     return Err(invalid());
                 }
-                current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
+                // `wanted` once per cell, at its start tag, in document order.
+                // Unwanted cells skip `t`/value/formula capture entirely (no
+                // transient strings); `in_cell` still guards structure.
+                in_cell = true;
+                if wanted(&cell) {
+                    if let Some(t) = attrs.get("t") {
+                        cover_scratch(bounds, wide(t.len()))?;
+                    }
+                    current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
+                }
             }
             Event::Empty(tag) if depth == 3 && sheet_tag(&reader, &tag, "c") && row.is_some() => {
-                if current.is_some() {
+                if in_cell {
                     return Err(invalid());
                 }
-                let attrs = attributes(&tag)?;
+                let attrs = attributes(&tag, bounds)?;
                 let cell =
                     CellRef::parse(attrs.get("r").ok_or_else(invalid)?).map_err(|_| invalid())?;
                 if Some(cell.row) != row {
                     return Err(invalid());
                 }
-                current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
-                finish_cell(&mut current, wanted, &mut cells, &pkg)?;
+                if wanted(&cell) {
+                    if let Some(t) = attrs.get("t") {
+                        cover_scratch(bounds, wide(t.len()))?;
+                    }
+                    current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
+                    finish_cell(&mut current, &mut cells, shared_xml, shared_cache, bounds)?;
+                } else {
+                    checkpoint(bounds)?;
+                }
             }
-            Event::Start(tag)
-                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "is") =>
-            {
+            Event::Start(tag) if in_cell && depth == 5 && sheet_tag(&reader, &tag, "is") => {
                 inline_string = true;
             }
             Event::Start(tag)
-                if current.is_some()
-                    && inline_string
-                    && depth == 6
-                    && sheet_tag(&reader, &tag, "r") =>
+                if in_cell && inline_string && depth == 6 && sheet_tag(&reader, &tag, "r") =>
             {
                 inline_run = true;
             }
-            Event::Start(tag)
-                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "f") =>
-            {
-                current.as_mut().ok_or_else(invalid)?.3 = Some(String::new());
+            Event::Start(tag) if in_cell && depth == 5 && sheet_tag(&reader, &tag, "f") => {
+                // Unwanted cells validate formula text but keep no buffer.
+                if let Some(cell) = current.as_mut() {
+                    cell.3 = Some(String::new());
+                }
                 capture = Some("formula");
             }
             Event::Empty(tag)
@@ -105,7 +189,7 @@ pub(crate) fn named_sheet_cells(
                 current.as_mut().ok_or_else(invalid)?.3 = Some(String::new());
             }
             Event::Start(tag)
-                if current.is_some()
+                if in_cell
                     && ((depth == 5 && sheet_tag(&reader, &tag, "v"))
                         || (depth == 6
                             && inline_string
@@ -117,7 +201,10 @@ pub(crate) fn named_sheet_cells(
                             && sheet_tag(&reader, &tag, "t"))) =>
             {
                 capture = Some("value");
-                current.as_mut().ok_or_else(invalid)?.4 = true;
+                // Unwanted cells validate value text but keep no flag.
+                if let Some(cell) = current.as_mut() {
+                    cell.4 = true;
+                }
             }
             Event::Empty(tag)
                 if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "v") =>
@@ -130,8 +217,12 @@ pub(crate) fn named_sheet_cells(
                         || (depth == 6 && inline_string && !inline_run)
                         || (depth == 7 && inline_run)) =>
             {
+                cover_scratch(bounds, wide(text.as_ref().len()))?;
                 let v = quick_xml::escape::unescape(text.as_ref()).map_err(|_| invalid())?;
-                push_captured(&mut current, capture, &v)?;
+                // Unwanted cells validated above; only wanted cells retain.
+                if current.is_some() {
+                    push_captured(&mut current, capture, &v, bounds)?;
+                }
             }
             Event::CData(text)
                 if capture.is_some()
@@ -139,7 +230,9 @@ pub(crate) fn named_sheet_cells(
                         || (depth == 6 && inline_string && !inline_run)
                         || (depth == 7 && inline_run)) =>
             {
-                push_captured(&mut current, capture, text.as_ref())?;
+                if current.is_some() {
+                    push_captured(&mut current, capture, text.as_ref(), bounds)?;
+                }
             }
             Event::GeneralRef(reference)
                 if capture.is_some()
@@ -147,6 +240,7 @@ pub(crate) fn named_sheet_cells(
                         || (depth == 6 && inline_string && !inline_run)
                         || (depth == 7 && inline_run)) =>
             {
+                cover_scratch(bounds, wide(8))?;
                 let value = reference
                     .resolve_char_ref()
                     .map_err(|_| invalid())?
@@ -156,13 +250,20 @@ pub(crate) fn named_sheet_cells(
                             .map(str::to_owned)
                     })
                     .ok_or_else(invalid)?;
-                push_captured(&mut current, capture, &value)?;
+                if current.is_some() {
+                    push_captured(&mut current, capture, &value, bounds)?;
+                }
             }
-            Event::End(tag) if depth == 4 && sheet_end(&reader, &tag, "c") && current.is_some() => {
-                finish_cell(&mut current, wanted, &mut cells, &pkg)?;
+            Event::End(tag) if depth == 4 && sheet_end(&reader, &tag, "c") && in_cell => {
+                if current.is_some() {
+                    finish_cell(&mut current, &mut cells, shared_xml, shared_cache, bounds)?;
+                } else {
+                    checkpoint(bounds)?;
+                }
                 capture = None;
                 inline_string = false;
                 inline_run = false;
+                in_cell = false;
             }
             Event::End(tag)
                 if (depth == 5
@@ -184,7 +285,7 @@ pub(crate) fn named_sheet_cells(
             Event::End(tag)
                 if depth == 3 && tag.local_name().as_ref() == "row" && row.is_some() =>
             {
-                if current.is_some() {
+                if in_cell {
                     return Err(invalid());
                 }
                 row = None;
@@ -205,7 +306,7 @@ pub(crate) fn named_sheet_cells(
             depth = depth.checked_sub(1).ok_or_else(invalid)?;
         }
     }
-    if current.is_some() || row.is_some() || in_sheet_data || depth != 0 || !root_seen {
+    if current.is_some() || in_cell || row.is_some() || in_sheet_data || depth != 0 || !root_seen {
         return Err(invalid());
     }
     Ok(cells)
@@ -215,7 +316,9 @@ pub(super) fn push_captured(
     current: &mut Option<CellRead>,
     capture: Option<&str>,
     text: &str,
+    bounds: &mut Option<Bounds<'_>>,
 ) -> Result<()> {
+    reserve_retained(bounds, wide(text.len()))?;
     let cell = current.as_mut().ok_or_else(invalid)?;
     if capture == Some("formula") {
         cell.3.as_mut().ok_or_else(invalid)?.push_str(text);
@@ -252,19 +355,21 @@ pub(super) fn sheet_tag(reader: &NsReader<&[u8]>, tag: &BytesStart<'_>, name: &s
 
 pub(super) fn finish_cell(
     current: &mut Option<CellRead>,
-    wanted: &dyn Fn(&CellRef) -> bool,
     cells: &mut BTreeMap<CellRef, CellValue>,
-    pkg: &OpcPackage,
+    shared_xml: Option<&[u8]>,
+    shared_cache: &mut BTreeMap<usize, String>,
+    bounds: &mut Option<Bounds<'_>>,
 ) -> Result<()> {
+    checkpoint(bounds)?;
     let (cell, kind, value, formula, value_seen) = current.take().ok_or_else(invalid)?;
-    if !wanted(&cell) {
-        return Ok(());
-    }
+    // Caller checked `wanted` at `<c>`; this finishes wanted cells only.
     let parsed = match kind.as_deref() {
         Some("inlineStr" | "str") => CellValue::Text(value),
         Some("s") => {
             let index = value.parse::<usize>().map_err(|_| invalid())?;
-            CellValue::Text(shared_string(pkg, index)?)
+            checkpoint(bounds)?;
+            let text = shared_string_cached(index, shared_xml, shared_cache, bounds)?;
+            CellValue::Text(text)
         }
         Some("b") => CellValue::Bool(match value.as_str() {
             "0" => false,
@@ -283,25 +388,62 @@ pub(super) fn finish_cell(
         _ => return Err(invalid()),
     };
     let parsed = if let Some(expr) = formula {
+        reserve_retained_estimate(bounds, bytes_of::<CellValue>(1), 0)?;
         CellValue::Formula {
             expr,
-            cached: value_seen.then(|| Box::new(parsed)),
+            cached: if value_seen {
+                reserve_retained_estimate(bounds, bytes_of::<CellValue>(1), 0)?;
+                Some(Box::new(parsed))
+            } else {
+                None
+            },
         }
     } else {
         parsed
     };
+    reserve_retained_estimate(bounds, bytes_of::<(CellRef, CellValue)>(1), 0)?;
     if cells.insert(cell, parsed).is_some() {
         return Err(invalid());
     }
+    // Hand this cell's retained bytes to the live reading; later cells must
+    // not double-count history (resource.rs "lasts until they are").
+    hand_retained(bounds);
     Ok(())
 }
 
-pub(super) fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
-    let xml = pkg.part("xl/sharedStrings.xml").ok_or_else(invalid)?;
+/// Shared-string `index` via the cached bytes: decoded once per index,
+/// scanned with the same checks as the legacy path.
+fn shared_string_cached(
+    index: usize,
+    shared_xml: Option<&[u8]>,
+    cache: &mut BTreeMap<usize, String>,
+    bounds: &mut Option<Bounds<'_>>,
+) -> Result<String> {
+    if let Some(hit) = cache.get(&index) {
+        reserve_retained(bounds, wide(hit.len()))?;
+        return Ok(hit.clone());
+    }
+    let xml = shared_xml.ok_or_else(invalid)?;
+    let text = shared_string(xml, index, bounds)?;
+    reserve_retained(bounds, wide(text.len()))?;
+    reserve_retained_estimate(bounds, bytes_of::<(usize, String)>(1), 0)?;
+    let out = text.clone();
+    cache.insert(index, text);
+    Ok(out)
+}
+
+pub(super) fn shared_string(
+    xml: &[u8],
+    index: usize,
+    bounds: &mut Option<Bounds<'_>>,
+) -> Result<String> {
+    checkpoint(bounds)?;
+    cover_scratch(bounds, wide(xml.len().min(1024)))?;
     let mut reader = NsReader::from_reader(xml);
     let (mut ordinal, mut content, mut depth) = (0usize, String::new(), 0usize);
     let (mut in_item, mut in_run, mut text) = (false, false, false);
     loop {
+        checkpoint(bounds)?;
         let event = reader.read_event().map_err(|_| invalid())?;
         if let Event::Start(tag) = &event {
             depth += 1;
@@ -335,14 +477,19 @@ pub(super) fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
                 text = true;
             }
             Event::Text(v) if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) => {
-                content.push_str(&quick_xml::escape::unescape(v.as_ref()).map_err(|_| invalid())?);
+                cover_scratch(bounds, wide(v.as_ref().len()))?;
+                let decoded = quick_xml::escape::unescape(v.as_ref()).map_err(|_| invalid())?;
+                cover_scratch(bounds, wide(content.len().saturating_add(decoded.len())))?;
+                content.push_str(&decoded);
             }
             Event::CData(v) if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) => {
+                cover_scratch(bounds, wide(content.len().saturating_add(v.as_ref().len())))?;
                 content.push_str(v.as_ref());
             }
             Event::GeneralRef(reference)
                 if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) =>
             {
+                cover_scratch(bounds, wide(8))?;
                 let value = reference
                     .resolve_char_ref()
                     .map_err(|_| invalid())?
@@ -352,6 +499,7 @@ pub(super) fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
                             .map(str::to_owned)
                     })
                     .ok_or_else(invalid)?;
+                cover_scratch(bounds, wide(content.len().saturating_add(value.len())))?;
                 content.push_str(&value);
             }
             Event::End(tag)
@@ -383,15 +531,29 @@ pub(super) fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
 
 pub(super) fn attributes(
     tag: &quick_xml::events::BytesStart<'_>,
+    bounds: &mut Option<Bounds<'_>>,
 ) -> Result<BTreeMap<String, String>> {
+    checkpoint(bounds)?;
     let mut out = BTreeMap::new();
+    // Scratch peak for one tag's map (dropped after `r`/`t`): running raw
+    // total plus node count, never volume across tags.
+    let mut total: u64 = 0;
     for a in tag.attributes() {
+        checkpoint(bounds)?;
         let a = a.map_err(|_| invalid())?;
+        let raw = wide(a.key.as_ref().len().saturating_add(a.value.len()));
+        cover_scratch(bounds, total.saturating_add(raw))?;
+        total = total.saturating_add(raw);
         let name = a.key.local_name().as_ref().to_owned();
         let value = a
             .normalized_value(quick_xml::XmlVersion::default())
             .map_err(|_| invalid())?
             .into_owned();
+        cover_scratch_estimate(
+            bounds,
+            bytes_of::<(String, String)>(out.len().saturating_add(1)),
+            0,
+        )?;
         if out.insert(name, value).is_some() {
             return Err(invalid());
         }
