@@ -19,7 +19,6 @@ use heed::{RoTxn, RwTxn};
 use super::KeepReason;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
@@ -27,6 +26,7 @@ use crate::ports::EntityStoreStaging;
 use crate::registry;
 use crate::side_table::{self, Named, SideDb, SideTable, SideTableDecl};
 use crate::store::Store;
+use crate::store::embedding::EmbeddingProvenance;
 use crate::store::gate_decision::HeldGateRows;
 
 /// The text each document was indexed with. Key: id16.

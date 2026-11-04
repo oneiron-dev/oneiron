@@ -29,8 +29,8 @@ use crate::origin::secret_projection::checkout::{
 };
 use crate::store::code_snapshot::RepoRef;
 use crate::{
-    checkout::lease::CheckoutLeaseAct,
     store::checkout_lease::CheckoutError,
+    store::checkout_lease::CheckoutLeaseAct,
     store::checkout_lease::{
         CheckoutResult, CheckoutTeardownInspection, GitOid as LeaseGitOid, PushedHeadReceipt,
         TeardownReceiptMatch,
