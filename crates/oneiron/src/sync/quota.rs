@@ -15,7 +15,8 @@ pub(crate) use work::{
 
 const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:";
 const MAINTENANCE_INGEST_QUOTA_CONFIG_KEY: &[u8] = b"m:maintenance_ingest_quota_config:v1";
-const MAINTENANCE_INGEST_QUOTA_VALUE_LEN: usize = 12;
+const MAINTENANCE_INGEST_QUOTA_VALUE_LEN: usize = 20;
+const MAINTENANCE_INGEST_QUOTA_CONFIG_LEN: usize = 21;
 const MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN: &[u8] = b"oneiron/maintenance-ingest-quota/v1/peer";
 /// Default accepted maintenance-band replay ops per peer per quota window.
 ///
@@ -35,10 +36,16 @@ pub struct MaintenanceIngestQuotaSnapshot {
     pub window_start_secs: u64,
     /// Accepted signed maintenance-band replay ops in the bucket.
     pub accepted_count: u32,
+    /// Accepted signed maintenance-band replay bytes in the bucket, counting
+    /// full envelope bytes.
+    pub accepted_bytes: u64,
     /// Configured share for the bucket; past it ops wait their turn.
     pub max_ops_per_peer_window: u32,
     /// Configured quota bucket width, in seconds.
     pub quota_window_secs: u64,
+    /// Optional configured byte share for the bucket; past it ops wait their
+    /// turn. `None` disables the byte share.
+    pub max_bytes_per_peer_window: Option<u64>,
 }
 
 /// Device-local maintenance-band replay quota tunables.
@@ -48,6 +55,10 @@ pub struct MaintenanceIngestQuotaConfig {
     pub max_ops_per_peer_window: u32,
     /// Quota bucket width, in seconds.
     pub quota_window_secs: u64,
+    /// Optional accepted bytes per peer per quota window, counting full
+    /// envelope bytes. `None` (the default) disables the byte share; `Some`
+    /// is the operator's own policy, including `Some(0)`.
+    pub max_bytes_per_peer_window: Option<u64>,
 }
 
 impl Default for MaintenanceIngestQuotaConfig {
@@ -55,6 +66,7 @@ impl Default for MaintenanceIngestQuotaConfig {
         Self {
             max_ops_per_peer_window: DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW,
             quota_window_secs: DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS,
+            max_bytes_per_peer_window: None,
         }
     }
 }
@@ -79,26 +91,34 @@ pub(super) enum MaintenanceAdmission {
 }
 
 /// Admits `op` from the signer `peer_key` now, debiting its bucket, or keeps
-/// it as retained work: past the signer's share of the window, or behind
-/// that signer's own waiting work. Crossing the share is advisory, counted
-/// and logged, never a refusal. Work its drain replays is admitted now.
+/// it as retained work: past the signer's op or optional byte share of the
+/// window, or behind that signer's own waiting work. Crossing a share is
+/// advisory, counted and logged, never a refusal. Work its drain replays is
+/// admitted now.
 pub(super) fn admit_maintenance_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     peer_key: MaintenanceIngestPeerKey,
     op: MaintenanceOp<'_>,
 ) -> Result<MaintenanceAdmission> {
+    let op_bytes = op.quota_bytes();
     let now_secs = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     if !work::replaying() {
-        let (accepted_count, max_ops) =
+        let (accepted_count, accepted_bytes, config) =
             maintenance_ingest_share_in_txn(vault, wtxn, peer_key, now_secs)?;
-        let crossed = accepted_count >= max_ops;
+        let crossed = accepted_count >= config.max_ops_per_peer_window
+            || config
+                .max_bytes_per_peer_window
+                .is_some_and(|max| accepted_bytes.saturating_add(op_bytes) > max);
         if crossed || work::waiting_in(vault, wtxn, &peer_key.0)? {
             if crossed {
                 tracing::info!(
                     peer_key = %bytes_to_hex_lower(&peer_key.0),
                     accepted_count,
-                    max_ops,
+                    accepted_bytes,
+                    op_bytes,
+                    max_ops = config.max_ops_per_peer_window,
+                    max_bytes = ?config.max_bytes_per_peer_window,
                     "maintenance signer passed its share of the quota window; the op waits its turn"
                 );
             }
@@ -106,41 +126,43 @@ pub(super) fn admit_maintenance_in_txn(
             return Ok(MaintenanceAdmission::Retained);
         }
     }
-    try_accept_maintenance_ingest_peer_in_txn(vault, wtxn, peer_key, now_secs)
+    try_accept_maintenance_ingest_peer_in_txn(vault, wtxn, peer_key, now_secs, op_bytes)
         .map(MaintenanceAdmission::Now)
 }
 
-/// The ops `peer_key` has had accepted in the quota window at `now_secs`, and
-/// its share of the window.
+/// The ops and full envelope bytes `peer_key` has had accepted in the quota
+/// window at `now_secs`, and its share of the window.
 fn maintenance_ingest_share_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     peer_key: MaintenanceIngestPeerKey,
     now_secs: u64,
-) -> Result<(u32, u32)> {
+) -> Result<(u32, u64, MaintenanceIngestQuotaConfig)> {
     let config = maintenance_ingest_quota_config_in_ro_txn(vault, txn)?;
     let window_start_secs = now_secs - (now_secs % config.quota_window_secs);
-    let accepted_count = match vault
+    let (accepted_count, accepted_bytes) = match vault
         .store
         .sync_queue
         .get(txn, &maintenance_ingest_quota_key(peer_key))?
     {
         Some(value) => match decode_maintenance_ingest_quota_value(&value)? {
-            (start, count) if start == window_start_secs => count,
-            _ => 0,
+            (start, count, bytes) if start == window_start_secs => (count, bytes),
+            _ => (0, 0),
         },
-        None => 0,
+        None => (0, 0),
     };
-    Ok((accepted_count, config.max_ops_per_peer_window))
+    Ok((accepted_count, accepted_bytes, config))
 }
 
-/// Debits `peer_key`'s bucket for one accepted op. Past the share the count
-/// keeps rising: the share is advisory.
+/// Debits `peer_key`'s bucket for one accepted op of `op_bytes` full
+/// envelope bytes. Past the share the count and bytes keep rising: the
+/// share is advisory.
 fn try_accept_maintenance_ingest_peer_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     peer_key: MaintenanceIngestPeerKey,
     now_secs: u64,
+    op_bytes: u64,
 ) -> Result<MaintenanceIngestQuotaDebit> {
     let config = maintenance_ingest_quota_config_in_rw_txn(vault, &*wtxn)?;
     let quota_window_secs = config.quota_window_secs;
@@ -158,21 +180,24 @@ fn try_accept_maintenance_ingest_peer_in_txn(
         }
         None => None,
     };
-    let (stored_window_start, stored_accepted_count) = match previous_value {
+    let (stored_window_start, stored_accepted_count, stored_accepted_bytes) = match previous_value {
         Some(value) => decode_maintenance_ingest_quota_value(&value)?,
-        None => (window_start_secs, 0),
+        None => (window_start_secs, 0, 0),
     };
 
-    let accepted_count = if stored_window_start == window_start_secs {
-        stored_accepted_count
+    let (accepted_count, accepted_bytes) = if stored_window_start == window_start_secs {
+        (stored_accepted_count, stored_accepted_bytes)
     } else {
-        0
+        (0, 0)
     };
 
     let next_count = accepted_count
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("maintenance ingest quota"))?;
-    let value = encode_maintenance_ingest_quota_value(window_start_secs, next_count);
+    let next_bytes = accepted_bytes
+        .checked_add(op_bytes)
+        .ok_or(Error::ArithmeticOverflow("maintenance ingest quota"))?;
+    let value = encode_maintenance_ingest_quota_value(window_start_secs, next_count, next_bytes);
     vault.store.sync_queue.put(wtxn, key.as_slice(), &value)?;
     Ok(MaintenanceIngestQuotaDebit {
         key,
@@ -214,13 +239,16 @@ pub fn maintenance_ingest_quota_snapshots(
             return Err(Error::CorruptedIndex("maintenance ingest quota key"));
         }
         let peer_key = &key[MAINTENANCE_INGEST_QUOTA_PREFIX.len()..];
-        let (window_start_secs, accepted_count) = decode_maintenance_ingest_quota_value(&value)?;
+        let (window_start_secs, accepted_count, accepted_bytes) =
+            decode_maintenance_ingest_quota_value(&value)?;
         snapshots.push(MaintenanceIngestQuotaSnapshot {
             peer_key_hex: bytes_to_hex_lower(peer_key),
             window_start_secs,
             accepted_count,
+            accepted_bytes,
             max_ops_per_peer_window: config.max_ops_per_peer_window,
             quota_window_secs: config.quota_window_secs,
+            max_bytes_per_peer_window: config.max_bytes_per_peer_window,
         });
     }
     snapshots.sort_by(|left, right| left.peer_key_hex.cmp(&right.peer_key_hex));
@@ -237,7 +265,8 @@ pub fn maintenance_ingest_quota_config(vault: &Vault) -> Result<MaintenanceInges
 ///
 /// The row lives in `sync_queue`'s `m:` family and is never mirrored into CRDT
 /// state. Existing accepted counters are left in place; under a lower share a
-/// peer's later ops wait their turn until the next bucket.
+/// peer's later ops wait their turn until the next bucket. The optional byte
+/// share counts full envelope bytes; `None` keeps the op share only.
 pub fn set_maintenance_ingest_quota_config(
     vault: &Vault,
     config: MaintenanceIngestQuotaConfig,
@@ -284,14 +313,19 @@ fn maintenance_ingest_quota_key(peer_key: MaintenanceIngestPeerKey) -> Vec<u8> {
     key
 }
 
-fn encode_maintenance_ingest_quota_value(window_start_secs: u64, accepted_count: u32) -> [u8; 12] {
+fn encode_maintenance_ingest_quota_value(
+    window_start_secs: u64,
+    accepted_count: u32,
+    accepted_bytes: u64,
+) -> [u8; 20] {
     let mut value = [0_u8; MAINTENANCE_INGEST_QUOTA_VALUE_LEN];
     value[..8].copy_from_slice(&window_start_secs.to_le_bytes());
-    value[8..].copy_from_slice(&accepted_count.to_le_bytes());
+    value[8..12].copy_from_slice(&accepted_count.to_le_bytes());
+    value[12..20].copy_from_slice(&accepted_bytes.to_le_bytes());
     value
 }
 
-fn decode_maintenance_ingest_quota_value(value: &[u8]) -> Result<(u64, u32)> {
+fn decode_maintenance_ingest_quota_value(value: &[u8]) -> Result<(u64, u32, u64)> {
     if value.len() != MAINTENANCE_INGEST_QUOTA_VALUE_LEN {
         return Err(Error::CorruptedIndex("maintenance ingest quota value"));
     }
@@ -301,11 +335,16 @@ fn decode_maintenance_ingest_quota_value(value: &[u8]) -> Result<(u64, u32)> {
             .map_err(|_| Error::CorruptedIndex("maintenance ingest quota value"))?,
     );
     let accepted_count = u32::from_le_bytes(
-        value[8..]
+        value[8..12]
             .try_into()
             .map_err(|_| Error::CorruptedIndex("maintenance ingest quota value"))?,
     );
-    Ok((window_start_secs, accepted_count))
+    let accepted_bytes = u64::from_le_bytes(
+        value[12..20]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("maintenance ingest quota value"))?,
+    );
+    Ok((window_start_secs, accepted_count, accepted_bytes))
 }
 
 fn maintenance_ingest_quota_config_in_ro_txn(
@@ -350,17 +389,34 @@ fn validate_maintenance_ingest_quota_config(config: MaintenanceIngestQuotaConfig
     Ok(())
 }
 
-fn encode_maintenance_ingest_quota_config(config: MaintenanceIngestQuotaConfig) -> [u8; 12] {
-    let mut value = [0_u8; MAINTENANCE_INGEST_QUOTA_VALUE_LEN];
+fn encode_maintenance_ingest_quota_config(config: MaintenanceIngestQuotaConfig) -> [u8; 21] {
+    let mut value = [0_u8; MAINTENANCE_INGEST_QUOTA_CONFIG_LEN];
     value[..4].copy_from_slice(&config.max_ops_per_peer_window.to_le_bytes());
-    value[4..].copy_from_slice(&config.quota_window_secs.to_le_bytes());
+    value[4..12].copy_from_slice(&config.quota_window_secs.to_le_bytes());
+    match config.max_bytes_per_peer_window {
+        None => {
+            value[12] = 0;
+            value[13..21].copy_from_slice(&0u64.to_le_bytes());
+        }
+        Some(max_bytes) => {
+            value[12] = 1;
+            value[13..21].copy_from_slice(&max_bytes.to_le_bytes());
+        }
+    }
     value
 }
 
 fn decode_maintenance_ingest_quota_config(value: &[u8]) -> Result<MaintenanceIngestQuotaConfig> {
-    if value.len() != MAINTENANCE_INGEST_QUOTA_VALUE_LEN {
+    if value.len() != MAINTENANCE_INGEST_QUOTA_CONFIG_LEN {
         return Err(Error::CorruptedIndex("maintenance ingest quota config"));
     }
+    let max_bytes_per_peer_window = match value[12] {
+        0 => None,
+        1 => Some(u64::from_le_bytes(value[13..21].try_into().map_err(
+            |_| Error::CorruptedIndex("maintenance ingest quota config"),
+        )?)),
+        _ => return Err(Error::CorruptedIndex("maintenance ingest quota config")),
+    };
     let config = MaintenanceIngestQuotaConfig {
         max_ops_per_peer_window: u32::from_le_bytes(
             value[..4]
@@ -368,10 +424,11 @@ fn decode_maintenance_ingest_quota_config(value: &[u8]) -> Result<MaintenanceIng
                 .map_err(|_| Error::CorruptedIndex("maintenance ingest quota config"))?,
         ),
         quota_window_secs: u64::from_le_bytes(
-            value[4..]
+            value[4..12]
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("maintenance ingest quota config"))?,
         ),
+        max_bytes_per_peer_window,
     };
     validate_maintenance_ingest_quota_config(config)?;
     Ok(config)

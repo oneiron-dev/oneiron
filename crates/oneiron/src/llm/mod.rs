@@ -195,7 +195,6 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
@@ -208,7 +207,4 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::routing::llm_description_policy_accepts_masked;
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
-pub(crate) use self::seat::llm_model_description_accepts_masked;
-pub(crate) use self::step::model_step_submission_accepts_masked;

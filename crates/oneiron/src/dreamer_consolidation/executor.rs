@@ -11,6 +11,7 @@ pub(super) mod extraction;
 mod failure;
 mod merge_resolution;
 mod partition_run;
+mod partition_window;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
