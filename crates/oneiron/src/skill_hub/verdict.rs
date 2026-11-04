@@ -23,8 +23,7 @@ use super::package::HubPackage;
 use super::support::{MAX_HUB_TEXT_BYTES, map_text, map_value, validate_text};
 use crate::error::ArtifactError;
 
-/// Claim predicate for scanner receipts attached to a canonical content hash.
-pub const PREDICATE_SKILL_SCAN_VERDICT: &str = "skill.scan_verdict";
+pub use crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT;
 
 /// Domain separator for the deterministic content-anchor entity-id
 /// derivation (ONE-1741). Bumping this string re-keys every anchor, so it is

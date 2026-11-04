@@ -3,7 +3,7 @@
 //! Every MESSAGE row the engine writes passes through here, immediately before
 //! its own atomic put, inside the witness write transaction. The door is the
 //! ONE place that answers "may THIS actor write THIS envelope", and the answer
-//! covers the FULL envelope — author, message type, content, metadata
+//! covers the FULL envelope — author, message type, content, ordered parts, metadata
 //! (including nested values), visibility and order — never the text alone and
 //! never authorship alone.
 //!
@@ -15,7 +15,7 @@
 //! could tell it apart from an engine row), hide a row from the transcript,
 //! stamp an arbitrary message type, smuggle a nested metadata side channel, or
 //! claim any position in the turn. Those are six axes of one envelope, so the
-//! door binds all six together.
+//! door binds every axis together.
 //!
 //! # The binding
 //!
@@ -25,11 +25,13 @@
 //! bytes the caller staged are byte-identical, then hands those proven bytes
 //! back as [`WitnessMessageAuthorization::body`]. A write consumes the door's
 //! own output, so no axis can move between the check and the put: changing any
-//! one of the six changes the canonical bytes, which changes the binding, and
+//! axis changes the canonical bytes, which changes the binding, and
 //! changing the author or the visibility can change the DECISION as well.
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
+
+mod binding;
+use binding::witness_message_binding;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -59,6 +61,7 @@ pub(crate) const WITNESS_AUTHOR_SYSTEM: &str = "system";
 const BODY_KEY_AUTHOR: &str = "author";
 const BODY_KEY_TYPE: &str = "type";
 const BODY_KEY_CONTENT: &str = "content";
+const BODY_KEY_PARTS: &str = "parts";
 const BODY_KEY_METADATA: &str = "metadata";
 const BODY_KEY_IS_VISIBLE: &str = "is_visible";
 const BODY_KEY_ORDER: &str = "order";
@@ -111,10 +114,6 @@ const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
 
-/// The domain tag for the witness-message binding hash. Bump the suffix if the
-/// hashed tuple below ever changes; the value is an ABI.
-const WITNESS_MESSAGE_BINDING_DOMAIN: &[u8] = b"oneiron.gate.witness_message.v0";
-
 /// One MESSAGE envelope, exactly as the write door will encode it.
 ///
 /// `metadata` is the rmpv value the body carries (the engine converts JSON to
@@ -128,6 +127,8 @@ pub(crate) struct WitnessMessageEnvelope<'a> {
     pub(crate) message_type: &'a str,
     /// Text content, BM25-indexed by the caller when non-empty.
     pub(crate) content: &'a str,
+    /// Ordered terminal parts owned by the MESSAGE, never its editable text.
+    pub(crate) parts: Option<Vec<crate::ContentPart>>,
     /// Opaque passenger data, or `None`.
     pub(crate) metadata: Option<Value>,
     /// Whether the row is part of the visible transcript.
@@ -149,6 +150,13 @@ impl WitnessMessageEnvelope<'_> {
             (Value::from(BODY_KEY_TYPE), Value::from(self.message_type)),
             (Value::from(BODY_KEY_CONTENT), Value::from(self.content)),
         ];
+        if let Some(parts) = &self.parts {
+            let encoded = rmp_serde::to_vec_named(parts)
+                .map_err(|_| Error::InvalidClaimBody("witness message parts are not encodable"))?;
+            let value = rmpv::decode::read_value(&mut encoded.as_slice())
+                .map_err(|_| Error::InvalidClaimBody("witness message parts are not encodable"))?;
+            entries.push((Value::from(BODY_KEY_PARTS), value));
+        }
         if let Some(metadata) = &self.metadata {
             entries.push((Value::from(BODY_KEY_METADATA), metadata.clone()));
         }
@@ -462,6 +470,7 @@ pub(crate) fn validate_canonical_witness_message_body(
     let mut author: Option<&str> = None;
     let mut message_type: Option<&str> = None;
     let mut content: Option<&str> = None;
+    let mut parts: Option<Vec<crate::ContentPart>> = None;
     let mut metadata: Option<Value> = None;
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;
@@ -484,6 +493,15 @@ pub(crate) fn validate_canonical_witness_message_body(
             BODY_KEY_CONTENT => {
                 content = value.as_str();
                 content.is_none()
+            }
+            BODY_KEY_PARTS => {
+                if parts.is_some() {
+                    return Err(malformed());
+                }
+                let mut encoded = Vec::new();
+                rmpv::encode::write_value(&mut encoded, value).map_err(|_| malformed())?;
+                parts = Some(rmp_serde::from_slice(&encoded).map_err(|_| malformed())?);
+                false
             }
             BODY_KEY_METADATA => {
                 if metadata.is_some() {
@@ -515,6 +533,7 @@ pub(crate) fn validate_canonical_witness_message_body(
         author,
         message_type,
         content,
+        parts,
         metadata,
         is_visible,
         order,
@@ -771,18 +790,4 @@ fn encoded_metadata_len(metadata: &Value) -> Option<usize> {
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, metadata).ok()?;
     Some(encoded.len())
-}
-
-/// The content-addressed binding for one authorized MESSAGE write: the actor
-/// that presented it and the canonical body bytes that carry every envelope
-/// axis. Deterministic across processes and stable as an ABI.
-fn witness_message_binding(actor: WriteActor, body: &[u8]) -> [u8; 32] {
-    let entity_ref: EntityId = actor.entity_ref();
-    let mut hasher = Sha256::new();
-    hasher.update(WITNESS_MESSAGE_BINDING_DOMAIN);
-    hasher.update(edge_actor_class_str(actor.actor_class()).as_bytes());
-    hasher.update(entity_ref.as_bytes());
-    hasher.update((body.len() as u64).to_le_bytes());
-    hasher.update(body);
-    hasher.finalize().into()
 }

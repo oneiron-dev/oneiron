@@ -571,6 +571,26 @@ pub(crate) fn register_message_docs_observer(
     )
 }
 
+/// Observer B for the base window's repo manifest map (FIX 6870): each
+/// manifest an import brings is merged here.
+pub(crate) fn register_repo_manifests_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let repo_manifests_map = doc.get_map(crate::sync::repo_manifests::REPO_MANIFESTS_MAP);
+    subscribe_map_observer(
+        doc,
+        &repo_manifests_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::repo_manifests::materialize_repo_manifests_from_delta,
+        ("repo_manifests", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(
