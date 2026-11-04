@@ -50,6 +50,7 @@ use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::memory::MemoryResult;
 
 mod composed_reads;
+mod credential_read;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {

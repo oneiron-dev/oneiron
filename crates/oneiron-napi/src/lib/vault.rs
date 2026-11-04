@@ -85,10 +85,13 @@ pub struct NapiVault {
     binding: Option<RawBinding>,
     /// `openWithHostRoot`'s wrong-root fact (FIX 4730); `false` otherwise.
     wrong_host_root: bool,
+    /// Owned verified READ proof; writes keep the original bound identity.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
 }
 
 /// The principal a bound vault's app host named, and its off-record
 /// session, if any: this handle's alone, never process state.
+#[derive(Clone)]
 struct RawBinding {
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -185,6 +188,7 @@ impl NapiVault {
             dimensions,
             binding: None,
             wrong_host_root: false,
+            read_proof: None,
         })
     }
 
@@ -222,6 +226,22 @@ impl NapiVault {
     #[napi]
     pub fn wrong_host_root(&self) -> bool {
         self.wrong_host_root
+    }
+
+    /// A new handle whose raw content and codebase metadata reads use this
+    /// credential. Unbound reads use its actual verified subject; bound reads
+    /// also prove the holder matches the bound actor. Writes are unchanged.
+    #[napi]
+    pub fn with_read_credential(&self, credential: String) -> napi::Result<NapiVault> {
+        let proof = oneiron_remote::verify_read_credential(&self.vault, &credential)
+            .map_err(facade_error)?;
+        Ok(NapiVault {
+            vault: Arc::clone(&self.vault),
+            dimensions: self.dimensions,
+            binding: self.binding.clone(),
+            wrong_host_root: self.wrong_host_root,
+            read_proof: Some(proof),
+        })
     }
 
     /// A NEW vault over this same open vault whose writes run as one caller
@@ -267,6 +287,7 @@ impl NapiVault {
                 session,
             }),
             wrong_host_root: false,
+            read_proof: self.read_proof.clone(),
         })
     }
 
@@ -511,9 +532,7 @@ impl NapiVault {
     #[napi]
     pub fn get_codebase_snapshot(&self, id: Buffer) -> napi::Result<Option<NapiCodebaseSnapshot>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get_codebase_snapshot(&eid)
-            .map_err(to_napi_err)?
+        self.snapshot_for(&eid)?
             .map(napi_codebase_snapshot)
             .transpose()
             .map_err(napi::Error::from_reason)
@@ -523,10 +542,7 @@ impl NapiVault {
     #[napi]
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: String) -> napi::Result<Vec<Buffer>> {
         let repo_ref = RepoRef::parse(&repo_ref).map_err(to_napi_err)?;
-        let ids = self
-            .vault
-            .codebase_snapshots_by_repo_ref(&repo_ref)
-            .map_err(to_napi_err)?;
+        let ids = self.snapshots_for_repo(&repo_ref)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -536,10 +552,7 @@ impl NapiVault {
         &self,
         project_id: String,
     ) -> napi::Result<Vec<Buffer>> {
-        let ids = self
-            .vault
-            .codebase_snapshots_by_project_id(&project_id)
-            .map_err(to_napi_err)?;
+        let ids = self.snapshots_for_project(&project_id)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
