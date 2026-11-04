@@ -92,7 +92,10 @@ pub(super) fn erase_actor_fields_in_txn(
     scrub_actor_fields_in_txn(&mut erase)?;
     if hard {
         let (vault, wtxn, actor) = erase.parts();
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
+        vault
+            .store
+            .attempt_operations
+            .erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
     }
     Ok(())
 }
