@@ -80,8 +80,7 @@ pub(crate) use self::model_step::erase_model_step_failure_reasons_in_txn;
 
 // FIX 7115: the payload text in checkpoint images, a row-held response.
 pub(crate) use self::response::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    retire_attempt_payload_in_txn,
+    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque, retire_attempt_payload_in_txn,
 };
 
 /// The input member that holds the AGENT_DEF snapshot.
