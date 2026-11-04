@@ -164,6 +164,24 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
     OutputPart::decode(value).is_some_and(|part| part_suffix(&part.request, part.index) == row_key)
 }
 
+/// Whether an export-part row's payload may be collected for reapply: a
+/// part's head count bounds its whole set's peak before any payload is
+/// copied (review P1 on #4467). Non-part bytes collect as today. A gated-out
+/// set stays in its window for a later tick; `join`'s own gate stays the
+/// backstop.
+pub(crate) fn part_row_collection_admitted(bytes: &[u8]) -> bool {
+    let Some(part) = OutputPart::decode(bytes) else {
+        return true;
+    };
+    let Some(peak_upper) = u64::from(part.count)
+        .checked_mul(PART_BYTES as u64)
+        .and_then(|frame| frame.checked_mul(3))
+    else {
+        return false;
+    };
+    assembly_fits(peak_upper)
+}
+
 /// Admits one part under `row_key`, the map key after its prefix: one that
 /// decodes, filed under its own request and place, in its sealing month's
 /// base window. When no signed result names its head ([`head_named`]: the
