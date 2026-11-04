@@ -8,6 +8,7 @@
 mod routes_backups_to_signing_keys;
 mod routes_coach;
 mod routes_connect_proposals;
+mod routes_connectors;
 mod routes_packs;
 mod routes_pads_to_runs;
 mod routes_secret_scan_to_skills;
@@ -651,6 +652,7 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
     routes_backups_to_signing_keys::merge(spec);
     routes_coach::merge(spec);
     routes_connect_proposals::merge(spec);
+    routes_connectors::merge(spec);
     routes_packs::merge(spec);
     routes_pads_to_runs::merge(spec);
     routes_secret_scan_to_skills::merge(spec);

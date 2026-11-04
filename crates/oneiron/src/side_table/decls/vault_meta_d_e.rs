@@ -563,7 +563,8 @@ side_tables! {
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
     /// Held automated sign act, one per recipient. Key: hex32/string.
-    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named
+        => crate::blob_artifact::esign::erase_held_signing_actor_in_txn;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// The send act a signing document's staged notices go out under with no caller (FIX 6219):

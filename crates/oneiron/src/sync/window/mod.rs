@@ -136,6 +136,8 @@ pub struct LoadedWindow {
     /// Observer B for the office proposal map (FIX 2691), on a base window
     /// only.
     _observer_office_proposals: Option<Subscription>,
+    /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
+    _observer_repo_manifests: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -218,6 +220,12 @@ impl LoadedWindow {
         let observer_office_proposals = key.world().is_none().then(|| {
             bridge::register_office_proposals_observer(&doc, vault, materializer, key.as_str())
         });
+        let observer_repo_manifests = Some(bridge::register_repo_manifests_observer(
+            &doc,
+            vault,
+            materializer,
+            key.as_str(),
+        ));
 
         Self {
             doc,
@@ -230,6 +238,7 @@ impl LoadedWindow {
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
             _observer_office_proposals: observer_office_proposals,
+            _observer_repo_manifests: observer_repo_manifests,
             observer_a_state,
         }
     }

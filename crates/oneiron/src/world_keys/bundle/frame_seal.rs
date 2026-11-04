@@ -167,7 +167,11 @@ pub(super) fn seal_outer(
     let slot_count = u16::try_from(slots.len()).map_err(|_| too_large())?;
     bytes.extend_from_slice(&slot_count.to_be_bytes());
     for slot in slots {
-        put_counted(&mut bytes, &slot.to_bytes())?;
+        let byte_len = slot.len();
+        let len = u32::try_from(byte_len).map_err(|_| refused("a sealed part is too large"))?;
+        bytes.reserve(4 + byte_len);
+        bytes.extend_from_slice(&len.to_be_bytes());
+        slot.write_to(&mut bytes)?;
     }
     // A part's frame bytes beyond its chunk: the length prefix and the envelope
     // around the part header.
@@ -178,7 +182,7 @@ pub(super) fn seal_outer(
         &mut SysRng,
     )
     .map_err(|_| refused("sealing failed"))?;
-    let per_part = 4 + probe.to_bytes().len();
+    let per_part = 4 + probe.len();
     let fixed = bytes.len() + 4;
     let len = body.byte_len();
     let total = match total {
@@ -196,7 +200,12 @@ pub(super) fn seal_outer(
         zeros: room - len,
     };
     seal_parts(&params, &kek, padded, &even_sizes(room, count), |part| {
-        put_counted(&mut bytes, &part.to_bytes())
+        let byte_len = part.len();
+        let len = u32::try_from(byte_len).map_err(|_| refused("a sealed part is too large"))?;
+        bytes.reserve(4 + byte_len);
+        bytes.extend_from_slice(&len.to_be_bytes());
+        part.write_to(&mut bytes)?;
+        Ok(())
     })?;
     if bytes.len() != total {
         return Err(refused("the sealed object missed its size"));

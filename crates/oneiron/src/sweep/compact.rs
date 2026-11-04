@@ -395,6 +395,8 @@ pub(super) fn compact_window_with(
     crate::sync::message_docs::scrub_message_docs(vault, &doc, None)?;
     // FIX 2691: and the office proposals of an erased artifact.
     crate::sync::office_proposals::scrub_office_proposals(vault, &doc, None)?;
+    // FIX 6870: and an erased repo's portable manifest.
+    crate::sync::repo_manifests::scrub_repo_manifests(vault, &doc, None)?;
     // FIX 3877: an origin claim carrier names no erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, &doc, None)?;
     // FIX 6387: nor does a birth carrier, so the history kept has no erased birth.
