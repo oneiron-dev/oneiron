@@ -235,6 +235,23 @@ impl Stream for OpenAiResponsesLlmStream<'_> {
                         }
                     }
                 }
+                Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::ChunkWithMetadata {
+                    chunk,
+                    metadata,
+                }))) => match this.accumulator.push_event(&chunk) {
+                    Ok(mut events) => {
+                        for event in &mut events {
+                            if let LlmStreamEvent::Done { usage, .. } = event {
+                                usage.call_metadata = Some(metadata.clone());
+                            }
+                        }
+                        this.pending.extend(events.into_iter().map(Ok));
+                    }
+                    Err(error) => {
+                        this.ended = true;
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                },
                 Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::Abort { usage }))) => {
                     this.pending
                         .extend(this.accumulator.abort_with_usage(usage).into_iter().map(Ok));
