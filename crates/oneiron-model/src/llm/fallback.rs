@@ -77,10 +77,13 @@ impl FallbackRegistry {
                 reason,
             })?;
         if message.content.is_empty()
-            || message
-                .content
-                .iter()
-                .all(|p| matches!(p, ContentPart::Text { text } | ContentPart::Reasoning { text, .. } if text.trim().is_empty()))
+            || message.content.iter().all(|p| match p {
+                ContentPart::Text { text } => text.trim().is_empty(),
+                ContentPart::Reasoning { text, data, .. } => {
+                    text.trim().is_empty() && data.is_none()
+                }
+                _ => false,
+            })
         {
             return Err(FallbackError::Empty(declared.name.clone()));
         }
