@@ -40,6 +40,12 @@ impl Vault {
     ///
     /// The identities or connector keys could not be read.
     pub fn linkedin_served_seats(&self) -> Result<Vec<LinkedInServedSeat>> {
+        if self
+            .checked_builtin_channel(LINKEDIN_CHANNEL, "linkedin-session")?
+            .is_none()
+        {
+            return Ok(Vec::new());
+        }
         let mut bound = Vec::new();
         {
             let txn = self.store.env.read_txn()?;
