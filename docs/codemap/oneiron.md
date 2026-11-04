@@ -1670,16 +1670,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/companion/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/companion/tests/support.rs` | test | s | 1 crate-vis | — | Valid retired FACET bytes, used only to prove every old write/replay door refuses them |
 | `src/companion/vault.rs` | src | s | 2 fn | — | Vault access-grant query for a companion PERSON profile |
-| `src/config.rs` | src | m | 3 struct · 6 fn · 4 mod · 2 re-export · 2 crate-vis | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
-| `src/config/bm25.rs` | src | s | 1 enum · 10 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
-| `src/config/community_graph/codec.rs` | src | s | 1 struct · 5 fn · 4 crate-vis | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
-| `src/config/community_graph/detection.rs` | src | m | 2 fn · 8 crate-vis | — | Graph projection and Leiden/CPM partition detection |
-| `src/config/community_graph/mod.rs` | src | s | 4 re-export · 6 crate-vis | — | Pure community graph projection, snapshot codecs and configuration |
-| `src/config/community_graph/refresh.rs` | src | s | 2 fn · 2 crate-vis | — | Refresh policy, affected-set expansion and read-side cache view |
-| `src/config/community_graph/types.rs` | src | s | 8 struct · 3 fn · 6 const · 1 re-export · 3 crate-vis | CommunityCacheMeta, CommunityEdge, CommunityGraphInput, CommunityId, CommunityMembership, CommunityProjection, CommunityRefreshReport, PprCommunityCache | Community constants, error, ids, config and shared shells |
-| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 5 fn · 9 const · 3 crate-vis | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
-| `src/config/retrieval_affect.rs` | src | s | 1 struct · 1 fn · 3 const · 2 crate-vis | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
-| `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 8 fn · 6 const · 2 crate-vis | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connect_delivery.rs` | src | s | 3 struct · 1 enum | ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined | Connect delivery and rejoin wire vocabulary |
 | `src/connector_key/accounting.rs` | src | m | 1 enum · 4 fn · 1 re-export · 3 crate-vis | ConnectorKeySendAdmission | Connector key budget admission and spend settlement |
 | `src/connector_key/accounting/batch.rs` | src | s | 2 fn · 1 const | — | Connector-key batch admission: a batch of send-like dispatches charged through one key, one transaction… |
@@ -3440,7 +3430,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 206 mod · 98 re-export · 28 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 205 mod · 99 re-export · 28 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |

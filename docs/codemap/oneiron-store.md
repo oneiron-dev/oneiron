@@ -13,11 +13,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/bundle_generations.rs` | src | s | 1 struct · 5 fn · 4 const | SealedBundleGeneration | Bundle generation identity, upload cadence and retirement selection |
 | `src/checkpoint_host_recipient.rs` | src | s | 1 struct · 1 enum · 3 fn | HostHoldsRecipient, HostHoldsSealing | Host recipient and sealing policy for checkpoint legal-hold members |
+| `src/config.rs` | src | m | 3 struct · 7 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
+| `src/config/bm25.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy | Rank-profile config: field/channel params, formula, recency, defaults |
+| `src/config/community_graph/codec.rs` | src | s | 1 struct · 9 fn | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
+| `src/config/community_graph/detection.rs` | src | m | 1 struct · 9 fn | Graph | Graph projection and Leiden/CPM partition detection |
+| `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |
+| `src/config/community_graph/refresh.rs` | src | s | 4 fn | — | Refresh policy, affected-set expansion and read-side cache view |
+| `src/config/community_graph/types.rs` | src | s | 9 struct · 3 fn · 1 type · 7 const · 1 re-export | CommunityCacheMeta, CommunityEdge, CommunityGraphInput, CommunityId, CommunityMembership, CommunityProjection, CommunityQueryView, CommunityRefreshReport +1 | Community constants, error, ids, config and shared shells |
+| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 9 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
+| `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
+| `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
 | `src/file_secret_marks.rs` | src | s | 1 struct · 2 enum · 5 fn · 2 type · 2 const | KeySpan, MemberStep, SecretSight | Value-free file-mask paths, read visibility, and byte-span transformations |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
 | `src/key_material.rs` | src | s | 1 struct · 1 enum · 4 fn | WorldKeyDestroyCause, WorldKeyDestruction | Guarded key derivation, OS entropy, and the world-key refusal constructor |
-| `src/lib.rs` | src | s | 14 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 15 mod | — | The store layer of the oneiron engine |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
 | `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 50 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
