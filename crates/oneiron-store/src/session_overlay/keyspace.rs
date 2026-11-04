@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use zeroize::Zeroize;
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 use super::journal::PublishedEntry;
 
 /// Manifest slot identifying one of the 28 named databases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum OverlayKeyspace {
+pub enum OverlayKeyspace {
     Entities = 0,
     TypeIndex = 1,
     ShortIds = 2,
@@ -48,7 +48,7 @@ impl OverlayKeyspace {
         self as usize
     }
 
-    pub(crate) const fn is_dupsort(self) -> bool {
+    pub const fn is_dupsort(self) -> bool {
         matches!(self, Self::TextPostings)
     }
 
@@ -291,16 +291,16 @@ impl OverlayState {
 pub(super) fn unbudgeted_row(keyspace: OverlayKeyspace, key: &[u8]) -> bool {
     match keyspace {
         OverlayKeyspace::VaultMeta => [
-            oneiron_store::overlay_bookkeeping::SCOPE_RECORD_PREFIX,
-            oneiron_store::overlay_bookkeeping::PROVENANCE_ROW_BIRTH_PREFIX,
-            oneiron_store::overlay_bookkeeping::PROVENANCE_BIRTH_BY_TRIGGER_PREFIX,
+            crate::overlay_bookkeeping::SCOPE_RECORD_PREFIX,
+            crate::overlay_bookkeeping::PROVENANCE_ROW_BIRTH_PREFIX,
+            crate::overlay_bookkeeping::PROVENANCE_BIRTH_BY_TRIGGER_PREFIX,
             super::short_id::SESSION_SHORT_ID_ORDINAL_KEY,
         ]
         .into_iter()
         .any(|prefix| key.starts_with(prefix)),
         // An edge key is `[src(16) | kind(1) | tgt(16)]`, in both directions.
         OverlayKeyspace::EdgesOut | OverlayKeyspace::EdgesIn => {
-            key.get(16) == Some(&(crate::edge::EdgeKind::FacetOf as u8))
+            key.get(16) == Some(&(oneiron_base::edge::EdgeKind::FacetOf as u8))
         }
         _ => false,
     }

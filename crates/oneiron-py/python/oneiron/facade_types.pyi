@@ -10290,7 +10290,7 @@ class PolicyOutboundRequest(TypedDict):
     world_ref: NotRequired[str | None]
     project_ref: NotRequired[str | None]
 PolicyEnforcementAction = Literal["allow", "warn", "reword", "block", "route_to_help", "hold", "skipped"]
-PolicySkipReason = Literal["no-backend", "no-document", "backend-unavailable", "response-unusable", "budget-exhausted", "policy-moving"]
+PolicySkipReason = Literal["no-backend", "no-document", "backend-unavailable", "response-unusable", "budget-exhausted", "admission-denied", "policy-moving"]
 class PolicyClassifyDecisionSkipped(TypedDict):
     skipped: PolicySkipReason
 PolicyClassifyDecision = Literal["allow", "warn", "reword", "block", "route-to-help", "hold"] | PolicyClassifyDecisionSkipped
@@ -16416,6 +16416,7 @@ class ProposalDeltaSettlement(TypedDict):
     proposed_text: str
     final_text: str
     delta: NotRequired[AmendmentDeltaView | None]
+    recorded_delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
