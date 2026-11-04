@@ -13515,6 +13515,7 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+    notices: NotRequired[list[WorldRecipientNotice]]
 class AgentSkillInput(TypedDict):
     skill_id: str
     min_version: NotRequired[str | None]

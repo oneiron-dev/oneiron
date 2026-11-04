@@ -1011,7 +1011,7 @@ pub struct DiaryEntryRequest {
     pub kind: Option<String>,
 }
 
-/// `oneiron::lens::record_ref::RecordRef`.
+/// `oneiron::store::record_ref::RecordRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecordRef {
     #[serde(rename = "kind")]
@@ -12193,7 +12193,7 @@ pub struct VectorSearchHit {
     pub embedding_matches: Vec<EmbeddingMatchEvidence>,
 }
 
-/// `oneiron::pipeline::vector_refinement::VectorRefinement`.
+/// `oneiron_store::vector_refinement::VectorRefinement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct VectorRefinement {
     #[serde(rename = "stored_dimensions")]
@@ -20661,7 +20661,7 @@ pub struct SlimDropRequest {
     pub waited_secs: u64,
 }
 
-/// `oneiron::heap_drop::HeapDropReport`.
+/// `oneiron_store::heap_drop::HeapDropReport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HeapDropReport {
     #[serde(rename = "sync_windows")]
@@ -38195,7 +38195,7 @@ pub struct CodeSymbolsReleased {
     pub released: bool,
 }
 
-/// `oneiron::code_document::types::CodeOpProvenance`.
+/// `oneiron::store::code_document_receipt::CodeOpProvenance`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CodeOpProvenance {
@@ -42776,6 +42776,8 @@ pub struct ArtifactExportFile {
     pub born_with: std::collections::HashMap<String, String>,
     #[serde(rename = "content_base64")]
     pub content_base64: String,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentSkillInput`.
@@ -42831,7 +42833,7 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
-/// `oneiron::agent_def::refusal::RefusalLevel`.
+/// `oneiron::store::agent_refusal::RefusalLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RefusalLevel {
     #[serde(rename = "none")]
@@ -42844,7 +42846,7 @@ pub enum RefusalLevel {
     Full,
 }
 
-/// `oneiron::agent_def::refusal::RefusalDial`.
+/// `oneiron::store::agent_refusal::RefusalDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefusalDial {
@@ -42854,7 +42856,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
