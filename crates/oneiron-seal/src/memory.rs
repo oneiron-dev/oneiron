@@ -7,10 +7,12 @@
 //! ([`SealMemoryProvider`]). Each seal and each verification is one
 //! operation with a ledger of its own, opened before it parses anything. The
 //! ledger reserves at least [`RESERVE_STEP`] at a time and serves smaller
-//! admissions from what it has left. It never gives anything back while its
-//! operation runs: it holds the sum of every allocation the operation's
-//! decodes asked for, not only what is live, which is sound and
-//! conservative. Everything it reserved goes back when the operation ends.
+//! admissions from what it has left. What it reserved from the service stays
+//! held until the operation ends, but what a decode no longer holds goes back
+//! to spare room for a later admission to reuse: a replacement is admitted at
+//! its full size while the old buffer is still alive, and the old bytes are
+//! released only after the new allocation succeeds, so simultaneous peaks
+//! stay charged. Everything it reserved goes back when the operation ends.
 //!
 //! A refusal is typed: the machine's memory floor or a deadline, or a
 //! cancelled call or a service that cannot answer. It is never a count or a
@@ -25,6 +27,8 @@
 
 use std::fmt;
 use std::ops::Deref;
+
+use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use lopdf::{DecodeAdmission, DecodeAdmissionError};
@@ -241,10 +245,11 @@ impl SealResourceLimits {
     }
 }
 
-/// One operation's reservations: grown by every admission, never shrunk
-/// while the operation runs, and given back whole when the last of the
-/// operation's handles drops. It is lopdf's `DecodeAdmission` for every
-/// decode the operation runs.
+/// One operation's reservations: admissions take spare room or reserve more,
+/// released bytes return to spare room for a later admission, held service
+/// reservations and a kept refusal never shrink, and everything reserved goes
+/// back when the last of the operation's handles drops. It is lopdf's
+/// `DecodeAdmission` for every decode the operation runs.
 pub(crate) struct MemoryLedger {
     service: Arc<dyn SealMemory>,
     /// Where each finished decode's length goes.
@@ -254,7 +259,8 @@ pub(crate) struct MemoryLedger {
 
 #[derive(Default)]
 struct LedgerState {
-    /// Reserved, and not yet admitted to an allocation.
+    /// Reserved, and available to a later admission: what is left plus what
+    /// was released.
     spare: u64,
     /// What the service holds for each reservation.
     held: Vec<Box<dyn Send>>,
@@ -295,6 +301,15 @@ impl MemoryLedger {
         self.take(u64::try_from(bytes).unwrap_or(u64::MAX))
     }
 
+    /// Returns `bytes` admitted before, whose allocation was replaced or
+    /// freed, to spare room for a later admission to reuse. Held service
+    /// reservations and a kept refusal stay as they are: this never returns
+    /// host memory.
+    pub(crate) fn release(&self, bytes: u64) {
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(bytes);
+    }
+
     /// Whether memory refused the decode that failed with `err`, and how:
     /// the refusal this ledger kept (the service's own words, which lopdf's
     /// error cannot carry), else lopdf's. A refusal is never read as a
@@ -316,10 +331,19 @@ impl DecodeAdmission for MemoryLedger {
             .map_err(SealMemoryRefusal::to_decode)
     }
 
+    fn release(&self, bytes: usize) {
+        MemoryLedger::release(self, u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+
     fn decoded(&self, bytes: usize) {
         self.observed.note(Counter::StreamDecodeBytes, bytes);
     }
 }
+
+/// The fixed `Arc` control header a shared owner holds beside its bytes: the
+/// strong and weak counts. A model of the allocation, not a content ceiling:
+/// it is reserved once at creation, never per `Arc::clone`.
+pub(crate) const SHARED_CONTROL_BYTES: usize = 2 * std::mem::size_of::<usize>();
 
 /// What a memory service holds for one owner's bytes, until the owner drops
 /// it (see [`SealMemoryProvider::lease`]).
@@ -355,20 +379,40 @@ impl AdmittedBytes {
         }
     }
 
-    /// A copy of `bytes`, its memory reserved from `memory`'s service before
-    /// the copy is made. The reservation is the copy's own: it goes back
-    /// when the copy drops, not when an operation ends.
+    /// No bytes, with the shared `Arc` control header reserved.
+    pub fn shared_empty(memory: &SealMemoryProvider) -> Result<Self, SealMemoryRefusal> {
+        Ok(Self {
+            bytes: Vec::new(),
+            _lease: Some(memory.lease(SHARED_CONTROL_BYTES)?),
+        })
+    }
+
+    /// No bytes, with an already reserved shared header.
+    pub(crate) fn from_leased_empty(lease: Lease) -> Self {
+        Self {
+            bytes: Vec::new(),
+            _lease: Some(lease),
+        }
+    }
+
+    /// A copy of `bytes`, its memory plus the shared header reserved from
+    /// `memory`'s service before the copy is made. The reservation is the
+    /// copy's own: it goes back when the copy drops, not when an operation
+    /// ends. The header ([`SHARED_CONTROL_BYTES`]) is reserved once here,
+    /// never per `Arc::clone`.
     ///
     /// # Errors
     /// The service's refusal; [`SealMemoryRefusal::Unavailable`] when
     /// `memory` names no service. An allocator that refuses bytes the
     /// service reserved is the floor with nothing available.
     pub fn copy_from(memory: &SealMemoryProvider, bytes: &[u8]) -> Result<Self, SealMemoryRefusal> {
-        let mut copy = Self::empty();
-        if !bytes.is_empty() {
-            copy.regrow(bytes.len(), memory.lease(bytes.len())?)?;
-            copy.extend(bytes)?;
+        if bytes.is_empty() {
+            return Self::shared_empty(memory);
         }
+        let mut copy = Self::empty();
+        let held = memory.lease(bytes.len().saturating_add(SHARED_CONTROL_BYTES))?;
+        copy.regrow(bytes.len(), held)?;
+        copy.extend(bytes)?;
         Ok(copy)
     }
 
@@ -376,7 +420,8 @@ impl AdmittedBytes {
     /// when something already holds their memory (the organ runtime's
     /// reservation, made before it copied them), else a lease of their own
     /// from `memory`'s service, taken now. The lease covers the buffer's
-    /// whole capacity and drops with it.
+    /// whole capacity plus the shared header ([`SHARED_CONTROL_BYTES`],
+    /// once, never per `Arc::clone`) and drops with it.
     ///
     /// # Errors
     /// The service's refusal, when the bytes need a lease of their own.
@@ -386,14 +431,16 @@ impl AdmittedBytes {
         bytes: Vec<u8>,
         held: Option<Box<dyn Send>>,
     ) -> Result<Self, SealMemoryRefusal> {
-        if bytes.capacity() == 0 {
-            return Ok(Self::empty());
-        }
         let lease = match held {
-            Some(held) => Lease {
-                _held: Mutex::new(held),
-            },
-            None => memory.lease(bytes.capacity())?,
+            Some(held) => {
+                // The runtime already holds the bytes; the header is leased
+                // beside them and both are held together.
+                let control = memory.lease(SHARED_CONTROL_BYTES)?;
+                Lease {
+                    _held: Mutex::new(Box::new((held, control)) as Box<dyn Send>),
+                }
+            }
+            None => memory.lease(bytes.capacity().saturating_add(SHARED_CONTROL_BYTES))?,
         };
         Ok(Self {
             bytes,
@@ -451,6 +498,41 @@ impl AdmittedBytes {
     }
 }
 
+/// The wire form is the bytes alone, exactly as the `Vec<u8>` this
+/// replaces: a wire receipt arrives without a lease, like every other
+/// received buffer, and its receiver admits before use.
+impl serde::Serialize for AdmittedBytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AdmittedBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self {
+            bytes: Vec::<u8>::deserialize(deserializer)?,
+            _lease: None,
+        })
+    }
+}
+
+impl AdmittedBytes {
+    /// The buffer for a sole owner without copying (FIX 8452): a shared
+    /// buffer is copied instead, so callers reserve the copy's bytes first —
+    /// a copy is memory nothing reserved.
+    pub(crate) fn into_vec(shared: SharedBytes) -> Vec<u8> {
+        Arc::try_unwrap(shared)
+            .map(|owned| owned.bytes)
+            .unwrap_or_else(|shared| shared.bytes.clone())
+    }
+}
+
 impl Deref for AdmittedBytes {
     type Target = [u8];
 
@@ -481,6 +563,100 @@ impl PartialEq for AdmittedBytes {
 }
 
 impl Eq for AdmittedBytes {}
+
+/// Text whose memory was reserved before it was allocated, with the lease
+/// that holds the reservation (FIX 8455). The string and its lease drop
+/// together, so the memory goes back when the last owner lets go and never
+/// before. It is shared as [`SharedStr`] and has no clone: a copy would be
+/// memory nothing reserved.
+pub struct AdmittedStr {
+    text: String,
+    /// Holds the text's bytes plus the shared header; none while it holds
+    /// nothing. Never read: it is dropped with the text.
+    _lease: Option<Lease>,
+}
+
+/// Admitted text, shared by every owner that keeps it: a fetch response,
+/// the fetcher's cache, a hit.
+pub type SharedStr = Arc<AdmittedStr>;
+
+impl AdmittedStr {
+    /// No text, and nothing reserved.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            text: String::new(),
+            _lease: None,
+        }
+    }
+
+    /// No text, with the shared `Arc` control header reserved.
+    pub fn shared_empty(memory: &SealMemoryProvider) -> Result<Self, SealMemoryRefusal> {
+        Ok(Self {
+            text: String::new(),
+            _lease: Some(memory.lease(SHARED_CONTROL_BYTES)?),
+        })
+    }
+
+    /// A copy of `text`, its bytes plus the shared header reserved from
+    /// `memory`'s service before the copy is made. The reservation is the
+    /// copy's own: it goes back when the copy drops, not when an operation
+    /// ends. Empty text reserves the shared header.
+    ///
+    /// # Errors
+    /// The service's refusal; [`SealMemoryRefusal::Unavailable`] when
+    /// `memory` names no service.
+    pub fn copy_from(memory: &SealMemoryProvider, text: &str) -> Result<Self, SealMemoryRefusal> {
+        if text.is_empty() {
+            return Self::shared_empty(memory);
+        }
+        let lease = memory.lease(text.len().saturating_add(SHARED_CONTROL_BYTES))?;
+        Ok(Self {
+            text: text.to_owned(),
+            _lease: Some(lease),
+        })
+    }
+
+    /// `text` with `lease`, already reserved for its bytes plus the shared
+    /// header (the native fetcher's deadline-bound reservation).
+    pub(crate) fn from_leased(text: String, lease: Lease) -> Self {
+        Self {
+            text,
+            _lease: Some(lease),
+        }
+    }
+}
+
+impl Deref for AdmittedStr {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl AsRef<str> for AdmittedStr {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl fmt::Debug for AdmittedStr {
+    /// The length only: fetched headers stay out of every debug string.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdmittedStr")
+            .field("len", &self.text.len())
+            .finish()
+    }
+}
+
+impl PartialEq for AdmittedStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for AdmittedStr {}
 
 /// A length as a service counts bytes.
 fn wide(bytes: usize) -> u64 {

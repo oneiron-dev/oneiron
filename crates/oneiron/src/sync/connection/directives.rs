@@ -57,13 +57,15 @@ fn applied(
 impl SyncConnection {
     /// Runs a round of the owner's residence directives each time the
     /// upkeep wakes them. When a round finished one, the authority catch-up
-    /// runs again, so the results reach the home by its append half.
+    /// runs again, so the results reach the home by its append half. Each
+    /// round holds the host's admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_directives(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> std::convert::Infallible {
         loop {
             self.directive_wake.notified().await;
+            let _round = self.admit_round().await;
             match self.apply_residence_directives().await {
                 Ok(0) | Err(TransportError::InvalidPayload(_)) => {}
                 Ok(_) => {
