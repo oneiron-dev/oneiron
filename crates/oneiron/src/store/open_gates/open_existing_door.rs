@@ -193,6 +193,7 @@ impl Store {
             scope_stamps: hooks.scope_stamps,
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
+            actor_scrubs: hooks.actor_scrubs,
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
