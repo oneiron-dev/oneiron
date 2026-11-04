@@ -809,15 +809,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WorkflowDefinition"
-     ],
+     "notable": [],
      "path": "src/agent_def/workflow.rs",
      "purpose": "Saved ordered agent compositions",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 1,
+      "fn": 6,
+      "re-export": 1
      }
     },
     {
@@ -6847,6 +6845,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/agent_knowledge_selection.rs",
+     "purpose": "Which claims an agent pack's selected-knowledge facet may carry: the ordinary claims directly about the agent",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/agent_person_import.rs",
      "purpose": "Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after…",
      "surface": {
@@ -7242,7 +7250,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 13
      }
     },
@@ -17661,7 +17669,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 31,
       "fn": 3
      }
     },
@@ -34144,13 +34152,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -43065,7 +43073,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -43179,7 +43187,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AskRole",
       "AskRoleResolver",
       "AskTo",
       "HumanDecisionQueue",
@@ -43190,9 +43197,8 @@
      "path": "src/llm/decision/ladder/roles.rs",
      "purpose": "Decision ladder person asks and the roles they go to",
      "surface": {
-      "enum": 1,
-      "fn": 4,
-      "re-export": 1,
+      "fn": 3,
+      "re-export": 2,
       "struct": 4,
       "trait": 2
      }
@@ -43358,7 +43364,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
      }
     },
     {
@@ -44047,7 +44053,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 16,
       "mod": 11,
       "re-export": 27
      }
@@ -44073,7 +44079,6 @@
      "path": "src/llm/model_stream.rs",
      "purpose": "Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach…",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 12
@@ -44157,7 +44162,6 @@
      "notable": [
       "CatalogSeed",
       "ModelRegistryRow",
-      "ModelScoreDiff",
       "ModelWireFormat",
       "ScoreObservation",
       "ScoreSnapshot",
@@ -44166,11 +44170,11 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 16,
-      "re-export": 2,
-      "struct": 6
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -44274,7 +44278,6 @@
      "notable": [
       "DescriptionPolicy",
       "DescriptionReask",
-      "MeasuredDescription",
       "ModelDescription",
       "OwnerModelLine",
       "ReaskTrigger",
@@ -44288,11 +44291,11 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 13,
-      "re-export": 2,
-      "struct": 10
+      "re-export": 3,
+      "struct": 9
      }
     },
     {
@@ -67187,7 +67190,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HookActorClass",
       "HookOutcomeKind",
       "HookPhase",
       "HookRenderClass",
@@ -67198,8 +67200,8 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "crate-vis": 8,
-      "enum": 4,
-      "re-export": 3,
+      "enum": 3,
+      "re-export": 4,
       "struct": 2
      }
     },
@@ -67755,7 +67757,7 @@
      "path": "src/skill_hub/refinement_custody.rs",
      "purpose": "Candidate-owned custody for inert refinement rulings",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 11
      }
     },
     {
@@ -67865,13 +67867,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/source_custody.rs",
      "purpose": "Source-only retirement and payload cleanup, shared by local/raw/replay/erase",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 6
      }
     },
     {
@@ -70406,6 +70408,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskRole"
+     ],
+     "path": "src/store/decision_ask_role.rs",
+     "purpose": "The role a human decision ask goes to, and the serde form of an answer's actor",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/decision_question_watches.rs",
+     "purpose": "Which units a typed question watches for arrivals: the units its outcome binding names, and the sources its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "StoreDeleteGuards"
      ],
      "path": "src/store/delete_guards.rs",
@@ -71790,6 +71816,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/linear_pull_cursor.rs",
+     "purpose": "The lift sweep's typed acceptance for the tracker pull-page cursor row (`LINEAR_PULL_CURSOR`)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -71861,9 +71897,45 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 74,
-      "mod": 74,
-      "re-export": 29
+      "crate-vis": 80,
+      "mod": 79,
+      "re-export": 31
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeasuredDescription"
+     ],
+     "path": "src/store/model_description_rows.rs",
+     "purpose": "The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`)",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelScoreDiff"
+     ],
+     "path": "src/store/model_score_diff.rs",
+     "purpose": "One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows)",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/model_stream_row.rs",
+     "purpose": "The durable row of one shared model stream (`MODEL_STREAM`): its owner, stable key, frozen request and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -72092,6 +72164,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HookActorClass"
+     ],
+     "path": "src/store/pack_hook_actor_class.rs",
+     "purpose": "The actor classes a pack hook's selector may name",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/pad_object_membership.rs",
      "purpose": "Generation membership policy named by a pad-object install",
@@ -72250,6 +72334,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "StoreProjectWrites"
+     ],
+     "path": "src/store/project_writes.rs",
+     "purpose": "The project write hooks the store layer's batch put and import paths run, supplied by the engine when a…",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ProposalSpoolClaim",
       "ProposalSpoolFloor",
       "SpoolAtFloor",
@@ -72322,6 +72418,18 @@
      "surface": {
       "const": 1,
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreRecordHooks"
+     ],
+     "path": "src/store/record_hooks.rs",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation and room…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -72533,6 +72641,16 @@
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/result_body_rows.rs",
+     "purpose": "The tag byte of a raw result body row: where its body is (in the row or in a body file) and whether the row…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -73100,10 +73218,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/skill_refinement_custody.rs",
+     "purpose": "The custody index of a skill candidate's refinement carriers: which carriers a candidate owns, the holder…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/skill_source_carrier.rs",
      "purpose": "Holder-bound exact skill source carrier framing",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_source_custody.rs",
+     "purpose": "The source-custody index of a skill holder: the live, dead or unseen state of each (holder, content hash) pair",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -73374,6 +73512,20 @@
      "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
      "surface": {
       "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowDefinition"
+     ],
+     "path": "src/store/workflow_definition.rs",
+     "purpose": "A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -79178,7 +79330,7 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -79205,7 +79357,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 62,
+      "crate-vis": 61,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -88449,7 +88601,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88941,7 +89093,7 @@
     "engine_store_hooks": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
@@ -89702,7 +89854,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 340,
+     "files": 353,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89942,7 +90094,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6229,
+   "source_files": 6243,
    "test_files": 898
   },
   "oneiron-android": {
