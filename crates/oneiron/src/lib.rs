@@ -252,7 +252,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;

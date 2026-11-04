@@ -3410,7 +3410,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointAttestation",
@@ -3421,7 +3421,7 @@
      "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 13,
       "struct": 3
      }
@@ -10934,21 +10934,6 @@
      "path": "src/build_cache/tests/hit_metadata.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SealedBundleGeneration"
-     ],
-     "path": "src/bundle_generations.rs",
-     "purpose": "Bundle generation identity, upload cadence and retirement selection",
-     "surface": {
-      "const": 3,
-      "crate-vis": 1,
-      "fn": 4,
-      "struct": 1
-     }
     },
     {
      "bucket": "s",
@@ -25435,7 +25420,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 28,
+      "crate-vis": 26,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -25682,14 +25667,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RoomParty"
+      "RoomParty",
+      "RoomPartyEntry"
      ],
      "path": "src/disclosure/room_party.rs",
      "purpose": "The term one room member brings to the room's meet (ARCH-0067 §8: \"the grants behind the people and agents…",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -42236,108 +42223,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LensAtom"
-     ],
-     "path": "src/lens/atom/atom_enum.rs",
-     "purpose": "LensAtom closed enum with wire codec and primitive/validate/budget dispatch",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 5
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AnswerSheetAtom",
-      "AsofScrubberAtom",
-      "ClaimLineAtom",
-      "CollectionAtom",
-      "GeneratedUiResultSetActionEvent",
-      "GeneratedUiResultSetAtom",
-      "GeneratedUiResultSetRow",
-      "GeneratedUiResultSetSelectAll",
-      "GeneratedUiResultSetSelection",
-      "GraphEdge",
-      "GraphNode",
-      "InspectorAtom",
-      "LedgerCell",
-      "LedgerRowAtom",
-      "LensStatus",
-      "LensTextSpan",
-      "MediaAtom",
-      "MetaLineAtom",
-      "NeighborhoodGraphAtom",
-      "PackLineAtom",
-      "PostmarkAtom",
-      "QuickFilterAtom",
-      "ReceiptAtom",
-      "SealAtom",
-      "SealLevel",
-      "SectionAtom",
-      "StatusDotAtom",
-      "TextBlockAtom",
-      "ThreadEntryAtom",
-      "ThrobberAtom",
-      "TwoClocksAtom",
-      "VadBadge",
-      "VoiceLineAtom"
-     ],
-     "path": "src/lens/atom/atom_leaves.rs",
-     "purpose": "Leaf payload structs with per-atom validate and fallback impls",
-     "surface": {
-      "crate-vis": 12,
-      "enum": 6,
-      "fn": 2,
-      "struct": 27
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "LensNode"
-     ],
-     "path": "src/lens/atom/atom_node.rs",
-     "purpose": "LensNode tree type with its Deserialize seeds: the tree decodes whole, at any width or depth its codec reads…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "FiniteF64",
-      "LensText"
-     ],
-     "path": "src/lens/atom/atom_scalars.rs",
-     "purpose": "Scalar newtypes LensText/FiniteF64 with TryFrom/serde impls, and kit-version/kind-list consts",
-     "surface": {
-      "const": 3,
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/lens/atom/mod.rs",
-     "purpose": "The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its…",
-     "surface": {
-      "crate-vis": 1,
-      "re-export": 4
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -42349,230 +42234,6 @@
      "surface": {
       "fn": 1,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiCatalog",
-      "GeneratedUiCatalogDescriptor",
-      "GeneratedUiCatalogVersion",
-      "GeneratedUiComponentAtom",
-      "GeneratedUiComponentSchema"
-     ],
-     "path": "src/lens/generated_ui/genui_app_catalog.rs",
-     "purpose": "Component catalogs an app declares (FIX 9891, 9893): the catalog name, its semver `catalogVersion`, the…",
-     "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 6,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiCard"
-     ],
-     "path": "src/lens/generated_ui/genui_card.rs",
-     "purpose": "Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding",
-     "surface": {
-      "fn": 13,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiPrebuilt",
-      "GeneratedUiPrimitive",
-      "GeneratedUiSummaryCardPrebuilt",
-      "GeneratedUiSurfaceCapabilities"
-     ],
-     "path": "src/lens/generated_ui/genui_catalog.rs",
-     "purpose": "The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion",
-     "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 11,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiDecoded",
-      "GeneratedUiFallback"
-     ],
-     "path": "src/lens/generated_ui/genui_decode.rs",
-     "purpose": "The staged version boundary every generated-UI envelope crosses first (FIX 7967; CALLS \"FIX 7967 7970…",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "GeneratedLens",
-      "LensLoadAction",
-      "LensVersionStamp"
-     ],
-     "path": "src/lens/generated_ui/genui_envelope.rs",
-     "purpose": "Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation",
-     "surface": {
-      "const": 3,
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 11,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LensAtomInventoryChange",
-      "LensBehaviorDiff",
-      "LensBehaviorFingerprint",
-      "LensBehaviorHandle",
-      "LensHandleRoleChange"
-     ],
-     "path": "src/lens/generated_ui/genui_fingerprint.rs",
-     "purpose": "Golden-corpus behavior fingerprint and structured behavior diff",
-     "surface": {
-      "fn": 24,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/lens/generated_ui/genui_heal.rs",
-     "purpose": "Healing a generated-UI segment cut mid-stream (FIX 7970; ARCH-0048 G4 healing-tolerant parse): a cut string…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiJsonPatchOperation"
-     ],
-     "path": "src/lens/generated_ui/genui_json_patch.rs",
-     "purpose": "RFC-6902 JSON Patch for the patch stream profile (FIX 7968): the operation type, its all-or-nothing…",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "LensEvaluatedRevision",
-      "LensRegenFailure",
-      "LensRegenFailurePhase",
-      "LensRegenOutcome",
-      "LensRegenRequest",
-      "LensRegenerator"
-     ],
-     "path": "src/lens/generated_ui/genui_regen.rs",
-     "purpose": "Regen request and outcome decision path over behavior fingerprints",
-     "surface": {
-      "enum": 2,
-      "fn": 15,
-      "struct": 3,
-      "trait": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiCardElement",
-      "GeneratedUiCardStart",
-      "GeneratedUiCardStateUpdate",
-      "GeneratedUiDataModel",
-      "GeneratedUiNode",
-      "GeneratedUiRender",
-      "GeneratedUiSegment"
-     ],
-     "path": "src/lens/generated_ui/genui_render.rs",
-     "purpose": "Flat render validation, segment framing and reassembly, and segment wire validators",
-     "surface": {
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 8,
-      "struct": 6
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiActionDeclaration",
-      "GeneratedUiActionEvent",
-      "GeneratedUiActionTier",
-      "GeneratedUiArchiveReason",
-      "GeneratedUiCardLifecycle",
-      "GeneratedUiCardPhase",
-      "GeneratedUiStatePatch",
-      "GeneratedUiStateSnapshot",
-      "SelfUiBindableProperty",
-      "SelfUiBinding",
-      "SelfUiStateValue"
-     ],
-     "path": "src/lens/generated_ui/genui_state.rs",
-     "purpose": "Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate",
-     "surface": {
-      "crate-vis": 8,
-      "enum": 6,
-      "fn": 7,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "GeneratedUiCardReady",
-      "GeneratedUiCardStatePatch",
-      "GeneratedUiCardStateSnapshot",
-      "GeneratedUiPartialNode",
-      "GeneratedUiPartialTree",
-      "GeneratedUiStream",
-      "GeneratedUiStreamOutcome",
-      "GeneratedUiStreamProfile"
-     ],
-     "path": "src/lens/generated_ui/genui_stream.rs",
-     "purpose": "Stream profiles and the one incremental stream state (FIX 7968, 7970)",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 2,
-      "fn": 10,
-      "struct": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/lens/generated_ui/mod.rs",
-     "purpose": "The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation and app-declared…",
-     "surface": {
-      "crate-vis": 1,
-      "re-export": 11
      }
     },
     {
@@ -42924,30 +42585,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ButtonControl",
-      "SegmentedControl",
-      "SelectControl",
-      "SelfUiAction",
-      "SelfUiControl",
-      "SelfUiOption",
-      "SelfUiValue",
-      "SliderControl",
-      "TextInputControl",
-      "ToggleControl"
-     ],
-     "path": "src/lens/self_ui.rs",
-     "purpose": "The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value…",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 2,
-      "fn": 1,
-      "struct": 8
-     }
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -43046,41 +42683,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/lens/validate.rs",
-     "purpose": "Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]…",
-     "surface": {
-      "crate-vis": 11
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "LensHandleRef",
-      "LensHandleRole"
-     ],
-     "path": "src/lens/wire_ids.rs",
-     "purpose": "Bounded wire tokens shared by every other lens concern",
-     "surface": {
-      "enum": 1,
-      "fn": 2,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/lens/wire_limits.rs",
-     "purpose": "Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -43088,8 +42690,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 210,
-      "re-export": 94
+      "mod": 207,
+      "re-export": 97
      }
     },
     {
@@ -47986,8 +47588,8 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 29,
-      "mod": 41,
-      "re-export": 66
+      "mod": 40,
+      "re-export": 67
      }
     },
     {
@@ -50094,88 +49696,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WebCrawlRequest",
-      "WebFetchRequest"
-     ],
-     "path": "src/memory/web_acquisition/door.rs",
-     "purpose": "Typed inputs for the two acquisition doors",
-     "surface": {
-      "fn": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "CrawlCompletion",
-      "CrawlPageBudget",
-      "CrawlPageFailure",
-      "CrawlRequest",
-      "CrawlResult",
-      "CrawlScope",
-      "FetchResult",
-      "MinExtractedContentBytes",
-      "RendererAttemptFailure",
-      "RendererError",
-      "RendererErrorKind",
-      "RendererKind",
-      "WebAcquisition",
-      "WebFetchError"
-     ],
-     "path": "src/memory/web_acquisition/mod.rs",
-     "purpose": "Web acquisition values and the host-supplied acquisition port",
-     "surface": {
-      "const": 2,
-      "crate-vis": 3,
-      "enum": 6,
-      "fn": 10,
-      "re-export": 2,
-      "struct": 7,
-      "trait": 1,
-      "type": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "HostedEgressRefusal"
-     ],
-     "path": "src/memory/web_acquisition/refusal.rs",
-     "purpose": "—",
-     "surface": {
-      "const": 2,
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/memory/web_acquisition/result.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/memory/web_acquisition/url.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/memory/web_fetch.rs",
      "purpose": "Actor-bound web acquisition and import",
@@ -51165,219 +50685,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AnswerActor"
-     ],
-     "path": "src/model_decision/answer_actor.rs",
-     "purpose": "An answer actor identity, including its erased state",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "QuestionFamily"
-     ],
-     "path": "src/model_decision/catalogue.rs",
-     "purpose": "The engine's registered typed-question families, in one place",
-     "surface": {
-      "const": 50,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/codec.rs",
-     "purpose": "Canonical entity references for typed-decision wire records",
-     "surface": {
-      "crate-vis": 10
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/model_decision/mod.rs",
      "purpose": "Model-independent typed decision vocabulary and pure policy values",
      "surface": {
-      "crate-vis": 3,
-      "mod": 2,
-      "re-export": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "BandMode",
-      "DecisionBandEnforceRequest",
-      "DecisionBandLearnRequest",
-      "DecisionBandPolicy",
-      "DecisionBandReadRequest",
-      "LearnedBand",
-      "PersonThreshold",
-      "Reversibility",
-      "ThinkThreshold"
-     ],
-     "path": "src/model_decision/policy.rs",
-     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
-     "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 11,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PairedAnswer",
-      "ProviderCapability",
-      "ProviderDecision"
-     ],
-     "path": "src/model_decision/provider.rs",
-     "purpose": "Provider answer values, capabilities, and score-level rules",
-     "surface": {
-      "const": 3,
-      "crate-vis": 4,
-      "fn": 3,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/questions/mod.rs",
-     "purpose": "Graph-question recipe and outcome vocabulary",
-     "surface": {
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "GraphQuestionInput",
-      "GraphQuestionRef"
-     ],
-     "path": "src/model_decision/questions/recipe.rs",
-     "purpose": "Graph-question identities and explicit evidence joins",
-     "surface": {
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CalibrationPair",
-      "OmittedNeighbor",
-      "OutcomeBinding",
-      "OutcomeLabel",
-      "OutcomeSource",
-      "OutcomeWindowClose",
-      "QuestionActivation",
-      "QuestionAudience",
-      "QuestionMedia",
-      "QuestionScheduleHead",
-      "RefreshPolicy",
-      "SourceConflict",
-      "WindowOutcome"
-     ],
-     "path": "src/model_decision/questions/records.rs",
-     "purpose": "Standing-question outcome, refresh, and evidence values",
-     "surface": {
       "crate-vis": 1,
-      "enum": 5,
-      "fn": 1,
-      "struct": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AskAct",
-      "HolderKind",
-      "RoleRank"
-     ],
-     "path": "src/model_decision/roles.rs",
-     "purpose": "Actor-free role ranks, ask acts, and holder kinds",
-     "surface": {
-      "enum": 3,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "SlideReviewLimits",
-      "SlideReviewPolicy",
-      "SlideReviewPolicyRow",
-      "SlideReviewPrecedence",
-      "SlideReviewRoute"
-     ],
-     "path": "src/model_decision/slides_policy.rs",
-     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
-     "surface": {
-      "enum": 2,
-      "fn": 8,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/state.rs",
-     "purpose": "Caller-prepared decision state fitting",
-     "surface": {
-      "fn": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AnswerContract",
-      "DecisionAnswer",
-      "DecisionBand",
-      "DecisionClass",
-      "DecisionDial",
-      "DecisionQuestion",
-      "DecisionQuestionInput",
-      "DecisionRung",
-      "DecisionTime",
-      "EvidenceVersion",
-      "HostRuleRef",
-      "HumanAskReason",
-      "ImageBox",
-      "ImagePoint",
-      "PairedReading",
-      "PersonChangedAnswer",
-      "ProviderPin",
-      "Reasoning",
-      "ReasoningCause",
-      "StateCut",
-      "StopCause"
-     ],
-     "path": "src/model_decision/types.rs",
-     "purpose": "Typed decision questions, answer contracts, and measurement values",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 8,
-      "fn": 13,
-      "struct": 13
+      "re-export": 1
      }
     },
     {
@@ -57622,22 +56935,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PolicyModelAnswer",
-      "PolicyOutputContract"
-     ],
-     "path": "src/policy_model/contract.rs",
-     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
-     "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57694,16 +56991,6 @@
       "enum": 2,
       "fn": 7,
       "struct": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/policy_model/goal_limits.rs",
-     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
-     "surface": {
-      "crate-vis": 14
      }
     },
     {
@@ -58009,23 +57296,6 @@
      "purpose": "The one-tap undo of an agent's tighten (FIX 4480): the tapping holder's own act (`by: Owner`), bound to the…",
      "surface": {
       "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "PolicyPatternRole",
-      "PolicyPatternRule"
-     ],
-     "path": "src/policy_model/pattern.rs",
-     "purpose": "Substrate-owner pattern rules",
-     "surface": {
-      "const": 2,
-      "crate-vis": 9,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
      }
     },
     {
@@ -62610,60 +61880,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "BudgetLine",
-      "DeclarationEditor",
-      "DeclarationError",
-      "DeclaredTeachers",
-      "LeaseUnit",
-      "RunDeclaration"
-     ],
-     "path": "src/run_budget/declaration.rs",
-     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
-     "surface": {
-      "crate-vis": 8,
-      "enum": 2,
-      "fn": 15,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AddFundsNotice",
-      "CheckpointRef",
-      "DeclaredMaximum",
-      "JobMaximum",
-      "JobSignal",
-      "JobStartRefused",
-      "MaximumShown",
-      "MaximumStop",
-      "ResumeOffer",
-      "ResumeRefused",
-      "StopRefused"
-     ],
-     "path": "src/run_budget/job_maximum.rs",
-     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
-     "surface": {
-      "enum": 4,
-      "fn": 9,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/run_budget/mod.rs",
-     "purpose": "Run budget declarations and paid-job maximum state",
-     "surface": {
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/run_tree/a2a.rs",
      "purpose": "Attempt-record to A2A task projection with cancel/landing extensions",
@@ -63256,7 +62472,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 9,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 2,
       "type": 1
      }
@@ -65108,18 +64324,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SecretManifest",
-      "SecretManifestEntry"
-     ],
+     "notable": [],
      "path": "src/secret_manifest.rs",
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)",
      "surface": {
-      "const": 1,
-      "fn": 3,
-      "struct": 2
+      "re-export": 1
      }
     },
     {
@@ -65162,14 +64373,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_record/floor.rs",
      "purpose": "Vault floor resolution plus the shared strict POLICY_MANIFEST walk",
      "surface": {
-      "crate-vis": 8,
-      "fn": 2
+      "crate-vis": 7
      }
     },
     {
@@ -65184,25 +64394,22 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "SecretBinding",
-      "SecretCustodyFloor",
       "SecretCustodyMetadata",
       "SecretCustodyRecord",
-      "SecretCustodyStatus",
-      "TierBand"
+      "SecretCustodyStatus"
      ],
      "path": "src/secret_record/types.rs",
      "purpose": "Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 9,
-      "re-export": 1,
-      "struct": 5
+      "fn": 5,
+      "re-export": 2,
+      "struct": 2
      }
     },
     {
@@ -86272,111 +85479,14 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "FirecrawlRenderer",
-      "HeadlessDocument",
-      "HeadlessRenderer",
-      "NativeHeadlessRenderer",
-      "NativeReadabilityRenderer",
-      "RenderedPage",
-      "Renderer",
-      "WebFetcher"
-     ],
-     "path": "src/web_fetch.rs",
-     "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…",
-     "surface": {
-      "fn": 12,
-      "re-export": 4,
-      "struct": 6,
-      "trait": 2
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/web_fetch/client.rs",
-     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
-     "surface": {
-      "fn": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/web_fetch/door.rs",
-     "purpose": "Acquisition request values are defined at the lower import port",
-     "surface": {
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "HostedEgressGuard",
-      "HostedPrivateOrigin"
-     ],
-     "path": "src/web_fetch/egress.rs",
-     "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
-     "surface": {
-      "crate-vis": 4,
-      "fn": 7,
-      "re-export": 3,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/web_fetch/ladder.rs",
-     "purpose": "Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page…",
-     "surface": {
-      "crate-vis": 10
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/web_fetch/render.rs",
-     "purpose": "Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential…",
-     "surface": {
-      "crate-vis": 12
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/web_fetch/rungs.rs",
-     "purpose": "The built-in rungs' [`Renderer`] impls",
-     "surface": {}
-    },
-    {
-     "bucket": "XL",
-     "kind": "test",
-     "notable": [],
-     "path": "src/web_fetch/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "WindowKey"
-     ],
      "path": "src/window_key.rs",
      "purpose": "Monthly CRDT window keys and their timestamp conversion",
      "surface": {
-      "crate-vis": 3,
-      "fn": 10,
-      "struct": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -90708,13 +89818,6 @@
      "layout": "file+dir",
      "purpose": "Explicit account-scoped immutable build results"
     },
-    "bundle_generations": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Bundle generation identity, upload cadence and retirement selection"
-    },
     "calendar": {
      "files": 74,
      "impl_vault": true,
@@ -91374,7 +90477,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 60,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91437,7 +90540,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 357,
+     "files": 352,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91458,9 +90561,9 @@
      "purpose": "Model-role bindings and calibrated verdict values"
     },
     "model_decision": {
-     "files": 13,
+     "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Model-independent typed decision vocabulary and pure policy values"
     },
@@ -91577,7 +90680,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 63,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91716,13 +90819,6 @@
      "layout": "file+dir",
      "purpose": "ONE-207: the retrieval half of the effort dial"
     },
-    "run_budget": {
-     "files": 3,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "dir",
-     "purpose": "Run budget declarations and paid-job maximum state"
-    },
     "run_tree": {
      "files": 11,
      "impl_vault": false,
@@ -91775,7 +90871,7 @@
     "secret_manifest": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
@@ -92143,13 +91239,6 @@
      "layout": "dir",
      "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…"
     },
-    "web_fetch": {
-     "files": 8,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
-    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -92179,10 +91268,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 141,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6357,
-   "test_files": 900
+   "source_files": 6304,
+   "test_files": 899
   },
   "oneiron-android": {
    "files": [
@@ -103154,6 +102243,429 @@
    "source_files": 6,
    "test_files": 0
   },
+  "oneiron-lens-wire": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensAtom"
+     ],
+     "path": "src/lens/atom/atom_enum.rs",
+     "purpose": "LensAtom closed enum with wire codec and primitive/validate/budget dispatch",
+     "surface": {
+      "enum": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerSheetAtom",
+      "AsofScrubberAtom",
+      "ClaimLineAtom",
+      "CollectionAtom",
+      "GeneratedUiResultSetActionEvent",
+      "GeneratedUiResultSetAtom",
+      "GeneratedUiResultSetRow",
+      "GeneratedUiResultSetSelectAll",
+      "GeneratedUiResultSetSelection",
+      "GraphEdge",
+      "GraphNode",
+      "InspectorAtom",
+      "LedgerCell",
+      "LedgerRowAtom",
+      "LensStatus",
+      "LensTextSpan",
+      "MediaAtom",
+      "MetaLineAtom",
+      "NeighborhoodGraphAtom",
+      "PackLineAtom",
+      "PostmarkAtom",
+      "QuickFilterAtom",
+      "ReceiptAtom",
+      "SealAtom",
+      "SealLevel",
+      "SectionAtom",
+      "StatusDotAtom",
+      "TextBlockAtom",
+      "ThreadEntryAtom",
+      "ThrobberAtom",
+      "TwoClocksAtom",
+      "VadBadge",
+      "VoiceLineAtom"
+     ],
+     "path": "src/lens/atom/atom_leaves.rs",
+     "purpose": "Leaf payload structs with per-atom validate and fallback impls",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 6,
+      "fn": 2,
+      "struct": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensNode"
+     ],
+     "path": "src/lens/atom/atom_node.rs",
+     "purpose": "LensNode tree type with its Deserialize seeds: the tree decodes whole, at any width or depth its codec reads…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FiniteF64",
+      "LensText"
+     ],
+     "path": "src/lens/atom/atom_scalars.rs",
+     "purpose": "Scalar newtypes LensText/FiniteF64 with TryFrom/serde impls, and kit-version/kind-list consts",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/atom/mod.rs",
+     "purpose": "The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCatalog",
+      "GeneratedUiCatalogDescriptor",
+      "GeneratedUiCatalogVersion",
+      "GeneratedUiComponentAtom",
+      "GeneratedUiComponentSchema"
+     ],
+     "path": "src/lens/generated_ui/genui_app_catalog.rs",
+     "purpose": "Component catalogs an app declares (FIX 9891, 9893): the catalog name, its semver `catalogVersion`, the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 6,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCard"
+     ],
+     "path": "src/lens/generated_ui/genui_card.rs",
+     "purpose": "Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding",
+     "surface": {
+      "fn": 13,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiPrebuilt",
+      "GeneratedUiPrimitive",
+      "GeneratedUiSummaryCardPrebuilt",
+      "GeneratedUiSurfaceCapabilities"
+     ],
+     "path": "src/lens/generated_ui/genui_catalog.rs",
+     "purpose": "The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiDecoded",
+      "GeneratedUiFallback"
+     ],
+     "path": "src/lens/generated_ui/genui_decode.rs",
+     "purpose": "The staged version boundary every generated-UI envelope crosses first (FIX 7967; CALLS \"FIX 7967 7970…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedLens",
+      "LensLoadAction",
+      "LensVersionStamp"
+     ],
+     "path": "src/lens/generated_ui/genui_envelope.rs",
+     "purpose": "Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensAtomInventoryChange",
+      "LensBehaviorDiff",
+      "LensBehaviorFingerprint",
+      "LensBehaviorHandle",
+      "LensHandleRoleChange"
+     ],
+     "path": "src/lens/generated_ui/genui_fingerprint.rs",
+     "purpose": "Golden-corpus behavior fingerprint and structured behavior diff",
+     "surface": {
+      "fn": 24,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/generated_ui/genui_heal.rs",
+     "purpose": "Healing a generated-UI segment cut mid-stream (FIX 7970; ARCH-0048 G4 healing-tolerant parse): a cut string…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiJsonPatchOperation"
+     ],
+     "path": "src/lens/generated_ui/genui_json_patch.rs",
+     "purpose": "RFC-6902 JSON Patch for the patch stream profile (FIX 7968): the operation type, its all-or-nothing…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensEvaluatedRevision",
+      "LensRegenFailure",
+      "LensRegenFailurePhase",
+      "LensRegenOutcome",
+      "LensRegenRequest",
+      "LensRegenerator"
+     ],
+     "path": "src/lens/generated_ui/genui_regen.rs",
+     "purpose": "Regen request and outcome decision path over behavior fingerprints",
+     "surface": {
+      "enum": 2,
+      "fn": 15,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCardElement",
+      "GeneratedUiCardStart",
+      "GeneratedUiCardStateUpdate",
+      "GeneratedUiDataModel",
+      "GeneratedUiNode",
+      "GeneratedUiRender",
+      "GeneratedUiSegment"
+     ],
+     "path": "src/lens/generated_ui/genui_render.rs",
+     "purpose": "Flat render validation, segment framing and reassembly, and segment wire validators",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 8,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiActionDeclaration",
+      "GeneratedUiActionEvent",
+      "GeneratedUiActionTier",
+      "GeneratedUiArchiveReason",
+      "GeneratedUiCardLifecycle",
+      "GeneratedUiCardPhase",
+      "GeneratedUiStatePatch",
+      "GeneratedUiStateSnapshot",
+      "LensElementRef",
+      "SelfUiBindableProperty",
+      "SelfUiBinding",
+      "SelfUiStateValue"
+     ],
+     "path": "src/lens/generated_ui/genui_state.rs",
+     "purpose": "Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 6,
+      "fn": 10,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCardReady",
+      "GeneratedUiCardStatePatch",
+      "GeneratedUiCardStateSnapshot",
+      "GeneratedUiPartialNode",
+      "GeneratedUiPartialTree",
+      "GeneratedUiStream",
+      "GeneratedUiStreamOutcome",
+      "GeneratedUiStreamProfile"
+     ],
+     "path": "src/lens/generated_ui/genui_stream.rs",
+     "purpose": "Stream profiles and the one incremental stream state (FIX 7968, 7970)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 10,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/generated_ui/mod.rs",
+     "purpose": "The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation and app-declared…",
+     "surface": {
+      "re-export": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/mod.rs",
+     "purpose": "Closed generated-lens wire vocabulary, moved out of `oneiron::lens`",
+     "surface": {
+      "mod": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ButtonControl",
+      "SegmentedControl",
+      "SelectControl",
+      "SelfUiAction",
+      "SelfUiControl",
+      "SelfUiOption",
+      "SelfUiValue",
+      "SliderControl",
+      "TextInputControl",
+      "ToggleControl"
+     ],
+     "path": "src/lens/self_ui.rs",
+     "purpose": "The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/validate.rs",
+     "purpose": "Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensHandleRef",
+      "LensHandleRole"
+     ],
+     "path": "src/lens/wire_ids.rs",
+     "purpose": "Bounded wire tokens shared by every other lens concern",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/wire_limits.rs",
+     "purpose": "Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "lens": {
+     "files": 23,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Closed generated-lens wire vocabulary, moved out of `oneiron::lens`"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
+   "source_files": 24,
+   "test_files": 0
+  },
   "oneiron-linear": {
    "files": [
     {
@@ -106802,6 +106314,99 @@
    "source_files": 18,
    "test_files": 2
   },
+  "oneiron-policy-vocabulary": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the…",
+     "surface": {
+      "crate-vis": 2,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyModelAnswer",
+      "PolicyOutputContract"
+     ],
+     "path": "src/policy_model/contract.rs",
+     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GoalLimitRow",
+      "GoalLimitScope",
+      "GoalLimitValues",
+      "GoalLimits",
+      "GoalLimitsPrecedence"
+     ],
+     "path": "src/policy_model/goal_limits.rs",
+     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
+     "surface": {
+      "enum": 2,
+      "fn": 9,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/mod.rs",
+     "purpose": "The policy-model modules moved out of `oneiron::policy_model`",
+     "surface": {
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompiledPatternRule",
+      "CompiledPatternRules",
+      "PatternEvaluation",
+      "PatternRuleDefect",
+      "PolicyPatternRole",
+      "PolicyPatternRule"
+     ],
+     "path": "src/policy_model/pattern.rs",
+     "purpose": "Substrate-owner pattern rules",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 9,
+      "struct": 5
+     }
+    }
+   ],
+   "modules": {
+    "policy_model": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The policy-model modules moved out of `oneiron::policy_model`"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the…",
+   "source_files": 5,
+   "test_files": 0
+  },
   "oneiron-py": {
    "files": [
     {
@@ -107606,6 +107211,86 @@
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 19,
    "test_files": 5
+  },
+  "oneiron-run-budget": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Run budget declarations and paid-job maximum state of the oneiron engine",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLine",
+      "DeclarationEditor",
+      "DeclarationError",
+      "DeclaredTeachers",
+      "LeaseUnit",
+      "RunDeclaration"
+     ],
+     "path": "src/run_budget/declaration.rs",
+     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "surface": {
+      "enum": 2,
+      "fn": 23,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddFundsNotice",
+      "CheckpointRef",
+      "DeclaredMaximum",
+      "JobMaximum",
+      "JobSignal",
+      "JobStartRefused",
+      "MaximumShown",
+      "MaximumStop",
+      "ResumeOffer",
+      "ResumeRefused",
+      "StopRefused"
+     ],
+     "path": "src/run_budget/job_maximum.rs",
+     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "surface": {
+      "enum": 4,
+      "fn": 9,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_budget/mod.rs",
+     "purpose": "Run budget declarations and paid-job maximum state",
+     "surface": {
+      "re-export": 2
+     }
+    }
+   ],
+   "modules": {
+    "run_budget": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Run budget declarations and paid-job maximum state"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Run budget declarations and paid-job maximum state of the oneiron engine",
+   "source_files": 4,
+   "test_files": 0
   },
   "oneiron-sandbox-contract": {
    "files": [
@@ -126859,6 +126544,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SealedBundleGeneration"
+     ],
+     "path": "src/bundle_generations.rs",
+     "purpose": "Bundle generation identity, upload cadence and retirement selection",
+     "surface": {
+      "const": 4,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConnectorKeyStatus"
      ],
      "path": "src/connector_key_status.rs",
@@ -126908,7 +126607,221 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 5
+      "mod": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnswerActor"
+     ],
+     "path": "src/model_decision/answer_actor.rs",
+     "purpose": "An answer actor identity, including its erased state",
+     "surface": {
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuestionFamily"
+     ],
+     "path": "src/model_decision/catalogue.rs",
+     "purpose": "The engine's registered typed-question families, in one place",
+     "surface": {
+      "const": 50,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/codec.rs",
+     "purpose": "Canonical entity references for typed-decision wire records",
+     "surface": {
+      "fn": 7,
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/mod.rs",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values",
+     "surface": {
+      "mod": 3,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandPolicy",
+      "DecisionBandReadRequest",
+      "LearnedBand",
+      "PersonThreshold",
+      "Reversibility",
+      "ThinkThreshold"
+     ],
+     "path": "src/model_decision/policy.rs",
+     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 11,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PairedAnswer",
+      "ProviderCapability",
+      "ProviderDecision"
+     ],
+     "path": "src/model_decision/provider.rs",
+     "purpose": "Provider answer values, capabilities, and score-level rules",
+     "surface": {
+      "const": 3,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/questions/mod.rs",
+     "purpose": "Graph-question recipe and outcome vocabulary",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQuestionInput",
+      "GraphQuestionRef"
+     ],
+     "path": "src/model_decision/questions/recipe.rs",
+     "purpose": "Graph-question identities and explicit evidence joins",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibrationPair",
+      "OmittedNeighbor",
+      "OutcomeBinding",
+      "OutcomeLabel",
+      "OutcomeSource",
+      "OutcomeWindowClose",
+      "QuestionActivation",
+      "QuestionAudience",
+      "QuestionMedia",
+      "QuestionScheduleHead",
+      "RefreshPolicy",
+      "SourceConflict",
+      "WindowOutcome"
+     ],
+     "path": "src/model_decision/questions/records.rs",
+     "purpose": "Standing-question outcome, refresh, and evidence values",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AskAct",
+      "HolderKind",
+      "RoleRank"
+     ],
+     "path": "src/model_decision/roles.rs",
+     "purpose": "Actor-free role ranks, ask acts, and holder kinds",
+     "surface": {
+      "enum": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPolicyRow",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/model_decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/state.rs",
+     "purpose": "Caller-prepared decision state fitting",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerContract",
+      "DecisionAnswer",
+      "DecisionBand",
+      "DecisionClass",
+      "DecisionDial",
+      "DecisionQuestion",
+      "DecisionQuestionInput",
+      "DecisionRung",
+      "DecisionTime",
+      "EvidenceVersion",
+      "HostRuleRef",
+      "HumanAskReason",
+      "ImageBox",
+      "ImagePoint",
+      "PairedReading",
+      "PersonChangedAnswer",
+      "ProviderPin",
+      "Reasoning",
+      "ReasoningCause",
+      "StateCut",
+      "StopCause"
+     ],
+     "path": "src/model_decision/types.rs",
+     "purpose": "Typed decision questions, answer contracts, and measurement values",
+     "surface": {
+      "enum": 8,
+      "fn": 17,
+      "struct": 13
      }
     },
     {
@@ -126949,9 +126862,64 @@
       "fn": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SecretManifest",
+      "SecretManifestEntry"
+     ],
+     "path": "src/secret_manifest.rs",
+     "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretBinding",
+      "SecretCustodyFloor",
+      "SecretCustodyFloorSource",
+      "TierBand"
+     ],
+     "path": "src/secret_record.rs",
+     "purpose": "Secret custody floor and binding vocabulary used by the store layer",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "re-export": 1,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowKey"
+     ],
+     "path": "src/window_key.rs",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 15,
+      "struct": 1
+     }
     }
    ],
    "modules": {
+    "bundle_generations": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Bundle generation identity, upload cadence and retirement selection"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
@@ -126973,6 +126941,13 @@
      "layout": "file",
      "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
     },
+    "model_decision": {
+     "files": 13,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values"
+    },
     "model_step_record": {
      "files": 1,
      "impl_vault": false,
@@ -126986,11 +126961,32 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
+    },
+    "secret_manifest": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
+    },
+    "secret_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Secret custody floor and binding vocabulary used by the store layer"
+    },
+    "window_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion"
     }
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 6,
+   "source_files": 23,
    "test_files": 0
   },
   "oneiron-uniffi": {
@@ -132699,6 +132695,216 @@
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 52,
+   "test_files": 1
+  },
+  "oneiron-web-fetch": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Web acquisition of the oneiron engine",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebCrawlRequest",
+      "WebFetchRequest"
+     ],
+     "path": "src/web_acquisition/door.rs",
+     "purpose": "Typed inputs for the two acquisition doors",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CrawlCompletion",
+      "CrawlPageBudget",
+      "CrawlPageFailure",
+      "CrawlRequest",
+      "CrawlResult",
+      "CrawlScope",
+      "FetchResult",
+      "MinExtractedContentBytes",
+      "RendererAttemptFailure",
+      "RendererError",
+      "RendererErrorKind",
+      "RendererKind",
+      "WebAcquisition",
+      "WebFetchError"
+     ],
+     "path": "src/web_acquisition/mod.rs",
+     "purpose": "Web acquisition values and the host-supplied acquisition port",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 6,
+      "fn": 10,
+      "re-export": 2,
+      "struct": 7,
+      "trait": 1,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedEgressRefusal"
+     ],
+     "path": "src/web_acquisition/refusal.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_acquisition/result.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_acquisition/url.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FirecrawlRenderer",
+      "HeadlessDocument",
+      "HeadlessRenderer",
+      "NativeHeadlessRenderer",
+      "NativeReadabilityRenderer",
+      "RenderedPage",
+      "Renderer",
+      "WebFetcher"
+     ],
+     "path": "src/web_fetch.rs",
+     "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…",
+     "surface": {
+      "fn": 12,
+      "re-export": 4,
+      "struct": 6,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/client.rs",
+     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/door.rs",
+     "purpose": "Acquisition request values are defined at the lower import port",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostedEgressGuard",
+      "HostedPrivateOrigin"
+     ],
+     "path": "src/web_fetch/egress.rs",
+     "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 7,
+      "re-export": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/ladder.rs",
+     "purpose": "Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/render.rs",
+     "purpose": "Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_fetch/rungs.rs",
+     "purpose": "The built-in rungs' [`Renderer`] impls",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/web_fetch/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "web_acquisition": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Web acquisition values and the host-supplied acquisition port"
+    },
+    "web_fetch": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Web acquisition of the oneiron engine",
+   "source_files": 13,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
