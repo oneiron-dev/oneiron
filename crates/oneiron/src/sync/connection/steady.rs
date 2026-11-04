@@ -429,10 +429,19 @@ impl SyncConnection {
                         continue;
                     };
                     client.remove_outdated_ephemeral();
-                    if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
-                        return LoopExit::Disconnected(e);
-                    }
-                    if let Err(e) = crate::sync::client::send_leaf_key_requests(client, &mut write).await {
+                    let mut housekeeping_left_rx = self.left.subscribe();
+                    let send_result = tokio::select! {
+                        biased;
+                        () = async { let _ = housekeeping_left_rx.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        result = async {
+                            crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
+                            crate::sync::client::send_leaf_key_requests(client, &mut write).await
+                        } => result,
+                    };
+                    if let Err(e) = send_result {
                         return LoopExit::Disconnected(e);
                     }
                     if let Err(error) = client.replay_deferred_federation_update() {
