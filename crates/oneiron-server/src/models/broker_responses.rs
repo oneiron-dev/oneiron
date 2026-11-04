@@ -91,6 +91,18 @@ impl BrokerResponses {
         self.usable() && responses_can_carry(request)
     }
 
+    fn buffered_stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStream<'a> {
+        LlmStream::new(futures_util::stream::once(async move {
+            let response = self.chat.generate(request, lease).await?;
+            Ok(LlmStreamEvent::Done {
+                message: response.message,
+                usage: response.usage,
+                finish_reason: response.finish_reason,
+                reply_assertions: response.reply_assertions,
+            })
+        }))
+    }
+
     fn turn(&self, request: &LlmRequest, stream: bool) -> LlmResult<OpenAiResponsesTurn> {
         let mut turn = build_openai_responses_turn(&self.config, request, stream)?;
         let mut head = JsonValue::Object(std::mem::take(&mut turn.head));
@@ -137,7 +149,7 @@ impl BrokerResponses {
             &digest_body,
         );
         header
-            .check(&body)
+            .check_responses(&body, &digest_body)
             .map_err(|_| FatalLlmError::InvalidRequest)?;
         Ok((header, body, digest_body))
     }
@@ -391,28 +403,15 @@ impl LlmBackend for BrokerResponses {
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         if !self.carries(&request) {
-            return self.chat.stream(request, lease);
+            return Ok(self.buffered_stream(request, lease));
         }
         let turn = self.turn(&request, true)?;
         let opened = async move {
             match self.run(lease, turn).await {
                 Ok(Some(stream)) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(stream))),
-                // The socket path answered without a send (an unreachable
-                // broker, a latched refusal): the broker chat strips
-                // Streaming, so its buffered reply is emitted here as one
-                // terminal event, never as chat SSE.
-                Ok(None) => {
-                    let response = self.chat.generate(request, lease).await?;
-                    let event = LlmStreamEvent::Done {
-                        message: response.message,
-                        usage: response.usage,
-                        finish_reason: response.finish_reason,
-                        reply_assertions: response.reply_assertions,
-                    };
-                    Ok(LlmStream::new(futures_util::stream::once(
-                        std::future::ready(Ok(event)),
-                    )))
-                }
+                // Nothing was sent on the Responses route: expose the
+                // buffered chat reply as one terminal event, never chat SSE.
+                Ok(None) => Ok(self.buffered_stream(request, lease)),
                 Err(error) => Err(error),
             }
         };
@@ -430,7 +429,7 @@ impl LlmBackend for BrokerResponses {
 impl SingleRouteBackend for BrokerResponses {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         if !self.carries(request) {
-            return self.chat.preflight(request, stream);
+            return self.chat.preflight(request, false);
         }
         if !stream {
             self.chat.preflight(request, false)?;
@@ -451,7 +450,7 @@ impl SingleRouteBackend for BrokerResponses {
 
     fn request_digest(&self, request: &LlmRequest, stream: bool) -> LlmResult<Option<String>> {
         if !self.carries(request) {
-            return self.chat.request_digest(request, stream);
+            return self.chat.request_digest(request, false);
         }
         let turn = self.turn(request, stream)?;
         let (header, _, _) = self.header("", &turn, None, &turn.items)?;

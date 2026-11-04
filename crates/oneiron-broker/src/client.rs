@@ -247,7 +247,13 @@ impl BrokerConnection {
         whole: Option<&[u8]>,
         secret: Zeroizing<Vec<u8>>,
     ) -> Result<BrokerStream, BrokerError> {
-        call.check(body).map_err(BrokerError::Refused)?;
+        if call.shape == crate::Shape::OpenAiResponses {
+            let whole = whole.ok_or(BrokerError::Refused(crate::Refusal::Frame))?;
+            call.check_responses(body, whole)
+                .map_err(BrokerError::Refused)?;
+        } else {
+            call.check(body).map_err(BrokerError::Refused)?;
+        }
         // One deadline covers the frame's write, the wait and the reply's
         // read (FIX 8559).
         let deadline = Instant::now() + self.reply_timeout;

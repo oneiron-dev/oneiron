@@ -87,8 +87,8 @@ impl CallHeader {
 
     /// A call whose admission digest covers `digest_body`, which may be the
     /// whole turn while `body` is its planned delta. Responses uses this: the
-    /// daemon binds the whole turn before checkout, and the broker checks the
-    /// delta's shape and model rather than pretending it equals that whole turn.
+    /// daemon binds the whole turn before checkout, and [`Self::check_responses`]
+    /// checks that the delta belongs to that admitted turn.
     pub fn new_with_digest_body(
         call: String,
         shape: Shape,
@@ -141,9 +141,43 @@ impl CallHeader {
         if named.map_or(self.wire_model.is_empty(), |model| model != self.wire_model) {
             return Err(Refusal::WireModel);
         }
-        // Responses' admission digest covers the whole turn; its body may be a planned delta.
-        if self.shape != Shape::OpenAiResponses
-            && request_digest(&self.method, &self.path, &self.headers, body) != self.digest
+        if request_digest(&self.method, &self.path, &self.headers, body) != self.digest {
+            return Err(Refusal::Digest);
+        }
+        Ok(url)
+    }
+
+    /// Checks a Responses whole turn against admission, then checks that the
+    /// planned create only adds a chain id and omits a prefix of its input.
+    pub fn check_responses(&self, body: &[u8], whole: &[u8]) -> Result<Url, Refusal> {
+        if self.shape != Shape::OpenAiResponses || body.len() > MAX_STREAM {
+            return Err(Refusal::Body);
+        }
+        let url = self.check(whole)?;
+        let mut planned: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(body).map_err(|_| Refusal::Body)?;
+        let mut full: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(whole).map_err(|_| Refusal::Body)?;
+        if full.contains_key("previous_response_id") {
+            return Err(Refusal::Digest);
+        }
+        let chained = match planned.remove("previous_response_id") {
+            None => false,
+            Some(serde_json::Value::String(id)) if !id.is_empty() => true,
+            Some(_) => return Err(Refusal::Body),
+        };
+        if planned.get("model") != full.get("model") {
+            return Err(Refusal::WireModel);
+        }
+        let Some(serde_json::Value::Array(input)) = planned.remove("input") else {
+            return Err(Refusal::Body);
+        };
+        let Some(serde_json::Value::Array(full_input)) = full.remove("input") else {
+            return Err(Refusal::Body);
+        };
+        if planned != full
+            || (!chained && input != full_input)
+            || (chained && !full_input.ends_with(&input))
         {
             return Err(Refusal::Digest);
         }
