@@ -199,6 +199,13 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         EngineLimit::EsignStreamDecodeBytes.default_bound(),
     )
 }
+/// The engine audit replay's checked output for `request`: its chain head
+/// and its trail lines. The seal task replays here before the isolated
+/// prepare, which takes them as given: one implementation
+/// ([`evidence`]), never a second replay.
+pub fn replay_esign_audit(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<String>)> {
+    evidence(request)
+}
 /// Rewrite immutable original bytes and flatten all recorded fields. The audit
 /// chain is checked and replayed; its projection must equal the supplied state.
 /// No I/O, clock, network, key custody or PAdES signing occurs here. Each

@@ -581,6 +581,16 @@ impl EsignSealer for HostedSealer<'_> {
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
         Ok(self.verify_classified(pdf)?.0)
     }
+
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &oneiron::blob_artifact::esign::render::PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: Vec<String>,
+    ) -> Result<oneiron::blob_artifact::esign::render::PreparedEsignPdf, EsignSealerError> {
+        self.prepare_esign_pdf_via_organ(original, request, chain, trail)
+    }
 }
 
 /// `seal.identity`: the key's certificate and chain.
