@@ -581,7 +581,9 @@ fn staged_claims(
 fn unresolved_reference() -> Error {
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",
-        reason_codes: vec![crate::gate::GateReasonCode::DenyUnresolvedRecordReference.as_str()],
+        reason_codes: vec![
+            crate::store::gate_reason::GateReasonCode::DenyUnresolvedRecordReference.as_str(),
+        ],
     })
 }
 

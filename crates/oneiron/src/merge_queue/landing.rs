@@ -5,9 +5,9 @@ use super::{
     SpeculativePath, TestedBatch,
 };
 use crate::{
-    store::contract_oracle::{ContractOracle, invalid},
     error::{Error, Result},
     git_wire::{GitWire, lock_repository},
+    store::contract_oracle::{ContractOracle, invalid},
     store::repo_mutation_record::{RepoMutationOplogEntry, RepoMutationStatus},
 };
 
