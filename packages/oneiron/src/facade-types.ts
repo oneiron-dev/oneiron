@@ -4751,7 +4751,7 @@ export type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: st
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsRequest` */
 export type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null }
 /** `oneiron::anchored_annotation::wire::AnnotationLocator` */
-export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string }
+export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitView` */
 export type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsView` */
