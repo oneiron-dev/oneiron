@@ -224,7 +224,7 @@ impl Vault {
                     return Ok(false);
                 }
                 hook => {
-                    let transient = run_failed_transient(error);
+                    let transient = run_failed_transient(&error);
                     (
                         ask::SavedOutcome::error(error.code, &error.message),
                         transient,

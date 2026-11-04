@@ -215,9 +215,9 @@ impl RecordingJsHost<'_, '_> {
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
             Err(Error::Code(CodeError::CodeStepCancelled)) => {
-                failed(CodeError::CodeStepCancelled.to_string())
+                failed(CodeError::CodeStepCancelled.to_string()).0
             }
-            Err(error) => failed(error.to_string()),
+            Err(error) => failed(error.to_string()).0,
         };
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.

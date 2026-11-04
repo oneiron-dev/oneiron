@@ -51,11 +51,14 @@ impl RecordingJsHost<'_, '_> {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
                 Err(reason) => {
-                    return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                        effect: SelfEffect::ReaderSpawn,
-                        outcome: reason,
-                        reason_codes: Vec::new(),
-                    }));
+                    return Ok((
+                        SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            effect: SelfEffect::ReaderSpawn,
+                            outcome: reason,
+                            reason_codes: Vec::new(),
+                        }),
+                        None,
+                    ));
                 }
             }
         }
@@ -95,17 +98,23 @@ impl RecordingJsHost<'_, '_> {
                             .get("denied")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("denied");
-                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                            effect: SelfEffect::Summarize,
-                            outcome: code.to_owned(),
-                            reason_codes: Vec::new(),
-                        }));
+                        return Ok((
+                            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                effect: SelfEffect::Summarize,
+                                outcome: code.to_owned(),
+                                reason_codes: Vec::new(),
+                            }),
+                            None,
+                        ));
                     }
                 };
                 if read.is_tainted() {
-                    return Ok(SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
-                        reply: read.withheld(),
-                    }));
+                    return Ok((
+                        SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
+                            reply: read.withheld(),
+                        }),
+                        None,
+                    ));
                 }
                 let output = read.output();
                 bound.push(DelegatedSource {

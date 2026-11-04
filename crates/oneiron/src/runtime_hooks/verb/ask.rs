@@ -221,6 +221,16 @@ impl AskToken {
     pub(super) fn parked(&self, invocation: InvocationId) -> VerbHookStop {
         pending(invocation, self.ask)
     }
+
+    /// The invocation whose ask this token answers (chain-resume reopen path).
+    pub(super) fn key(&self) -> [u8; 16] {
+        self.key
+    }
+
+    /// The ask this token answers (chain-resume reopen path).
+    pub(super) fn ask(&self) -> EntityId {
+        self.ask
+    }
 }
 
 /// The hook's author's surface for its ask, on the task-work turn the

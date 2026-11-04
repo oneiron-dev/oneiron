@@ -205,7 +205,7 @@ impl EngineNativeExecutor<'_> {
                         healed.then_some(&config.model),
                         &receipts,
                         parked.as_ref(),
-                    )?;
+                    )?
             }
             result => result?,
         }

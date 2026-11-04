@@ -596,7 +596,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     &host.receipts,
                     parked.as_ref(),
                     &resume,
-                )?;
+                )?
             }
             result => result?,
         }
