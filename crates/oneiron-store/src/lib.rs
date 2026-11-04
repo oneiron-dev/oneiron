@@ -17,6 +17,7 @@ pub mod heap_drop;
 pub mod graph_version;
 pub mod identity_hints;
 pub mod index_keys;
+pub mod inference_context;
 pub mod key_material;
 pub mod long_interval;
 pub mod manifest_origin_keys;
