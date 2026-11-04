@@ -3,139 +3,19 @@
 //! can bind a consented usefulness-yes and held-out win to promoted bytes.
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
-use crate::side_table::{self, LegacyJson, Raw, SideTable};
+pub(super) use crate::store::claim_refinement_control::{
+    RefinementControl, RefinementState, RefinementTarget, put_control, read_control,
+    retire_refinement_control,
+};
+use crate::store::skill_refinement_origin::{
+    CLAIM_ORIGIN, SKILL_ORIGIN, declares_refinement, declares_skill_refinement,
+};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
     registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL},
     store::Store,
 };
-use serde::{Deserialize, Serialize};
-
-// Permanent candidate origin, keyed only by entity ID. The value is the hash
-// of the first native Proposed bytes, never the body or an approval receipt.
-const CLAIM_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
-    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CLAIM_ORIGIN);
-const SKILL_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
-    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SKILL_ORIGIN);
-/// Content-free refinement control row for one candidate.
-const CONTROL: SideTable<EntityId, RefinementControl, LegacyJson> =
-    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CONTROL);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum RefinementState {
-    Pending,
-    Refused,
-    Admitted,
-    Erased,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum RefinementTarget {
-    Skill { base: String, fork: String },
-    Claim { base: String, proposal: String },
-}
-impl RefinementTarget {
-    fn base(&self) -> &str {
-        match self {
-            Self::Skill { base, .. } | Self::Claim { base, .. } => base,
-        }
-    }
-    fn kind(&self) -> u8 {
-        match self {
-            Self::Skill { .. } => ENTITY_TYPE_SKILL,
-            Self::Claim { .. } => ENTITY_TYPE_CLAIM,
-        }
-    }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RefinementControl {
-    pub(super) target: RefinementTarget,
-    pub(super) resident: Option<String>,
-    pub(super) base_binding: String,
-    pub(super) proposal_binding: String,
-    pub(super) state: RefinementState,
-}
-impl RefinementControl {
-    pub(super) fn claim(
-        base: EntityId,
-        candidate: EntityId,
-        resident: EntityId,
-        base_binding: String,
-        proposal_binding: String,
-    ) -> Self {
-        Self {
-            target: RefinementTarget::Claim {
-                base: base.to_hex(),
-                proposal: candidate.to_hex(),
-            },
-            resident: Some(resident.to_hex()),
-            base_binding,
-            proposal_binding,
-            state: RefinementState::Pending,
-        }
-    }
-    pub(super) fn skill(
-        base: EntityId,
-        fork: EntityId,
-        base_binding: String,
-        proposal_binding: String,
-    ) -> Self {
-        Self {
-            target: RefinementTarget::Skill {
-                base: base.to_hex(),
-                fork: fork.to_hex(),
-            },
-            resident: None,
-            base_binding,
-            proposal_binding,
-            state: RefinementState::Pending,
-        }
-    }
-}
-pub(super) fn read_control(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<RefinementControl>> {
-    CONTROL.get(store, txn, id)
-}
-pub(super) fn put_control(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    control: &RefinementControl,
-) -> Result<()> {
-    CONTROL.put(store, txn, id, control)
-}
-pub(crate) fn refinement_control_scope_exists(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(read_control(store, txn, id)?.is_some_and(|row| row.state != RefinementState::Erased))
-}
-pub(crate) fn retire_refinement_control(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    let Some(mut row) = read_control(store, txn, id)? else {
-        return Ok(false);
-    };
-    if row.state == RefinementState::Erased {
-        return Ok(false);
-    }
-    if matches!(row.target, RefinementTarget::Skill { .. }) {
-        // The offer's source assertion is not a permanent deletion marker.
-        // Retain only the content-free typed control/erased-ID fact.
-        super::shared_delta::SHARED_DELTA.delete(store, txn, id)?;
-    }
-    row.state = RefinementState::Erased;
-    put_control(store, txn, id, &row)?;
-    Ok(true)
-}
 
 /// No public constructor. The score/decision/consent assertions run in the
 /// same transaction that applies the exact body transition. A receipt can be
@@ -296,22 +176,6 @@ fn continues_admitted_refinement(
     Ok(declares_refinement(&prior))
 }
 
-fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
-    body.evidence.as_ref().is_some_and(|evidence| {
-        evidence.as_map().is_some_and(|fields| {
-            fields.iter().any(|(key, value)| {
-                key.as_str() == Some("provenance") && value.as_str() == Some("claim-refinement")
-            })
-        })
-    })
-}
-fn declares_skill_refinement(record: &crate::skill::SkillRecord) -> bool {
-    record.provenance.as_map().is_some_and(|fields| {
-        fields.iter().any(|(key, value)| {
-            key.as_str() == Some("source") && value.as_str() == Some("shared-skill-delta")
-        })
-    })
-}
 /// The useful-upstream requirement survives replay, same-byte aliases and
 /// deletion even when the receiver has no locally submitted delta row.
 pub(crate) fn skill_refinement_origin_in_txn(
@@ -321,40 +185,6 @@ pub(crate) fn skill_refinement_origin_in_txn(
 ) -> Result<bool> {
     Ok(SKILL_ORIGIN.get(store, txn, id)?.is_some())
 }
-/// The ordinary put chokepoint stages the first native Candidate/Proposed
-/// origin after validation, for local and replicated writes alike. Delete
-/// never removes these content-free facts.
-pub(crate) fn stage_refinement_origin(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    claim: Option<&crate::claim::ClaimBody>,
-    skill: Option<&crate::skill::SkillRecord>,
-    data: &[u8],
-) -> Result<()> {
-    let table = if claim.is_some_and(|body| {
-        body.approval == crate::claim::ClaimApprovalStatus::Proposed && declares_refinement(body)
-    }) {
-        CLAIM_ORIGIN
-    } else if skill.is_some_and(|record| {
-        record.lifecycle_status == crate::skill::SkillLifecycle::Candidate
-            && declares_skill_refinement(record)
-    }) {
-        SKILL_ORIGIN
-    } else {
-        return Ok(());
-    };
-    let digest = blake3::hash(data);
-    if let Some(prior) = table.get(store, txn, id)? {
-        if prior != *digest.as_bytes() {
-            return Err(invalid("refinement origin changed"));
-        }
-    } else {
-        table.put(store, txn, id, digest.as_bytes())?;
-    }
-    Ok(())
-}
-
 /// The shared materialization door asks this BEFORE any gate or entity write.
 pub(crate) fn validate_refinement_admission(
     store: &Store,

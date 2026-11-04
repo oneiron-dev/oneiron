@@ -79,9 +79,7 @@ pub(crate) use self::step_claim::{
     index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 // KS-2B1: row-held step responses under body custody.
-pub(crate) use self::response_bodies::{
-    retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
-};
+pub(crate) use self::response_bodies::{retire_step_claim_in_rows, retire_step_claim_in_txn};
 // FIX 6225: a claim's teardown, a restore and an activation take its pins.
 pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -136,4 +134,3 @@ pub(crate) use types::StepEffectBinding;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::submission_custody::model_step_submission_accepts_masked;
