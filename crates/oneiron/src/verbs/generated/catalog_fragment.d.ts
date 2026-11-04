@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4510 declarations.
+// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4512 declarations.
 // Replies: 1090 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -356,7 +356,7 @@ declare namespace Sdk {
   type TextSource = "supplied" | "reference" | "template" | "generated";
   type FieldTextReason = { why: "no_text" } | { why: "missing_slot"; slot: string } | { why: "unclosed_slot" } | { why: "not_an_option"; source: TextSource } | { why: "secret_field" } | { why: "writer_unavailable" } | { why: "writer_refused" } | { why: "writer_failed" } | { why: "checked_no" } | { why: "check_abstained" } | { why: "check_failed" } | { why: "page_rejected" };
   type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text"; reason: FieldTextReason } | { cause: "no_progress" } | { cause: "browser"; code: string };
-  type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } } | "interrupted";
+  type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } } | "interrupted" | "not_model_free";
   type TaskWorkflowOutcome = "pending" | { started: { at: number } } | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
   type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; waiting?: string | null; observed: string };
@@ -408,8 +408,10 @@ declare namespace Sdk {
   type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
   type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
+  type AgentSpendCalibration = { samples: number; total_units: number; ewma_units: number; last_units: number; updated_at: number };
+  type SpendCalibrationSample = { before?: AgentSpendCalibration | null };
   type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number };
-  type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
+  type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; calibration_sample?: SpendCalibrationSample | null; exploration_attempt?: AttemptId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
   type FanoutLeaseView = { lease: SpendScope; spend: SpendRead; released_units?: number | null };
