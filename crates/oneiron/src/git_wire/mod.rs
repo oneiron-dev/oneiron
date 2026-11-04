@@ -26,6 +26,8 @@
 
 mod argv;
 mod bridge;
+pub(crate) mod bundle_tree;
+pub(crate) mod mutation_commands;
 mod checkout;
 mod checkout_remote;
 mod config;
