@@ -7,6 +7,7 @@ use heed::{RoTxn, RwTxn};
 use oneiron_store::consolidation_reader::ConsolidationReader;
 use oneiron_store::policy_scoped_grant::PolicyScopedGrant;
 use oneiron_store::project_depth_record::ProjectDepthBirth;
+use oneiron_store::proposal_observation_record::ProposalPolicySource;
 
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
@@ -146,6 +147,17 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         world: Option<EntityId>,
         credential: Option<&oneiron_authority::federation::Scope>,
     ) -> bool;
+
+    /// The engine's `gate::proposal_observation::observe_submission_in_txn`.
+    fn observe_submission_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actor: EntityId,
+        proposal_ref: &str,
+        policy_source: ProposalPolicySource,
+        revision_changed: bool,
+    ) -> Result<()>;
 
     /// The engine's `gate::proposal_observation::erase_count_actor_in_txn`
     /// (side table `PROPOSAL_ACTOR_COUNT`).

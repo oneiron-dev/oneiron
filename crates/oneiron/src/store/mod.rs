@@ -157,6 +157,7 @@ pub use record_hooks::StoreRecordHooks;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 pub(crate) mod gate_hooks;
+pub(crate) mod critical_confirm_record;
 pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
@@ -550,6 +551,7 @@ pub mod repo_import_predicate;
 
 pub(crate) mod authority_rows;
 pub(crate) mod consent_bound;
+pub(crate) mod gate_metrics;
 pub(crate) mod gate_reason;
 pub(crate) mod policy_record;
 pub(crate) mod record_links;

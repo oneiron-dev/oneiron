@@ -412,7 +412,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
+        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
             return Ok(());
         };
         let claim_id = EntityId::from_bytes(record.claim_id)
@@ -438,7 +438,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
+        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
             return Ok(());
         };
         CRITICAL_CONFIRM_INDEX.delete(self, wtxn, &binding.confirm_id)?;
