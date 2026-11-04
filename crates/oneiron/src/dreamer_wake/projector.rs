@@ -757,17 +757,92 @@ pub(crate) fn take_reading_in_txn(
 /// at a reading it no longer has. Liveness is checked before
 /// equality: a gone turn reads as the empty set, which would equal an
 /// empty frozen reading. The live reading is a comparand only; it is
-/// never stamped.
+/// never stamped. Row presence is not liveness: a soft-deleted, stale
+/// or archived TURN keeps its row as a header-only shell whose absent
+/// text reads as the empty set - equal to an empty frozen reading -
+/// so the liveness leg is the chunk gate's: a live row whose words
+/// are not withdrawn.
 pub(crate) fn reading_current_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
     frozen: [u8; 32],
 ) -> Result<bool> {
-    if turn_key_in_txn(&vault.store, txn, turn)?.is_none() {
+    if !matches!(
+        live_entity_row_in_txn(&vault.store, txn, turn)?,
+        LiveEntityRow::Live { .. }
+    ) || withdrawn_in_txn(&vault.store, txn, turn)?
+    {
         return Ok(false);
     }
     Ok(turn_statements_in_txn(vault, txn, turn)?.is_some_and(|live| reading(&live) == frozen))
+}
+
+/// Whether the carrier round `round` still stands for `originals` (FIX
+/// 12246 follow-on): the guard the widened stamp owes a gap erasure of
+/// an original. A present round proceeds as today. A missing round
+/// proceeds only when every queued original is still live, unwithdrawn,
+/// and still linked to it - the keep-deleted replay, whose `keep`
+/// deleted the ROUND row but left every member's GIVEN link. An
+/// erasure (or unheld demotion) deletes the member's GIVEN row with
+/// the round, so a retired carrier fails here and the whole stamp
+/// skips: recreating the round would resurrect retired membership
+/// under words the erase already released.
+pub(crate) fn carrier_round_live_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    round: &[u8; 32],
+    originals: &[EntityId],
+) -> Result<bool> {
+    if ROUND.get(&vault.store, txn, round)?.is_some() {
+        return Ok(true);
+    }
+    for turn in originals {
+        let linked = GIVEN
+            .get(&vault.store, txn, turn)?
+            .is_some_and(|given| given.rounds.contains(round));
+        if !linked
+            || !matches!(
+                live_entity_row_in_txn(&vault.store, txn, turn)?,
+                LiveEntityRow::Live { .. }
+            )
+            || withdrawn_in_txn(&vault.store, txn, turn)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Stamps a completed original's frozen reading as taken (FIX 12246
+/// follow-on): an away chunk member registered its round at enqueue
+/// without a digest, and runs as a queued original after promotion, so
+/// no other stamp covers it. Fires only while taken is `None` -
+/// ordinary members keep exactly what their enqueue stamped - and only
+/// while the turn still reads as frozen in its frozen partition. No
+/// membership write: the enqueue already linked it.
+pub(crate) fn take_returned_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    frozen: [u8; 32],
+    partition: [u8; 32],
+) -> Result<()> {
+    let taken = GIVEN
+        .get(&vault.store, txn, turn)?
+        .and_then(|given| given.taken);
+    if taken.is_some() {
+        return Ok(());
+    }
+    if !reading_current_in_txn(vault, txn, turn, frozen)? {
+        return Ok(());
+    }
+    if crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, turn)?
+        != Some(partition)
+    {
+        return Ok(());
+    }
+    take_reading_in_txn(vault, txn, turn, frozen)
 }
 
 /// The latest-round bookkeeping of `hold_in_txn` for an assignment a

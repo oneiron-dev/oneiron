@@ -68,6 +68,19 @@ impl ConsolidationExecutor<'_> {
                 Some((turn, reading, partition))
             })
             .collect();
+        // The queued originals, with the same frozen readings and
+        // partitions: the stamp's carrier guard revalidates the ids,
+        // and members no round has taken yet (an away chunk member at
+        // enqueue) are stamped from these when this run completes.
+        let originals = Self::queued_originals(attempt);
+        let returned: Vec<(EntityId, [u8; 32], [u8; 32])> = originals
+            .iter()
+            .filter_map(|turn| {
+                let reading = resources.taken_reading(turn).ok()?;
+                let partition = resources.taken_partition(turn).ok()?;
+                Some((*turn, reading, partition))
+            })
+            .collect();
         // The projection round this attempt itself carries, for the
         // latest-round bookkeeping its widened stamp owes: a deferral
         // requeues this same row, and a successor copies kind + dedupe
@@ -116,7 +129,16 @@ impl ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &widened, widened_round, ctx, stages)
+                    .commit_candidates(
+                        &resources,
+                        candidates,
+                        &widened,
+                        widened_round,
+                        &originals,
+                        &returned,
+                        ctx,
+                        stages,
+                    )
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -131,7 +153,16 @@ impl ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) = self
-                    .commit_candidates(&resources, candidates, &[], widened_round, ctx, stages)
+                    .commit_candidates(
+                        &resources,
+                        candidates,
+                        &[],
+                        widened_round,
+                        &[],
+                        &[],
+                        ctx,
+                        stages,
+                    )
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -169,13 +200,19 @@ impl ConsolidationExecutor<'_> {
     /// with the latest-round bookkeeping that assignment owes under
     /// this attempt's own round
     /// (`widened_round`), in the stamp's own commit after the candidates'
-    /// (FIX 12246). An attempt with no round of its own records nothing.
+    /// (FIX 12246). The same stamp fills queued originals no round has
+    /// taken (`returned` - an away chunk member at enqueue - revalidated
+    /// against `originals`), and skips entirely when a gap erasure
+    /// retired the carrier round. An attempt with no round of its own
+    /// records nothing.
     async fn commit_candidates(
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
         widened: &[(EntityId, [u8; 32], [u8; 32])],
         widened_round: Option<[u8; 32]>,
+        originals: &[EntityId],
+        returned: &[(EntityId, [u8; 32], [u8; 32])],
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
     ) -> Result<()> {
@@ -195,10 +232,26 @@ impl ConsolidationExecutor<'_> {
         // without its round's membership and latest move would suppress
         // the turns while an older turn still holds. Unstamped, they
         // re-enter through the usual doors.
-        if accepted.is_ok() && !widened.is_empty() && widened_round.is_some() {
+        if accepted.is_ok()
+            && widened_round.is_some()
+            && (!widened.is_empty() || !returned.is_empty())
+        {
             // A failed stamp never fails the commit the extraction already
             // landed; it only costs a later duplicate extraction.
             let stamped = ctx.vault.with_write_txn_grouped(|txn| {
+                // A gap erasure of an original (or its cited MESSAGE)
+                // retired the carrier round with the member's GIVEN row:
+                // recreating it here would resurrect retired membership
+                // under words the erase already released. Skip the whole
+                // stamp; unstamped turns re-enter through the usual doors.
+                let Some(carrier) = widened_round else {
+                    return Ok(());
+                };
+                if !crate::dreamer_wake::carrier_round_live_in_txn(
+                    ctx.vault, txn, &carrier, originals,
+                )? {
+                    return Ok(());
+                }
                 // A widened turn erased or rewritten since the branch
                 // opened is not stamped at its frozen reading: an erasure
                 // in the gap already deleted its row, and moved-on words
@@ -219,11 +272,19 @@ impl ConsolidationExecutor<'_> {
                 for (turn, reading) in &current {
                     crate::dreamer_wake::take_reading_in_txn(ctx.vault, txn, turn, *reading)?;
                 }
+                // Originals no round has taken (an away chunk member at
+                // enqueue) are stamped at their frozen readings now that
+                // the run that extracted them has landed.
+                for (turn, reading, partition) in returned {
+                    crate::dreamer_wake::take_returned_in_txn(
+                        ctx.vault, txn, turn, *reading, *partition,
+                    )?;
+                }
                 crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, &current)
             });
             if let Err(error) = stamped {
                 tracing::warn!(
-                    turns = widened.len(),
+                    turns = widened.len() + returned.len(),
                     kind = ?error.kind(),
                     "widened turns were not recorded as taken"
                 );
@@ -237,6 +298,21 @@ impl ConsolidationExecutor<'_> {
     /// Empty for every other scope and for branches widening kept to their
     /// originals; an unreadable queued payload also yields empty (no stamp
     /// is the safe direction: a later widening re-takes the words).
+    /// The attempt's queued originals (Micro only): the ids the stamp's
+    /// carrier guard revalidates and the completion stamp owes its
+    /// untaken members. Empty for every other scope and for an
+    /// unreadable queued payload.
+    fn queued_originals(attempt: &DreamerAdmittedAttempt) -> Vec<EntityId> {
+        if attempt.status.attempt.kind.as_str()
+            != crate::dreamer_runner::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+        {
+            return Vec::new();
+        }
+        super::super::partition::decode_partition_payload(&attempt.status.payload.input)
+            .map(|queued| queued.turn_ids().into_iter().collect())
+            .unwrap_or_default()
+    }
+
     fn widened_turns(
         attempt: &DreamerAdmittedAttempt,
         plan: &PreparedConsolidationAttempt,
