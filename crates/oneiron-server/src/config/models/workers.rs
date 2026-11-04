@@ -348,6 +348,7 @@ impl WorkerFile {
             ("env", !self.env.is_empty()),
             ("envelope_mib", self.envelope_mib != EnvelopeFile::default()),
             ("idle_stop_secs", self.idle_stop_secs.is_some()),
+            ("policy_file", self.policy_file.is_some()),
         ];
         if let Some((name, _)) = fields.iter().find(|(_, set)| *set) {
             anyhow::bail!(
@@ -429,6 +430,11 @@ impl WorkerFile {
         let (credential_env, policy_file) = if media {
             self.media_launch(id, kind, provider, base)?
         } else {
+            anyhow::ensure!(
+                self.policy_file.is_none(),
+                "{}: only a media worker takes a serving-policy file",
+                field("policy_file")
+            );
             (None, None)
         };
         if let Some(env) = &self.hub_token_env {
