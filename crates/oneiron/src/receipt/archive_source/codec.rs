@@ -1,4 +1,5 @@
 //! Canonical claim-bound archived receipt data, never a native terminal stamp.
+pub(super) use crate::store::receipt_identity::MAGIC;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, export::ExportReceiptSource},
     entity_id::EntityId,
@@ -8,7 +9,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-pub(super) use crate::store::receipt_identity::MAGIC;
 /// The domain an archived source's id hashes its canonical bytes under.
 const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

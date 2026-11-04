@@ -210,6 +210,17 @@ impl RetryableLlmError {
         Self::fault(TransportFaultKind::NotSent, Some(stage), detail.into())
     }
 
+    /// Whether this is the typed not-sent fault a caller named by `stage`.
+    #[must_use]
+    pub fn is_not_sent_stage(&self, stage: &str) -> bool {
+        matches!(
+            self,
+            Self::TransportFault(fault)
+                if fault.kind == TransportFaultKind::NotSent
+                    && fault.stage.as_deref() == Some(stage)
+        )
+    }
+
     /// The I/O failed at `stage` after the call went out: it may have run.
     #[must_use]
     pub fn io_after_send(stage: &str, detail: impl Into<String>) -> Self {

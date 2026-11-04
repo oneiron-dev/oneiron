@@ -11,13 +11,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::error::Result;
-use crate::receipt::task_type_ref::TypeRef;
 use crate::claim::learning_evidence::Anchor;
+use crate::error::Result;
+use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::store::setting_seed::ATTRIBUTION_UNCLEAR_FLOOR;
-use crate::learning_setting::{
-    SettingCheck, global_setting_subject, record_setting_check_in_txn,
-};
 
 use super::judge::JudgeTrace;
 use super::split::held_reason;

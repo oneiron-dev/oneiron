@@ -1,9 +1,9 @@
 //! The authenticated NOTE state envelope and its strict payload decoder.
 
+use crate::EntityId;
 use crate::error::Result;
 use crate::note::NoteSeal;
 use crate::note::documents::invalid;
-use crate::EntityId;
 
 /// Bytes of the head sequence field.
 const SEQ_LEN: usize = 8;

@@ -8,7 +8,6 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
-use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
@@ -21,6 +20,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
 use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
+use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
