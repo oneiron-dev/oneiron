@@ -7948,6 +7948,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
+ "oneiron-store",
  "oneiron-vault-contract",
  "oneiron-xlsx-formula",
  "oxc_allocator",
@@ -8458,6 +8459,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -8701,6 +8703,10 @@ dependencies = [
  "libc",
  "tokio",
 ]
+
+[[package]]
+name = "oneiron-store"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-uniffi"
