@@ -252,10 +252,10 @@ fn system_author_authorized(
             == Some(PolicyApprovalCeiling::Auto)
 }
 
+use crate::store::witness_message_body::validate_replicated_witness_message_body;
 pub(crate) use crate::store::witness_message_body::{
     WitnessMessageBodyAuthor, validate_canonical_witness_message_body,
 };
-use crate::store::witness_message_body::validate_replicated_witness_message_body;
 
 /// TEST-ONLY: the canonical MESSAGE body for one envelope, through the SAME
 /// encoder every write door uses.
