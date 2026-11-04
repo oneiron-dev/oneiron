@@ -127,7 +127,7 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod canonical_document;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
 pub mod conversation_record;
