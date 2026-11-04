@@ -96,7 +96,8 @@ pub(super) fn dispatch_put_type(
                 .refinement_admission
                 .is_some_and(|proof| proof.binds_claim(&fixed.id, data))
             && !fixed.write_envelope.is_some_and(|envelope| {
-                crate::store::claim_projection::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
+                crate::store::claim_projection::session_claim_producer(&body)
+                    == Some(envelope.actor().entity_ref())
             })
         {
             return Err(Error::InvalidClaimBody(
@@ -245,7 +246,7 @@ pub(super) fn dispatch_put_type(
             fixed.occurred,
             data,
         )?;
-        crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
+        crate::store::diagnostic_record::admission::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
@@ -269,7 +270,7 @@ pub(super) fn dispatch_put_type(
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
-        crate::skill::resident::validate_owner_put_in_txn(
+        crate::store::skill_resident::validate_owner_put_in_txn(
             store,
             wtxn,
             &fixed.id,
