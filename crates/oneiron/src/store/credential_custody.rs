@@ -151,6 +151,30 @@ pub(crate) fn credential_value_leaf_in(
 }
 
 impl Store {
+    /// Plans exactly the resume generation a retained carrier commits to.
+    pub(crate) fn plan_connector_resume(
+        plan: &mut CustodyPlan,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<Requirement> {
+        let source = plan
+            .source()
+            .ok_or_else(|| CustodyKind::ConnectorResume.corrupt())?;
+        let id = resume_subject(source, call_ref)?.at(u64::from(generation));
+        plan.require_exact(&id)
+    }
+
+    /// Reads a resume leaf from an activation's fork, never the old binding.
+    pub(crate) fn connector_resume_leaf_in(
+        binding: &CustodyBinding,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<CredentialLeaf> {
+        let id = resume_subject(binding, call_ref)?.at(u64::from(generation));
+        let secret = crate::store::key_custody::LocalCustody::at(binding).read(&id)?;
+        copy_leaf(CustodyKind::ConnectorResume, secret.expose())
+    }
+
     /// The key credential `credential`'s value at `generation` is sealed
     /// under, minted in `wtxn` when custody holds none there yet, the
     /// binding pinned in the same transaction: published, synced and its

@@ -6,8 +6,11 @@ use super::door::CalendarConnectorOperation;
 use super::remote::RemoteWriteReceipt;
 use crate::entity_id::EntityId;
 use crate::secret_custody::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
+use crate::store::Store;
+use crate::store::key_custody::{CustodyBinding, CustodyPlan, Requirement};
 use crate::vault::Vault;
 
 const CODEC: u8 = 1;
@@ -122,15 +125,7 @@ impl LiteralCarrier {
         if self.seat != operation.literal_scope()? {
             return Err(invalid());
         }
-        let ciphertext = self
-            .boxed
-            .iter()
-            .map(|word| {
-                word.checked_sub(256)
-                    .and_then(|byte| u8::try_from(byte).ok())
-                    .ok_or_else(invalid)
-            })
-            .collect::<crate::Result<Vec<_>>>()?;
+        let ciphertext = self.ciphertext()?;
         let reference = reference(kind, &self.instance);
         let payload = {
             let snapshot = vault.store.custody_snapshot()?;
@@ -143,7 +138,30 @@ impl LiteralCarrier {
                 &ciphertext,
             )?
         };
-        let envelope: Envelope = serde_json::from_slice(&payload).map_err(|_| invalid())?;
+        let envelope = self.envelope(&payload, kind, key, row)?;
+        Ok((envelope.uid, envelope.values))
+    }
+
+    fn ciphertext(&self) -> crate::Result<Vec<u8>> {
+        self.boxed
+            .iter()
+            .map(|word| {
+                word.checked_sub(256)
+                    .and_then(|byte| u8::try_from(byte).ok())
+                    .ok_or_else(invalid)
+            })
+            .collect()
+    }
+
+    fn envelope(
+        &self,
+        payload: &[u8],
+        kind: LiteralKind,
+        key: [u8; 32],
+        row: [u8; 32],
+    ) -> crate::Result<Envelope> {
+        let reference = reference(kind, &self.instance);
+        let envelope: Envelope = serde_json::from_slice(payload).map_err(|_| invalid())?;
         if envelope.codec != CODEC
             || envelope.kind != kind
             || envelope.instance != self.instance
@@ -154,7 +172,31 @@ impl LiteralCarrier {
         {
             return Err(invalid());
         }
-        Ok((envelope.uid, envelope.values))
+        Ok(envelope)
+    }
+
+    pub(super) fn plan(
+        &self,
+        plan: &mut CustodyPlan,
+        kind: LiteralKind,
+    ) -> crate::Result<Requirement> {
+        Store::plan_connector_resume(plan, &reference(kind, &self.instance), GENERATION)
+    }
+
+    pub(super) fn read_back(
+        &self,
+        binding: &CustodyBinding,
+        kind: LiteralKind,
+        key: [u8; 32],
+        row: [u8; 32],
+    ) -> crate::Result<()> {
+        read_back_connector_resume_for_activation(
+            binding,
+            &reference(kind, &self.instance),
+            GENERATION,
+            &self.ciphertext()?,
+            |payload| self.envelope(payload, kind, key, row).map(|_| ()),
+        )
     }
 
     pub(super) fn retire(

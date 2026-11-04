@@ -53,7 +53,8 @@ pub(crate) use self::image::{
 };
 
 pub(crate) use self::connector_resume::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::types::{

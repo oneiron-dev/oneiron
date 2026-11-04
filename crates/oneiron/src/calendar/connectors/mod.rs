@@ -79,6 +79,7 @@ pub use self::outbound::{
     CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState,
     calendar_remote_uid_for_href, calendar_remote_uid_for_href_for_operation, write_calendar_event,
 };
+pub(crate) use self::outbound::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
 pub use self::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest,

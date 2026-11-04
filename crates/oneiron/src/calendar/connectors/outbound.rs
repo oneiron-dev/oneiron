@@ -1,5 +1,9 @@
 //! Conditional writes plus durable outbox and remote-object cursor store.
 
+mod archived;
+
+pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

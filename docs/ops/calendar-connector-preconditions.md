@@ -35,3 +35,17 @@ Truthful recording after admitted I/O adds no fresh owner or credential gate.
 Passport/index writes still use their existing separate transactions. This
 slice does not claim whole-settlement atomicity or fix every concurrent
 passport/cursor ordering race. There is no migration or old masked-row reader.
+
+## Archived-vault activation
+
+Activation collects every current outbox and remote-object cursor, including
+Committed outbox evidence. It plans only each carrier's purpose-derived resume
+ref at generation 0 before forking custody. A retired instance removes only its
+own row through the existing archive prune. Missing or damaged required custody
+keeps the existing strict error; no replacement key is minted.
+
+Before lifting the archive mark, activation opens each kept carrier under the
+new fork's transaction binding and validates the same ciphertext encoding and
+envelope bindings as ordinary operation reads. This validation returns no
+literal and admits no transport work. It does not change credential, owner, or
+installed-seat admission. Side-restore parity is not established by this slice.
