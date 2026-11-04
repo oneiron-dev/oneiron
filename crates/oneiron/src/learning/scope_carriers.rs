@@ -130,7 +130,9 @@ pub(crate) fn erase_team_receipt_scope_in_txn(
 ///
 /// Storage errors.
 ///
-/// Revokes the custody the side-row wall minted from one deleted row (FIX 12085).
+/// Revokes the custody the side-row wall minted from one deleted row (FIX 12085). A row
+/// the erase moves under a fresh key keeps the custody its handles still name; only a
+/// dropped replacement's custody is revoked (REVIEW-4444 round-1 P1).
 fn revoke_deleted_row_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -174,21 +176,26 @@ pub(crate) fn erase_review_scope_in_txn(
                     branch_attempt: artifact.branch_attempt,
                     artifact_id: artifact.artifact_id.clone(),
                 };
-                // FIX 12085: the deleted row's lifted custody goes with it.
-                revoke_deleted_row_in_txn(
-                    vault,
-                    wtxn,
-                    &format!("side:{}", ARTIFACT.decl().name),
-                    &ARTIFACT.key_bytes(&key),
-                )?;
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
                 let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
                 match CRITIQUE_ARTIFACT.put(&vault.store, &mut savepoint, &moved, &artifact) {
                     Ok(()) => savepoint.commit()?,
-                    Err(error) => tracing::warn!(
-                        %error,
-                        "a scoped critique artifact the side-row wall no longer admits is dropped by its erase"
-                    ),
+                    Err(error) => {
+                        drop(savepoint);
+                        // FIX 12085: a dropped replacement's custody goes with it. A
+                        // successfully moved row keeps the custody its handles still
+                        // name (REVIEW-4444 round-1 P1).
+                        revoke_deleted_row_in_txn(
+                            vault,
+                            wtxn,
+                            &format!("side:{}", ARTIFACT.decl().name),
+                            &ARTIFACT.key_bytes(&key),
+                        )?;
+                        tracing::warn!(
+                            %error,
+                            "a scoped critique artifact the side-row wall no longer admits is dropped by its erase"
+                        )
+                    }
                 }
             }
             Ok(_) => {}
@@ -279,13 +286,6 @@ pub(crate) fn erase_review_scope_in_txn(
         hasher.update(salt.as_bytes());
         hasher.update(&hash);
         let moved = *hasher.finalize().as_bytes();
-        // FIX 12085: the deleted row's lifted custody goes with it.
-        revoke_deleted_row_in_txn(
-            vault,
-            wtxn,
-            &format!("side:{}", REVIEW.decl().name),
-            &REVIEW.key_bytes(&hash),
-        )?;
         REVIEW.delete(&vault.store, wtxn, &hash)?;
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         if let Err(error) = REVIEW.put(&vault.store, &mut savepoint, &moved, &review) {
@@ -294,6 +294,15 @@ pub(crate) fn erase_review_scope_in_txn(
                 "a scoped review the side-row wall no longer admits is dropped by its erase"
             );
             drop(savepoint);
+            // FIX 12085: a dropped replacement's custody goes with it. A
+            // successfully moved row keeps the custody its handles still
+            // name (REVIEW-4444 round-1 P1).
+            revoke_deleted_row_in_txn(
+                vault,
+                wtxn,
+                &format!("side:{}", REVIEW.decl().name),
+                &REVIEW.key_bytes(&hash),
+            )?;
             dropped.push(REVIEW.key_bytes(&hash));
             continue;
         }
@@ -365,13 +374,6 @@ fn erase_review_session_rows_in_txn(
         hasher.update(salt.as_bytes());
         hasher.update(&hash);
         let moved = *hasher.finalize().as_bytes();
-        // FIX 12085: the deleted row's lifted custody goes with it.
-        revoke_deleted_row_in_txn(
-            vault,
-            wtxn,
-            &format!("side:{}", REVIEW.decl().name),
-            &REVIEW.key_bytes(&hash),
-        )?;
         REVIEW.delete(&vault.store, wtxn, &hash)?;
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         if let Err(error) = REVIEW.put(&vault.store, &mut savepoint, &moved, &review) {
@@ -380,6 +382,15 @@ fn erase_review_session_rows_in_txn(
                 "a session-erased review the side-row wall no longer admits is dropped by its erase"
             );
             drop(savepoint);
+            // FIX 12085: a dropped replacement's custody goes with it. A
+            // successfully moved row keeps the custody its handles still
+            // name (REVIEW-4444 round-1 P1).
+            revoke_deleted_row_in_txn(
+                vault,
+                wtxn,
+                &format!("side:{}", REVIEW.decl().name),
+                &REVIEW.key_bytes(&hash),
+            )?;
             dropped.push(REVIEW.key_bytes(&hash));
             continue;
         }
