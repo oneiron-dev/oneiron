@@ -2287,10 +2287,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/authority/tests.rs` | test | m | — | — | — |
 | `src/dreamer_runner/authority/tests/coach.rs` | test | s | — | — | The Coach, the second base agent (owner ruling 2026-10-16): its own principal row and its own stamp on the… |
 | `src/dreamer_runner/claim_authoring.rs` | src | s | 6 struct · 6 enum · 11 fn | DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision, DreamerClaimAuthoringSchedule, DreamerClaimAuthoringSinglePassReason, DreamerClaimAuthoringStrategy, DreamerClaimEvidenceState +4 | OF-366/OF-267 claim-authoring admission gate: single-pass vs tournament |
-| `src/dreamer_runner/codec.rs` | src | m | 2 fn · 25 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
+| `src/dreamer_runner/codec.rs` | src | m | 1 re-export · 12 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
 | `src/dreamer_runner/codec/budget.rs` | src | m | 2 crate-vis | — | MessagePack codecs and validators for the private wake-budget rows: the counter, with its overdraft and owed… |
 | `src/dreamer_runner/connector_event.rs` | src | s | 2 struct · 1 enum · 1 trait · 4 fn · 2 const · 2 crate-vis | ConnectorEventExecutor, ConnectorEventReplyHandoff, ConnectorEventResponder, ConnectorEventWake | Connector wake delivery retains its typed event; it is not a partition job |
-| `src/dreamer_runner/constants.rs` | src | s | 1 const · 25 re-export · 35 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
+| `src/dreamer_runner/constants.rs` | src | s | 1 const · 25 re-export · 32 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
 | `src/dreamer_runner/deferral.rs` | src | s | 3 crate-vis | — | A deferred selection (FIX 3863) |
 | `src/dreamer_runner/free_time/actor_content.rs` | src | s | 2 crate-vis | — | What an erased actor leaves in another agent's free-time rows (FIX 8875, stage 1): one field scrub per row… |
 | `src/dreamer_runner/free_time/cycle.rs` | src | m | 3 struct · 2 enum · 2 fn · 8 crate-vis | FreeTimeCycle, FreeTimeCycleState, FreeTimeItemRef, FreeTimeNote, FreeTimeOwnTimeChoice | A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end |
@@ -2460,7 +2460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/step_replay.rs` | src | s | 6 struct · 4 enum · 2 fn · 2 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin +2 | — |
 | `src/dreamer_runner/store.rs` | src | L | 1 struct · 18 fn · 30 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
-| `src/dreamer_runner/types.rs` | src | m | 25 struct · 12 enum · 17 fn · 2 re-export · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload +29 | Dreamer runner request/outcome vocabulary and its pure impls |
+| `src/dreamer_runner/types.rs` | src | m | 24 struct · 12 enum · 17 fn · 3 re-export · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptProgressState +28 | Dreamer runner request/outcome vocabulary and its pure impls |
 | `src/dreamer_runner/types/park.rs` | src | s | 1 struct | ParkDreamerAttempt | Parking a Dreamer attempt in local runner state |
 | `src/dreamer_runner/types/retry_policy.rs` | src | s | 5 fn · 3 crate-vis | — | How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own… |
 | `src/dreamer_runner/wake_park.rs` | src | s | 1 struct · 1 fn | DreamerCheckpointDue | The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the… |
@@ -5711,6 +5711,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/document_frame_tags.rs` | src | s | 10 const · 1 mod | — | Document frame tags shared by persisted document consumers and transport |
 | `src/store/document_segments.rs` | src | s | 1 struct · 1 fn · 1 const | DocsSegment | Structural document segments used by indexing and birth fingerprints |
 | `src/store/dreamer_attempt_kind.rs` | src | s | 27 const | — | Queue discriminators and wire constants used by stored Dreamer attempts |
+| `src/store/dreamer_attempt_payload.rs` | src | s | 1 struct · 2 fn · 18 crate-vis | DreamerAttemptPayload | Dreamer attempt payload envelope and its MessagePack codec |
 | `src/store/dreamer_wake_policy.rs` | src | s | 4 struct · 3 enum | AgentWakePolicy, AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence, DreamerWakePolicy, WeaveRecipePriority | The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the… |
 | `src/store/embedding.rs` | src | m | 8 struct · 3 enum · 3 trait · 7 fn · 1 type · 9 const · 2 re-export · 6 crate-vis | EgressDecision, EgressPredicate, Embedder, EmbedderLocality, EmbeddingMatchEvidence, EmbeddingProvenanceCount, EmbeddingSpace, KindSlotBindings +6 | Embedding space, input, provenance and host-provider vocabulary |
 | `src/store/executor_speech_identity.rs` | src | s | 4 crate-vis | — | The deterministic ids of a durable executor run's speech turn and compaction session, and the domain-tagged… |
@@ -5831,7 +5832,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 115 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 116 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | DescriptionPolicy, MeasuredDescription, ModelDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
