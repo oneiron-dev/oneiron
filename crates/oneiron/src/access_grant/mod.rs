@@ -22,6 +22,8 @@ mod erase;
 pub(crate) use erase::erase_principal_grants_in_txn;
 mod record;
 mod vault_doors;
+mod witness_history;
+pub(crate) use witness_history::witness_read_generations;
 
 pub use self::codec::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, decode_access_grant_body,
