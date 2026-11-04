@@ -46,6 +46,7 @@ impl RecordingJsHost<'_, '_> {
         reference: &JsResultRef,
     ) -> Option<(CodeRunRawOutput, Option<String>)> {
         crate::code_run::resolve_result(
+            self.run_id,
             self.results.iter().chain(&self.captured),
             &self.live_bindings(),
             reference,

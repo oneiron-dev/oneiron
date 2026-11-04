@@ -198,14 +198,20 @@ pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<En
 pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
-/// size, kind, completion and preview, and where to read it. The read path
-/// names the run's occurrence of the body, so a same-byte result reads
-/// its own taint and secrets instead of the first occurrence's.
+/// size, kind, completion and preview, where to read it, and the ref that
+/// names it back. The read path names the run's occurrence of the body, so
+/// a same-byte result reads its own taint and secrets instead of the first
+/// occurrence's. The ref names the same occurrence (`occurrence:<hex>`),
+/// because the guest's `refOf` prefers `ref` over `handle`: a bare handle
+/// names the first occurrence with those bytes, so a second same-byte store
+/// would slice, describe and inherit as the first one and read its taint.
 pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> serde_json::Value {
-    let read = ResultOccurrence::of(Some(owner), output)
-        .map(|occurrence| result_read_path_for(output.output_ref(), &occurrence))
-        .unwrap_or_else(|_| result_read_path(output.output_ref()));
-    json!({
+    let occurrence = ResultOccurrence::of(Some(owner), output).ok();
+    let read = occurrence
+        .as_ref()
+        .map(|occurrence| result_read_path_for(output.output_ref(), occurrence))
+        .unwrap_or_else(|| result_read_path(output.output_ref()));
+    let mut card = json!({
         "handle": output.handle,
         "bytes": output.raw_len,
         "kind": match output.kind {
@@ -216,7 +222,11 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
         "complete": output.complete,
         "preview": output.preview.text,
         "read": read,
-    })
+    });
+    if let Some(occurrence) = occurrence.as_ref() {
+        card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
+    }
+    card
 }
 
 /// A step's streamed result as its host took it: one body sink per target,

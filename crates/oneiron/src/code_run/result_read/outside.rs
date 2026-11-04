@@ -130,7 +130,7 @@ pub(crate) fn read_result_in(
             }
             selected
         }
-        _ => resolve(outputs, &live, &target.reference),
+        _ => resolve(run_id, outputs, &live, &target.reference),
     };
     let Some((output, name)) = selected else {
         return Ok(unknown_handle(&live));

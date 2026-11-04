@@ -476,8 +476,13 @@ pub(crate) fn card(
 
 /// The run's result a reference names among `outputs`, and the live name
 /// bound to it. `live` is the run's live names, oldest first. Only the
-/// run's own results resolve: a handle names nothing else.
+/// run's own results resolve: a handle names nothing else. An
+/// `occurrence:<hex>` ref names the run's exact occurrence at `owner`'s
+/// path, never the first occurrence that happens to hold the same bytes:
+/// whole-result cards carry one because the guest prefers `ref` over
+/// `handle`.
 pub(crate) fn resolve<'r>(
+    owner: EntityId,
     mut outputs: impl Iterator<Item = &'r CodeRunRawOutput>,
     live: &[&'r CodeRunResultBinding],
     reference: &JsResultRef,
@@ -492,6 +497,30 @@ pub(crate) fn resolve<'r>(
             Some((output.clone(), Some(binding.name.clone())))
         }
         JsResultRef::Handle(handle) => {
+            if let Some(wanted) = handle.strip_prefix("occurrence:") {
+                let mut selected: Option<CodeRunRawOutput> = None;
+                for output in outputs {
+                    let Ok(occurrence) =
+                        crate::code_run::ResultOccurrence::owned(owner, &output.path)
+                    else {
+                        continue;
+                    };
+                    if occurrence.id().to_hex() == wanted {
+                        selected = Some(output.clone());
+                        break;
+                    }
+                }
+                let output = selected?;
+                let name = live
+                    .iter()
+                    .rev()
+                    .find(|binding| {
+                        binding.handle == output.handle
+                            && (binding.path.is_empty() || binding.path == output.path)
+                    })
+                    .map(|binding| binding.name.clone());
+                return Some((output, name));
+            }
             let output = outputs.find(|output| names_result(output, handle))?;
             let name = live
                 .iter()

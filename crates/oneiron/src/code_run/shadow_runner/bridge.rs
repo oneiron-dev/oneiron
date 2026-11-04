@@ -346,7 +346,8 @@ impl<'a> ShadowBridgeHost<'a> {
         self.admit_read()?;
         let live = self.live_bindings();
         let outputs = self.results.iter().map(|result| &result.output);
-        let Some((output, name)) = resolve_result(outputs, &live, &target.reference) else {
+        let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
+        else {
             return Ok(Err(unknown_handle(&live)));
         };
         let taint = self.taint_of(&output);
