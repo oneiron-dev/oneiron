@@ -76,8 +76,8 @@ impl Masker {
             {
                 continue;
             }
-            // A value the owner ruled no secret in the record is left as
-            // written, whatever rule placed its span (FIX 8646).
+            // A value the owner ruled no secret or kept as text in the record is left
+            // as written, whatever rule placed its span (FIX 8646).
             if self.is_kept(&leaf[span.clone()]) {
                 continue;
             }

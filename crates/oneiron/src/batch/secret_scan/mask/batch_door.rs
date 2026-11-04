@@ -59,7 +59,7 @@ pub(in crate::batch) fn mask_batch_ops(
     if refusal.is_none() && known.is_none() {
         return Ok((MaskedFiles::default(), Vec::new()));
     }
-    // A value the owner ruled no secret in a record is no hit there.
+    // A value the owner ruled no secret or kept as text in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
         return Ok((MaskedFiles::default(), Vec::new()));
