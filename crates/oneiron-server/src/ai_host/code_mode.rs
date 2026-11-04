@@ -76,7 +76,11 @@ pub(super) async fn bind(
         );
         return server;
     }
-    let component = match tokio::task::spawn_blocking(crate::mcp::checked_in_quickjs_runtime).await
+    let step_wall = models.code_mode.step_wall;
+    let component = match tokio::task::spawn_blocking(move || {
+        crate::mcp::checked_in_quickjs_runtime_with_wall(step_wall)
+    })
+    .await
     {
         Ok(Ok(component)) => component,
         Ok(Err(error)) => {
