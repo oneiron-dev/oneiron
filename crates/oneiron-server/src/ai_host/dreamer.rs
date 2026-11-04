@@ -27,7 +27,9 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext};
+use oneiron::llm::{
+    HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext,
+};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -611,8 +613,7 @@ impl ObservedFactory {
                 .with_work_context(WorkContext {
                     class: WorkClass::Background,
                     deadline: self.pass_deadline.as_ref().and_then(|deadline| {
-                        Instant::now()
-                            .checked_add(Duration::from_millis(deadline.remaining_ms()))
+                        Instant::now().checked_add(Duration::from_millis(deadline.remaining_ms()))
                     }),
                     // Role runs admit under the pass's device-work
                     // cancellation (FIX 11963): tripping it beside the wake
