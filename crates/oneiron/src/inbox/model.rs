@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::edit_distance::delta::AmendmentDelta;
 use crate::error::Error;
-use crate::store::receipt_row::{ReceiptRecord, ReceiptView};
 use crate::side_table::{CodecError, RawValue};
 use crate::store::PendingGateConsentRecord;
+use crate::store::receipt_row::{ReceiptRecord, ReceiptView};
 
 /// Sub-clusters by entity/theme are emitted only when a run surfaces at
 /// least this many members ("when the run emits many items").
