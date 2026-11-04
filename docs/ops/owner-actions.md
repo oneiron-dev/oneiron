@@ -2001,6 +2001,11 @@ clearance (the `vault.disclosure.offer` verb, under an agent credential that car
 `propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
 contact offer.
 
+- `GET /v1/owner/disclosure/offers?limit=20` lists your open offers, unresolved and
+  unexpired, in proposal-reference order. The reply holds `offers` (the same frozen views as
+  the singular read) and `next_after`. Pass that reference as `after` for the next page;
+  `next_after: null` means done. Choose `limit` on every request; zero returns an empty page.
+  The list grants nothing and never includes another owner's offers.
 - `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
   the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
 - `POST /v1/owner/disclosure/confirm` with
