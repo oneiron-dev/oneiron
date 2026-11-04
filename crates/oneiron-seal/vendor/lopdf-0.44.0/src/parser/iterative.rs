@@ -265,9 +265,9 @@ pub(super) fn array<'a>(
     if input.first() != Some(&b'[') {
         return Err(nom::Err::Error(NomError::from_error_kind(input, ErrorKind::Tag)));
     }
-    let (rest, object) = object(input, admission, refused)?;
-    match object {
-        Object::Array(objects) => Ok((rest, objects)),
+    let (rest, mut object) = object(input, admission, refused)?;
+    match &mut object {
+        Object::Array(objects) => Ok((rest, std::mem::take(objects))),
         _ => Err(nom::Err::Error(NomError::from_error_kind(input, ErrorKind::MapRes))),
     }
 }
@@ -305,9 +305,9 @@ pub(super) fn dictionary<'a>(
     if !input.starts_with(b"<<") {
         return Err(nom::Err::Error(NomError::from_error_kind(input, ErrorKind::Tag)));
     }
-    let (rest, object) = object(input, admission, refused)?;
-    match object {
-        Object::Dictionary(dict) => Ok((rest, dict)),
+    let (rest, mut object) = object(input, admission, refused)?;
+    match &mut object {
+        Object::Dictionary(dict) => Ok((rest, std::mem::take(dict))),
         _ => Err(nom::Err::Error(NomError::from_error_kind(input, ErrorKind::MapRes))),
     }
 }

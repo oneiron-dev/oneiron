@@ -97,6 +97,7 @@ impl Vault {
                 "a tested queue revision must advance its aggregation session",
             ));
         }
+        super::queue_root::put_queue_root_in_txn(&self.store, &mut wtxn, revision)?;
         seal.attach_in_txn(self, &mut wtxn)?;
         wtxn.commit()?;
         Ok(revision.revision_id)
@@ -217,10 +218,9 @@ pub(crate) fn validate_queue_revision_in_txn(
         .commit_metadata
         .as_ref()
         .ok_or_else(|| invalid("a tested queue revision needs canonical metadata"))?;
-    if vault
-        .store
-        .port_entity_record(txn, &metadata.author)?
-        .is_none()
+    // An author erased before the seal leaves none to read (FIX 7348).
+    if let Some(author) = &metadata.author
+        && vault.store.port_entity_record(txn, author)?.is_none()
     {
         return Err(Error::EntityNotFound);
     }

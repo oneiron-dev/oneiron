@@ -484,6 +484,7 @@ impl EditSession for NativeCellSession {
             &changes,
             self.limits,
             &crate::office_body::document_resources(),
+            None,
         )
         .map_err(|error| {
             // A resource refusal is the engine's error (FIX 10587), never a failed write.

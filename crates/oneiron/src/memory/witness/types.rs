@@ -56,6 +56,11 @@ pub struct WitnessMessage {
     pub message_type: String,
     /// Text content; BM25-indexed under the `content` field when non-empty.
     pub content: String,
+    /// Ordered model-output parts owned by this MESSAGE. Text readers keep
+    /// reading `content`; reasoning never enters their joined text or the
+    /// editable document. Absent for text-only writers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<crate::ContentPart>>,
     /// Opaque metadata, passed through as MessagePack.
     pub metadata: Option<serde_json::Value>,
     /// Visibility flag (default true app-side).

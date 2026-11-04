@@ -24,10 +24,10 @@ use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispat
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::code_run::ReadWorldUnknown;
 use oneiron::code_run::model_call::{
-    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
-    record_model_call_in_txn,
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
 };
-use oneiron::compaction::output::restore_output;
+use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
@@ -284,7 +284,7 @@ impl StepRunner {
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
-            let bytes = restore_output(vault, output.source)?;
+            let bytes = restore_output_window(vault, output.source, OUTPUT_WINDOW_BYTES)?;
             earlier.push(message(
                 LlmMessageRole::User,
                 String::from_utf8_lossy(&bytes).into_owned(),
@@ -804,13 +804,17 @@ fn record_workflow_response(
         Vec::new()
     };
     let record = ModelCallRecord {
-        schema: 1,
+        schema: MODEL_CALL_SCHEMA,
         attempt: attempt_entity,
         lease_generation: u64::from(attempt.attempt_count),
         // Index 1 is the try's first call; a tool-rounds step's final answer
         // follows its truncated rounds and takes index 2.
         call_index: u64::from(tool_rounds) + 1,
-        digests,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
         route,
         rung,
         issuing_login: None,
@@ -822,8 +826,6 @@ fn record_workflow_response(
         previous_response_id: None,
         store: None,
         captured_at: vault.now_recorded_at(),
-        usage: response.usage.clone(),
-        finish_reason: response.finish_reason.clone(),
         receipt_ref: None,
         actor: Some(actor.entity_ref()),
         produced_pending: response.reply_assertions.created.is_empty(),
