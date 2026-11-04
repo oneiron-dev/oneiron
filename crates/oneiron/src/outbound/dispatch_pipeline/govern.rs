@@ -7,6 +7,7 @@ use crate::gate::{
 };
 use crate::outbound::capability::{OutboundVerbContract, normalize_key};
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
+use crate::outbound::dispatch_types::OutboundDispatchActorGate;
 
 /// `frozen_payload` is the payload the request froze
 /// ([`super::request_binding::PreparedOutboundDispatch::frozen_payload_bytes`]),
