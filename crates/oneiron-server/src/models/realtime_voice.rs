@@ -276,7 +276,8 @@ impl RealtimeVoiceSession {
                 RealtimeWire::GeminiLive => {
                     let content = &event["serverContent"];
                     let complete = content["turnComplete"].as_bool() == Some(true);
-                    if content.get("modelTurn").is_some()
+                    if event.get("toolCall").is_some()
+                        || content.get("modelTurn").is_some()
                         || content["generationComplete"].as_bool() == Some(true)
                         || content["interrupted"].as_bool() == Some(true)
                     {
