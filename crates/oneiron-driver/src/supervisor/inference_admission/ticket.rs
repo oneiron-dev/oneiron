@@ -78,6 +78,21 @@ impl WorkTicket {
         self.admission.resolve_pressure(self)
     }
 
+    /// One pressure pass without victims this caller already tried.
+    pub fn resolve_pressure_excluding(&self, tried: &BTreeSet<String>) -> PressureDecision {
+        self.admission.resolve_pressure_excluding(self, tried)
+    }
+
+    /// Admission changes, armed by the caller before its final state check.
+    pub fn pressure_change(&self) -> tokio::sync::futures::Notified<'_> {
+        self.admission.changed()
+    }
+
+    /// This ticket's caller deadline, if it has one.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.admission.ticket_deadline(self.ticket)
+    }
+
     /// Cancels this ticket and any children still inheriting from it.
     pub fn cancel(&self) {
         self.request.cancel.store(true, Ordering::Release);

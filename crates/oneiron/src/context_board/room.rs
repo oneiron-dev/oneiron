@@ -2,9 +2,9 @@
 
 use super::people::{PeopleView, PersonKind, PersonRow};
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
-use crate::federation::{Scope, ScopeAxis, ScopeId};
-use crate::pipeline::WorldAuthoritySet;
+use crate::claim::world_access::WorldAuthoritySet;
 use crate::{EntityId, Result};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 #[cfg(test)]
 mod tests;
@@ -311,7 +311,7 @@ impl RoomSection {
             );
             let ends = card.until.unwrap_or_else(|| {
                 card.last_engaged_at
-                    .saturating_add(crate::workspace_roster::ROOM_OFFER_IDLE_SECS)
+                    .saturating_add(crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS)
             });
             format!(
                 "offer: {} agent={} what={} artifact={} cost={} until={} vote=vault.rooms.offer.vote answer=vault.rooms.offer.answer",

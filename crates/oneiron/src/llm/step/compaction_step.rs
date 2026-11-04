@@ -61,6 +61,10 @@ const COMPACTION_STEP_SURFACE: &str = "code-run-compaction";
 /// record's withdrawal. The pass's receipt names the calls as unfiled.
 const COMPACTION_STEP_SOURCE_WITHDRAWN: &str = "compaction_step_source_withdrawn";
 
+/// The refusal a step filing takes when the call's complete input was not
+/// witnessed: unknown is never the empty, edgeless set (FIX 11937).
+const COMPACTION_STEP_SOURCES_UNKNOWN: &str = "compaction_step_sources_unknown";
+
 /// One decoded call: its request identity, the bytes of its answer and the
 /// records its words were read from.
 struct FiledCall {
@@ -71,7 +75,7 @@ struct FiledCall {
     usage_in: u64,
     usage_out: u64,
     payload: Vec<u8>,
-    sources: Vec<EntityId>,
+    sources: Option<Vec<EntityId>>,
 }
 
 impl FiledCall {
@@ -95,10 +99,18 @@ impl FiledCall {
         })
     }
 
+    /// The complete records this call read, or a refusal when they were not
+    /// witnessed. Empty is a proved empty set, never the unknown fallback.
+    fn sources(&self) -> Result<&[EntityId]> {
+        self.sources
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(COMPACTION_STEP_SOURCES_UNKNOWN))
+    }
+
     /// Refuses the filing when a record this call read is gone or withdrawn
     /// as `dbs` reads it in `txn`.
     fn sources_stand_in(&self, dbs: &impl ManifestDbs, txn: &heed::RoTxn<'_>) -> Result<()> {
-        for source in &self.sources {
+        for source in self.sources()? {
             if dbs.port_entity_record(txn, source)?.is_none()
                 || crate::ports::withdrawn_in_txn(dbs, txn, source)?
             {
@@ -236,6 +248,7 @@ impl StepFiling<'_> {
         let mut filed = Vec::with_capacity(calls.len());
         for call in calls {
             call.sources_stand_in(&vault.store, wtxn)?;
+            let sources = call.sources()?;
             let claim_id = vault.store.clock.entity_id()?;
             let response_ref = if call.payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES {
                 None
@@ -250,7 +263,7 @@ impl StepFiling<'_> {
                     self.now_ms,
                     &encoded,
                 );
-                for source in &call.sources {
+                for source in sources {
                     batch = batch.edge(&artifact_id, EdgeKind::DerivedFrom, source, 1.0);
                 }
                 batch.apply(wtxn)?;
@@ -286,7 +299,7 @@ impl StepFiling<'_> {
                 occurred,
                 self.now_ms,
             );
-            for source in &call.sources {
+            for source in sources {
                 batch = batch.edge(&claim_id, EdgeKind::DerivedFrom, source, 1.0);
             }
             batch.apply(wtxn)?;
@@ -316,6 +329,7 @@ impl StepFiling<'_> {
                 call.sources_stand_in(&view, &txn)?;
                 view.clock().entity_id()?
             };
+            let sources = call.sources()?;
             session.stage_session_derived_claim(
                 route,
                 claim_id,
@@ -323,7 +337,7 @@ impl StepFiling<'_> {
                 self.envelope,
                 self.occurred(),
                 self.now_ms,
-                &call.sources,
+                sources,
             )?;
             filed.push(call.filed(claim_id));
         }

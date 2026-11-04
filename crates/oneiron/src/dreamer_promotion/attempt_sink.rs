@@ -135,7 +135,10 @@ impl AttemptPromotionSink {
                 held = outcome.held.len(),
                 "scoped consolidation write refused"
             );
-            Err(write_refusal(&outcome.rejected_kinds, &outcome.rejected_gates))
+            Err(write_refusal(
+                &outcome.rejected_kinds,
+                &outcome.rejected_gates,
+            ))
         }
     }
 }

@@ -11,9 +11,9 @@ use super::PublishScope;
 use super::authority::anchor_serves;
 use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequestView};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::error::Result;
-use crate::federation::RepoTarget;
+use crate::store::code_snapshot::RepoRef;
+use oneiron_authority::federation::RepoTarget;
 
 impl Vault {
     /// The anchor the approver's Grant reads, verified against this served
@@ -63,7 +63,10 @@ impl Vault {
                 Ok(crate::policy_model::owners_in_txn(self, txn)?.contains(&actor))
             }
             OriginPublishAuthority::Grant { grant } => {
-                let (Some(code_repo), Some(anchor)) = (view.code_repo, anchor) else {
+                // A lossy path is one no Grant bound judges (FIX 10003).
+                let (Some(code_repo), Some(anchor), false) =
+                    (view.code_repo, anchor, view.review.lossy_paths)
+                else {
                     return Ok(false);
                 };
                 let target = RepoTarget {

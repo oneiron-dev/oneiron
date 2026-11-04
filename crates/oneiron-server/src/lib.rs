@@ -64,6 +64,7 @@ mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod import_audience;
+mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;
 mod linear_host;

@@ -28,6 +28,13 @@
 //! state admits the signer, so each join's parents carry the signer's
 //! standing. It reads no role, clearance or owner act beyond that, and
 //! grants nothing.
+//!
+//! A writer whose own side heads alone fill one entry joins them the same
+//! way first, by the same key, in the scope of the branch they ride (FIX
+//! 11868): an anchor its own heads ([`FrontierJoinScope::AnchorSide`]), a
+//! carrier a world's side leaves ([`FrontierJoinScope::World`]). Its fold is
+//! the main join's; an anchor's side join also records itself among the
+//! anchor's own rows, so it retires their heads and no main door names it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -99,12 +106,14 @@ impl FrontierSigner<'_> {
     fn sign(
         self,
         fold: &AuthorityFold,
+        scope: FrontierJoinScope,
         seq: u64,
         parents: BTreeSet<AuthorityEntryHash>,
         now: u64,
     ) -> Result<AuthorityLogEntry> {
         let op = AuthorityOp::FrontierJoin(FrontierJoin {
             family: self.family(),
+            scope,
         });
         match self {
             Self::Install(_, signing) | Self::Anchor(signing) => {
@@ -180,7 +189,8 @@ pub(super) fn plan_frontier_joins(
 /// check: its signer must be one [`admits_join_signer`] admits in the join's
 /// parent state, else it is not in its ancestry. Its state is its parents'
 /// merge, and only its signer's sequence moves, past its last one there; it
-/// applies nothing.
+/// applies nothing. An anchor's side join is one of the anchor's own rows,
+/// as its root and marks are (FIX 11868).
 pub(super) fn apply_frontier_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -200,6 +210,9 @@ pub(super) fn apply_frontier_join(
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     state.seqs.insert(signer.clone(), entry.seq);
+    if join.scope == FrontierJoinScope::AnchorSide {
+        state.anchor_entries.insert(hash);
+    }
     Ok(())
 }
 
@@ -246,6 +259,24 @@ impl Vault {
         signer: FrontierSigner<'_>,
         room: usize,
     ) -> Result<Option<AuthorityView>> {
+        self.join_scoped_heads_in_txn(txn, fold, (heads, FrontierJoinScope::Main), signer, room)
+    }
+
+    /// [`Self::join_authority_heads_in_txn`] over `heads` of `scope`: the
+    /// main log's, or the signer's own side heads that alone fill one entry
+    /// (FIX 11868), each join signed in that scope, so it rides the branch
+    /// it joins.
+    ///
+    /// # Errors
+    /// As [`Self::prepare_authority_frontier_in_txn`].
+    pub(crate) fn join_scoped_heads_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        (heads, scope): (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
+        signer: FrontierSigner<'_>,
+        room: usize,
+    ) -> Result<Option<AuthorityView>> {
         let room = room.max(1);
         if heads.len() <= room {
             return Ok(None);
@@ -266,7 +297,7 @@ impl Vault {
         let mut joins = Vec::new();
         while tips.len() > room {
             for group in plan_frontier_joins(&tips, level_tip) {
-                let join = signer.sign(fold, seq, group.clone(), now)?;
+                let join = signer.sign(fold, scope, seq, group.clone(), now)?;
                 seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
                 let hash = authority_entry_hash(&join)?;
                 tips.retain(|tip| !group.contains(tip));

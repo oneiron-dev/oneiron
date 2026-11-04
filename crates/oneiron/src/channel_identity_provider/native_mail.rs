@@ -1,5 +1,11 @@
 //! Native mail fulfillment adapter. MTA, JMAP, DNS and DKIM stay in the host.
+mod canonical;
+mod host_pass;
+mod mailbox;
 pub mod pack;
+pub(crate) use canonical::{CanonicalMailSend, approval_digest_from_frozen_payload};
+pub use host_pass::NativeMailInboxPass;
+pub use mailbox::PREDICATE_NATIVE_MAIL_MAILBOX;
 pub use pack::{NativeMailPack, PreparedNativeMailSend};
 
 use super::shared_validate::{
@@ -73,6 +79,8 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             host,
         })
     }
+    /// The derived `mail-<id>` mailbox: the address an identity takes when
+    /// no name is chosen for it.
     pub fn address_for_identity(&self, id: EntityId) -> String {
         format!("mail-{}@{}", id.to_hex(), self.domain)
     }
@@ -84,6 +92,37 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             ChannelIdentityBinding::agent(agent),
             now,
         )
+    }
+    /// A requested identity at a chosen local part on the managed domain:
+    /// the agent's own named work address (`eiri@`, ARCH-0063 R6). The MTA
+    /// account takes the same local part at provisioning.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a local part outside the engine's email
+    /// grammar, or one of the derived `mail-<id>` form naming another
+    /// identity.
+    pub fn requested_named_identity(
+        &self,
+        id: EntityId,
+        local_part: &str,
+        agent: EntityId,
+        now: u64,
+    ) -> Result<ChannelIdentity> {
+        let address = format!("{}@{}", local_part.trim(), self.domain);
+        let local_part = mailbox_local_part(&self.domain, id, &address)?;
+        Ok(ChannelIdentity::requested(
+            "email",
+            format!("{local_part}@{}", self.domain),
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::agent(agent),
+            now,
+        ))
+    }
+    /// Whether `address` is `identity_ref`'s mailbox on the managed domain,
+    /// derived or named.
+    fn holds_mailbox(&self, identity_ref: EntityId, address: &str) -> bool {
+        mailbox_local_part(&self.domain, identity_ref, address).is_ok()
     }
     /// Native-mail send door. The host supplies the sink; the engine owns the
     /// sender/recipient check, gate, intent ledger and receipt. No SMTP or
@@ -100,7 +139,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         let identity = native_mail_identity(vault, identity_ref)?.ok_or_else(invalid)?;
         if request.intent.channel != "email"
             || request.intent.verb != "send"
-            || identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+            || !self.holds_mailbox(identity_ref, &identity.facts.address_or_handle)
             || identity.facts.binding.actor_ref() != request.actor.actor_entity_ref
         {
             return Err(invalid().into());
@@ -129,7 +168,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         if request.intent.channel != "email"
             || request.intent.verb != "send"
             || request.intent_ref.trim().is_empty()
-            || identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+            || !self.holds_mailbox(identity_ref, &identity.facts.address_or_handle)
             || !identity.custody.may_send()
             || identity.facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
@@ -152,7 +191,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         let Some(identity) = native_mail_identity_in_txn(&vault.store, &txn, identity_ref)? else {
             return Ok(None);
         };
-        if identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+        if !self.holds_mailbox(identity_ref, &identity.facts.address_or_handle)
             || !identity.custody.may_send()
         {
             return Ok(None);
@@ -204,11 +243,32 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         if body.len() > 16 * 1024 * 1024 {
             return Err(Error::InvalidConfig("mail webhook too large".into()));
         }
-        let verified = self.host.verify_webhook(body, headers)?;
+        let mut verified = self.host.verify_webhook(body, headers)?;
+        archive_native_mail_inbound(vault, &mut verified, now)?;
         let thread = verified.thread_headers.clone();
         let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(verified))?;
         vault.enqueue_inbound_email(input, thread.as_ref(), now)
     }
+}
+/// Keeps one native mail inbound in the vault as its provider event
+/// ([`Vault::archive_provider_event`]): the inbound as it arrived, its
+/// threading headers and its quarantine reference included. Its
+/// `payload_ref` becomes the archive's, so a reply to the message reads the
+/// headers it threads on back through the answered event.
+pub(crate) fn archive_native_mail_inbound(
+    vault: &Vault,
+    inbound: &mut EmailProviderInbound,
+    now: u64,
+) -> Result<()> {
+    let body = serde_json::to_vec(&*inbound)
+        .map_err(|_| Error::InvalidConfig("native mail inbound did not encode".into()))?;
+    inbound.payload_ref = Some(vault.archive_provider_event(
+        super::EMAIL_CHANNEL,
+        &inbound.provider_event_id,
+        &body,
+        now,
+    )?);
+    Ok(())
 }
 impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> {
     fn provider_key(&self) -> &'static str {
@@ -228,7 +288,9 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         intent: &ProvisionIntent,
         fulfilled_at: u64,
     ) -> Result<ChannelIdentityProviderProvision> {
-        let address = self.address_for_identity(intent.identity_id);
+        // The identity's own address, derived or named, is the mailbox.
+        let address = intent.identity.address_or_handle().to_owned();
+        mailbox_local_part(&self.domain, intent.identity_id, &address)?;
         validate_provision_intent(intent, "email", &address, ChannelIdentityFulfillment::Api)?;
         let provider_identity_ref = self.host.provision(intent, self.mode)?;
         if provider_identity_ref.is_empty() || provider_identity_ref.len() > 512 {
@@ -258,19 +320,14 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
             ));
         };
         validate_email_inbound_metadata(&mail)?;
+        // Any mailbox on the managed domain reaches routing: a derived or
+        // named address, or an alias (ARCH-0063 R6). Routing finds the
+        // identity that holds it and rejects one nobody holds.
         let (local, domain) = split_email_address(&mail.envelope_to)?;
         if domain != self.domain {
             return Err(Error::InvalidConfig(
                 "mail recipient outside managed domain".into(),
             ));
-        }
-        let id = EntityId::from_hex(
-            local
-                .strip_prefix("mail-")
-                .ok_or_else(|| Error::InvalidConfig("unknown mailbox".into()))?,
-        )?;
-        if self.address_for_identity(id) != format!("{local}@{domain}") {
-            return Err(Error::InvalidConfig("noncanonical mailbox".into()));
         }
         let sender = split_email_address(&mail.envelope_from)
             .and_then(|(_, domain)| normalize_email_address(&mail.envelope_from, &domain));
@@ -284,7 +341,7 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         let mut event = InboundSurfaceEventInput::new(
             mail.provider_event_id,
             "email",
-            self.address_for_identity(id),
+            format!("{local}@{domain}"),
             counterparty,
             mail.received_at,
             true,
@@ -349,186 +406,37 @@ pub(crate) fn canonical_mail_send_digest(
     crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)
 }
 
-/// One stable logical mail send, independent of approval availability and
-/// current sender lifecycle. Both owner tap and Gate compose their digest from
-/// this operation; the dispatcher freezes its canonical recipient into the
-/// ordinary intent that the sink receives and the ledger compares.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CanonicalMailSend {
-    pub(crate) actor: EntityId,
-    pub(crate) identity: EntityId,
-    pub(crate) recipient: String,
-    pub(crate) logical_ref: String,
-    pub(crate) content_ref: Option<String>,
-    pub(crate) brief_ref: Option<String>,
-}
-
-impl CanonicalMailSend {
-    pub(crate) fn from_request(request: &OutboundDispatchRequest) -> Result<Self> {
-        if !request.intent.channel.trim().eq_ignore_ascii_case("email")
-            || !request.intent.verb.trim().eq_ignore_ascii_case("send")
-        {
-            return Err(Error::InvalidConfig("invalid native-mail operation".into()));
-        }
-        let identity = request
-            .channel_identity_ref
-            .ok_or_else(|| Error::InvalidConfig("missing native-mail sender".into()))?;
-        let actor = request
-            .actor
-            .actor_entity_ref
-            .ok_or_else(|| Error::InvalidConfig("missing native-mail actor".into()))?;
-        let recipient = canonical_recipient(&request.intent.target)?;
-        if let Some(contact) = request.counterparty_ref.as_deref()
-            && canonical_recipient(contact)? != recipient
-        {
-            return Err(Error::InvalidConfig(
-                "native-mail target and counterparty differ".into(),
-            ));
-        }
-        if request.intent_ref.trim().is_empty() {
-            return Err(Error::InvalidConfig("missing native-mail send ref".into()));
-        }
-        Ok(Self {
-            actor,
-            identity,
-            recipient,
-            logical_ref: request.intent_ref.clone(),
-            content_ref: request.intent.content_ref.clone(),
-            brief_ref: request.intent.job_ref.clone(),
-        })
-    }
-
-    pub(crate) fn from_effect(effect: &ExternalEffectGateInput) -> Option<Self> {
-        let actor = effect.provenance.actor_entity_ref?;
-        if effect.channel != "email"
-            || effect.verb != "send"
-            || effect.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-        {
-            return None;
-        }
-        Some(Self {
-            actor,
-            identity: effect.channel_identity_ref?,
-            recipient: canonical_recipient(effect.counterparty.as_deref()?).ok()?,
-            logical_ref: effect.send_ref.as_ref()?.clone(),
-            content_ref: effect.provenance.mail_content_ref.clone(),
-            brief_ref: effect.brief_ref.clone(),
-        })
-    }
-
-    fn optional_string(value: &serde_json::Value, key: &str) -> Option<Option<String>> {
-        match value.get(key) {
-            None | Some(serde_json::Value::Null) => Some(None),
-            Some(serde_json::Value::String(text)) => Some(Some(text.clone())),
-            _ => None,
-        }
-    }
-    /// Decode only canonical axes needed to verify a typed admission proof.
-    pub(crate) fn from_frozen_payload(bytes: &[u8]) -> Option<Self> {
-        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        if !value.get("native_mail_recipient")?.as_bool()?
-            || value.get("channel")?.as_str()? != "email"
-            || !value
-                .get("verb")?
-                .as_str()?
-                .trim()
-                .eq_ignore_ascii_case("send")
-        {
-            return None;
-        }
-        let identity = EntityId::from_hex(value.get("channel_identity_ref")?.as_str()?).ok()?;
-        let actor = EntityId::from_hex(value.get("actor_entity_ref")?.as_str()?).ok()?;
-        if value.get("actor_ref")?.as_str()? != actor.to_hex() {
-            return None;
-        }
-        let recipient = canonical_recipient(value.get("target")?.as_str()?).ok()?;
-        if value.get("target")?.as_str()? != recipient
-            || value.get("counterparty_ref")?.as_str()? != recipient
-        {
-            return None;
-        }
-        let logical_ref = value.get("native_mail_logical_ref")?.as_str()?.to_owned();
-        if logical_ref.trim().is_empty() {
-            return None;
-        }
-        Some(Self {
-            actor,
-            identity,
-            recipient,
-            logical_ref,
-            content_ref: Self::optional_string(&value, "content_ref")?,
-            brief_ref: Self::optional_string(&value, "job_ref")?,
-        })
-    }
-
-    pub(crate) fn approval_kind(&self) -> String {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron.native_mail.cold_send.approve_once.v1");
-        let identity_hex = self.identity.to_hex();
-        for part in [
-            identity_hex.as_str(),
-            self.recipient.as_str(),
-            self.logical_ref.as_str(),
-        ] {
-            hasher.update(&(part.len() as u64).to_le_bytes());
-            hasher.update(part.as_bytes());
-        }
-        match self.content_ref.as_deref() {
-            Some(content) => {
-                hasher.update(&[1]);
-                hasher.update(&(content.len() as u64).to_le_bytes());
-                hasher.update(content.as_bytes());
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-        format!("external:email:send:once:{}", hasher.finalize().to_hex())
-    }
-}
-
-/// Recompose the immutable operation, not a caller-supplied proof string.
-/// Ledger validation checks its digest before accepting a replayable row.
-pub(crate) fn approval_digest_from_frozen_payload(
-    payload: &[u8],
-) -> Option<crate::consent::EffectDigest> {
-    let operation = CanonicalMailSend::from_frozen_payload(payload)?;
-    let actor_ref = operation.actor.to_hex();
-    let effect = ExternalEffectGateInput {
-        actor: GateActor {
-            actor_class: "agent".into(),
-            actor_ref: Some(actor_ref),
-            delegation_grant_ref: None,
-        },
-        provenance: GateProvenanceHandles {
-            actor_entity_ref: Some(operation.actor),
-            mail_content_ref: operation.content_ref,
-            ..GateProvenanceHandles::default()
-        },
-        verb: "send".into(),
-        channel: "email".into(),
-        channel_identity_ref: Some(operation.identity),
-        counterparty: Some(operation.recipient),
-        brief_ref: operation.brief_ref,
-        send_ref: Some(operation.logical_ref),
-        standing_grant_ref: None,
-        scoped_mcp_call: None,
-        counterparty_first_touch: None,
-        counterparty_opted_out: false,
-        counterparty_opt_out_receipt_reason: None,
-        has_opted_in: true,
-        has_permission: true,
-        policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
-        send_autonomy: None,
-    };
-    crate::gate::native_mail_cold_approval_digest(&effect)
-}
-
 /// Canonical recipient used by both the Gate and the frozen transport intent.
 /// Kept in the pack so every path uses the same strict address parser.
 pub(crate) fn canonical_recipient(address: &str) -> Result<String> {
     let (_, domain) = split_email_address(address)?;
     normalize_email_address(address, &domain)
+}
+
+/// The local part of a native mailbox address on `domain`, which names its
+/// MTA account. A local part of the derived `mail-<id>` form must name
+/// `identity_ref` itself, so no identity takes another's derived mailbox.
+pub(super) fn mailbox_local_part(
+    domain: &str,
+    identity_ref: EntityId,
+    address: &str,
+) -> Result<String> {
+    let (local, address_domain) = split_email_address(address)?;
+    if address_domain != domain {
+        return Err(Error::InvalidConfig(
+            "native mailbox outside managed domain".into(),
+        ));
+    }
+    if let Some(hex) = local.strip_prefix("mail-")
+        && hex.len() == 32
+        && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && hex != identity_ref.to_hex()
+    {
+        return Err(Error::InvalidConfig(
+            "native mailbox names another identity".into(),
+        ));
+    }
+    Ok(local)
 }
 
 /// The recipient posture is only for active native-mail identities. Plain
@@ -597,10 +505,21 @@ fn native_mail_identity_in_txn(
     else {
         return Ok(None);
     };
-    if facts.channel != "email"
-        || !facts
-            .address_or_handle
-            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
+    // A derived `mail-<id>` address names its own identity; a named one is a
+    // native mailbox once the pack recorded the MTA holding it.
+    if facts.channel != "email" {
+        return Ok(None);
+    }
+    let derived = facts
+        .address_or_handle
+        .starts_with(&format!("mail-{}@", identity_ref.to_hex()));
+    if !derived
+        && !mailbox::native_mailbox_recorded_in_txn(
+            store,
+            txn,
+            identity_ref,
+            &facts.address_or_handle,
+        )?
     {
         return Ok(None);
     }

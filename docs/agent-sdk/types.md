@@ -291,6 +291,10 @@ export type RecallScope = {
   kinds?: string[]
   /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
   projectRefs?: string[]
+  /** Conversation entity refs. Empty adds no narrowing; with `personRef`, only conversations selected by both axes remain. */
+  conversationRefs?: string[]
+  /** PERSON entity ref; selects conversations where they authored at least one live MESSAGE, never conversations that merely mention them. */
+  personRef?: string
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
@@ -1109,6 +1113,8 @@ class Oneiron:
         def message_stream_partial(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamPartial:
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
         @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs": ...
+        @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
@@ -1547,6 +1553,9 @@ class Oneiron:
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
         def resume(self, spec: Facade.RunnerWorkResumeRequest) -> Facade.RunnerWorkResumeView:
             """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
+    class _VaultMessageStreamsVerbs:
+        def refused(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StreamRecoveryRefusal]:
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -1799,9 +1808,9 @@ class Oneiron:
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
         def rebind(self, spec: Facade.TurnProgramRebindRequest) -> Facade.TurnProgramRebindReceipt:
-            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            """Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes."""
         def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
-            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
+            """Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
@@ -2383,6 +2392,8 @@ class Oneiron:
             """The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."""
         def rejoin(self, spec: Facade.ConnectDelivery) -> Facade.ConnectRejoined:
             """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
+        @property
+        def world_privacy(self) -> "Oneiron._VaultFederationConnectWorldPrivacyVerbs": ...
     class _VaultFederationConnectGrantsVerbs:
         def mint(self, spec: Facade.MintConnectGrant) -> Facade.ConnectGrant:
             """The owner mints an inert Connect guest grant inside the named local-world ceiling."""
@@ -2391,6 +2402,11 @@ class Oneiron:
             """The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."""
         def accept(self, spec: Facade.AcceptRescopeConnect) -> Facade.ConnectRescoped:
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
+    class _VaultFederationConnectWorldPrivacyVerbs:
+        def export(self, spec: Facade.ForeignWorldPrivacyExportRequest) -> Facade.ForeignWorldPrivacyDelivery:
+            """The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."""
+        def receive(self, spec: Facade.ForeignWorldPrivacyDelivery) -> Facade.WorldPrivacyRequest:
+            """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
@@ -2733,6 +2749,8 @@ class Oneiron:
             """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
         def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+        def create_auto_weave_grant(self, spec: Facade.AutoWeaveGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def failure_signals_held(self, spec: Facade.EmptyRequest | None = None) -> Facade.HeldFailureSignalBatchView | None:
@@ -3192,7 +3210,7 @@ class Oneiron:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
             """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
-        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.ScopedReadResult[Facade.CheckoutLeaseView | None]:
             """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
         def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
             """Renew the caller's still-live checkout under its exact holder and epoch fence."""
@@ -3231,7 +3249,7 @@ class Oneiron:
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
     class _VaultCodeMergeQueueVerbs:
         def enqueue(self, spec: Facade.MergeQueueEnqueueRequest) -> Facade.MergeQueueBatchView:
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
         def stage(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
         def observe(self, spec: Facade.MergeQueueObserveRequest) -> Facade.MergeQueueObservation:
@@ -4155,6 +4173,8 @@ class Oneiron:
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
+        @property
+        def pads(self) -> "Oneiron._SelfMemoryPadsVerbs": ...
     class _SelfMemoryDiaryVerbs:
         def __call__(self, spec: Facade.DiaryEntryRequest) -> Facade.DiaryEntryReceipt:
             """Writes one private entry in the bound actor's own diary, as an actor-private NOTE."""
@@ -4164,6 +4184,11 @@ class Oneiron:
             """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
         def query(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+    class _SelfMemoryPadsVerbs:
+        def read(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
+            """Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."""
+        def admin_reads(self, spec: Facade.AdminPadReadsRequest) -> Facade.AdminPadReadsView:
+            """The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."""
     class _SelfStandingVerbs:
         def get(self, spec: Facade.OwnStandingBlockRequest) -> Facade.StandingBlockView:
             """This agent's configured standing block in one world: its handle, name and token floor."""

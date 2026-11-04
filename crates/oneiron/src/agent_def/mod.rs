@@ -58,6 +58,7 @@ pub(crate) use self::id_pin::{
     refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
 pub(crate) use self::manifest::{
+    SEEDED_AGENT_DEFINITION_TIMESTAMP, ensure_seeded_agent_persons_in_txn,
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};

@@ -31,7 +31,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitId, KitIssue, KitPassphrase, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// One pending root request this install answers, as the door read it.
@@ -131,16 +131,17 @@ fn not_pending(fold: &AuthorityFold, me: EntityId, hash: AuthorityEntryHash) -> 
 }
 
 /// The counted root request signed as entry `hash` that names `me` and has
-/// no result yet, with its change.
+/// no result yet, with its change. The request is the fold's shared body,
+/// not a copy (FIX 12138).
 fn pending_root(
     fold: &AuthorityFold,
     me: EntityId,
     hash: AuthorityEntryHash,
-) -> Option<(OwnerWorkRequest, RootChange)> {
+) -> Option<(std::sync::Arc<OwnerWorkRequest>, RootChange)> {
     fold.pending_owner_work_for(me)
         .find_map(|(pending, request)| match request.work {
             OwnerWorkBody::Root { change, .. } if pending == hash => {
-                Some((request.clone(), change))
+                Some((fold.shared_owner_work_request(&pending)?, change))
             }
             _ => None,
         })
@@ -333,12 +334,13 @@ impl Vault {
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key
-        // slots, and the kits it replaced keep none pending (FIX 11977, 12046).
-        let replaced: &[KitId] = match &confirmed {
-            Answered::Done(kit) => kit.replaced.as_slice(),
-            Answered::Refused(_) | Answered::AwaitsBasis => &[],
+        // slots while it is still current, and the kits it replaced keep none
+        // pending (FIX 11977, 12046, 12135, 12136).
+        let settled = match &confirmed {
+            Answered::Done(kit) => Some(kit.kit),
+            Answered::Refused(_) | Answered::AwaitsBasis => None,
         };
-        self.settle_pending_kit_pieces(replaced);
+        self.settle_pending_kit_pieces(settled);
         let mirror_pending = match transition.finish() {
             Ok(()) => false,
             Err(error) => {

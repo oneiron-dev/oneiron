@@ -6,10 +6,11 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, session_claim_producer,
 };
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
+use crate::memory::{Memory, OutboundDraftInput, OutboundIntentReceipt};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, CommitmentWakeDue,
@@ -19,7 +20,7 @@ use super::wake_event::{
     PROVENANCE_KEY_JOB_ID, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SURFACE, commitment_trigger_ref,
     required_string, required_u64,
 };
-use super::wake_fire::{WakeEligibility, wake_eligibility};
+use super::wake_fire::{WakeEligibility, current_wake_eligibility};
 use super::wake_proposal::CommitmentWakeProposalDraft;
 use crate::error::ClaimError;
 
@@ -220,7 +221,10 @@ fn require_live_commitment(vault: &Vault, instance_id: &EntityId) -> Result<()> 
         .ok_or(Error::InvalidClaimBody(
             "commitment wake proposal names a missing commitment",
         ))?;
-    if !matches!(wake_eligibility(&record), WakeEligibility::Eligible) {
+    if !matches!(
+        current_wake_eligibility(vault, &record)?,
+        WakeEligibility::Eligible
+    ) {
         return Err(Error::InvalidClaimBody(
             "commitment wake proposal names a closed or ineligible commitment",
         ));
@@ -358,8 +362,9 @@ pub fn schedule_approved_commitment_wake(
         )));
     }
     // The owner's civil clock, when set, rides the send so its delivery
-    // window can read local time (OF-187).
-    let context = super::reminder::reminder_schedule_context(facade.vault());
+    // window can read local time (OF-187): the offset in force now.
+    let context =
+        super::reminder::reminder_schedule_context(facade.vault(), crate::unix_seconds_now());
     let draft = OutboundDraftInput {
         verb: approved.verb,
         channel: approved.channel,
@@ -441,8 +446,8 @@ pub(crate) fn scheduled_commitment_wake_authorised(
     else {
         return Ok(true);
     };
-    if crate::outbound::OutboundIntentSource::parse(&intent.intent_source)
-        != Some(crate::outbound::OutboundIntentSource::Commitment)
+    if crate::store::outbound_trigger::OutboundIntentSource::parse(&intent.intent_source)
+        != Some(crate::store::outbound_trigger::OutboundIntentSource::Commitment)
     {
         return Ok(true);
     }

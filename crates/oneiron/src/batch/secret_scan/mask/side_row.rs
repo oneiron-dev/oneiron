@@ -419,7 +419,7 @@ fn admitted(
     // writer holds a custody door, shape or none (OF-560 C).
     let known = match (pass.known, dbs.side_custody()) {
         (Some(known), _) => Some(known),
-        (None, Some(custody)) => KnownValues::load_in_writer(custody.store, wtxn)?.map(Arc::new),
+        (None, Some(custody)) => KnownValues::shared_in_writer(custody.store, wtxn)?,
         (None, None) => None,
     };
     if refusal.is_none() && known.is_none() {

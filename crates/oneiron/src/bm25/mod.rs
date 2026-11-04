@@ -63,9 +63,9 @@ use self::query::{
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
+use oneiron_retrieval::pipeline::ScoredEntity;
 pub(crate) use scoped::{
     Bm25CategorySearchOptions, search_text_category_with_recency, search_text_filtered_with_recency,
 };
@@ -90,38 +90,9 @@ use crate::analyzer::{Token, TokenKind};
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-// === Layout constants ===
-
-const ENTITY_ID_LEN: usize = 16;
-
-/// Sum of `field_id_u16_be + tf_u32_le`.
-const FIELD_TF_LEN: usize = 6;
-
-/// `doc_count_u32_le + total_length_u64_le`.
-const FIELD_STATS_LEN: usize = 12;
-
-/// `field_id_u16_be + length_u32_le`.
-const FIELD_LENGTH_LEN: usize = 6;
-
-const DOC_META_LEN: usize = 8;
-
-const TOTAL_DOCS_KEY: [u8; 16] = [0x00; 16];
-
-/// Deprecated total-length sentinel kept as a reserved key so fresh vaults
-/// never collide with a legacy entry. Per-field lengths live in
-/// `text_bm25_field_stats` (plan §4.1).
-const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
-
-/// Version of the binary value layout used in `text_postings`.
-/// * v1 = concatenated multi-entry blob per term (pre-ONE-299).
-/// * v2 = ONE-299 / storage ABI v4: `DUP_SORT` single-entry duplicate
-///   items per (term, entity); `text_forward` records carry no `tf`.
-pub(crate) const POSTINGS_VALUE_FORMAT_VERSION: u16 = 2;
-
-/// Byte width of the `term_len_u64_le` head of a forward record.
-const FORWARD_TERM_LEN_LEN: usize = 8;
-
-/// Byte width of the `field_id_u16_be` trailer of a forward record.
-const FORWARD_FIELD_ID_LEN: usize = 2;
-
-const BM25_DIAGNOSTIC_COUNTER_COUNT: usize = 4;
+pub(crate) use crate::store::text_index::POSTINGS_VALUE_FORMAT_VERSION;
+#[cfg(test)]
+use crate::store::text_index::{
+    BM25_DIAGNOSTIC_COUNTER_COUNT, DOC_META_LEN, ENTITY_ID_LEN, FIELD_LENGTH_LEN, FIELD_STATS_LEN,
+    FIELD_TF_LEN, FORWARD_FIELD_ID_LEN, FORWARD_TERM_LEN_LEN, TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
+};

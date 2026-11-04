@@ -45,6 +45,7 @@ struct Section {
     pages: Vec<OriginPublishReviewPage>,
     page: Vec<OriginPublishReviewItem>,
     paths: BTreeSet<String>,
+    lossy_paths: bool,
     commits: u64,
     entries: u64,
 }
@@ -60,6 +61,7 @@ impl Section {
             pages: Vec::new(),
             page: Vec::new(),
             paths: BTreeSet::new(),
+            lossy_paths: false,
             commits: 0,
             entries: 0,
         }
@@ -121,6 +123,7 @@ impl Section {
         } = item
         {
             self.entries = self.entries.saturating_add(1);
+            self.lossy_paths |= std::str::from_utf8(path).is_err();
             let path = String::from_utf8_lossy(path).into_owned();
             self.paths.insert(path.clone());
             self.push(OriginPublishReviewItem::Path {
@@ -138,6 +141,7 @@ impl Section {
         self.flush();
         self.pages.extend(walk.pages);
         self.paths.extend(walk.paths);
+        self.lossy_paths |= walk.review.lossy_paths;
         self.commits = self.commits.saturating_add(walk.review.commits);
         self.entries = self.entries.saturating_add(walk.review.entries);
     }
@@ -154,6 +158,7 @@ impl Section {
                 paths: count(self.paths.len()),
                 pages: count(self.pages.len()),
                 lfs_bytes: OriginPublishLfsBytes::NotSent,
+                lossy_paths: self.lossy_paths,
             },
             pages: self.pages,
             paths: self.paths,

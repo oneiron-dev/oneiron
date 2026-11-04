@@ -4,7 +4,6 @@ use super::graph::{self, CANONICAL, HEAD, actor_in_txn, chain, invalid, read_id,
 use super::migration::migrate_in_txn;
 use super::policy::{self, AppendFailure};
 use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
-use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{RecordError, Result};
@@ -12,6 +11,7 @@ use crate::memory::{Memory, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
+use oneiron_contracts::affect::Vad;
 use rmpv::Value;
 
 mod messages;
@@ -608,6 +608,20 @@ impl Vault {
                 },
             )?
             .head)
+    }
+
+    /// The local HEAD as it stands, the pointer read alone: no migration,
+    /// no write transaction and no canonical-chain walk, where
+    /// [`Self::head`] migrates a legacy conversation first and reads its
+    /// main line. `None` for a conversation that has adopted no HEAD
+    /// (FIX 10367).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn local_head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        read_id(&self.store, &txn, HEAD, conversation)
     }
 
     /// Reads a coherent root-first page; never returns a truncated safety walk.

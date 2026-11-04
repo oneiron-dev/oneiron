@@ -125,6 +125,8 @@ impl Vault {
                 Err(err) => Rows::Discard(Err(E::from(err))),
             }
         })?;
+        // A fence this write's erase committed reaches key custody now (FIX 11211).
+        self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();

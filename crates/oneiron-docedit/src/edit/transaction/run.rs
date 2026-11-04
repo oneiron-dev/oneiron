@@ -322,6 +322,19 @@ pub(super) fn apply(
                 },
             )?
         }
+        DeckStep::ReleaseMedia {
+            slide,
+            relationships,
+        } => {
+            let (changed_parts, effects) =
+                crate::edit::media::release_media(deck, slide, relationships)?;
+            StepReport {
+                verb: verb.to_owned(),
+                changed_parts,
+                effects,
+                fit: None,
+            }
+        }
     };
     // Every id a step minted moves its mark: a later step allocates above it.
     for effect in &report.effects {

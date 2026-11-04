@@ -20,27 +20,32 @@ use serde::{Deserialize, Serialize};
 
 use super::trusted_contact::{RELATIONS, TrustedContact, TrustedContactTier, invalid};
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt, RetryAttempt,
+    AttemptQueue, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, EnqueueOutcome,
+    FailAttempt, RetryAttempt,
 };
+use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::edge::EdgeActorClass;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::memory::Memory;
 use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
-    OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult,
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
+    OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateSystemNoticeRecord;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
+use crate::store::outbound_trigger::OutboundIntentTrigger;
 use crate::{EntityId, Result, Vault};
 
 pub const TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND: &str = "trusted_contact.notice";
 
 /// The content a notice's send carries: the fact of concern, which the
-/// host's adapter renders as its fixed check-in line.
+/// host's adapter renders as its fixed check-in line. A send to a contact
+/// whose language the vault knows carries it after a `:`.
 pub const TRUSTED_CONTACT_NOTICE_CONTENT_REF: &str = "trusted-contact-notice:fact_of_concern";
 
 /// The producer of the inbox rows that tell a fire or a yes.
@@ -339,6 +344,20 @@ impl Vault {
             _ => return Err(invalid("notice actor class").into()),
         };
         let intent_ref = format!("trusted-contact-notice:{}", notice.fire);
+        // The contact's own language, when the vault knows it, freezes the
+        // check-in line it reads; an unknown or unreadable one leaves the
+        // bare ref, which the sink reads in its default language.
+        let language = EntityId::from_hex(&notice.contact)
+            .ok()
+            .and_then(|contact| {
+                self.expression_preferences(&contact, request.occurred_at)
+                    .ok()
+            })
+            .and_then(|preferences| preferences.language);
+        let content_ref = match language {
+            Some(language) => format!("{TRUSTED_CONTACT_NOTICE_CONTENT_REF}:{language}"),
+            None => TRUSTED_CONTACT_NOTICE_CONTENT_REF.to_owned(),
+        };
         let mut outgoing = OutboundDispatchRequest::new(
             request.receipt_id,
             intent_ref.clone(),
@@ -349,7 +368,7 @@ impl Vault {
                     verb: notice.verb.clone(),
                     channel: notice.channel.clone(),
                     target: notice.target.clone(),
-                    content_ref: Some(TRUSTED_CONTACT_NOTICE_CONTENT_REF.to_owned()),
+                    content_ref: Some(content_ref),
                     idempotency_key: Some(intent_ref.clone()),
                     dedupe_key: Some(intent_ref.clone()),
                     mention: None,

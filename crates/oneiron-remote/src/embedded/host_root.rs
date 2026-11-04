@@ -119,6 +119,8 @@ impl HostRootProfile {
 /// provider's, naming why. Marks are read as the fold holds them, never
 /// relabelled: a hosted root is stamped `ROLE_CLOUD` and `CloudCustodial`
 /// when it is minted, and the opener's local default does not erase that.
+/// A root in the provider's custody (one a marked key admitted) is refused
+/// the same way, whatever its own marks say (FIX 5344).
 fn refuse_hosted_root(shared: &SharedVault) -> Result<(), MemoryError> {
     let vault: &Vault = shared.vault();
     match vault.privacy_posture() {
@@ -146,9 +148,13 @@ fn refuse_hosted_root(shared: &SharedVault) -> Result<(), MemoryError> {
         return Ok(());
     };
     let fold = vault.authority_fold()?;
-    let provider_held = fold.roster.get(&issuer.public_key()).is_some_and(|row| {
+    let key = issuer.public_key();
+    // A successor root a provider-marked key admitted is the provider's too,
+    // even when it dropped the marks (FIX 5344): the fold's custody walk
+    // names it.
+    let provider_held = fold.roster.get(&key).is_some_and(|row| {
         row.roles & ROLE_CLOUD != 0 || row.tier == AuthorityTier::CloudCustodial
-    });
+    }) || vault.authority_key_in_host_custody(&key)?;
     if provider_held {
         return Err(forbidden(
             "the given host root is a hosted root the provider holds, so this owner-local \

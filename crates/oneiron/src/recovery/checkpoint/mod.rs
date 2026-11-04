@@ -47,7 +47,7 @@ mod write_budget;
 mod write_estimate;
 use crate::side_table::{self, Named, SideTable};
 pub use crate::store::custody_protocol;
-use crate::store::{ForkedCustodyDir, LiveCustody};
+use crate::store::{CopyGenerations, ForkedCustodyDir, LiveCustody};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use admission::{
     AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact,
@@ -157,8 +157,8 @@ enum Source<'a> {
         first: LiveCustody,
         #[cfg(unix)]
         shared: Option<crate::store::SharedPath>,
-        /// The install's configured keystore; the platform's at its defaults
-        /// when none was given ([`SideRestoreSource::with_keystore`]).
+        /// The install's configured keystore ([`SideRestoreSource::with_keystore`]);
+        /// none is a host with none, which opens no device wrap (FIX 12225).
         keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
         /// A sealed vault's page seal, which every read of it opens with.
         page_seal: Option<crate::world_keys::VaultPageSeal>,
@@ -177,7 +177,8 @@ impl SideRestoreSource<'static> {
         vault_dir: &Path,
         page_seal: Option<crate::world_keys::VaultPageSeal>,
     ) -> Result<Self> {
-        let first = crate::store::read_live_custody(vault_dir, page_seal.as_ref())?;
+        let no_copy = CopyGenerations::NoCopy;
+        let first = crate::store::read_live_custody(vault_dir, page_seal.as_ref(), &no_copy)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
             first,
@@ -215,20 +216,13 @@ impl SideRestoreSource<'_> {
     /// The key the artifact at `checkpoint` opens with. A vault open in this
     /// process gives its own ([`Vault::checkpoint_key`]); one read off the
     /// disk is never opened, so this install's keystore unlocks the key from
-    /// the device wrap the artifact carries
-    /// ([`CheckpointKey::unlock_on_this_device`]).
+    /// the device wrap the artifact carries, or refuses with none (FIX 12225).
     pub fn checkpoint_key(&self, checkpoint: &Path) -> Result<CheckpointKey> {
         match &self.0 {
             Source::Open(vault) => vault.checkpoint_key(),
-            Source::Disk {
-                keystore: Some(keystore),
-                ..
-            } => Ok(CheckpointKey::unlock(
-                checkpoint,
-                &crate::world_keys::VaultKeyUnlock::Device(keystore.as_ref()),
-            )?
-            .trusting_device(std::sync::Arc::clone(keystore))),
-            Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
+            Source::Disk { keystore, .. } => {
+                CheckpointKey::unlock_on_this_device(checkpoint, keystore.as_ref())
+            }
         }
     }
     /// The source's page seal while its pages are sealed (OF-570 maximum
@@ -507,10 +501,12 @@ impl Vault {
         restored_at: u64,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<(Self, RestoreReport)> {
-        let live = source.capture()?;
+        // The copy keeps the image's generations; the capture carries the others' bundles
+        // (FIX 11824).
+        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
+        let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
@@ -589,8 +585,13 @@ impl Vault {
             );
         }
         // The archive the swap parks keeps every body instance its rows
-        // name, until its custodian releases it (FIX 6022).
-        self.store.hold_parked_archive_bodies()?;
+        // name, until its custodian releases it (FIX 6022). Its census and
+        // registration hold the custody read guard like a snapshot's, so
+        // no finisher write guard lands between them (FIX 9067).
+        {
+            let _custody = self.store.gate_custody_read_guard()?;
+            self.store.hold_parked_archive_bodies()?;
+        }
         self.store.swap_out(
             &replacement.store,
             |txn| {
@@ -634,9 +635,10 @@ impl Vault {
         // The archive is admitted like the source before anything opens it
         // by name; a missing one is refused, not made.
         crate::store::admit_existing_vault_root(path)?;
-        let live = source.capture()?;
-        let erased = source.erased_ids();
+        // The source's capture carries only the bundles the archive does not keep (FIX 11824).
         let archive = Self::open_owned(path, config.clone())?;
+        let live = source.capture(&CopyGenerations::of_store(&archive.store))?;
+        let erased = source.erased_ids();
         let expected = pad_objects::expected_of(&archive, &live.pad_objects);
         let (dropped_gate_decisions, erased_pads, credentials, landing) =
             archive.store.activate_archived(&live, expected.as_ref())?;

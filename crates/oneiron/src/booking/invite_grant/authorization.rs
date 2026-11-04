@@ -10,7 +10,7 @@ use crate::booking::lifecycle::{
     BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BookingBookerContactValue,
     BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
 };
-use crate::calendar::CALENDAR_INVITE_VERB;
+use crate::calendar::{CALENDAR_INVITE_VERB, CalendarInviteMethod};
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
@@ -45,13 +45,30 @@ pub fn booking_page_invites_authorizes(
     scope: &StandingOutboundGrantScope,
     context: &BookingPageInviteContext<'_>,
 ) -> Result<bool, BookingError> {
+    booking_page_invite_method_authorizes(vault, scope, context, CalendarInviteMethod::Request)
+}
+
+/// [`booking_page_invites_authorizes`] for one invite method (FIX 7850). A
+/// `CANCEL` is also authorized to the booker of a booking the grant covered
+/// whose cancel has settled, so a cancel reaches the person it withdraws;
+/// a `REQUEST` never is, so the grant opens no new invitation to them.
+///
+/// # Errors
+///
+/// As [`booking_page_invites_authorizes`].
+pub(super) fn booking_page_invite_method_authorizes(
+    vault: &Vault,
+    scope: &StandingOutboundGrantScope,
+    context: &BookingPageInviteContext<'_>,
+    method: CalendarInviteMethod,
+) -> Result<bool, BookingError> {
     let StandingOutboundGrantScope::BookingPageInvites { page_ref } = scope else {
         return Ok(false);
     };
     if context.verb_kind.trim() != CALENDAR_INVITE_VERB {
         return Ok(false);
     }
-    let Some(binding) = confirmed_booking_binding(vault, &context.booking_ref)? else {
+    let Some(binding) = confirmed_booking_binding(vault, &context.booking_ref, method)? else {
         return Ok(false);
     };
     if binding.page_ref != *page_ref {
@@ -119,7 +136,12 @@ impl BookingInviteCoverage {
             .read_txn()
             .map_err(|error| engine_failure("read transaction", error))?;
         for booking_ref in bookings {
-            if let Some(binding) = confirmed_booking_binding_in_txn(vault, &rtxn, &booking_ref)? {
+            if let Some(binding) = confirmed_booking_binding_in_txn(
+                vault,
+                &rtxn,
+                &booking_ref,
+                CalendarInviteMethod::Request,
+            )? {
                 self.covered
                     .insert((binding.page_ref, normalize_identity(&binding.recipient)));
             }
@@ -148,16 +170,18 @@ impl BookingInviteCoverage {
     }
 }
 
-/// Whether booking-page grant `grant_ref` still covers an invite to
+/// Whether booking-page grant `grant_ref` still covers a `method` invite to
 /// `recipient` for the booking EVENT `booking_ref`, through the caller's
 /// transaction: that EVENT is a confirmed booking on the grant's page whose
-/// booker is the recipient.
+/// booker is the recipient, or, for a `CANCEL` alone, such a booking whose
+/// cancel has settled (FIX 7850).
 pub(crate) fn page_grant_covers_booking_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     grant_ref: &EntityId,
     booking_ref: &EntityId,
     recipient: &str,
+    method: CalendarInviteMethod,
 ) -> Result<bool, BookingError> {
     let Some(grant) =
         crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, rtxn, grant_ref)
@@ -168,24 +192,27 @@ pub(crate) fn page_grant_covers_booking_in_txn(
     let StandingOutboundGrantScope::BookingPageInvites { page_ref } = &grant.scope else {
         return Ok(false);
     };
-    let Some(binding) = confirmed_booking_binding_in_txn(vault, rtxn, booking_ref)? else {
+    let Some(binding) = confirmed_booking_binding_in_txn(vault, rtxn, booking_ref, method)? else {
         return Ok(false);
     };
     Ok(binding.page_ref == *page_ref && identities_match(&binding.recipient, recipient))
 }
 
-/// The page/booker binding `booking_ref` carries, or `None` when this EVENT is
-/// not a confirmed booking with a resolvable booker.
+/// The page/booker binding `booking_ref` carries for a `method` invite, or
+/// `None` when this EVENT is not a confirmed booking with a resolvable
+/// booker. For a `CANCEL` a confirmed booking whose cancel has settled
+/// still carries its binding.
 pub(super) fn confirmed_booking_binding(
     vault: &Vault,
     booking_ref: &EntityId,
+    method: CalendarInviteMethod,
 ) -> Result<Option<BookingInviteBinding>, BookingError> {
     let rtxn = vault
         .store
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
-    confirmed_booking_binding_in_txn(vault, &rtxn, booking_ref)
+    confirmed_booking_binding_in_txn(vault, &rtxn, booking_ref, method)
 }
 
 /// [`confirmed_booking_binding`] through the caller's transaction.
@@ -193,6 +220,7 @@ fn confirmed_booking_binding_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     booking_ref: &EntityId,
+    method: CalendarInviteMethod,
 ) -> Result<Option<BookingInviteBinding>, BookingError> {
     let mut page_ref = None;
     let mut status = None;
@@ -219,7 +247,8 @@ fn confirmed_booking_binding_in_txn(
         }
         // Nor may a critical write its owner has not confirmed: a held page,
         // booker or type binds nobody, and no older head stands in for it. A
-        // held Confirmed never confirms, and a Cancelled unbinds, held or not.
+        // held Confirmed never confirms, and a Cancelled unbinds a REQUEST,
+        // held or not; a settled Cancelled still binds its CANCEL.
         let settled =
             crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)
                 .map_err(|error| engine_failure("booking claim confirm", error))?;
@@ -239,6 +268,11 @@ fn confirmed_booking_binding_in_txn(
             }
             BOOKING_STATUS_PREDICATE => {
                 match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
+                    BookingStatus::Cancelled
+                        if settled && method == CalendarInviteMethod::Cancel =>
+                    {
+                        status = Some(BookingStatus::Cancelled);
+                    }
                     BookingStatus::Cancelled => return Ok(None),
                     BookingStatus::Confirmed if settled => status = Some(BookingStatus::Confirmed),
                     BookingStatus::Confirmed => {}
@@ -260,9 +294,7 @@ fn confirmed_booking_binding_in_txn(
             _ => {}
         }
     }
-    let (Some(page_ref), Some(BookingStatus::Confirmed), Some(booker_contact)) =
-        (page_ref, status, booker_contact)
-    else {
+    let (Some(page_ref), Some(_), Some(booker_contact)) = (page_ref, status, booker_contact) else {
         return Ok(None);
     };
     let Some(recipient) = booker_identity_in_txn(vault, rtxn, &booker_contact)? else {

@@ -33,8 +33,10 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 use self::admission::{AdmittedCustody, admit_recovery};
 pub(crate) use self::takeover::{PreparedTakeover, TakeoverRefusal};
@@ -177,12 +179,13 @@ impl Store {
 /// retirement fact first, then every live entry but an erased credential's,
 /// which lands retired, then each world pad compartment the head left
 /// unopened, carried on (PAD-3, FIX 11133), then the journal at the next
-/// writer epoch and every erased credential's fact, all synced. The admitted
-/// retirements stay owed as one takeover obligation at the admitted
-/// position: the new writer's targets and anchor must reach it at its epoch
-/// before they count complete (KS-4A2). The directory it made is removed
-/// when the restore fails. A host issuer seed that does not land is warned
-/// and left out, never the restore's failure (FIX-LIST 10770).
+/// writer epoch, every erased credential's fact and every holder debt (FIX
+/// 11206), all synced. The admitted retirements stay owed as one takeover
+/// obligation at the admitted position: the new writer's targets and anchor
+/// must reach it at its epoch before they count complete (KS-4A2). The
+/// directory it made is removed when the restore fails. A host issuer seed
+/// that does not land is warned and left out, never the restore's failure
+/// (FIX-LIST 10770).
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
     binding: &CustodyBinding,
@@ -237,6 +240,12 @@ pub(crate) fn land_recovery(
         // restore's fences read it, and the next head carries it.
         for (&credential, &fact) in &admitted.evidence {
             custody.put_erase_evidence(&CredentialFenceFact { credential, fact })?;
+        }
+        // So does every holder debt (FIX 11206): a retired key's copy kept
+        // elsewhere still reads `custody_remote_retirement_pending(<holder>)`
+        // here, and the next head carries it.
+        for debt in &admitted.holders {
+            custody.put_holder_debt(debt)?;
         }
         if !admitted.retired.is_empty()
             || !admitted.retired_through.is_empty()

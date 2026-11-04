@@ -118,6 +118,17 @@ pub(super) fn retain(
     Ok(proposal)
 }
 
+/// Drops the revision's stranded proposal, body and all, in its artifact's
+/// teardown write (FIX 9694).
+pub(super) fn delete_proposal_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    revision_id: &EntityId,
+) -> Result<()> {
+    PROPOSALS.delete(store, txn, revision_id)?;
+    Ok(())
+}
+
 fn encode_proposal(proposal: &CodeRevisionProposal) -> Result<Vec<u8>> {
     let fields = Value::Map(vec![
         (

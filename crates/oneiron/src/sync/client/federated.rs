@@ -22,12 +22,7 @@ use crate::sync::transport::{
 };
 use crate::sync::types::WindowKey;
 
-/// Trust is selected by the authenticated import context, never by claim bytes.
-#[derive(Debug, Clone, Copy)]
-pub enum ImportTier {
-    OwnDevice,
-    Federated(FederationAdmissionRole),
-}
+pub use crate::store::window_protocol::ImportTier;
 
 impl SyncClient {
     /// Replays raw window bytes by their caller-bound tier. Federation is admitted
@@ -251,7 +246,11 @@ impl SyncClient {
         // 7998). The raw payload is what is retained, so the rows it brings
         // that the admitted parts omit are named too (FIX 11184).
         let mut carried = crate::sync::ingest::payload_rows(&key, update);
-        carried.extend(admitted.parts().flat_map(|part| part.delivered().keys().copied()));
+        carried.extend(
+            admitted
+                .parts()
+                .flat_map(|part| part.delivered().keys().copied()),
+        );
         let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,

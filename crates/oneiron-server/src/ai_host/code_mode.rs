@@ -202,6 +202,13 @@ pub(super) async fn bind(
         Some((decisions, facet)) => provider.with_model_seat_router(decisions, facet),
         None => provider,
     };
+    // A manifest-backed run's seat birth admits only the models the host's
+    // router serves now (FIX 2745); without a router the birth admits all,
+    // as before. The provider reads the snapshot live per birth.
+    let provider = match runtime.router() {
+        Some(router) => provider.with_served_router(router),
+        None => provider,
+    };
     // Leased agent runs plan their spawns over the host's seats, if any.
     let provider = if models.planner.seats.is_empty() {
         provider

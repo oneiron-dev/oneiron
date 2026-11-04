@@ -8,6 +8,7 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
@@ -19,6 +20,7 @@ mod open;
 mod places;
 mod raw_writes;
 
+pub(crate) mod code_consent_host;
 #[cfg(feature = "test-support")]
 mod read_fixture;
 mod reader_table;
@@ -62,7 +64,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
-pub use self::raw_writes::RawEntityPut;
+pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
@@ -107,7 +109,8 @@ pub struct Vault {
     /// its handles.
     pub(crate) spent_nonces: std::sync::Arc<crate::authority::SpentNonces>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
+    pub(crate) housekeeping:
+        std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
@@ -123,6 +126,13 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// The page-seal mirror read the last settle fused with its file
+    /// identity, consumed by the next ready check instead of a second
+    /// under-lease mirror read (FIX 12272). Set only by the settle's write
+    /// path, taken (never retained) by the check, and honored only while
+    /// this process holds the writer lease and the file's identity still
+    /// matches the capture — otherwise the check re-reads as before.
+    pub(crate) page_seal_mirror_carry: std::sync::Mutex<Option<crate::world_keys::CapturedMirror>>,
     /// Posture/custody pairing this handle was opened under, retained from the
     /// validated config so the honest read-only description below cannot drift
     /// from what the opener actually accepted. Private: callers read it through
@@ -151,6 +161,9 @@ pub struct Vault {
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
     pub(crate) conversation_presence:
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
+    /// The backoff of each critical confirm whose timeout demotion keeps
+    /// failing (FIX 12079). In memory only: a reopened vault tries each at once.
+    pub(crate) confirm_demotion_retries: crate::gate::ConfirmDemotionRetries,
     /// The host's USD quote for launch statements (OF-532), installed once
     /// by [`Vault::install_launch_usd_prices`]. Empty: dollars are unknown.
     pub(crate) launch_usd_prices:
@@ -177,7 +190,7 @@ pub struct Vault {
     pub(crate) home_search: std::sync::Mutex<crate::sync::connection::HomeSearchSlot>,
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
-    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    pub(crate) speculative_passes: crate::vault::speculative_passes::SpeculativePasses,
     /// The room a host lends the origin for reading whole LFS manifests
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
@@ -189,10 +202,10 @@ pub struct Vault {
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
+        std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
-    pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
@@ -208,14 +221,20 @@ pub struct Vault {
     /// The served host that drives an answered code consent wait's effect
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
-    pub(crate) code_consent_host:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
+    pub(crate) code_consent_host: std::sync::OnceLock<
+        std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>,
+    >,
     /// The served host's check that a managed vault's attested owner is its
     /// live owner, which his queued work runs under (FIX 11090), installed
     /// once per open vault ([`Vault::install_managed_owner_check`]). In
     /// memory only.
     pub(crate) managed_owner_check:
         std::sync::OnceLock<std::sync::Arc<dyn crate::authority::ManagedOwnerCheck>>,
+    /// The served host's provider APIs and mail server its served sinks send
+    /// through (OF-187), installed once per open vault
+    /// ([`Vault::install_served_transports`]). In memory only.
+    pub(crate) served_transports:
+        std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
@@ -229,7 +248,7 @@ pub struct Vault {
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
-        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
+        std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
 }
 
 /// A vault's detached writes run before it closes (FIX 12023): those queued

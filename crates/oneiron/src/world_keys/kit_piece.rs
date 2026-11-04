@@ -6,16 +6,20 @@
 //! reads the piece of the install it was copied from. A world kit's draw keeps its
 //! piece in that kit's own pending pair, and the piece moves to the current pair
 //! once the kit is current (FIX 11977, 12046): each drawn kit keeps its own until
-//! its confirm.
+//! its confirm. The kit module's settle makes that move, one settle per install
+//! at a time (FIX 12136).
 
 use crate::Vault;
 use crate::error::Result;
-use crate::recovery::{
-    KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, PieceHome, RestoredKitSecret, join_kept_piece, restore_kit,
+use crate::{
+    recovery::KitPieceStore,
+    recovery::{join_kept_piece, restore_kit},
+    store::recovery_kit::{KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    store::recovery_kit::{KitSecretKind, PieceHome, RestoredKitSecret},
 };
 
 use super::keystore_error;
+use super::kit::{UNLISTED_KITS, kit_key};
 
 impl Vault {
     /// Where a kit issued over `homes` keeps this machine's piece: `None` with no
@@ -41,7 +45,7 @@ impl Vault {
 
     /// This install's kit-piece slots as they stand: `None` with no keystore or
     /// no machine id yet. Nothing is minted.
-    fn kit_piece_store_here(&self) -> Result<Option<KitPieceStore>> {
+    pub(super) fn kit_piece_store_here(&self) -> Result<Option<KitPieceStore>> {
         let Ok(keystore) = self.device_keystore() else {
             return Ok(None);
         };
@@ -75,6 +79,15 @@ impl Vault {
         matches!(
             self.kept_kit_piece(KitPiecePair::Current(kind)),
             Ok(Some(_))
+        )
+    }
+
+    /// Whether this machine keeps its current piece of the exact kit `kit` of
+    /// `kind`. Another kit's piece never counts toward this kit's passphrase choice.
+    pub fn keeps_kit_piece_for(&self, kind: KitSecretKind, kit: KitId) -> bool {
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(piece)) if piece.kit_id() == kit
         )
     }
 
@@ -145,46 +158,6 @@ impl Vault {
             .then_some(kit)
     }
 
-    /// Settles this install's world-kit pieces (FIX 11977, 12046): the current
-    /// world kit's pending piece, when it has one, replaces the current pair's,
-    /// then its pending pair empties, and the pending pieces of the kits in
-    /// `replaced`, which can no longer be confirmed, are deleted. The piece of a
-    /// kit still pending stays, whatever kit became current. Runs after a
-    /// confirm's commit, with the kits it replaced, and before a draw keeps its
-    /// piece, with none. A step that fails is logged and leaves its piece where
-    /// it is, where a restore here still reads it.
-    pub(super) fn settle_pending_kit_pieces(&self, replaced: &[KitId]) {
-        if let Err(error) = self.move_pending_kit_piece() {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a confirmed world kit's piece stays in its pending kit-piece slots"
-            );
-        }
-        for kit in replaced {
-            self.drop_pending_kit_piece(*kit);
-        }
-    }
-
-    /// [`Self::settle_pending_kit_pieces`]'s move: the current pair is written
-    /// before the pending pair empties, so a failure between them leaves the
-    /// piece in both pairs, never in neither.
-    fn move_pending_kit_piece(&self) -> Result<()> {
-        let Some(store) = self.kit_piece_store_here()? else {
-            return Ok(());
-        };
-        let Some(kit) = self.current_world_kit()? else {
-            return Ok(());
-        };
-        let pending = KitPiecePair::Pending(kit);
-        let Some(piece) = store.get(pending).map_err(keystore_error)? else {
-            return Ok(());
-        };
-        store
-            .put(&piece, KitPiecePair::Current(KitSecretKind::RecoveryRoot))
-            .map_err(keystore_error)?;
-        store.delete(pending).map_err(keystore_error)
-    }
-
     /// A drawn world kit whose pending row did not commit (FIX 12046): no
     /// confirm can take it, so the piece its `ThisMachine` home kept pending
     /// goes.
@@ -195,7 +168,9 @@ impl Vault {
     }
 
     /// Deletes this install's pending piece of the world kit `kit` (FIX 12046),
-    /// best-effort: a delete that fails is logged, and the piece stays.
+    /// best-effort: a delete that fails is logged, and the piece stays, named
+    /// in [`UNLISTED_KITS`] so a later settle's sweep retries the delete
+    /// (FIX 12202): no committed row names this kit.
     fn drop_pending_kit_piece(&self, kit: KitId) {
         let dropped = self.kit_piece_store_here().and_then(|store| match store {
             Some(store) => store
@@ -208,6 +183,14 @@ impl Vault {
                 kind = ?error.kind(),
                 "a world kit that can no longer be confirmed keeps its pending kit-piece slots"
             );
+            let named =
+                self.with_write_txn(|txn| UNLISTED_KITS.put(&self.store, txn, &kit_key(kit), &kit));
+            if let Err(error) = named {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the unlisted kit could not be named for a later sweep either"
+                );
+            }
         }
     }
 }

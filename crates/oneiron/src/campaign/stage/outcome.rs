@@ -15,30 +15,8 @@ use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageEvidenceClass};
 use crate::claim::claim_surfaceable;
 use crate::{EntityId, Result, Vault};
 
-/// One leg of the ratified no-show recovery order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NoShowRecoveryStep {
-    /// Offer a same-day reschedule.
-    SameDayReschedule,
-    /// Bump after a delay.
-    BumpAfter {
-        /// The configured delay.
-        delay_secs: u64,
-    },
-    /// Snooze the membership.
-    Snooze,
-}
-
-/// The recovery plan a `no_show` outcome produces. It never writes `call_held`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoShowRecoveryPlan {
-    /// The EVENT that did not happen.
-    pub event_ref: EntityId,
-    /// The `calendar.event_outcome` claim that says so.
-    pub outcome_claim_ref: EntityId,
-    /// Recovery legs, in the ratified order.
-    pub steps: Vec<NoShowRecoveryStep>,
-}
+pub use crate::memory::campaign_records::stage_results::NoShowRecoveryPlan;
+pub use crate::memory::campaign_records::stage_results::NoShowRecoveryStep;
 
 // ---------------------------------------------------------------------------
 // Calendar outcomes - read side only
@@ -52,8 +30,10 @@ pub struct NoShowRecoveryPlan {
 /// elapsed clock might suggest. Only `Some(EventOutcome::Held)` can advance, and
 /// only with the live outcome claim itself as evidence.
 ///
-/// `no_show` returns the ratified recovery plan and never writes a held stage.
-/// `cancelled_pre_start`, an explicit `unknown`, and silence all return
+/// `no_show` and `cancelled_pre_start` return the ratified recovery plan
+/// (same-day reschedule, then the bump, then snooze) and never write a held
+/// stage: a meeting called off before it began routes to the same recovery
+/// without waiting for a no-show. An explicit `unknown` and silence return
 /// [`StageProjectResult::NoChange`].
 ///
 /// The outcome VALUE and the outcome CLAIM the stage cites are bound to each
@@ -90,14 +70,14 @@ pub fn apply_event_outcome(
             },
             mode,
         ),
-        EventOutcome::NoShow => Ok(StageProjectResult::Routed(StageRoute::Reengage(
-            NoShowRecoveryPlan {
+        EventOutcome::NoShow | EventOutcome::CancelledPreStart => Ok(StageProjectResult::Routed(
+            StageRoute::Reengage(NoShowRecoveryPlan {
                 event_ref: *event_ref,
                 outcome_claim_ref,
                 steps: recovery_steps(&definition.no_show_recovery),
-            },
-        ))),
-        EventOutcome::CancelledPreStart | EventOutcome::Unknown => Ok(StageProjectResult::NoChange),
+            }),
+        )),
+        EventOutcome::Unknown => Ok(StageProjectResult::NoChange),
     }
 }
 

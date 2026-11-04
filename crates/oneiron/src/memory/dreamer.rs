@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{
-    DreamerConsolidationScope, DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt,
 };
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

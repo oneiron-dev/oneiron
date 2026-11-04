@@ -37,7 +37,6 @@ pub const REPO_CONFLICT_RESOLUTION_VALUE_KEYS: [&str; 7] = [
 ];
 
 const REPO_CONFLICT_KIND_REPO_BRANCH: &str = "repo_branch";
-const MAX_REPO_CONFLICT_PATHS: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RepoConflictOpenValue {
@@ -59,16 +58,13 @@ pub(super) struct RepoConflictResolutionValue {
     pub(super) resolved_paths: Vec<String>,
 }
 
+/// Every conflicted path, validated, sorted and once each. No count refuses
+/// a conflict (rule 5, FIX 8831): its recorder asks past `RepoConflictPaths`.
 pub(super) fn normalize_repo_conflict_paths(paths: Vec<String>) -> Result<Vec<String>> {
     let mut normalized = BTreeSet::new();
     for path in paths {
         validate_relative_repo_path(&path)?;
         normalized.insert(path);
-        if normalized.len() > MAX_REPO_CONFLICT_PATHS {
-            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo conflict path list exceeds max count",
-            )));
-        }
     }
     Ok(normalized.into_iter().collect())
 }

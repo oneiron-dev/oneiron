@@ -170,17 +170,30 @@ pub(super) async fn claimed(
             digest.as_bytes(),
         ],
     );
-    match crate::api::claim_door_invocation(server, invocation, body).await {
+    match crate::api::claim_door_invocation(server, invocation, body, auth.principal_entity()).await
+    {
         DoorClaim::Run(claim) => {
             let answer = run(server, auth, context, method, params).await;
+            let failed = answer.is_err();
             if let Some(outcome) = saved(&answer) {
-                claim.finish(outcome);
+                if failed {
+                    claim.finish_failed(outcome);
+                } else {
+                    claim.finish(outcome);
+                }
             }
             answer
         }
         DoorClaim::Answered(outcome) => replayed(outcome),
         DoorClaim::InFlight => Err(AppError::invocation_in_flight()),
         DoorClaim::Conflict => Err(AppError::invocation_conflict()),
+        DoorClaim::ReplyNotKept { committed_writes } => {
+            Err(AppError::invocation_reply_not_kept(committed_writes))
+        }
+        DoorClaim::Erased => Err(AppError::invocation_response_erased()),
+        DoorClaim::StoreFailed => Err(AppError::internal_server_error(
+            "the invocation claim could not be stored",
+        )),
     }
 }
 

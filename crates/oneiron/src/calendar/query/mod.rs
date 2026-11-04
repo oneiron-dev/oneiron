@@ -34,7 +34,9 @@ pub use window::{CalendarOccurrenceView, CalendarOccurrencesRequest, read_occurr
 
 pub use self::facts::CalendarRead;
 pub(crate) use self::facts::visit_calendar_events_for_effect;
-pub(in crate::calendar) use self::facts::{receipted, visit_calendar_events_busy};
+pub(in crate::calendar) use self::facts::{
+    CalendarEventRow, receipted, visit_calendar_events_busy,
+};
 pub use self::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
     MAX_CALENDAR_SEARCH_LIMIT,

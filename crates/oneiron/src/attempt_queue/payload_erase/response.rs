@@ -23,10 +23,10 @@ use serde::Deserialize;
 use super::super::encoding::{decode_record, encode_record};
 use super::super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord};
 use super::{TextOwner, dispatch_payload_actor, erase_dispatch_payload_text};
-use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::store::{ResponseCarriage, ResponseScan, Store, is_opaque_erased};
 
 /// The Dreamer attempt payload's pinned key naming its attempt type.

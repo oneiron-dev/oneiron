@@ -164,8 +164,10 @@ pub(crate) use self::answers::{
     asks_are_suppressed_in_txn, record_go_auto_answer_in_txn, scope_is_manual_pinned_in_txn,
     streak_resets_in_txn,
 };
+pub(crate) use self::answers::{latest_decline_at_in_txn, record_external_offer_decline_in_txn};
 pub(crate) use self::receipts::answer_receipts_in_txn;
 pub(crate) use self::threshold_policy::graduation_policy_in_txn;
+pub(crate) use self::threshold_policy::runtime_graduation_policy_in_txn;
 
 #[cfg(test)]
 mod tests;

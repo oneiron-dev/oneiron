@@ -56,8 +56,8 @@
 //! Outbound consent rails already ride the comm send path (`disclosure.rs`),
 //! so this module adds no second consent check.
 
-use crate::comm::CommError;
 use crate::error::Error;
+use crate::write_envelope::communication::CommError;
 
 mod delivery_outcome;
 mod dial;
@@ -87,6 +87,7 @@ pub(crate) use self::signature_store::{
     emit_issue_signature_in_txn, emit_issue_signature_local_in_txn,
 };
 pub(crate) use self::transport::record_signature_hold_in_txn;
+pub(crate) use self::transport::record_signature_local_in_txn;
 pub use self::transport::{
     PUBLISHER_CHANNEL_CLASS, SendOutcome, SignatureSendState, send_signatures_if_enabled,
     signature_send_state,

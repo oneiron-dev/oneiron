@@ -263,7 +263,9 @@ fn may_host_in(
         return Ok(true);
     };
     match crate::subject_model::person_substrate_in_txn(vault, txn, &person, now) {
-        Ok(substrate) => Ok(substrate == Some(crate::subject_model::PersonSubstrate::Model)),
+        Ok(substrate) => {
+            Ok(substrate == Some(crate::write_envelope::subject_record::PersonSubstrate::Model))
+        }
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }

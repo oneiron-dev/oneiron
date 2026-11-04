@@ -19,6 +19,7 @@
 
 use std::marker::PhantomData;
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     SECRET_SCOPE_READ, SecretBinding, SecretCustodyStatus, read_secret_custody_admission_in_txn,
@@ -31,7 +32,9 @@ use super::auth_mode::ChannelAuthMode;
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
 use super::keys::SUBJECT_CLASS_SELF_HELD;
-use super::lifecycle::{ChannelIdentityState, DelegatedLifecycle, IdentityEdge, SelfHeldLifecycle};
+use super::lifecycle::{
+    ChannelIdentityState, DelegatedLifecycle, IdentityEdge, QuarantineWindow, SelfHeldLifecycle,
+};
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
 use crate::error::{RecordError, SecretError};
 use crate::gate::class_policy::ActPosture;
@@ -495,7 +498,7 @@ impl Custody {
     }
 
     /// Applies one edge, on whichever machine this custody runs, with
-    /// `min_quarantine_secs` as the resolved hold floor.
+    /// `window` as the resolved hold bounds.
     ///
     /// A mismatch is refused HERE rather than by a predicate at the caller: a
     /// self-held edge handed to a delegated row (and the reverse) is one arm,
@@ -512,13 +515,13 @@ impl Custody {
         &self,
         edge: IdentityEdge<'_>,
         at: u64,
-        min_quarantine_secs: u64,
+        window: QuarantineWindow,
     ) -> Result<Self> {
         match (self, edge) {
             (Self::SelfHeld { shape, lifecycle }, IdentityEdge::SelfHeld(edge)) => {
                 Ok(Self::SelfHeld {
                     shape: *shape,
-                    lifecycle: lifecycle.step(edge, at, min_quarantine_secs)?,
+                    lifecycle: lifecycle.step(edge, at, window)?,
                 })
             }
             (Self::Delegated { grant, lifecycle }, IdentityEdge::Delegated(edge)) => {
@@ -644,10 +647,18 @@ pub(crate) struct DelegatedCustodyProof<'txn> {
     channel: String,
     address: String,
     custody_record_ref: String,
+    /// The custody record `custody_record_ref` named in the proving read.
+    custody_record_id: EntityId,
     _txn: PhantomData<&'txn ()>,
 }
 
 impl DelegatedCustodyProof<'_> {
+    /// The custody record the proving read resolved the grant's name to.
+    #[must_use]
+    pub(super) const fn custody_record_id(&self) -> EntityId {
+        self.custody_record_id
+    }
+
     /// Whether this proof covers exactly `(channel, address, grant)`.
     ///
     /// The ADDRESS arm is the one that matters: a two-way `(channel, record)`
@@ -741,6 +752,7 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         channel: channel.to_owned(),
         address: address.to_owned(),
         custody_record_ref: grant.custody_record_ref.clone(),
+        custody_record_id: id,
         _txn: PhantomData,
     })
 }

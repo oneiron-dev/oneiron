@@ -9,12 +9,12 @@ use crate::access_grant::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity_selection::RelationshipContext;
+use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
 };
 
 use super::codec::{
@@ -33,6 +33,8 @@ use crate::error::GateError;
 impl Vault {
     /// Read authorization is disjoint from action reservation. Populated
     /// allowlists are conjunctive; empty lists do not widen the other axis.
+    /// A full-mailbox envelope admits every item of its identity. Supplied
+    /// date bounds hold for both.
     pub fn authorize_channel_identity_scoped_read(
         &self,
         grant_ref: &EntityId,
@@ -93,22 +95,25 @@ impl Vault {
             Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(false),
             Err(error) => return Err(error),
         }
-        Ok((envelope.label_allowlist.is_empty()
+        let label_in_scope = envelope.label_allowlist.is_empty()
             || candidate
                 .label
                 .as_ref()
-                .is_some_and(|label| envelope.label_allowlist.contains(label)))
-            && (envelope.thread_allowlist.is_empty()
-                || candidate
-                    .thread_ref
-                    .as_ref()
-                    .is_some_and(|thread| envelope.thread_allowlist.contains(thread)))
-            && envelope
-                .not_before
-                .is_none_or(|at| candidate.occurred_at >= at)
-            && envelope
-                .not_after
-                .is_none_or(|at| candidate.occurred_at <= at))
+                .is_some_and(|label| envelope.label_allowlist.contains(label));
+        let thread_in_scope = envelope.thread_allowlist.is_empty()
+            || candidate
+                .thread_ref
+                .as_ref()
+                .is_some_and(|thread| envelope.thread_allowlist.contains(thread));
+        Ok(
+            (envelope.full_mailbox || (label_in_scope && thread_in_scope))
+                && envelope
+                    .not_before
+                    .is_none_or(|at| candidate.occurred_at >= at)
+                && envelope
+                    .not_after
+                    .is_none_or(|at| candidate.occurred_at <= at),
+        )
     }
 
     /// Authenticated atomic apply. Exact replay is read-only, including receipts.
@@ -154,7 +159,7 @@ impl Vault {
         let read_bound = read_bound(desired.actor_ref, identity, read_ref)?;
         let read_grant_ref = address("read_grant", &Value::from(read_bound.digest().to_hex()))?;
         let read_grant = AccessGrant {
-            authority_scope: crate::federation::scope_codec::read_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::read_preset(),
             principal_ref: desired.actor_ref,
             scope: AccessGrantScope::ChannelIdentity {
                 identity_ref: identity,
@@ -219,7 +224,7 @@ impl Vault {
                     return Err(invalid_autonomy());
                 }
                 let grant = StandingOutboundGrant {
-                    authority_scope: crate::federation::scope_codec::effect_preset(),
+                    authority_scope: oneiron_authority::federation::scope_codec::effect_preset(),
                     principal_ref: desired.actor_ref.to_hex(),
                     origin_component_id: "channel_identity.autonomy".to_owned(),
                     origin_action_id: "apply".to_owned(),
@@ -296,7 +301,7 @@ impl Vault {
         }
         let receipt = self.create_standing_grant_in_txn(&mut txn, owner, bound.clone())?;
         let grant = StandingOutboundGrant {
-            authority_scope: crate::federation::scope_codec::effect_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::effect_preset(),
             principal_ref: actor.to_hex(),
             origin_component_id: "channel_identity.autonomy".to_owned(),
             origin_action_id: "owner_grant".to_owned(),

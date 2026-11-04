@@ -4,6 +4,8 @@
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
 mod contracts;
+mod read_result;
+pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
 mod retrieval;
 pub(crate) use lmdb_retrieval::text_index;
@@ -83,7 +85,7 @@ pub(crate) use integrity::{
     withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
 pub use records::*;
-pub(crate) use regeneration::dependency_sources_in;
+pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
 pub(crate) use time::{
     CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
     persist_id_floor_in_txn, recorded_at_in_txn,

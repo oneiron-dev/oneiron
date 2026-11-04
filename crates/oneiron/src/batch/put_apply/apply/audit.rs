@@ -17,7 +17,7 @@ pub(super) fn audit_and_stage_body(
     fixed: &super::admission::FixedPut<'_>,
     dispatch: &super::admission::Dispatch,
     body_changed: bool,
-    previous_skill_record: &Option<crate::skill::SkillRecord>,
+    previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     markers: StagedMarkers,
 ) -> Result<()> {
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
@@ -42,6 +42,7 @@ pub(super) fn audit_and_stage_body(
         &fixed.id,
         fixed.entity_type,
         data,
+        fixed.options.storage.asset_file,
     )?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(
         store,
@@ -78,7 +79,7 @@ pub(super) fn audit_and_stage_body(
         data,
         fixed.replicated,
     )?;
-    crate::ingest::invalidate_blob_fingerprint(store, wtxn, &fixed.id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, &fixed.id)?;
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, fixed.id, body)?;
     }

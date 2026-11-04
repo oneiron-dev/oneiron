@@ -68,6 +68,21 @@ pub(crate) fn index_publication_in_txn(
     // owner transaction creates it, and generic writes/replay cannot clear it
     // or use it as consent.
     PROTECTED_CLAIM.put(&vault.store, txn, &claim, &())?;
+    // Publishing is the owner act that lets the page's confirmed bookings
+    // carry invites (FIX 7849): a published page's one standing invite grant
+    // is minted here, in the owner's own write, bound to the publishing owner.
+    if let Some(body) = vault.get_claim_in_txn(&*txn, &claim)?
+        && let Some(publisher) = publication_owner(&body)
+        && decode_public_booking_page_value(&body.value).is_ok_and(|value| value.published)
+    {
+        crate::booking::invite_grant::mint_page_invite_grant_in_txn(
+            vault,
+            txn,
+            page,
+            publisher,
+            vault.store.clock.now_recorded_at(),
+        )?;
+    }
     Ok(())
 }
 

@@ -90,6 +90,8 @@ vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
+selfMemoryPadsRead(input: unknown): unknown
+selfMemoryPadsAdminReads(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
@@ -132,6 +134,7 @@ vaultFlushStream(input: unknown): unknown
 vaultFinalizeStream(input: unknown): unknown
 vaultCancelStream(input: unknown): unknown
 vaultMessageStreamPartial(input: unknown): unknown
+vaultMessageStreamsRefused(input: unknown): unknown
 vaultMessagesDurability(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
@@ -403,6 +406,8 @@ vaultFederationConnectRescopeAccept(input: unknown): unknown
 vaultFederationConnectDisconnect(input: unknown): unknown
 vaultFederationConnectExport(input: unknown): unknown
 vaultFederationConnectRejoin(input: unknown): unknown
+vaultFederationConnectWorldPrivacyExport(input: unknown): unknown
+vaultFederationConnectWorldPrivacyReceive(input: unknown): unknown
 vaultTrustedContactsName(input: unknown): unknown
 vaultTrustedContactsList(input: unknown): unknown
 vaultTrustedContactsConsent(input: unknown): unknown
@@ -553,6 +558,7 @@ vaultConsentApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentFailureSignalsHeld(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown

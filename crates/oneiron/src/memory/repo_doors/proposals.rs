@@ -32,19 +32,23 @@ use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
 use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{
     MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::{
-    RepoProposal, RepoProposalOperation, RepoProposalReview, RepoProposalStatus,
-};
-use crate::repo_mutation::{RepoMutationOperation, RepoMutationRequest};
 use crate::task_verb::SymbolLease;
 use crate::{EntityId, Vault};
+use crate::{
+    repo_mutation::RepoMutationRequest, store::repo_mutation_record::RepoMutationOperation,
+};
+use crate::{
+    repo_mutation::proposal::RepoProposal, repo_mutation::proposal::RepoProposalReview,
+    store::repo_proposal_record::RepoProposalOperation,
+    store::repo_proposal_record::RepoProposalStatus,
+};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// The code a run's proposal answered while the host bound no review policy
 /// for its repo (CALL "FIX 6867 review policy and provenance"). Superseded
@@ -266,6 +270,7 @@ impl Memory<'_> {
         let proposed =
             self.vault
                 .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+                    let now = self.vault.now_recorded_at();
                     if let Err(refused) =
                         admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
                     {
@@ -352,6 +357,7 @@ impl Memory<'_> {
         let manifest = self.vault.get_code_symbol_manifest(&own.stamp.repo)?;
         let accepted: Vec<EntityId> = rows.iter().map(|row| row.id).collect();
         let formed = queue.enqueue_for_run(candidates, |txn| {
+            let now = self.vault.now_recorded_at();
             let declaration =
                 match admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)? {
                     Ok(declaration) => declaration,
@@ -393,7 +399,8 @@ impl Memory<'_> {
             }))
         })?;
         let batch = formed.map_err(refusal_error)?;
-        let (entry, blockers) = self.repo_entry_view(binding, &queue, batch, now)?;
+        let (entry, blockers) =
+            self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
         let mut answer_rows = vec![own.stamp.repo];
         answer_rows.extend(blockers);
         Ok(RepoRunAnswer {

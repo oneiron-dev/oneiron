@@ -43,7 +43,7 @@ impl OutboundDispatchPipeline {
         vault: &Vault,
         request: OutboundDispatchRequest,
         sink: &mut S,
-        binding: crate::llm::StepEffectBinding,
+        binding: crate::model_step_effect::StepEffectBinding,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, None, Some(binding))
     }
@@ -87,7 +87,7 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
-        step_binding: Option<crate::llm::StepEffectBinding>,
+        step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         let prepared =
             PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;
@@ -184,6 +184,7 @@ impl OutboundDispatchPipeline {
             verified_actor,
             owner_proof,
             parked: None,
+            seat_held_until: None,
             suppression_receipt: None,
             authorization: PreparedAuthorization::None,
             // A completed replay sends nothing, so it neither spends nor
@@ -295,6 +296,10 @@ impl OutboundDispatchPipeline {
             verified_actor,
             owner_proof,
             parked,
+            seat_held_until: admission
+                .seat
+                .as_ref()
+                .and_then(super::seat_policy::SeatPolicyDecision::held_until),
             admission_ceiling: seat_ledger.ceiling,
             suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
                 &request,

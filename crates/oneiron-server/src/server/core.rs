@@ -59,6 +59,8 @@ pub use oneiron::work_line::TaskWorkTurn;
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
+    /// Durable client-named invocation intents, outcomes and admission locks.
+    pub(crate) invocation_claims: crate::invocation_claims::InvocationClaimStore,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.

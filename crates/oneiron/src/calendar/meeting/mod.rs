@@ -2,8 +2,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::calendar::outcome::{
-    self, CheckInAnswer, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS, DueOutcomeCheckIn,
-    EventOutcome, EventOutcomeClaimValue, MeetingClassSignals,
+    self, CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome,
+    EventOutcomeClaimValue, MeetingClassSignals,
 };
 use crate::calendar::prep::{PrepBuildRequest, PrepPack, PrepPolicy, build_prep_pack_scoped};
 use crate::claim::{
@@ -12,13 +12,10 @@ use crate::claim::{
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, WriteEnvelope, WriteProvenance};
+use crate::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
 
 mod facts;
 pub(in crate::calendar) use facts::meeting_event_in_txn;
-
-const POLICY: SideTable<(), CalendarOutcomePolicy, Named> =
-    SideTable::new(&side_table::CALENDAR_OUTCOME_POLICY);
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -26,19 +23,14 @@ pub struct CalendarMeetingRequest {
     pub event_ref: String,
 }
 
-/// Vault-side grace, never a caller-supplied clock or evidence signal.
+/// The vault-scope `calendar_outcome_grace_seconds` policy row the owner reads
+/// and writes through the policy manifest
+/// (`gate::policy_manifest_doors::set_calendar_outcome_grace_as_owner`); never
+/// a caller-supplied clock or evidence signal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarOutcomePolicy {
     pub grace_secs: u64,
-}
-
-impl Default for CalendarOutcomePolicy {
-    fn default() -> Self {
-        Self {
-            grace_secs: DEFAULT_OUTCOME_GRACE_SECS,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -109,34 +101,6 @@ fn check_owner(
     Ok(())
 }
 
-pub fn outcome_policy_get(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-) -> MemoryResult<CalendarOutcomePolicy> {
-    let txn = memory
-        .vault()
-        .store
-        .env
-        .read_txn()
-        .map_err(crate::Error::from)?;
-    check_owner(memory, owner, &txn)?;
-    Ok(POLICY
-        .get(&memory.vault().store, &txn, &())?
-        .unwrap_or_default())
-}
-
-pub fn outcome_policy_set(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: &CalendarOutcomePolicy,
-) -> MemoryResult<CalendarOutcomePolicy> {
-    memory.with_verified_actor_write_txn(|txn| {
-        check_owner(memory, owner, txn)?;
-        POLICY.put(&memory.vault().store, txn, &(), input)?;
-        Ok(input.clone())
-    })
-}
-
 fn signals(event: &crate::calendar::PrepEvent) -> MeetingClassSignals {
     MeetingClassSignals {
         external_attendee_count: event.external_attendee_count,
@@ -169,10 +133,7 @@ fn due_in_txn(
     let vault = memory.vault();
     trace_event(memory, txn, event)?;
     let observed_at = vault.instant_in_txn(txn)?.secs();
-    let grace_secs = POLICY
-        .get(&vault.store, txn, &())?
-        .unwrap_or_default()
-        .grace_secs;
+    let grace_secs = outcome::outcome_grace_secs_in_txn(vault, txn)?;
     let outcome = outcome::current_outcome_in(vault, txn, &event)?;
     let mut result = CalendarCheckInDue {
         event_ref: event.to_hex(),

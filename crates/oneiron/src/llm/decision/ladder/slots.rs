@@ -76,8 +76,9 @@ impl DecisionLadder<'_> {
     }
 
     /// The first rung from `dial.first` to its ceiling, short of the person, whose provider
-    /// takes `question` over `images`. The ladder fails a call whose first rung cannot take
-    /// it, so a caller with images starts there, or asks without them and says so.
+    /// takes `question` over `images`. A pack's first read starts at the first rung that
+    /// serves it (FIX 12278), so a caller with images may start there, or ask without them
+    /// and say so.
     pub fn first_taking(
         &self,
         question: &DecisionQuestion,
@@ -101,6 +102,31 @@ impl DecisionLadder<'_> {
                 .slot(rung)
                 .is_some_and(|provider| takes(provider, question, images, audio))
             {
+                return Some(rung);
+            }
+            rung = next_rung(rung);
+        }
+        None
+    }
+
+    /// The first rung from `first` up to `ceiling`, short of the person, whose provider
+    /// takes every pack question over `images` and `audio`. An empty rung is skipped, not a
+    /// refusal; the person's queue never serves a first read (FIX 12278).
+    pub(super) fn first_serving(
+        &self,
+        first: DecisionRung,
+        ceiling: DecisionRung,
+        questions: &[&DecisionQuestion],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        let mut rung = first;
+        while rung <= ceiling && rung != DecisionRung::Human {
+            if self.slot(rung).is_some_and(|provider| {
+                questions
+                    .iter()
+                    .all(|question| takes(provider, question, images, audio))
+            }) {
                 return Some(rung);
             }
             rung = next_rung(rung);

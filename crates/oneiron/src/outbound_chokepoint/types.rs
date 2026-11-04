@@ -48,9 +48,10 @@ pub(crate) struct OutboundEffectResult {
     /// The actor whose decision held this call, when `approval_digest` is
     /// set: the press it names is that actor's (FIX 6424 part 2a).
     pub(crate) approval_actor: Option<EntityId>,
-    /// Set when a full count-bound budget window paced this call (FIX 8788,
-    /// FIX 8686), to the engine instant, Unix seconds, its windows all open
-    /// again: nothing was recorded, charged or sent.
+    /// Set when a full count-bound budget window (FIX 8788, FIX 8686) or a
+    /// full sender envelope window (FIX 7948) paced this call, to the engine
+    /// instant, Unix seconds, its windows all open again: nothing was
+    /// recorded, charged or sent.
     pub(crate) paced_until: Option<u64>,
 }
 
@@ -289,7 +290,10 @@ pub(crate) trait OutboundTransport {
 pub(crate) fn frozen_call_hygiene_headers(
     call: &FrozenOutboundCall,
 ) -> Result<std::collections::BTreeMap<String, String>, OutboundEffectError> {
-    crate::campaign::send_hygiene::frozen_payload_hygiene_headers(call.payload()).map_err(|_| {
-        IntentLedgerError::InvalidRecord("frozen outbound payload carries invalid hygiene headers")
-    })
+    crate::outbound_intent_ledger::email_headers::frozen_payload_hygiene_headers(call.payload())
+        .map_err(|_| {
+            IntentLedgerError::InvalidRecord(
+                "frozen outbound payload carries invalid hygiene headers",
+            )
+        })
 }

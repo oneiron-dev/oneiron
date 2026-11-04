@@ -46,18 +46,13 @@ impl Default for BookingConversionPolicy {
 }
 
 impl BookingConversionPolicy {
-    /// Structural bounds only: prevent unbounded output and malformed wake
-    /// schedules; UX counts and thresholds may be any value inside them.
+    /// Structural shape only: non-zero counts and a well-formed wake
+    /// schedule. Every count the owner chooses is served; none has a
+    /// compiled ceiling.
     pub fn validate(&self) -> Result<(), BookingError> {
         if self.max_visible_slots == 0
-            || self.max_visible_slots > 128
-            || self.max_preconfirm_fields > 32
-            || self.max_total_fields > 32
             || self.max_snippet_times == 0
-            || self.max_snippet_times > 128
             || self.repeat_no_show_at == 0
-            || self.repeat_no_show_at > 1_000
-            || self.reminder_leads_secs.len() > 8
             || self
                 .reminder_leads_secs
                 .iter()
@@ -100,6 +95,17 @@ impl BookingConversionPolicy {
             precedence: self.precedence,
         }
     }
+
+    /// Two authored vault rows' shared constraints: each holder's choice
+    /// binds, whichever row is read first. Holder override survives only
+    /// when both rows allow it.
+    fn intersect(&self, other: &Self) -> Self {
+        let mut both = self.narrow(other);
+        if other.precedence == BookingPolicyPrecedence::NestedNarrowing {
+            both.precedence = BookingPolicyPrecedence::NestedNarrowing;
+        }
+        both
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,10 +145,11 @@ impl BookingConversionPolicyRow {
 }
 
 /// Fold trusted manifest rows. The shipped vault row is a DEFAULT, not a
-/// permanent product-choice ceiling: one explicitly authored vault row may
-/// replace it within structural bounds. Conflicting authored vault rows refuse
-/// instead of silently choosing a writer. Nested rows narrow one another;
-/// a matching holder may override nested values only inside the vault cap.
+/// permanent product-choice ceiling: an explicitly authored vault row
+/// replaces it. Differing authored vault rows resolve to their stricter
+/// intersection, so no writer's choice is silently dropped. Nested rows
+/// narrow one another; a matching holder may override nested values only
+/// inside the vault cap.
 pub fn resolve_booking_conversion_rows(
     rows: &[BookingConversionPolicyRow],
     holder_ref: Option<&str>,
@@ -156,15 +163,10 @@ pub fn resolve_booking_conversion_rows(
         match row.scope {
             BookingPolicyScope::Vault => {
                 if row.policy != shipped {
-                    if authored_vault
-                        .as_ref()
-                        .is_some_and(|existing| existing != &row.policy)
-                    {
-                        return Err(BookingError::InvalidConfig(
-                            "conflicting authored booking vault policy rows".to_owned(),
-                        ));
-                    }
-                    authored_vault = Some(row.policy.clone());
+                    authored_vault = Some(authored_vault.map_or_else(
+                        || row.policy.clone(),
+                        |previous| previous.intersect(&row.policy),
+                    ));
                 }
             }
             BookingPolicyScope::Nested => {

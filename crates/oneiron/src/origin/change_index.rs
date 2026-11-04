@@ -2,15 +2,14 @@
 use super::actor_erase::{ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginProofErase};
 use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
-};
-use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, encode_claim_body};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use rmpv::Value;
 
 /// Tamper-detection proof hash pinning one repo.change claim's exact byte content: at publication

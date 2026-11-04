@@ -276,6 +276,7 @@ impl SyncServer {
             renderer_turns,
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
+            invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
             vault,
             root_doc,
             ephemeral_store,

@@ -19,7 +19,25 @@
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
 use super::custody::DelegatedCustodyProof;
+use super::keys::DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS;
 use crate::error::{Error, RecordError, Result};
+
+/// The quarantine hold this vault admits, as its door resolved the manifest's
+/// `channel_identity.quarantine` wait row: the shortest hold and, when the
+/// policy holder set one, the longest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QuarantineWindow {
+    pub min_secs: u64,
+    pub max_secs: Option<u64>,
+}
+
+impl QuarantineWindow {
+    /// The window the default manifest's row ships: its floor, no ceiling.
+    pub const SHIPPED: Self = Self {
+        min_secs: DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+        max_secs: None,
+    };
+}
 
 /// ChannelIdentity lifecycle state as it appears on the wire (OF-347 R3/R5).
 ///
@@ -95,9 +113,9 @@ pub enum SelfHeldLifecycle {
     Released,
     /// Held out of recycling until `until`.
     ///
-    /// The floor `until` must clear is the manifest's resolved
+    /// The window `until` must fall in is the manifest's resolved
     /// `channel_identity.quarantine` wait row, checked by this machine's step
-    /// against the number its door resolved. The decoder checks only that the
+    /// against the bounds its door resolved. The decoder checks only that the
     /// window does not end before the stamp it dates from: it holds no manifest
     /// snapshot, and a replicated body carries no evidence about this vault's
     /// policy.
@@ -313,25 +331,25 @@ impl SelfHeldLifecycle {
         }
     }
 
-    /// Applies one edge at `at`, with `min_quarantine_secs` as the resolved
-    /// hold floor for this vault.
+    /// Applies one edge at `at`, with `window` as the resolved hold bounds
+    /// for this vault.
     ///
-    /// The floor is a PARAMETER because it is policy: the door resolves the
+    /// The window is a PARAMETER because it is policy: the door resolves the
     /// manifest's `channel_identity.quarantine` wait row in the transaction
-    /// that writes the row, and hands the number here. The state table is still
-    /// code; how long the hold runs is not.
+    /// that writes the row, and hands both bounds here. The state table is
+    /// still code; how long the hold runs is not.
     ///
     /// # Errors
     ///
     /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
     /// when the edge is not on this state's table, or when a quarantine window
-    /// is shorter than the resolved floor; [`Error::ArithmeticOverflow`] when
-    /// that floor cannot be computed.
+    /// is shorter than the resolved floor or ends past the resolved ceiling;
+    /// [`Error::ArithmeticOverflow`] when that floor cannot be computed.
     pub(super) fn step(
         self,
         edge: SelfHeldEdge,
         at: u64,
-        min_quarantine_secs: u64,
+        window: QuarantineWindow,
     ) -> Result<Self> {
         match (self, edge) {
             (Self::Requested, SelfHeldEdge::Bind(mode)) => Ok(Self::PendingFulfillment(mode)),
@@ -341,13 +359,23 @@ impl SelfHeldLifecycle {
             (Self::Active, SelfHeldEdge::Rotate) => Ok(Self::Rotating),
             (Self::Active | Self::Rotating, SelfHeldEdge::Release) => Ok(Self::Released),
             (Self::Released, SelfHeldEdge::Quarantine { until }) => {
-                let floor =
-                    at.checked_add(min_quarantine_secs)
-                        .ok_or(Error::ArithmeticOverflow(
-                            "channel identity quarantine window",
-                        ))?;
+                let floor = at
+                    .checked_add(window.min_secs)
+                    .ok_or(Error::ArithmeticOverflow(
+                        "channel identity quarantine window",
+                    ))?;
                 if until < floor {
                     return Err(invalid_identity());
+                }
+                // A ceiling past the end of the clock bounds nothing.
+                if window
+                    .max_secs
+                    .and_then(|max| at.checked_add(max))
+                    .is_some_and(|ceiling| until > ceiling)
+                {
+                    return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                        "quarantine window ends past this vault's resolved maximum hold",
+                    )));
                 }
                 Ok(Self::Quarantine { until })
             }

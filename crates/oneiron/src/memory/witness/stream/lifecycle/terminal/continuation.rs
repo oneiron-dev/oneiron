@@ -47,8 +47,14 @@ pub(super) fn write_continuation_terminal(
     assertions: &WitnessAssertions,
     gate: TerminalGate<'_>,
     callback: Callback,
-    (lane, memory): (Option<&crate::claim::ScopedRead<'_>>, &crate::memory::Memory<'_>),
-    (unread, unproven): (&std::cell::Cell<Option<String>>, &std::cell::Cell<Vec<String>>),
+    (lane, memory): (
+        Option<&crate::claim::ScopedRead<'_>>,
+        &crate::memory::Memory<'_>,
+    ),
+    (unread, unproven): (
+        &std::cell::Cell<Option<String>>,
+        &std::cell::Cell<Vec<String>>,
+    ),
     receipt: &mut MessageStreamReceipt,
 ) -> MessageStreamResult<()> {
     let seed = &state.seed;

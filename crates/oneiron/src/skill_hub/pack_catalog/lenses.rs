@@ -21,7 +21,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{PackInstallReceipt, PackInstallStatus, PackManifest, PackSource, PackTree, invalid};
+use super::admission::{PACK_INSTALL, PackCommit, pack_permissions};
+use super::builtin::{ENGINE_PUBLISHER, engine_hub_id};
+use super::{
+    PackFitVerdict, PackInstallReceipt, PackInstallStatus, PackManifest, PackSource, PackTree,
+    invalid,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::lens::{
     GeneratedLens, LensIntentRecord, LensMount, LensProposeRequest, LensScope, LensSlot,
@@ -29,7 +34,7 @@ use crate::lens::{
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::LensProposalReceipt;
-use crate::skill_hub::HubFile;
+use crate::skill_hub::{HubFile, HubPin, HubRef};
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
 const LENS_DIR: &str = "lenses/";
@@ -45,9 +50,13 @@ pub const WEAVE_LENS_PACK_NAME: &str = "oneiron.weave";
 /// SKILL.md is the weave render's instruction.
 pub const WEAVE_REPORT_LENS: &str = "weave-report";
 
+/// The engine hub ref the weave lens pack installs under.
+const WEAVE_LENS_PACK_HUB_REF: &str = "built-in:weave";
+
 /// The weave lens pack's exact folder: the `weave-report` skill and the lens
 /// that binds it. The engine renders the lens in code, so the folder carries
-/// no tree and no build. It installs through `vault.packs.put` like any
+/// no tree and no build. Vault open installs it Active
+/// ([`seed_weave_lens_pack_in_txn`]); `vault.packs.put` replaces it like any
 /// owner folder.
 #[must_use]
 pub fn weave_lens_pack_files() -> Vec<HubFile> {
@@ -65,6 +74,58 @@ pub fn weave_lens_pack_files() -> Vec<HubFile> {
             include_str!("../../../../../packs/weave/lenses/weave-report/LENS.json").as_bytes(),
         ),
     ]
+}
+
+/// Vault open installs the weave lens pack Active from the engine's own
+/// folder, with the built-in packs and once per engine version: an
+/// engine-seeded install follows the engine's folder. An owner's install
+/// under its name, or a source of the folder's hash the vault already holds
+/// or erased, is left as it is.
+pub(super) fn seed_weave_lens_pack_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    let source = PackSource::from_files(weave_lens_pack_files())?;
+    let prior = PACK_INSTALL.get(&vault.store, &*txn, &source.manifest.name)?;
+    if prior.as_ref().is_some_and(|installed| {
+        installed.publisher != ENGINE_PUBLISHER
+            || installed.content_hash == source.content_hash().to_hex()
+    }) {
+        return Ok(());
+    }
+    let source_id = source.entity_id()?;
+    let deletion =
+        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*txn, &source_id)?;
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &*txn, &source_id)?
+        || deletion.deleted
+        || deletion.stale
+    {
+        return Ok(());
+    }
+    vault.stage_pack_source_in_txn(txn, &source, TimeRange { start: 0, end: 0 }, 0)?;
+    let hub = HubRef::new(
+        engine_hub_id()?,
+        WEAVE_LENS_PACK_HUB_REF,
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let permissions = pack_permissions(&source, prior.as_ref())?;
+    vault.commit_pack_install_in_txn(
+        txn,
+        &source,
+        &PackCommit {
+            source_id,
+            hub: &hub,
+            publisher: ENGINE_PUBLISHER,
+            foreign: None,
+            verdict: PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: false,
+            },
+            permissions: &permissions,
+            qualification: None,
+            world: None,
+            owner_activated: &[],
+        },
+    )?;
+    Ok(())
 }
 
 /// One lens a pack carries.
@@ -372,6 +433,23 @@ impl Vault {
         self.pack_lens_entry_in(&txn, &receipt, &source, declared)
     }
 
+    /// [`Self::pack_lens`], or `None` while no Active pack `pack_name`
+    /// carries `lens`: how an engine render reads its own lens pack.
+    pub fn pack_lens_if_active(
+        &self,
+        pack_name: &str,
+        lens: &str,
+    ) -> Result<Option<PackLensEntry>> {
+        let txn = self.store.env.read_txn()?;
+        let Some((receipt, source)) = self.active_pack_in(&txn, pack_name)? else {
+            return Ok(None);
+        };
+        source
+            .lens(lens)
+            .map(|declared| self.pack_lens_entry_in(&txn, &receipt, &source, declared))
+            .transpose()
+    }
+
     /// An Active pack lens's component build, its bytes verified against
     /// the pin: what a host builds the lens's runtime from
     /// ([`crate::lens::LensExecutionRuntime::from_component`]). A Candidate
@@ -396,14 +474,27 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         pack_name: &str,
     ) -> Result<(PackInstallReceipt, PackSource)> {
-        let receipt = self
+        self.active_pack_in(txn, pack_name)?
+            .ok_or_else(|| invalid("no Active pack is installed under that name"))
+    }
+
+    /// The Active installation under `pack_name` with its source, or `None`
+    /// when no pack of that name is installed Active.
+    fn active_pack_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack_name: &str,
+    ) -> Result<Option<(PackInstallReceipt, PackSource)>> {
+        let Some(receipt) = self
             .mounted_pack_in_txn(txn, pack_name)?
             .filter(|receipt| receipt.status == PackInstallStatus::Active)
-            .ok_or_else(|| invalid("no Active pack is installed under that name"))?;
+        else {
+            return Ok(None);
+        };
         let source = self
             .pack_source_in_txn(txn, &EntityId::from_hex(&receipt.source_id)?)?
             .ok_or_else(|| invalid("installed pack source missing"))?;
-        Ok((receipt, source))
+        Ok(Some((receipt, source)))
     }
 
     fn pack_lens_entry_in(

@@ -5,10 +5,11 @@ use super::{ClaimMaterialization, binding_error, lifecycle_envelope, row_digest}
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, VerifiedClaimTransition,
 };
-use crate::claim::{ClaimLifecycleStatus, decode_claim_body, encode_claim_body};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{decode_claim_body, encode_claim_body};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 impl ClaimMaterialization {
     /// Only closing the current active row is admitted. No actor or evidence

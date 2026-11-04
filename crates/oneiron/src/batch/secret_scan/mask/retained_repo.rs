@@ -21,6 +21,7 @@
 //! doors, their key bound and their container budget are unchanged.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -29,6 +30,8 @@ use super::super::container::{
     Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
 };
 use super::super::release_hit;
+use super::body::reads_as_text;
+use super::text_log::{TextLog, TextSpans};
 use super::wipe::PlanValues;
 use super::{
     FileKey, FoundFile, Masker, REASON_KNOWN_VALUE, file_spans, merged, occurrences, offset,
@@ -36,15 +39,17 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
 use crate::origin::lfs::find_custody_credential;
 use crate::ports::ShortIdStoreRead;
-use crate::repo_mutation::{
+use crate::secret_custody::masked_file_in_txn;
+use crate::secret_custody::{KnownValues, MaskedFile};
+use crate::secret_record::CustodyWrite;
+use crate::store::Store;
+use crate::store::repo_environment::{
     REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
 };
-use crate::secret_custody::{
-    CustodyWrite, KeySpan, KnownValues, MaskedFile, MemberStep, masked_file_in_txn,
-};
-use crate::store::Store;
 
 pub(crate) mod read;
 
@@ -145,7 +150,6 @@ fn place_leaf(
         None => Vec::new(),
     };
     let mut spans = file_spans(leaf);
-    spans.extend(extra.iter().cloned());
     // A value a structured reading places (a credential field), wherever
     // its bytes sit in the leaf.
     let mut fields = Masker {
@@ -153,7 +157,17 @@ fn place_leaf(
         at: Some((origin, PLACE.to_owned())),
         ..Masker::default()
     };
+    // A leaf no decoder takes is read as one text, whose spans are
+    // the ones just found: they are not found again (speed, FIX 12211).
+    if reads_as_text(leaf) {
+        let leaf_spans = TextSpans {
+            known: Vec::new(),
+            shapes: spans.clone(),
+        };
+        fields.text_log = TextLog::seeded(leaf, leaf_spans);
+    }
     fields.mask_body(leaf)?;
+    spans.extend(extra.iter().cloned());
     for found in fields.found {
         spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
     }
@@ -241,7 +255,7 @@ fn leaf_hit(bytes: &[u8]) -> Result<Option<&'static str>> {
 /// far, wiped when it drops. A value met again, in one blob or another,
 /// keeps the record it took the first time.
 pub(crate) struct RetainedRepoCustody {
-    known: Option<KnownValues>,
+    known: Option<Arc<KnownValues>>,
     minted: PlanValues<(String, EntityId)>,
 }
 
@@ -249,7 +263,7 @@ impl RetainedRepoCustody {
     /// The index as `wtxn` reads it, with nothing minted yet.
     pub(crate) fn load_in_writer(store: &Store, wtxn: &RwTxn<'_>) -> Result<Self> {
         Ok(Self {
-            known: KnownValues::load_in_writer(store, wtxn)?,
+            known: KnownValues::shared_in_writer(store, wtxn)?,
             minted: PlanValues::default(),
         })
     }
@@ -519,6 +533,12 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
+        // FIX 11550: a PDF object stream's decoded bytes.
+        MemberStep::PdfObjectStream { object, generation } => {
+            out.push(6);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
     }
 }
 
@@ -571,6 +591,11 @@ impl<'b> Spooled<'b> {
                 generation: self.u16()?,
             },
             3 => MemberStep::PdfStrings {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            // FIX 11550: a PDF object stream's decoded bytes.
+            6 => MemberStep::PdfObjectStream {
                 object: self.u32()?,
                 generation: self.u16()?,
             },

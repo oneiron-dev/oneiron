@@ -38,3 +38,10 @@ impl ApplyCliEnv for Command {
         self
     }
 }
+
+/// Adds the bound `HOME` and `XDG_RUNTIME_DIR` to a cleared spawn from
+/// another crate (FIX 6886): the public twin of [`ApplyCliEnv`], which stays
+/// crate-private. Nothing when none is bound.
+pub fn apply_cli_env_to_command(command: &mut Command) -> &mut Command {
+    command.apply_cli_env()
+}

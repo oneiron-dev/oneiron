@@ -164,8 +164,10 @@ pub enum MeasurementState {
     Pending,
     /// Its exposures are counted and its legs are under way.
     Claimed,
-    /// It ended without a complete matched set: no card, and final for its
-    /// digest.
+    /// It ended without a complete matched set: no card. Final for its
+    /// digest everywhere but the helper gate, which measures it again on
+    /// the next request and replaces it when that measurement settles
+    /// ([`crate::Vault::remeasure_partial_eval_measurement`]).
     Partial {
         reasons: Vec<MeasurementUnavailable>,
     },

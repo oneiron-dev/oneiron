@@ -116,6 +116,8 @@ mod overrides;
 #[cfg(feature = "sync")]
 pub(crate) use lifecycle::note_seal_in_txn;
 pub(crate) use lifecycle::{erase_seal_actor_in_txn, note_sealed_in_txn, seal_note_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use overrides::encode_frame_overrides_in_txn;
 pub(crate) use overrides::note_defaults_in_txn;
 pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
 pub use proposals::{
@@ -568,8 +570,7 @@ mod document_store;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
 pub(crate) use document_store::{
-    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn,
-    observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };
 mod files;
 pub use files::{
@@ -598,6 +599,8 @@ pub(crate) use scan::measure as measure_note_document;
 pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
+#[cfg(feature = "sync")]
+pub(crate) mod frame_envelope;
 #[cfg(feature = "sync")]
 mod replica;
 #[cfg(feature = "sync")]

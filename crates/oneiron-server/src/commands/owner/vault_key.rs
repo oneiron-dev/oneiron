@@ -650,13 +650,27 @@ pub(super) fn read_pins(path: &Path) -> anyhow::Result<Vec<CheckpointSigner>> {
     view::parse_pins(&text)
 }
 
+/// Why a host with no keystore opens no pad with a machine key, and how the
+/// owner gives it one (FIX 12225).
+pub(super) const NO_KEYSTORE_FOR_PAD_MACHINE: &str = "this host installed no keystore ([keystore] backend = \"off\"), so it \
+    holds no machine key and opens no pad with one; set [keystore] backend = \"platform\" (on Linux, a 0600 file \
+    store outside the vault directory) to open pads with a machine key";
+
+/// The refusal a host with no keystore answers `--pad-machine` with (FIX 12225).
+pub(super) fn no_keystore_for_pad_machine() -> oneiron::Error {
+    oneiron::Error::Secret(oneiron::error::SecretError::KeystoreUnavailable(
+        NO_KEYSTORE_FOR_PAD_MACHINE,
+    ))
+}
+
 /// The key `backup` opens with when the restore names an unlock or a trust of
 /// its own; `None` leaves this install's device unlock and trust as before.
-/// Every unlock but this device's trusts only pinned signers: a host that
-/// holds no seed has no other ground to trust a backup on.
+/// A device unlock with no keystore refuses, naming the platform backend (FIX
+/// 12225). Every unlock but this device's trusts only pinned signers: a host
+/// that holds no seed has no other ground to trust a backup on.
 pub(super) fn backup_key(
     backup: &Path,
-    vault_path: &Path,
+    _vault_path: &Path,
     keystore: Option<&Arc<dyn DeviceKeystore>>,
     unlock: &HostUnlock,
     pins: Option<Vec<CheckpointSigner>>,
@@ -668,14 +682,7 @@ pub(super) fn backup_key(
     match (unlock.engine(), pins) {
         (None, None) => Ok(None),
         (None, Some(pins)) => {
-            let keystore = match keystore {
-                Some(keystore) => Arc::clone(keystore),
-                None => oneiron_keystore::default_platform_keystore(&[vault_path])?,
-            };
-            let key = opened(CheckpointKey::unlock(
-                backup,
-                &VaultKeyUnlock::Device(keystore.as_ref()),
-            ))?;
+            let key = opened(CheckpointKey::unlock_on_this_device(backup, keystore))?;
             Ok(Some(key.trusting(pins)))
         }
         (Some(_), None) => anyhow::bail!(

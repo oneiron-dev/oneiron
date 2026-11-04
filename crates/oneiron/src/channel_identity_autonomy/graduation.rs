@@ -1,12 +1,13 @@
-//! Offer-only graduation: scope value, attributed review evidence (agent and owner doors), receipt-backed review validation, and the streak evaluation.
+//! Offer-only graduation: scope value and its shared ramp scope, attributed review evidence (agent and owner doors), receipt-backed review validation, the streak evaluation against the shared offer policy and owner answers, and the owner's decline doors.
 
 use rmpv::Value;
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
+use crate::consent_graduation::RampScope;
+use crate::edit_distance::graduation::{self as shared, SnoozeState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::write_envelope::WriteActor;
 
 use super::codec::{AUTONOMY, address, array, id, id_value, key, text, token};
@@ -15,6 +16,30 @@ use super::types::{
     ChannelIdentityAutonomyRung, DEFAULT_GRADUATION_UNCHANGED_STREAK, DraftReviewOutcome,
     GraduationEvidence, GraduationOffer, GraduationScopeKey, PREDICATE_GRADUATION_EVIDENCE,
 };
+
+/// The op-kind prefix of a channel identity's graduation scope in the shared
+/// offer machinery, before the scope's verb class.
+const RAMP_OP_KIND_PREFIX: &str = "channel_identity.";
+
+impl GraduationScopeKey {
+    /// This scope in the shared offer machinery: op kind
+    /// `channel_identity.<verb class>`, target class the handle its evidence
+    /// rows are keyed under, actor the acting agent. Owner threshold rows, the
+    /// answer log (snooze, backoff, manual pin) and the shared unpin door
+    /// (`edit_distance::graduation::unpin_scope_as_owner`) name the scope by it.
+    pub fn ramp_scope(&self) -> Result<RampScope> {
+        RampScope::new(
+            format!("{RAMP_OP_KIND_PREFIX}{}", self.verb_class),
+            scope_handle(self)?.to_hex(),
+            self.actor_ref.to_hex(),
+        )
+    }
+}
+
+/// The handle a scope's evidence rows are keyed under.
+fn scope_handle(scope: &GraduationScopeKey) -> Result<EntityId> {
+    address("scope", &scope_value(scope)?)
+}
 
 fn scope_value(scope: &GraduationScopeKey) -> Result<Value> {
     if !matches!(scope.verb_class.as_str(), "mail.draft" | "mail.send") {
@@ -117,29 +142,16 @@ impl Vault {
     // carry an explicit review_outcome and the exact graduation scope fields.
     // Resolve before opening the write txn: the receipt door owns its read txns
     // and send audit receipts are append-only. No actor/time filter may hide an
-    // ambiguous receipt id; all durable outbound rows must remain visible.
+    // ambiguous receipt id: the lookup reads every durable outbound row, with
+    // no result limit, so the id must name exactly one of them.
     fn validate_graduation_review(
         &self,
         evidence: &GraduationEvidence,
     ) -> Result<(EntityId, &'static str, Value)> {
-        let scan = self.scan_receipts(
-            ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
-                .with_kind(ReceiptKind::Outbound),
-        )?;
-        // Continuations describe omitted data, not resumable snapshot pages.
-        // Without a bounded resume door, neither a missing id nor one visible
-        // match proves uniqueness. Reject source AND result truncation.
-        if !scan.complete {
+        let matches = self.outbound_receipts_with_id(&evidence.receipt_ref)?;
+        let [receipt] = matches.as_slice() else {
             return Err(invalid_autonomy());
-        }
-        let mut matches = scan
-            .records
-            .iter()
-            .filter(|r| r.receipt_id == evidence.receipt_ref);
-        let receipt = matches.next().ok_or_else(invalid_autonomy)?;
-        if matches.next().is_some() {
-            return Err(invalid_autonomy());
-        }
+        };
         let field = |key: &str| receipt.fields.get(key).map(String::as_str);
         let task_ref = field(crate::receipt::FIELD_TASK_REF)
             .and_then(|value| EntityId::from_hex(value).ok())
@@ -166,30 +178,116 @@ impl Vault {
         Ok((task_ref, outcome, distance.map_or(Value::Nil, Value::from)))
     }
 
-    /// Pure evaluation: zero selects the pinned default of twelve. The proposal
-    /// retains the existing draft volume bound; acceptance must use owner consent.
+    /// Evaluation against the shared offer policy and the owner's answers. The
+    /// proposal retains the existing draft volume bound; acceptance must use
+    /// owner consent.
+    ///
     /// Each task contributes only its latest `(occurred_at, receipt_ref)` review,
-    /// independent of admission order. A later correction replaces its old outcome.
+    /// independent of admission order; a later correction replaces its old
+    /// outcome. The streak is the run of approved-untouched tasks since the
+    /// newest correction and since the owner's last decline; the corrections
+    /// are every other task. A runtime threshold row governing
+    /// [`GraduationScopeKey::ramp_scope`] decides with its streak and posterior
+    /// guard. With none, the streak alone meets `unchanged_streak`, and zero
+    /// selects the pinned default of twelve. A scope the owner snoozed or
+    /// pinned to manual offers nothing until the snooze ends or the pin clears.
     pub fn evaluate_graduation_offer(
         &self,
         scope: &GraduationScopeKey,
         unchanged_streak: u32,
         now: u64,
     ) -> Result<Option<GraduationOffer>> {
-        let threshold = if unchanged_streak == 0 {
-            DEFAULT_GRADUATION_UNCHANGED_STREAK
-        } else {
-            unchanged_streak
-        };
-        let prefix = key(
-            PREDICATE_GRADUATION_EVIDENCE,
-            &address("scope", &scope_value(scope)?)?.to_hex(),
-        );
+        let ramp = scope.ramp_scope()?;
         let recorded_now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        let now = now.min(recorded_now);
-        let mode = self.autonomy_mode_in_txn(
+        self.graduation_offer_in_txn(
             &txn,
+            scope,
+            &ramp,
+            unchanged_streak,
+            now.min(recorded_now),
+            recorded_now,
+        )
+    }
+
+    /// The owner's "not now" on a standing identity graduation offer: a row in
+    /// the shared answer log on [`GraduationScopeKey::ramp_scope`]. The offer
+    /// stays unsurfaced through the owner's policy backoff, a decline past the
+    /// end of that ladder pins the scope to manual, and the next offer needs
+    /// its streak re-earned after this answer. The writing transaction
+    /// re-evaluates `offer` with its own streak as the threshold; an offer
+    /// that no longer stands records nothing.
+    pub fn decline_channel_identity_graduation_offer(
+        &self,
+        offer: &GraduationOffer,
+        owner: &AuthenticatedOwner,
+    ) -> Result<SnoozeState> {
+        self.record_channel_identity_offer_decline(offer, owner, false)
+    }
+
+    /// The owner's "stop asking" on a standing identity graduation offer: a
+    /// manual pin, recorded as
+    /// [`Self::decline_channel_identity_graduation_offer`] records a decline.
+    /// Only the shared unpin door on [`GraduationScopeKey::ramp_scope`] clears
+    /// it.
+    pub fn pin_channel_identity_graduation_offer(
+        &self,
+        offer: &GraduationOffer,
+        owner: &AuthenticatedOwner,
+    ) -> Result<SnoozeState> {
+        self.record_channel_identity_offer_decline(offer, owner, true)
+    }
+
+    fn record_channel_identity_offer_decline(
+        &self,
+        offer: &GraduationOffer,
+        owner: &AuthenticatedOwner,
+        pin: bool,
+    ) -> Result<SnoozeState> {
+        self.autonomy_owner(owner)?;
+        let ramp = offer.scope.ramp_scope()?;
+        let recorded_now = self.store.authorization_now()?;
+        let mut txn = self.store.env.write_txn()?;
+        if self
+            .graduation_offer_in_txn(
+                &txn,
+                &offer.scope,
+                &ramp,
+                offer.unchanged_streak,
+                recorded_now,
+                recorded_now,
+            )?
+            .is_none()
+        {
+            return Err(invalid_autonomy());
+        }
+        let state = shared::record_external_offer_decline_in_txn(
+            self,
+            &mut txn,
+            owner,
+            &ramp,
+            pin,
+            recorded_now,
+        )?;
+        txn.commit()?;
+        Ok(state)
+    }
+
+    fn graduation_offer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: &GraduationScopeKey,
+        ramp: &RampScope,
+        unchanged_streak: u32,
+        now: u64,
+        recorded_now: u64,
+    ) -> Result<Option<GraduationOffer>> {
+        let prefix = key(
+            PREDICATE_GRADUATION_EVIDENCE,
+            &scope_handle(scope)?.to_hex(),
+        );
+        let mode = self.autonomy_mode_in_txn(
+            txn,
             scope.identity_ref,
             scope.relationship_context,
             now,
@@ -199,17 +297,19 @@ impl Vault {
             mode.rung,
             ChannelIdentityAutonomyRung::DraftOnly | ChannelIdentityAutonomyRung::SendWithApproval
         ) || scope.verb_class != "mail.send"
-            || self.autonomy_identity_actor(&txn, scope.identity_ref)? != scope.actor_ref
+            || self.autonomy_identity_actor(txn, scope.identity_ref)? != scope.actor_ref
+            || shared::asks_are_suppressed_in_txn(&self.store, txn, ramp, now)?
         {
             return Ok(None);
         }
-        let state = self.autonomy_state(&txn, mode, now, recorded_now)?;
+        let state = self.autonomy_state(txn, mode, now, recorded_now)?;
         let proposed_envelope = state.action_envelope.ok_or_else(invalid_autonomy)?;
         if proposed_envelope.counterparty_class != scope.counterparty_class {
             return Ok(None);
         }
+        let streak_restart = shared::latest_decline_at_in_txn(&self.store, txn, ramp)?;
         let mut rows = Vec::new();
-        for (_, row) in AUTONOMY.scan_from(&self.store, &txn, &prefix)? {
+        for (_, row) in AUTONOMY.scan_from(&self.store, txn, &prefix)? {
             let (actor, at, value) = (row.actor, row.at, row.value);
             let v = array(&value, 6)?;
             let task_ref = id(&v[5])?;
@@ -228,18 +328,30 @@ impl Vault {
         }
         rows.sort();
         let mut evidence_refs = Vec::new();
+        let mut corrections = 0_u32;
+        let mut streak_open = true;
         let mut seen_tasks = std::collections::BTreeSet::new();
-        for (_, reference, outcome, task_ref) in rows.into_iter().rev() {
+        for (at, reference, outcome, task_ref) in rows.into_iter().rev() {
             if !seen_tasks.insert(task_ref) {
                 continue;
             }
-            if outcome != "approved_untouched" {
-                break;
+            let untouched = outcome == "approved_untouched";
+            if !untouched {
+                corrections = corrections.saturating_add(1);
             }
-            evidence_refs.push(reference);
+            if streak_open && untouched && streak_restart.is_none_or(|restart| at > restart) {
+                evidence_refs.push(reference);
+            } else {
+                streak_open = false;
+            }
         }
         let streak = u32::try_from(evidence_refs.len()).map_err(|_| invalid_autonomy())?;
-        if streak < threshold {
+        let earned = match shared::runtime_graduation_policy_in_txn(&self.store, txn, ramp)? {
+            Some(policy) => policy.is_cleared_by(streak, corrections),
+            None if unchanged_streak == 0 => streak >= DEFAULT_GRADUATION_UNCHANGED_STREAK,
+            None => streak >= unchanged_streak,
+        };
+        if !earned {
             return Ok(None);
         }
         evidence_refs.reverse();

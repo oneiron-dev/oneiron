@@ -43,12 +43,22 @@ impl<'v> ScopedRead<'v> {
     /// one by one admits them all at one instant (FIX 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
+        self.refs_readable_each_in(&rtxn, sets)
+    }
+
+    /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
+    /// as [`Self::grant_read_txn`] opens one.
+    pub(super) fn refs_readable_each_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        sets: &[Vec<EntityId>],
+    ) -> Result<Vec<bool>> {
+        let policy = self.live_policy_manifest_in(rtxn)?;
         let mut each = Vec::with_capacity(sets.len());
         for ids in sets {
             let mut readable = true;
             for id in ids {
-                if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
+                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
                     readable = false;
                     break;
                 }
@@ -436,7 +446,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Grant bodies contain both private diary ids. They are authority,
         // never a readable graph/search result of their own.
@@ -451,27 +461,16 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        // A non-CLAIM body carries its own `stale: true` once withdrawn; a
-        // CLAIM's staleness is judged by its claim read below. A recorded
-        // source that no longer stands withdraws the row, the owner's too.
-        let readable = match (self.session_view, use_asked) {
-            (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
-            (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
-            (Some(view), true) => {
-                crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
-            }
-            (None, true) => {
-                crate::ports::raw_readable_apart_from_use_in_txn(&self.vault.store, rtxn, id, raw)?
-            }
-        };
-        if !readable
-            || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()
-            || (raw.len() == ENTITY_METADATA_HEADER_LEN
-                && self
-                    .vault
-                    .store
-                    .entity_deletion_present_in_txn(rtxn, id, header.learned_at)?)
+        // A CLAIM a reader with no record list reads is judged once per
+        // access class (FIX 11915); every other row, and a CLAIM that path
+        // leaves, takes the row admission below.
+        if header.entity_type == ENTITY_TYPE_CLAIM
+            && let Some(admitted) =
+                self.claim_by_class_in(rtxn, policy, id, raw, &header, filter, authority, grant)?
         {
+            return Ok(admitted);
+        }
+        if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
             return Ok(false);
         }
         if grant.is_none() && !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
@@ -525,6 +524,41 @@ impl<'v> ScopedRead<'v> {
         }
     }
 
+    /// Whether the stored row `raw` of `id`, with `header`, still stands as
+    /// a row: not withdrawn, not stale, every recorded source standing, not
+    /// archived and no deleted shell. A non-CLAIM body carries its own
+    /// `stale: true` once withdrawn; a CLAIM's staleness is judged by its
+    /// claim read. A recorded source that no longer stands withdraws the row,
+    /// the owner's too. `use_asked`: the named read asks the row's legal
+    /// non-use conjunct on its own (FIX 5226).
+    pub(super) fn row_stands_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        header: &EntityMetadataHeader,
+        use_asked: bool,
+    ) -> Result<bool> {
+        let readable = match (self.session_view, use_asked) {
+            (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
+            (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
+            (Some(view), true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
+            }
+            (None, true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(&self.vault.store, rtxn, id, raw)?
+            }
+        };
+        Ok(readable
+            && self.vault.archive_tombstone_in_txn(rtxn, id)?.is_none()
+            && (raw.len() != ENTITY_METADATA_HEADER_LEN
+                || !self.vault.store.entity_deletion_present_in_txn(
+                    rtxn,
+                    id,
+                    header.learned_at,
+                )?))
+    }
+
     /// Whether `viewers` read the revision `raw` when it is a private
     /// thread's notice (FIX 6473; CALLS `FIX 6473 private-thread notice
     /// readers`): only its recipient, and a reader of the thread whose root
@@ -548,7 +582,7 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
-        if notice.source.producer != crate::workspace_roster::THREAD_NOTICE_PRODUCER {
+        if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
         let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
@@ -654,7 +688,7 @@ impl ScopedRead<'_> {
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts_with_receipt`, which opens a transaction of its own.
-impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
+impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;

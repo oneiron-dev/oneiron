@@ -5,8 +5,9 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 
 use super::{
-    LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX, LinkedInConversationMessage, LinkedInInboxSyncConfig,
-    MAX_LINKEDIN_MESSAGE_ID_BYTES, MAX_LINKEDIN_SESSION_REF_BYTES, MAX_LINKEDIN_THREAD_ID_BYTES,
+    LINKEDIN_INBOX_SYNC_CURSOR_KEY_PREFIX, LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX,
+    LinkedInConversationMessage, LinkedInInboxSyncConfig, MAX_LINKEDIN_MESSAGE_ID_BYTES,
+    MAX_LINKEDIN_THREAD_ID_BYTES,
 };
 
 /// The `linkedin:inbox_sync:{seen,provenance}:v1:` table key for one message:
@@ -29,6 +30,25 @@ pub(super) fn linkedin_inbox_message_key_hash(
         ]
         .as_slice(),
     )
+}
+
+/// The `linkedin:inbox_sync:seen:v1:` table key of one seat's poll cursor
+/// (FIX 8790): the cursor prefix and a hash of the receiving identity and
+/// session, so it never meets a message's key.
+pub(super) fn linkedin_inbox_sync_cursor_key(config: &LinkedInInboxSyncConfig) -> String {
+    let (session_kind, session_ref) = match config.session_ref.as_deref() {
+        Some(session_ref) => ("session", session_ref),
+        None => ("no-session", ""),
+    };
+    let hash = event_hash(
+        [
+            config.receiving_address_or_handle.as_str(),
+            session_kind,
+            session_ref,
+        ]
+        .as_slice(),
+    );
+    format!("{LINKEDIN_INBOX_SYNC_CURSOR_KEY_PREFIX}{hash}")
 }
 
 pub(super) fn linkedin_inbox_sync_dedupe_key(config: &LinkedInInboxSyncConfig) -> String {
@@ -164,32 +184,9 @@ pub(super) fn bounded_identifier(
     Ok(value)
 }
 
-pub(super) fn bounded_ref(
-    value: String,
-    blank_message: &'static str,
-    too_long_message: &'static str,
-) -> Result<String> {
-    normalize_non_blank(
-        value,
-        MAX_LINKEDIN_SESSION_REF_BYTES,
-        blank_message,
-        too_long_message,
-    )
-}
+pub(super) use crate::outbound::linkedin_policy::bounded_ref;
 
-pub(super) fn vault_scoped_secret_ref(value: String) -> Result<String> {
-    let value = bounded_ref(
-        value,
-        "LinkedIn session cookie secret ref must be non-empty",
-        "LinkedIn session cookie secret ref exceeds maximum length",
-    )?;
-    if !value.starts_with("vault-secret:") {
-        return Err(Error::InvalidConfig(
-            "LinkedIn session cookie secret ref must be vault-scoped".to_owned(),
-        ));
-    }
-    Ok(value)
-}
+pub(super) use crate::outbound::linkedin_policy::vault_scoped_secret_ref;
 
 pub(super) fn event_hash(parts: &[&str]) -> String {
     let mut hasher = blake3::Hasher::new();
@@ -201,21 +198,7 @@ pub(super) fn event_hash(parts: &[&str]) -> String {
     hex[..16].to_owned()
 }
 
-pub(super) fn normalize_non_blank(
-    value: String,
-    max_bytes: usize,
-    blank_message: &'static str,
-    too_long_message: &'static str,
-) -> Result<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(Error::InvalidConfig(blank_message.to_owned()));
-    }
-    if value.len() > max_bytes {
-        return Err(Error::InvalidConfig(too_long_message.to_owned()));
-    }
-    Ok(value.to_owned())
-}
+pub(super) use crate::outbound::linkedin_policy::normalize_non_blank;
 
 pub(super) fn normalize_verb_key(verb: &str) -> String {
     verb.trim().to_ascii_lowercase().replace(['-', '.'], "_")

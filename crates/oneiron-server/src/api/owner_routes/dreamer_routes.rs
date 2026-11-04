@@ -5,6 +5,7 @@
 //! claim is retracted and what it superseded stands again; a summary or a
 //! NOTE is archived; a person's `about` goes back to the lines it replaced.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
@@ -12,6 +13,7 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
+use oneiron::dreamer_consolidation::excluded_conversations::DreamerExcludedConversations;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use oneiron::memory::DreamerDecidedCandidateView;
 use serde::{Deserialize, Serialize};
@@ -54,6 +56,15 @@ pub(super) fn owner_table() -> OwnerTable {
                 row: None,
             },
             post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/excluded-conversations",
+                summary: "Replaces the conversations the Dreamer must never consolidate. Answers the stored row.",
+                row: None,
+            },
+            post(replace_excluded_conversations),
         ),
         (
             OwnerRoute {
@@ -124,6 +135,19 @@ struct RevertChange {
     change: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReplaceExcludedConversations {
+    /// Every excluded conversation, as 32 hex. An empty list clears the row.
+    conversations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct ExcludedConversationsView {
+    version: u8,
+    conversations: Vec<String>,
+}
+
 /// `POST /v1/owner/dreamer/pause` and `/resume` carry no fields: `{}`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -163,6 +187,18 @@ struct ChangeReverted {
     receipt_ref: String,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/dreamer/excluded-conversations`'s
+/// body: [`ReplaceExcludedConversations`].
+pub(crate) fn excluded_conversations_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReplaceExcludedConversations>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/excluded-conversations`'s
+/// answer: [`ExcludedConversationsView`].
+pub(crate) fn excluded_conversations_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ExcludedConversationsView>()
+}
+
 /// The OpenAPI schema of `POST /v1/owner/dreamer/revert`'s body (FIX 11611): [`RevertChange`].
 pub(crate) fn revert_change_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<RevertChange>()
@@ -188,6 +224,17 @@ pub(crate) fn dreamer_paused_schema() -> serde_json::Value {
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
     OwnerError::Refused(error.to_string())
+}
+
+fn excluded_conversations_view(setting: DreamerExcludedConversations) -> ExcludedConversationsView {
+    ExcludedConversationsView {
+        version: setting.version,
+        conversations: setting
+            .conversations
+            .iter()
+            .map(|conversation| conversation.to_hex())
+            .collect(),
+    }
 }
 
 fn change_view(change: DreamerChange) -> ChangeView {
@@ -287,6 +334,32 @@ fn dreamer_control(server: &SyncServer) -> OwnerResult<crate::ai_host::DreamerCo
         .ai
         .dreamer_control()
         .ok_or_else(|| OwnerError::Refused("this server holds no dreamer pause control".to_owned()))
+}
+
+/// `POST /v1/owner/dreamer/excluded-conversations`: replaces the operator
+/// row naming conversations whose turns must never enter a Dreamer pass,
+/// and answers the row read back after the write.
+async fn replace_excluded_conversations(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ReplaceExcludedConversations>,
+) -> OwnerReply<ExcludedConversationsView> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let stored = blocking(move || -> OwnerResult<ExcludedConversationsView> {
+        let vault = server.vault();
+        let conversations = request
+            .conversations
+            .iter()
+            .map(|conversation| entity_id("conversation", conversation))
+            .collect::<OwnerResult<BTreeSet<_>>>()?;
+        let setting = DreamerExcludedConversations::new(conversations);
+        vault.set_dreamer_excluded_conversations(&owner, &setting)?;
+        let stored = vault.dreamer_excluded_conversations()?;
+        Ok(excluded_conversations_view(stored))
+    })
+    .await?;
+    Ok(Json(stored))
 }
 
 /// `POST /v1/owner/dreamer/pause` with `{}`: sets the owner's own Dreamer

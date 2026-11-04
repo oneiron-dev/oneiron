@@ -149,7 +149,8 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
@@ -281,3 +282,27 @@ use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, EdgeKind, EntityId,
     Error, Result, TimeRange, Vault,
 };
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::storage::code_run_continuation_accepts_masked;
+pub(crate) use self::storage::code_run_reader_job_accepts_masked;
+pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
+pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
+pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
+
+pub use self::dispatcher::{
+    ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,
+};
+
+pub(crate) use self::consent_wait::source as connector_result_source;
+pub use self::consent_wait::{
+    CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
+    CONNECTOR_RESULT_NOT_RETAINED, ConnectorCallReply, ConnectorToolResult,
+};
+
+pub(crate) use self::dispatcher::kept_reveal_lease;
+pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
+
+pub use self::dispatcher::workflow_operations;

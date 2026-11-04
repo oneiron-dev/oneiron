@@ -23,7 +23,13 @@ pub struct CommandOutput {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractSnapshot {
     pub public_names: BTreeSet<String>,
+    /// Re-exports whose target the syntactic walk could not reach, so their
+    /// members are not in `public_names`: reported, never refused (FIX 9767).
+    pub unresolved_exports: BTreeSet<String>,
     pub schemas: BTreeMap<String, serde_json::Value>,
+    /// Each schema file's original bytes, which the ruled byte-equality
+    /// check compares (FIX 9766).
+    pub schema_bytes: BTreeMap<String, Vec<u8>>,
     pub outputs: BTreeMap<String, CommandOutput>,
 }
 
@@ -51,6 +57,17 @@ pub enum ContractDiff {
         before: Option<CommandOutput>,
         after: Option<CommandOutput>,
     },
+    /// A schema file's bytes changed, beside any structural drift: a
+    /// whitespace or key-order change shows here alone (FIX 9766). A record,
+    /// never a refusal: [`ContractVerdict::passes`] does not read it.
+    SchemaBytesDrift {
+        contract: String,
+        /// The first byte at which the two files differ.
+        offset: u64,
+        /// Each side's blake3 digest in hex, `None` where it was not observed.
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +84,10 @@ pub struct ContractVerdict {
 impl ContractVerdict {
     #[must_use]
     pub fn passes(&self) -> bool {
-        self.tests_passed && self.diffs.is_empty()
+        self.tests_passed
+            && self
+                .diffs
+                .iter()
+                .all(|diff| matches!(diff, ContractDiff::SchemaBytesDrift { .. }))
     }
 }

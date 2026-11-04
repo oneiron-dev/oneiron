@@ -32,6 +32,9 @@ pub(super) struct ArcClaimEntry {
     pub(super) id: EntityId,
     pub(super) label: String,
     pub(super) body: String,
+    /// The claim as a landed summary's text names it in place of its label
+    /// (FIX 10359): `[predicate = value]`.
+    pub(super) named: String,
 }
 
 /// Every active claim on a subject `turns` name, read through `read` in
@@ -101,6 +104,7 @@ pub(super) fn claims_in_txn(
             id: *claim,
             label: label.to_string(),
             body: words,
+            named: format!("[{} = {}]", decoded.predicate, rmpv_to_json(&decoded.value)),
         });
     }
     Ok(ArcClaims { text, ids, entries })

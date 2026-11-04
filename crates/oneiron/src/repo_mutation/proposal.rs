@@ -90,14 +90,7 @@ fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
     OpKey { repo_key_hash, seq }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RepoProposalStatus {
-    Proposed,
-    Approved,
-    Applied,
-    Failed,
-    Rejected,
-}
+pub use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// A bounded, immutable file change plus all the critic evidence that judged it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,29 +135,14 @@ pub struct RepoProposal {
     /// The class a host stamped beside the actor (FIX 6867); `None` keeps
     /// the trusted and owner ingress as it is.
     pub actor_class: Option<u8>,
+    /// The verified credential lineage its owner opener carried, frozen at
+    /// admission: that lineage and its forks never settle it (FIX 8838).
+    /// Empty for a trusted, run or bundle proposal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opener_lineage: Vec<[u8; 32]>,
 }
 
-/// The complete reviewed operation identity. File bytes remain on `RepoProposal`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RepoProposalOperation {
-    CommitFile,
-    ResolveConflictFile {
-        #[serde(with = "entity_serde")]
-        branch_subject: EntityId,
-        #[serde(with = "entity_serde")]
-        open_conflict_claim_id: EntityId,
-        branch_name: String,
-    },
-    /// Every file of one accepted pushed ref update, as ONE reviewed
-    /// bundle (G4 PR2): it lands through its merge queue only.
-    ReceivedFiles {
-        #[serde(with = "entity_serde")]
-        candidate: EntityId,
-    },
-    /// Every file of one native reviewed bundle (FIX 7608 slice 5), each
-    /// with its exact state change: it lands through its merge queue only.
-    CommitFiles,
-}
+pub use crate::store::repo_proposal_record::RepoProposalOperation;
 
 pub(super) fn invalid(reason: &'static str) -> Error {
     Error::Code(CodeError::InvalidRepoMutationRecord(reason))
@@ -331,6 +309,7 @@ impl Vault {
             RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
+            None,
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
@@ -359,6 +338,7 @@ impl Vault {
             review,
             ProposalBase::CurrentCheckout,
             None,
+            Some(owner),
             |txn| {
                 guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
                 if let Some(session) = session {
@@ -613,42 +593,39 @@ pub(super) fn finish(
     }
     store(vault, txn, &row)
 }
+/// Whether a proposal of `repo` retained the snapshot `hash`. The walk reads
+/// every proposal it needs and never refuses for their number (rule 5, FIX
+/// 8832): past its threshold row it asks whether everything is okay.
 pub(super) fn proposal_snapshot_recorded(
     vault: &Vault,
     repo: &RepoRef,
     hash: RepoForkHash,
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    for (count, entry) in PROPOSAL.iter_from(&vault.store, &txn, &[])?.enumerate() {
-        if count >= 100_000 {
-            return Err(Error::IndexOverflow("repository proposals"));
-        }
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &txn,
+        crate::scan_check::EngineScan::RepoProposalSnapshotRows,
+        &[],
+    )?;
+    let wanted = repo_mutation_repo_key_hash(repo);
+    let mut found = false;
+    for entry in PROPOSAL.iter_from(&vault.store, &txn, &[])? {
+        count.row();
         let (_, row) = entry?;
-        if repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?)
-            == repo_mutation_repo_key_hash(repo)
-            && row.pre_action_fork_hash == hash
+        if row.pre_action_fork_hash == hash
+            && repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?) == wanted
         {
-            return Ok(true);
+            found = true;
+            break;
         }
     }
-    Ok(false)
+    drop(txn);
+    count.defer(&vault.store);
+    Ok(found)
 }
 
-mod entity_serde {
-    use crate::entity_id::EntityId;
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub(super) fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&id.to_hex())
-    }
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        EntityId::from_hex(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+use crate::store::repo_proposal_record::entity_serde;
 
 /// Check claim and branch bindings before the document edit or Git mutation.
 pub(super) fn validate_conflict(

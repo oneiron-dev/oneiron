@@ -55,6 +55,7 @@ use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+mod agent_person_import;
 mod asset_reserve;
 mod document_import;
 mod document_snapshot;

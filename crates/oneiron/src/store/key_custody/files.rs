@@ -66,7 +66,7 @@ pub(crate) fn custody_present(root: &Path) -> Result<bool> {
     exists(&container(root)?)
 }
 
-fn exists(path: &Path) -> Result<bool> {
+pub(super) fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -343,6 +343,10 @@ impl LocalCustody<'_> {
             kind,
         )?;
         open_dir(&self.compartment()?, create == Create::All, kind)?;
+        // FIX 11208: an erasable key's ref is filed before its directory.
+        if create != Create::Nothing && subject.kind() == CustodyKind::ErasableKey {
+            self.index_erasable(subject)?;
+        }
         let file = open_dir(&dir, create != Create::Nothing, kind)?;
         Ok((dir, file))
     }

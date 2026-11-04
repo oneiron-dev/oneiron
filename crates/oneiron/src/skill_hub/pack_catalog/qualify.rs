@@ -374,9 +374,8 @@ impl Vault {
     /// holds each hook body, and for each hook what its listing replay
     /// ([`Self::hooks_replay_binding_listing`]) lists, the binding it would
     /// get, its body's source, each entry's fact row and every row a
-    /// replayed read served. `None` once a replay's list is: an entry whose
-    /// body heard a verdict whose evidence rows are not known. The
-    /// Candidate, its author and its install are side rows.
+    /// replayed read served. Every listed row is named; an empty list means
+    /// no rows. The Candidate, its author and its install are side rows.
     ///
     /// # Errors
     /// As [`Self::qualify_pack_hooks`].
@@ -385,7 +384,7 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
         source_id: crate::EntityId,
-    ) -> Result<(PackHookQualification, Option<Vec<crate::EntityId>>)> {
+    ) -> Result<(PackHookQualification, Vec<crate::EntityId>)> {
         use super::admission::{PACK_CANDIDATE, PackCommit};
         use super::{HookAuthor, PackCandidateReason, PackHookBinding, PackInstallDisposition};
         let source = self
@@ -413,7 +412,7 @@ impl Vault {
         let pack = source.manifest().name.as_str();
         let mut replays = Vec::new();
         let mut passed = true;
-        let mut rows = Some(vec![source_id]);
+        let mut rows = vec![source_id];
         for hook in source.hooks() {
             let (id, row) = PackHookBinding::for_hook(
                 pack,
@@ -425,10 +424,7 @@ impl Vault {
             )?;
             let (entries, listed) =
                 self.hooks_replay_binding_listing(runtime, None, id, &row, None, usize::MAX)?;
-            rows = rows.zip(listed).map(|(mut rows, listed)| {
-                rows.extend(listed);
-                rows
-            });
+            rows.extend(listed);
             passed &= entries.iter().all(|entry| {
                 !matches!(
                     &entry.result,
@@ -438,11 +434,8 @@ impl Vault {
             });
             replays.push(PackHookReplay::new(hook, entries));
         }
-        let rows = rows.map(|mut rows| {
-            rows.sort_unstable();
-            rows.dedup();
-            rows
-        });
+        rows.sort_unstable();
+        rows.dedup();
         if !passed {
             return Ok((
                 PackHookQualification {

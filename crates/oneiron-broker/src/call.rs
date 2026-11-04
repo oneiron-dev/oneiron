@@ -53,6 +53,11 @@ pub struct CallHeader {
     /// A shape that names no model on the wire (a bodyless read of a job or a
     /// file) is bound to it here alone.
     pub wire_model: String,
+    /// Whether the daemon serves from a cloud node (ARCH-0081 §6): the
+    /// broker then sends plain, as gzip costs more on the link than it
+    /// saves. Transport context, not request identity: outside
+    /// [`request_digest`].
+    pub cloud: bool,
     /// [`request_digest`] of the method, path, headers and body.
     pub digest: String,
 }
@@ -67,6 +72,7 @@ impl CallHeader {
         path: String,
         headers: Vec<(String, String)>,
         wire_model: String,
+        cloud: bool,
         body: &[u8],
     ) -> Self {
         let method = shape.method().to_owned();
@@ -80,6 +86,7 @@ impl CallHeader {
             path,
             headers,
             wire_model,
+            cloud,
             digest,
         }
     }

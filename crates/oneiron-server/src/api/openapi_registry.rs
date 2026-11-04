@@ -1,6 +1,7 @@
 //! OpenAPI ApiDoc registration for the HTTP API.
 
 use super::__path_core_reject_widen;
+use super::__path_restore_quarantined_booking;
 use super::run_tree::CoreAttemptPlacement;
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
@@ -194,6 +195,7 @@ use utoipa::OpenApi;
         booking_book,
         booking_reschedule,
         booking_cancel,
+        restore_quarantined_booking,
         create_companion_access_grant,
         revoke_companion_access_grant,
         get_companion_profile,

@@ -214,8 +214,9 @@ impl Vault {
     #[doc(hidden)]
     pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use crate::write_envelope::claim_body::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
+        use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;
@@ -328,8 +329,8 @@ impl Vault {
     #[cfg(feature = "test-support")]
     fn install_fixture_source_permits(&self, actor: EntityId, peer_sources: bool) -> Result<()> {
         use crate::batch::{BatchOp, apply_ops};
-        use crate::claim::ClaimSource;
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;
@@ -352,7 +353,7 @@ impl Vault {
         // The stock Generated rows bind the commitment projector and, since
         // ARCH-0026's warm default, the Dreamer; the projector's is rebound.
         let projector = Value::from(
-            crate::commitment_schedule::commitment_projection_actor()?
+            crate::write_envelope::commitment_actor::commitment_projection_actor()?
                 .entity_ref()
                 .to_hex(),
         );
@@ -553,6 +554,7 @@ impl Vault {
             config,
             analyzer,
             writer_lease: None,
+            page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
@@ -560,6 +562,7 @@ impl Vault {
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
+            confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
@@ -596,6 +599,7 @@ impl Vault {
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
+            served_transports: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -620,7 +624,9 @@ impl Vault {
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
-        crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
+        vault.backfill_widen_contact_verdict_index(false)?;
+        crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
@@ -635,6 +641,7 @@ impl Vault {
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
                 }
+                crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
                 Ok(())
             })?;
             // An untouched seeded policy manifest takes the one this build
@@ -656,6 +663,7 @@ impl Vault {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::comm::seed_claim_class_descriptors(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;
@@ -756,7 +764,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn live_window(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
     ) -> Option<(
         std::sync::Arc<crate::sync::window::LoadedWindow>,
         std::sync::Arc<crate::sync::bridge::Materializer>,
@@ -847,7 +855,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn while_window_closed<T>(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let attached = self

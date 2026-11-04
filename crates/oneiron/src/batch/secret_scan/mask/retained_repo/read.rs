@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 
 use super::super::super::container::{Stop, masked_retained_repo_copy};
 use super::validate_retained_repo_copy;
-use crate::secret_custody::KeyPlaces;
+use crate::file_secret_marks::KeyPlaces;
 
 /// `bytes` with every span `places` names overwritten, members rebuilt and
 /// re-encoded, once the copy reads clean; `None` when no such copy stands.

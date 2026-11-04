@@ -42,7 +42,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
-use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
     WorkerBuildEvidence, WorkerFailure,
@@ -126,7 +126,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
-        Box::pin(execute(route, body, segments))
+        let context = lease.work_context().unwrap_or_default();
+        Box::pin(execute(route, body, segments, context))
     }
 
     fn stream<'a>(
@@ -139,11 +140,13 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
+        let context = lease.work_context().unwrap_or_default();
         Ok(Box::pin(futures_util::stream::unfold(
             Streaming::Start {
                 route,
                 body,
                 segments,
+                context,
             },
             Streaming::step,
         )))
@@ -195,11 +198,15 @@ impl Tie {
 struct Sent {
     call: Call,
     tie: Tie,
+    /// Host-attested custody from this call's own BoundWork context.
+    physical: WorkPhysical,
     #[expect(
         dead_code,
         reason = "its Drop unregisters the call's device update row"
     )]
     registration: Option<updates::Registration>,
+    /// Holds non-updates foreground presence until the call itself ends.
+    _foreground: Option<updates::Foreground>,
 }
 
 /// How a call's start ended.
@@ -230,8 +237,9 @@ async fn begin(
         kv_increment_mib: Some(0),
         workspace_mib: Some(0),
     };
+    let physical = context.physical;
     let mut work = worker_host::admit_bound_work(&route.worker, context, envelope);
-    let _foreground = if work.is_foreground() {
+    let foreground = if work.is_foreground() {
         match work.device() {
             Some(device) => Some(updates::foreground_arrival(device).await),
             None => None,
@@ -333,13 +341,22 @@ async fn begin(
                 })
             });
             call.set_grant(grant);
+            // A registration carries updates-capable foreground presence.
+            // Otherwise keep the arrival guard in Sent until the call ends.
+            let foreground = if registration.is_none() {
+                foreground
+            } else {
+                None
+            };
             Ok(Begun::Sent(Sent {
                 call,
                 tie: Tie {
                     manifest_sha256,
                     epoch,
                 },
+                physical,
                 registration,
+                _foreground: foreground,
             }))
         }
         Err(Start::Refused(refusal)) => {
@@ -361,34 +378,31 @@ async fn execute(
     route: NativeRoute,
     body: JsonValue,
     segments: Option<Arc<SegmentManifest>>,
+    context: WorkContext,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
-    let mut sent = match begin(
-        &route,
-        &body,
-        false,
-        segments.as_deref(),
-        WorkContext::default(),
-    )
-    .await?
-    {
+    let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
-    let last = loop {
+    let mut last = loop {
         match sent.call.next().await {
             Ok(Event::Final(last)) => break last,
             Ok(Event::Admitted(mark)) => report(&route, &mark),
             Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
             Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut(error)) => return Err(error),
+            Err(Cut(error)) => {
+                refresh_after_cut(&route);
+                return Err(error);
+            }
         }
     };
     report(&route, &last);
     record_receipt(&route, &sent, &last);
+    stamp_physical(&mut last, sent.physical);
     Ok(buffered_reply(last, target.as_deref(), Some(&sent.tie)))
 }
 
@@ -502,7 +516,25 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
         });
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
+        receipt.physical = Some(sent.physical);
         worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
+    }
+}
+
+/// Stamps this host's custody into every receipt the reply carries. Any
+/// worker-spelled value is overwritten; worker JSON is never its source.
+fn stamp_physical(last: &mut JsonValue, physical: WorkPhysical) {
+    let Some(calls) = last
+        .get_mut("usage")
+        .and_then(|usage| usage.get_mut(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array_mut)
+    else {
+        return;
+    };
+    for call in calls {
+        if let Some(call) = call.as_object_mut() {
+            call.insert("physical".to_owned(), json!(physical));
+        }
     }
 }
 
@@ -520,9 +552,22 @@ fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
         worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
-        worker_host::register_device_executor(&route.worker.spec().worker_id, activity.is_idle());
-        route.worker.report(activity);
+        worker_host::report_device_activity(&route.worker, activity);
     }
+}
+
+/// Re-polls after a Cut so a stale mid-call busy row cannot block idle-stop
+/// or pressure victim discovery. A dead worker's supervisor owns its truth.
+fn refresh_after_cut(route: &NativeRoute) {
+    let Some((socket, _)) = route.launch() else {
+        return;
+    };
+    let route = route.clone();
+    tokio::spawn(async move {
+        if let Some(activity) = activity(&socket).await {
+            worker_host::report_device_activity(&route.worker, activity);
+        }
+    });
 }
 
 /// What the worker holds now, from a cheap `stats` on its socket: the
@@ -614,6 +659,7 @@ enum Streaming {
         route: NativeRoute,
         body: JsonValue,
         segments: Option<Arc<SegmentManifest>>,
+        context: WorkContext,
     },
     Live(Box<Live>),
     Done,
@@ -640,20 +686,13 @@ impl Streaming {
                 route,
                 body,
                 segments,
+                context,
             } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(
-                    &route,
-                    &body,
-                    true,
-                    segments.as_deref(),
-                    WorkContext::default(),
-                )
-                .await
-                {
+                match begin(&route, &body, true, segments.as_deref(), context).await {
                     Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))
@@ -724,13 +763,15 @@ impl Live {
                     self.pending
                         .push_back(Ok(OpenAiCompatStreamFrame::Chunk(chunk)));
                 }
-                Ok(Event::Final(last)) => {
+                Ok(Event::Final(mut last)) => {
                     self.finished = true;
                     report(&self.route, &last);
                     record_receipt(&self.route, &self.sent, &last);
+                    stamp_physical(&mut last, self.sent.physical);
                     self.finish(last);
                 }
                 Err(Cut(error)) => {
+                    refresh_after_cut(&self.route);
                     self.finished = true;
                     self.pending.push_back(Err(error));
                 }

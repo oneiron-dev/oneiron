@@ -402,8 +402,9 @@ pub(super) fn set_cell(
     // its paragraphs' and runs' properties, attributes, namespace bindings,
     // `a:endParaRPr` and the bytes between paragraphs are kept, and only the
     // changed text is written. Where that mapping refuses (a change cutting
-    // into a field, content it does not know), the cell is rebuilt from its
-    // first paragraph's and first run's properties, as it was before.
+    // into a field, content holding text it does not know), the cell is
+    // rebuilt from its first paragraph's and first run's properties, as it
+    // was before.
     let out = match crate::edit::cell_text(&bytes, &tree, body, value) {
         Some(out) => out,
         None => rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,

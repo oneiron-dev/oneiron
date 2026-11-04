@@ -35,18 +35,20 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if r.holder_ref.is_empty() {
             return Err(CheckoutError::Invalid("checkout holder empty"));
         }
-        let a = self
-            .vault
-            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
-                super::transactions::claim_in_txn(self.vault, t, r.clone())
-            })?;
-        self.facts
-            .apply_checkout_fact(CheckoutFactMutation::Claimed {
+        let (vault, facts) = (self.vault, &mut self.facts);
+        // The TASK fact is applied inside the lease's write: a fact the sink
+        // refuses rolls the claim back, so no lease commits without it (FIX
+        // 8653). The host's sink runs there, so the write is a group of its own.
+        let a = vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let a = super::transactions::claim_in_txn(vault, t, r.clone())?;
+            facts.apply_checkout_fact(CheckoutFactMutation::Claimed {
                 task_ref: a.task_ref,
                 assignee_ref: a.holder_ref.clone(),
                 started_at: r.now,
                 epoch: a.epoch,
             })?;
+            Ok(a)
+        })?;
         self.liveness.publish(CheckoutLivenessPulse {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
@@ -83,26 +85,21 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if new.is_empty() {
             return Err(CheckoutError::Invalid("checkout holder empty"));
         }
-        let a = self
-            .vault
-            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
-                super::transactions::reclaim_in_txn(
-                    self.vault,
-                    t,
-                    id,
-                    new.clone(),
-                    now,
-                    None,
-                    false,
-                )
-            })?;
-        if a.1 {
-            self.facts
-                .apply_checkout_fact(CheckoutFactMutation::Reclaimed {
+        let (vault, facts) = (self.vault, &mut self.facts);
+        // A new epoch's TASK fact commits with it, as a claim's does (FIX 8653).
+        let a = vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let a =
+                super::transactions::reclaim_in_txn(vault, t, id, new.clone(), now, None, false)?;
+            if a.1 {
+                facts.apply_checkout_fact(CheckoutFactMutation::Reclaimed {
                     task_ref: a.0.task_ref,
                     assignee_ref: a.0.holder_ref.clone(),
                     epoch: a.0.epoch,
                 })?;
+            }
+            Ok(a)
+        })?;
+        if a.1 {
             self.liveness.publish(CheckoutLivenessPulse {
                 checkout_id: a.0.checkout_id,
                 epoch: a.0.epoch,
@@ -123,26 +120,30 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if r.observed_ref.is_empty() || r.result_ref.is_empty() {
             return Err(CheckoutError::Invalid("settlement references empty"));
         }
-        let (a, receipt, new) = self
-            .vault
-            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
-                super::transactions::settle_in_txn(self.vault, t, &r)
-            })?;
-        if new {
-            let fact = if receipt.disposition == CheckoutSettlementDisposition::Release {
-                CheckoutFactMutation::Released {
-                    task_ref: a.task_ref,
-                    epoch: a.epoch,
-                }
-            } else {
-                CheckoutFactMutation::Settled {
-                    task_ref: a.task_ref,
-                    epoch: a.epoch,
-                    result_ref: r.result_ref,
-                }
-            };
-            self.facts.apply_checkout_fact(fact)?;
-        }
+        let (vault, facts) = (self.vault, &mut self.facts);
+        // The settlement acknowledges only with its TASK fact applied in the
+        // same write: a refused fact rolls the settlement back, so a retry
+        // settles and applies it again instead of replaying past it (FIX 8653).
+        let receipt = vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
+            let (a, receipt, new) = super::transactions::settle_in_txn(vault, t, &r)?;
+            if new {
+                facts.apply_checkout_fact(
+                    if receipt.disposition == CheckoutSettlementDisposition::Release {
+                        CheckoutFactMutation::Released {
+                            task_ref: a.task_ref,
+                            epoch: a.epoch,
+                        }
+                    } else {
+                        CheckoutFactMutation::Settled {
+                            task_ref: a.task_ref,
+                            epoch: a.epoch,
+                            result_ref: r.result_ref.clone(),
+                        }
+                    },
+                )?;
+            }
+            Ok(receipt)
+        })?;
         Ok(receipt)
     }
     /// Tears a checkout down, collecting its working tree only when every
@@ -160,9 +161,10 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     ///   inspect -> reason -> collect from scratch.
     /// - `Settling` means "collection authorised under this fence": it is
     ///   written only after a full inspection passed, immediately before the
-    ///   irreversible `ops.collect`. A retry therefore *resumes* to completion
-    ///   instead of re-inspecting an already collected tree, and
-    ///   `CheckoutRepoOps::collect` is required to be idempotent.
+    ///   irreversible `ops.collect`. A retry *resumes* to completion once the
+    ///   tree is gone, and inspects a tree still present again before
+    ///   removing it (FIX 8654); `CheckoutRepoOps::collect` is required to be
+    ///   idempotent.
     /// - Liveness/repo port errors surface before any state transition, so a
     ///   failing port can never strand the lease in `Settling`.
     /// - `Released` is applied before the lease row is deleted, so the FACT is

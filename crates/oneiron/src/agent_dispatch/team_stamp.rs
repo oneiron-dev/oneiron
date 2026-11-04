@@ -63,16 +63,4 @@ impl TeamRunStamp {
     }
 }
 
-/// The team pattern a planned coordination pattern runs. `None` for solo:
-/// one agent is not a team, so a solo shape never produces a stamp.
-#[must_use]
-pub const fn team_pattern(pattern: CoordinationPattern) -> Option<TeamPattern> {
-    match pattern {
-        CoordinationPattern::Solo => None,
-        CoordinationPattern::CeoDecides => Some(TeamPattern::CeoDecides),
-        CoordinationPattern::Committee => Some(TeamPattern::Committee),
-        CoordinationPattern::Vote => Some(TeamPattern::Vote),
-        CoordinationPattern::Market => Some(TeamPattern::Market),
-        CoordinationPattern::Rotation => Some(TeamPattern::Rotation),
-    }
-}
+pub use crate::team::team_shape::team_pattern;

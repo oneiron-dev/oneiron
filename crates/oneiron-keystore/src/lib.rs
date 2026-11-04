@@ -88,7 +88,8 @@ pub enum SlotKind {
     /// a head and a tail slot, and each kit kind has its own pair: issuing
     /// one kind of kit replaces only that kind's piece. Each recovery-root kit
     /// drawn and not yet confirmed also has a pending pair of its own, named
-    /// by its kit id (FIX 11977, 12046).
+    /// by its kit id (FIX 11977, 12046). One slot more, named by the vault id
+    /// alone, names the install that keeps a data-key kit piece (FIX 12054).
     KitPiece(KitPieceSlot),
 }
 
@@ -131,6 +132,11 @@ pub enum KitPieceSlot {
     /// The piece of the recovery-root kit whose id this holds, drawn and not
     /// yet confirmed, its remaining bytes.
     RecoveryRootPendingTail([u8; 4]),
+    /// The 16-byte machine id of the install whose slots keep the data-key
+    /// kit's piece, then zeros (FIX 12054). Filed under the all-zero install,
+    /// so the vault id alone names it: a sealed vault's pages open before its
+    /// machine id can be read.
+    VaultKeyInstall,
 }
 
 impl KitPieceSlot {
@@ -144,6 +150,7 @@ impl KitPieceSlot {
             Self::VaultKeyTail => return Cow::Borrowed("kit-piece-vault-key-tail"),
             Self::RecoveryRootHead => return Cow::Borrowed("kit-piece-recovery-root-head"),
             Self::RecoveryRootTail => return Cow::Borrowed("kit-piece-recovery-root-tail"),
+            Self::VaultKeyInstall => return Cow::Borrowed("kit-piece-vault-key-install"),
             Self::RecoveryRootPendingHead(kit) => (kit, "head"),
             Self::RecoveryRootPendingTail(kit) => (kit, "tail"),
         };
@@ -161,7 +168,9 @@ impl KitPieceSlot {
 ///
 /// `install` is the install's incarnation, the engine's machine id. A restore that
 /// makes a new machine gets a new id, so it never opens the slot of the install it
-/// was copied from, even on the same host with the same keystore.
+/// was copied from, even on the same host with the same keystore. One slot is
+/// filed under the all-zero install, no machine's id:
+/// [`KitPieceSlot::VaultKeyInstall`], which the vault id alone names (FIX 12054).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeystoreSlot {
     pub vault_id: [u8; 32],

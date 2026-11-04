@@ -25,9 +25,6 @@ use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_camp
 use crate::autoreason_campaign::beam_promotion::default_strategy;
 use crate::autoreason_campaign::research::bound_research_roots;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::critic::{
-    CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict, LensCatalog,
-};
 use crate::dreamer_runner::{
     DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringGateDecision,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore,
@@ -40,12 +37,16 @@ use crate::dreamer_tournament::{
 use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
-use crate::llm::{
-    DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_effect::StepEffectBinding;
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{Result, Vault};
+use crate::{
+    critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
+    store::critic_lens::LensCatalog,
+};
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -84,7 +85,11 @@ impl ConsolidationExecutor<'_> {
         };
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
-        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
+        super::neighbourhood::pin(
+            ctx.vault,
+            super::neighbourhood::ListingPin::attempt(attempt_id),
+            resources.known(),
+        )?;
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;

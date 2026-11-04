@@ -16,13 +16,13 @@ pub(crate) use self::json_tokens::AnswerMemory;
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
 use crate::code_run::{CodeRunDeterminism, SelfCall};
-use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CallableProgram, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream,
     SelfDispatchResponse, StepCancellation,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
+use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::{EntityId, Vault};
 
 fn invalid(reason: &'static str) -> Error {

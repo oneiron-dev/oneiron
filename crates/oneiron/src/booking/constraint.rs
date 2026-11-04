@@ -389,6 +389,13 @@ pub struct SlotMask {
 pub trait SlotOracle: Send + Sync {
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError>;
 
+    /// Takes the rows this oracle's solves have read so far, leaving the set
+    /// empty: what a lifecycle writer that solved through it lists as its
+    /// read set (FIX 5483). An oracle that lists nothing returns none.
+    fn take_read_rows(&self) -> Vec<crate::EntityId> {
+        Vec::new()
+    }
+
     /// [`Self::solve`] for moving an existing booking, whose own place must
     /// not count against its move, as a confirm's own hold never blocks that
     /// confirm. An oracle that counts no bookings just solves.

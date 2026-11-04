@@ -23,13 +23,16 @@ impl Vault {
     /// keeps custody, then writes the journal claims, the base snapshot and
     /// the proposal in one transaction whose first act is `check`. A
     /// refusal there writes nothing. A run's stamp and class are on the row
-    /// before that write; the trusted and owner proposer write none.
+    /// before that write; the trusted and owner proposer write none. An
+    /// owner `opener`'s verified credential lineage is frozen on the row in
+    /// that transaction (FIX 8838).
     pub(in crate::repo_mutation) fn propose_repo_mutation_checked<R>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
+        opener: Option<&crate::consent::AuthenticatedOwner>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -125,12 +128,16 @@ impl Vault {
             created_at: now_millis() / 1000,
             run,
             actor_class: request_class.map(|class| class as u8),
+            opener_lineage: Vec::new(),
         };
         validate_conflict(self, &row, &repo_root)?;
-        let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
+        let mut prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
+        }
+        if let Some(opener) = opener {
+            prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
         }
         prepared.persist_in_txn(self, &mut txn)?;
         txn.commit()?;
@@ -256,6 +263,7 @@ impl Vault {
             created_at: now_millis() / 1000,
             run,
             actor_class: request_class.map(|class| class as u8),
+            opener_lineage: Vec::new(),
         };
         let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;

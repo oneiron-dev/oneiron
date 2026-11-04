@@ -6,7 +6,6 @@ use std::num::{NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Serialize};
 
-use super::rules::check_slot_list_cache_ttl;
 use super::storage::{
     CACHE_BODY_MAX_LEN, CACHE_KEY_DOMAIN, CACHE_KEY_TAG, QUARANTINE_RATE_DOMAIN, RATE_KEY_DOMAIN,
     RATE_KEY_TAG, RATE_WINDOW_SECS, decode_row, encode_row, engine_failure, refused,
@@ -233,14 +232,13 @@ pub fn read_slot_list_cache(
     Ok(Some(row.body))
 }
 
-/// Stores one slot-list response under the booking-only prefix. The TTL must
-/// sit inside the ratified 30-60 second window, which rule validation
-/// already enforces; this is the same check at the write door.
+/// Stores one slot-list response under the booking-only prefix, for the TTL
+/// the owner's rule picked.
 ///
 /// # Errors
 ///
-/// [`BookingError::InvalidConstraint`] on an out-of-window TTL or an
-/// oversized body; storage failures otherwise.
+/// [`BookingError::InvalidConstraint`] on an oversized body; storage
+/// failures otherwise.
 pub fn write_slot_list_cache(
     vault: &Vault,
     page_ref: &EntityId,
@@ -249,7 +247,6 @@ pub fn write_slot_list_cache(
     ttl_secs: NonZeroU64,
     now_secs: u64,
 ) -> Result<(), BookingError> {
-    check_slot_list_cache_ttl(ttl_secs.get())?;
     if body.len() > CACHE_BODY_MAX_LEN {
         return Err(refused("slot-list cache body exceeds the 512 KiB bound"));
     }

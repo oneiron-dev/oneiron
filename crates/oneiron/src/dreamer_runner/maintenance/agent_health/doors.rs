@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::erase::sync_reviewer_membership;
 use super::{
     AgentHealthCard, AgentHealthLoadedSkill, AgentHealthOutcome, CARDS, ConcernMoveBasis, card_ref,
     loaded, moves, outcomes, parse_card_ref,
@@ -11,8 +12,8 @@ use super::{
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::run_tree::{RunTree, RunTreeAdapter};
 use crate::{EntityId, Error, Result, Vault};
+use crate::{attempt_queue::run_tree_view::RunTree, run_tree::RunTreeAdapter};
 
 /// The first time in `[from, to)` that `card` was opened, updated or
 /// settled, if any: the one period test [`Vault::agent_health_cards_between`]
@@ -329,10 +330,13 @@ impl Vault {
             let mut card = CARDS
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
+            let old_reviewers = card.reviewer_revisions();
             let at = self.store.clock.now_recorded_at();
             outcomes::settle_with_review_receipt_in_txn(
                 self, txn, &mut card, by, true, outcome, at,
             );
+            let new_reviewers = card.reviewer_revisions();
+            sync_reviewer_membership(&self.store, txn, &key, &old_reviewers, &new_reviewers)?;
             CARDS.put(&self.store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
@@ -380,6 +384,7 @@ impl Memory<'_> {
             let mut card = CARDS
                 .get(&self.vault().store, txn, &key)?
                 .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
+            let old_reviewers = card.reviewer_revisions();
             if !may_read(self.vault(), txn, &card, self.actor())? {
                 return Err(forbidden());
             }
@@ -394,6 +399,14 @@ impl Memory<'_> {
                 input.outcome.into(),
                 at,
             );
+            let new_reviewers = card.reviewer_revisions();
+            sync_reviewer_membership(
+                &self.vault().store,
+                txn,
+                &key,
+                &old_reviewers,
+                &new_reviewers,
+            )?;
             CARDS.put(&self.vault().store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self.vault(), txn);

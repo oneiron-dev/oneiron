@@ -23,12 +23,14 @@ use crate::git_wire::lock_repository;
 impl MergeQueue<'_> {
     /// The staged path a check of `phase` on `mask` runs on, and the verdict
     /// its slot already holds. A slow check names the landed batch and runs
-    /// on its landed checkout.
+    /// on its landed checkout. `refresh` readies the path for a new run even
+    /// when the slot holds a verdict.
     pub(super) fn check_path(
         &self,
         batch: &MergeBatch,
         mask: u64,
         phase: CheckPhase,
+        refresh: bool,
     ) -> Result<(SpeculativePath, Option<String>)> {
         let mut path = batch
             .paths
@@ -46,7 +48,8 @@ impl MergeQueue<'_> {
                 batch.slow_verdict.clone()
             }
         };
-        if prior.is_none() {
+        // A refresh runs again whatever verdict the slot holds (FIX 9975).
+        if prior.is_none() || refresh {
             if phase == CheckPhase::Fast
                 && !matches!(batch.state, BatchState::Staged | BatchState::Ready)
             {
@@ -77,7 +80,12 @@ impl MergeQueue<'_> {
                 if !matches!(current.state, BatchState::Staged | BatchState::Ready) {
                     return Err(Error::ConcurrentWrite("batch changed during fast check"));
                 }
-                &mut current.paths[(mask - 1) as usize].verdict
+                &mut current
+                    .paths
+                    .iter_mut()
+                    .find(|path| path.mask == mask)
+                    .ok_or_else(|| invalid("speculative path not staged"))?
+                    .verdict
             }
             CheckPhase::Slow => {
                 if current.state != BatchState::HeadAdvanced
@@ -230,8 +238,10 @@ impl MergeQueue<'_> {
         stop: &dyn Fn() -> bool,
     ) -> Result<QueueCheckWork> {
         let batch = self.batch(&step.batch)?;
-        let (path, prior) = self.check_path(&batch, step.mask, step.phase)?;
-        if let Some(verdict_ref) = prior {
+        let (path, prior) = self.check_path(&batch, step.mask, step.phase, step.force_refresh)?;
+        // A forced refresh executes the checker and keeps its fresh receipt
+        // (FIX 9975); its verdict settles the slot only where it agrees.
+        if let Some(verdict_ref) = prior.filter(|_| !step.force_refresh) {
             let status = QueueCheckStatus::Settled {
                 verdict_ref: verdict_ref.clone(),
             };
