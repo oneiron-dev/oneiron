@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer_thing.rs` | src | s | 3 crate-vis | — | The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent |
 | `src/ai_host/dreamer_thing/generation.rs` | src | s | 6 crate-vis | — | The served agent's generation count (FIX 7508, 9015, 11449): what its calls spent on its parent's guard… |
 | `src/ai_host/dreamer_thing/ports.rs` | src | s | 2 crate-vis | — | A thing agent's two lent ports (FIX 7508, FIX 7733): the adapter its host registers for exactly… |
-| `src/ai_host/dreamer_thing/profile.rs` | src | s | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
+| `src/ai_host/dreamer_thing/profile.rs` | src | m | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
 | `src/ai_host/eval_measurement.rs` | src | m | 3 crate-vis | — | The Coach's paired eval measurement (FIX 574, OF-578) |
 | `src/ai_host/eval_measurement/helper.rs` | src | s | 1 crate-vis | — | The helper gate's measurement and verdict (FIX 10677, 12069, 12093): each callable helper awaiting its gate… |
@@ -1068,7 +1068,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery.rs` | src | m | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/feedback_redaction.rs` | src | s | 7 crate-vis | — | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
-| `src/files_intake/confined.rs` | src | m | 13 crate-vis | — | Reading under one folder without leaving it |
+| `src/files_intake/confined.rs` | src | m | 14 crate-vis | — | Reading under one folder without leaving it |
 | `src/files_intake/files.rs` | src | m | 2 crate-vis | — | A Files source's read (FIX 6942) |
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
