@@ -222,6 +222,7 @@ mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub mod world_registration_keys;
+pub(crate) mod world_pad_rows;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;

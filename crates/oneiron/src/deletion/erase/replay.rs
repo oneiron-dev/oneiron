@@ -174,7 +174,7 @@ impl Vault {
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
             if decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete) {
-                crate::world_keys::note_world_deleted_in_txn(
+                crate::store::world_pad_rows::note_world_deleted_in_txn(
                     &self.store,
                     wtxn,
                     *id,
