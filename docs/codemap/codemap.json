@@ -54826,9 +54826,9 @@
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -60142,7 +60142,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/reads.rs",
@@ -60875,13 +60875,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/privacy_kit/store.rs",
      "purpose": "This machine's own kit pieces (FIX 1957, 2063): the piece of a kit issued with a `ThisMachine` home, kept in…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -79963,7 +79963,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 24,
+      "fn": 25,
       "struct": 1
      }
     },
@@ -87429,8 +87429,8 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
-      "fn": 11,
+      "crate-vis": 19,
+      "fn": 13,
       "re-export": 2,
       "struct": 1
      }
@@ -87686,8 +87686,8 @@
      "path": "src/world_keys/vault_key/kit.rs",
      "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
+      "crate-vis": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -91216,7 +91216,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6275,
    "test_files": 900
@@ -110822,13 +110822,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invoke.rs",
      "purpose": "How a facade row invokes its door: in the caller's room turn, on a scoped credential",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
