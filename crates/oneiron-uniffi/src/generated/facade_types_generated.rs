@@ -1851,7 +1851,7 @@ pub struct ConcernMoveBasis {
     pub digest: String,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunSignalState`.
+/// `oneiron::store::attempt_run_signal::RunSignalState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RunSignalState {
     #[serde(rename = "Pending")]
@@ -4903,7 +4903,7 @@ pub enum TaskHandle {
     },
 }
 
-/// `oneiron::store::attempt_id::AttemptId`.
+/// `oneiron_store::attempt_id::AttemptId`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptId {
     #[serde(rename = "bytes")]
@@ -7052,7 +7052,7 @@ pub struct SpendLeaseView {
     pub spend: SpendRead,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptLandingReserve`.
+/// `oneiron::store::attempt_cancel::AttemptLandingReserve`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptLandingReserve {
     #[serde(
@@ -7081,7 +7081,7 @@ pub struct AttemptLandingReserve {
     pub dial_generation: Option<u32>,
 }
 
-/// `oneiron::attempt_queue::cancel::types::LandingTrigger`.
+/// `oneiron::store::attempt_cancel::LandingTrigger`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum LandingTrigger {
     #[serde(rename = "cancel_request")]
@@ -7092,7 +7092,7 @@ pub enum LandingTrigger {
     LeaseWarning,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptLanding`.
+/// `oneiron::store::attempt_cancel::AttemptLanding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptLanding {
     #[serde(rename = "trigger")]
@@ -7105,7 +7105,7 @@ pub struct AttemptLanding {
     pub status: Option<String>,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptCancelReceiptKind`.
+/// `oneiron::store::attempt_cancel::AttemptCancelReceiptKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AttemptCancelReceiptKind {
     #[serde(rename = "soft_requested")]
@@ -7124,7 +7124,7 @@ pub enum AttemptCancelReceiptKind {
     ForceCancelled,
 }
 
-/// `oneiron::attempt_queue::cancel::types::CancelStanding`.
+/// `oneiron::store::attempt_cancel::CancelStanding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CancelStanding {
     #[serde(rename = "peer_agent")]
@@ -7139,7 +7139,7 @@ pub enum CancelStanding {
     None,
 }
 
-/// `oneiron::attempt_queue::cancel::types::ForceCancelGrounds`.
+/// `oneiron::store::attempt_cancel::ForceCancelGrounds`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ForceCancelGrounds {
     #[serde(rename = "owner")]
@@ -7150,7 +7150,7 @@ pub enum ForceCancelGrounds {
     Criticality,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptResumePoint`.
+/// `oneiron::store::attempt_cancel::AttemptResumePoint`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptResumePoint {
     #[serde(rename = "marker")]
@@ -7165,7 +7165,7 @@ pub struct AttemptResumePoint {
     pub recorded_at: u64,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptCancelReceipt`.
+/// `oneiron::store::attempt_cancel::AttemptCancelReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptCancelReceipt {
     #[serde(rename = "sequence")]
@@ -32057,6 +32057,8 @@ pub enum PolicySkipReason {
     ResponseUnusable,
     #[serde(rename = "budget-exhausted")]
     BudgetExhausted,
+    #[serde(rename = "admission-denied")]
+    AdmissionDenied,
     #[serde(rename = "policy-moving")]
     PolicyMoving,
 }
@@ -44804,7 +44806,7 @@ pub enum AgentRunStatus {
     Cancelled,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunAskQuestion`.
+/// `oneiron::store::attempt_run_signal::RunAskQuestion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RunAskQuestion {
     #[serde(rename = "who")]
@@ -44817,7 +44819,7 @@ pub struct RunAskQuestion {
     pub deadline: Option<u64>,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunAskAnswerKind`.
+/// `oneiron::store::attempt_run_signal::RunAskAnswerKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RunAskAnswerKind {
     #[serde(rename = "Word")]
@@ -44830,7 +44832,7 @@ pub enum RunAskAnswerKind {
     Unknown,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunAskAnswer`.
+/// `oneiron::store::attempt_run_signal::RunAskAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RunAskAnswer {
     #[serde(rename = "who")]
@@ -44843,7 +44845,7 @@ pub struct RunAskAnswer {
     pub at: u64,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunAsk`.
+/// `oneiron::store::attempt_run_signal::RunAsk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RunAsk {
     #[serde(rename = "handle")]
@@ -44854,7 +44856,7 @@ pub struct RunAsk {
     pub answers: Vec<RunAskAnswer>,
 }
 
-/// `oneiron::attempt_queue::run_signal::RunSignalKind`.
+/// `oneiron::store::attempt_run_signal::RunSignalKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RunSignalKind {
     #[serde(rename = "Steer")]
@@ -44887,7 +44889,7 @@ pub enum RunSignalKind {
     },
 }
 
-/// `oneiron::attempt_queue::run_signal::RunBranchSignal`.
+/// `oneiron::store::attempt_run_signal::RunBranchSignal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RunBranchSignal {
     #[serde(rename = "key")]
@@ -44900,7 +44902,7 @@ pub struct RunBranchSignal {
     pub state: RunSignalState,
 }
 
-/// `oneiron::attempt_queue::cancel::types::CancelMode`.
+/// `oneiron::store::attempt_cancel::CancelMode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CancelMode {
     #[serde(rename = "landed")]
@@ -44909,7 +44911,7 @@ pub enum CancelMode {
     Forced,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptCancellation`.
+/// `oneiron::store::attempt_cancel::AttemptCancellation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptCancellation {
     #[serde(rename = "mode")]
@@ -44930,7 +44932,7 @@ pub struct AttemptCancellation {
     pub reserve_spent_units: u64,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptCancelPressure`.
+/// `oneiron::store::attempt_cancel::AttemptCancelPressure`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptCancelPressure {
     #[serde(rename = "requests", default, skip_serializing_if = "Option::is_none")]
@@ -44945,7 +44947,7 @@ pub struct AttemptCancelPressure {
     pub pending: Option<u32>,
 }
 
-/// `oneiron::attempt_queue::cancel::types::AttemptCancelState`.
+/// `oneiron::store::attempt_cancel::AttemptCancelState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptCancelState {
     #[serde(rename = "landing", default, skip_serializing_if = "Option::is_none")]
@@ -51628,6 +51630,12 @@ pub struct ProposalDeltaSettlement {
     pub final_text: String,
     #[serde(rename = "delta", default, skip_serializing_if = "Option::is_none")]
     pub delta: Option<AmendmentDeltaView>,
+    #[serde(
+        rename = "recorded_delta",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recorded_delta: Option<AmendmentDeltaView>,
     #[serde(rename = "hunks")]
     pub hunks: Vec<SettledHunkView>,
     #[serde(rename = "judgment", default, skip_serializing_if = "Option::is_none")]
@@ -64522,7 +64530,7 @@ pub struct SieveEvidenceView {
     pub continuing: bool,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakeRole`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakeRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentWakeRole {
     #[serde(rename = "companion")]
@@ -64533,7 +64541,7 @@ pub enum AgentWakeRole {
     Worker,
 }
 
-/// `oneiron::dreamer_wake::policy::CadencePrecedence`.
+/// `oneiron::store::dreamer_wake_policy::CadencePrecedence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CadencePrecedence {
     #[serde(rename = "vault_floor")]
@@ -64542,7 +64550,7 @@ pub enum CadencePrecedence {
     AgentOverride,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakeTriggers`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakeTriggers`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakeTriggers {
@@ -64556,7 +64564,7 @@ pub struct AgentWakeTriggers {
     pub event: bool,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakePolicy`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakePolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakePolicy {
@@ -64572,7 +64580,7 @@ pub struct AgentWakePolicy {
     pub worker: AgentWakeTriggers,
 }
 
-/// `oneiron::dreamer_wake::policy::WeaveRecipePriority`.
+/// `oneiron::store::dreamer_wake_policy::WeaveRecipePriority`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WeaveRecipePriority {
     #[serde(rename = "before_connector_event")]
@@ -64581,7 +64589,7 @@ pub enum WeaveRecipePriority {
     AfterConnectorEvent,
 }
 
-/// `oneiron::dreamer_wake::policy::DreamerWakePolicy`.
+/// `oneiron::store::dreamer_wake_policy::DreamerWakePolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {

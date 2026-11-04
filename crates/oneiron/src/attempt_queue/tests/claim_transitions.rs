@@ -60,7 +60,7 @@ fn attempt_queue_claim_cleans_ready_key_id_mismatch_and_continues() -> Result<()
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("first", None, 10))? else {
         panic!("expected enqueue");
     };
-    let stale_ready_key = ready_key(0, AttemptId { bytes: [0; 16] });
+    let stale_ready_key = ready_key(0, AttemptId::from_bytes(&[0; 16]).expect("all-zero id"));
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
@@ -100,7 +100,7 @@ fn attempt_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()>
         panic!("expected enqueue");
     };
     let malformed_key = vec![0];
-    let malformed_value_key = ready_key(0, AttemptId { bytes: [0; 16] });
+    let malformed_value_key = ready_key(0, AttemptId::from_bytes(&[0; 16]).expect("all-zero id"));
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
