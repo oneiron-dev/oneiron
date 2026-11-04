@@ -327,10 +327,22 @@ fn restore_cohort(
             }
             unchanged += 1;
             // Blind-review P1 (REVIEW-4378-kimi): an existing row breaks the
-            // tied-prior chain — a later missing row must not re-name a prior
-            // this restore inserted before the on-disk row, which is already
-            // closed (ProvenanceClaimAlreadyClosed).
-            previous = None;
+            // tied-prior chain when the tracked prior is already closed —
+            // re-naming it fails ProvenanceClaimAlreadyClosed.
+            // Blind-review P1 (REVIEW-4378.md): a newly inserted still-live
+            // tied prior survives the unchanged row so a later missing
+            // tie-mate closes it; otherwise the final exact comparison
+            // aborts a valid partially present cohort.
+            let prior_live = previous
+                .map(|(prior, _, _)| {
+                    crate::vault::live_entity_row_in_txn(&vault.store, txn, &prior)
+                        .map(|row| row.is_live())
+                })
+                .transpose()?
+                .unwrap_or(false);
+            if !prior_live {
+                previous = None;
+            }
             continue;
         }
         let explicit_prior = previous.and_then(|(prior, prior_learned_at, prior_lifecycle)| {
