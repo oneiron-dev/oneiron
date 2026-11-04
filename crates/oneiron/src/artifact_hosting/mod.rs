@@ -12,12 +12,13 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result, SecretError};
 use crate::gate::{
-    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
-    GateProvenanceHandles,
+    self, ExternalEffectGateInput, GateProvenanceHandles,
 };
+use crate::store::policy_record::{ExternalEffectPolicyRisk, GateActor};
+use crate::store::gate_reason::{GateOutcome};
 use crate::outbound::OutboundDispatchPipeline;
 use crate::ports::EntityStoreRead;
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ArtifactFamilyKindId, artifact_family_kind_of};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,

@@ -450,7 +450,7 @@ side_tables! {
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
     /// keyed by sequence; its skill and its actor are each nil once erased. Key: u64be.
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
-        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
+        => crate::store::skill_attribution_evidence::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
@@ -475,7 +475,7 @@ side_tables! {
     /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
     /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
     SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
-        => crate::skill_attribution::erase_site_exposure_in_txn;
+        => crate::store::site_skill_exposure::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;
