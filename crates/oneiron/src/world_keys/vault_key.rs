@@ -30,48 +30,29 @@ use getrandom::SysRng;
 // artifact codec's, so a host that never opens a vault reads a sealed
 // artifact's key header with the engine's own types. A stored wrap is one
 // wrap as it rests: its public facts and its sealed envelope.
+use self::state::{
+    AEAD, ARGON2_MAX, ESCROW_RECIPIENT, ESCROW_RETIRED, ESCROW_SEED_LABEL, ESCROW_SPOOLED, KEM,
+    PASSKEY_PRF_CONTEXT, PAYLOAD_LABEL, PAYLOAD_LEN, STATE, UnlockSecret, VAULT_KEY_EPOCH,
+    VaultKeyState, WRAPS, WrapSecret, check_name, log_escrow_warnings, open_wrap, passkey_kek,
+    presented_escrow, recipient_fingerprint, seal_wrap, wrap_digest,
+};
 use oneiron_crypto::backup::{KeyHeader, KeyHeaderWrap as StoredWrap};
 pub use oneiron_crypto::backup::{VaultKeyWrapInfo, VaultKeyWrapKind};
 use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
     Purpose, SealKey, SealParams, SuiteId, seal,
 };
-pub(super) use self::state::{
-    AEAD,
-    ARGON2_MAX,
-    COMMITMENT_CONTEXT,
-    ESCROW_RECIPIENT,
-    ESCROW_RETIRED,
-    ESCROW_SEED_LABEL,
-    ESCROW_SPOOLED,
-    KEM,
-    PASSKEY_PRF_CONTEXT,
-    PAYLOAD_LABEL,
-    PAYLOAD_LEN,
-    STATE,
-    UnlockSecret,
-    VAULT_KEY_EPOCH,
-    VaultKeyState,
-    WRAPS,
-    WrapSecret,
-    check_name,
-    log_escrow_warnings,
-    open_wrap,
-    passkey_kek,
-    presented_escrow,
-    recipient_fingerprint,
-    seal_wrap,
-    wrap_digest,
-};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::page_seal::{OpenedDataKey, WrapTransition};
-use super::{os_fill, refused};
+use super::refused;
 use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+pub(crate) use oneiron_store::vault_page_seal::VaultDataKey;
+pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 pub(super) mod kit;
@@ -87,56 +68,6 @@ pub use self::escrow::{
 pub use self::vocabulary::{
     NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient, passkey_prf_input,
 };
-
-/// The unlocked vault data key. No `Clone`, no `Serialize`, a `Debug` that
-/// prints nothing, and its bytes are wiped on drop.
-pub(crate) struct VaultDataKey(Zeroizing<[u8; 32]>);
-
-impl std::fmt::Debug for VaultDataKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("VaultDataKey(..)")
-    }
-}
-
-impl VaultDataKey {
-    pub(super) fn generate() -> Result<Self> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        os_fill(&mut bytes[..])?;
-        Ok(Self(bytes))
-    }
-
-    /// The key a managed node's supervisor delivered, copied into a handle
-    /// that wipes it on drop: zero-filled first, then filled, so no plain
-    /// copy is made on the way (FIX 6048).
-    pub(super) fn delivered(bytes: &[u8; 32]) -> Self {
-        let mut guarded = Zeroizing::new([0u8; 32]);
-        guarded.copy_from_slice(bytes);
-        Self(guarded)
-    }
-
-    /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
-    /// pins which bytes are this vault's key and reveals nothing about them.
-    pub(super) fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
-        // Public: the guard's copy is wiped as it drops.
-        *self.derive(COMMITMENT_CONTEXT, vault_id)
-    }
-
-    /// A key of its own for one use, `BLAKE3-derive_key(context, vault id ‖ key)`,
-    /// derived straight into its guard (FIX 6334).
-    pub(super) fn derive(&self, context: &str, vault_id: &[u8; 32]) -> Zeroizing<[u8; 32]> {
-        super::derive_guarded(context, &[&vault_id[..], &self.0[..]])
-    }
-}
-
-/// One wrap as a page-seal mirror carries it (OF-570): its id, which names
-/// its kind and label, and the BLAKE3 digest of its sealed envelope. A
-/// sealed vault admits an unlock from its mirror only while it holds the
-/// wrap that opened, envelope for envelope.
-#[derive(Clone, PartialEq, Eq)]
-pub(super) struct WrapDigest {
-    id: String,
-    envelope: [u8; 32],
-}
 
 /// The vault key as it rests: its commitment and every wrap's sealed envelope,
 /// never the key. A sealed artifact carries it in the clear, so a host without
@@ -453,7 +384,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         for wrap in wraps {
             let held = WRAPS
-                .get(&self.store, &txn, &wrap.id)?
+                .get(&self.store, &txn, wrap.id())?
                 .is_some_and(|stored| wrap_digest(&stored) == *wrap);
             if held {
                 return Ok(true);
@@ -702,4 +633,3 @@ impl Vault {
         Ok(())
     }
 }
-

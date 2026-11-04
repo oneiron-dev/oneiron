@@ -106,7 +106,7 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
-pub mod run_budget;
+pub use oneiron_run_budget::run_budget;
 pub mod teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
@@ -147,7 +147,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -196,7 +196,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -252,7 +252,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;
@@ -399,9 +399,9 @@ pub use crate::compaction::{
     CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
     CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
-    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
-    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody, MarginLaw, SwapPlan,
+    ValidatedCompactionPacket, admit_compaction_packet, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,

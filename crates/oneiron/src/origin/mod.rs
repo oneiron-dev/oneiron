@@ -6,6 +6,7 @@
 //! additive `pub mod ...;` line when its file exists.
 
 pub(crate) mod actor_erase;
+pub(crate) mod git_ref_change;
 mod document_candidate_types;
 mod document_candidates;
 mod document_ingress;
@@ -37,6 +38,7 @@ mod mirror_run;
 mod mirror_status;
 pub mod mirror_strategy;
 mod mirror_wake;
+pub(crate) use mirror_census::history_lfs_objects;
 pub(crate) use mirror_wake::OriginMirrorWake;
 pub mod publish;
 pub mod registration;

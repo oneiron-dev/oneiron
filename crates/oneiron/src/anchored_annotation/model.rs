@@ -31,6 +31,8 @@ pub(super) const FORMAT_DOCX: &str = "docx";
 
 pub(super) const FORMAT_PPTX: &str = "pptx";
 
+pub(super) const FORMAT_HTML: &str = "html";
+
 pub(super) const STATE_OPEN: &str = "open";
 
 pub(super) const STATE_RESOLVED: &str = "resolved";
@@ -130,6 +132,15 @@ pub enum Locator {
         /// Shape identifier on the slide.
         shape_id: String,
     },
+    /// HTML `{part_id, char_span}` in decoded visible text (FIX 7905).
+    Html {
+        /// Stable producer data-part-id or deterministic structural id.
+        part_id: String,
+        /// Inclusive character-span start.
+        char_start: u64,
+        /// Exclusive character-span end.
+        char_end: u64,
+    },
 }
 
 impl Locator {
@@ -176,6 +187,22 @@ impl Locator {
         Ok(Self::Pptx { slide, shape_id })
     }
 
+    /// Builds an HTML locator, validating its stable part id and char span.
+    pub fn html(part_id: impl Into<String>, char_start: u64, char_end: u64) -> Result<Self> {
+        let part_id = part_id.into();
+        validate_locator_text(&part_id, "html locator part_id")?;
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "html locator char span is inverted",
+            )));
+        }
+        Ok(Self::Html {
+            part_id,
+            char_start,
+            char_end,
+        })
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
@@ -183,6 +210,7 @@ impl Locator {
             Self::Xlsx { .. } => FORMAT_XLSX,
             Self::Docx { .. } => FORMAT_DOCX,
             Self::Pptx { .. } => FORMAT_PPTX,
+            Self::Html { .. } => FORMAT_HTML,
         }
     }
 }

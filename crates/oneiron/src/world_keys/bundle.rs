@@ -88,7 +88,24 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
+use self::bodies::{
+    PadsBody, decode_bundle_body, decode_pads_body, decode_section_body, encode_bundle_body,
+    encode_pads_body, encode_section_body, section_digest, section_digest_into, section_kek,
+    section_padded_len, signed_digest,
+};
 pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
+use self::codec::{
+    AEAD, BODY_RECIPIENT, BUNDLE, BUNDLE_LABEL, CHUNK, Cursor, DeletedWorldPads, FRAME_VERSION,
+    Frame, HYBRID, KEM, KEY_ID_LEN, Kind, OpenedOuter, PADS, PADS_LABEL, PART_HEADER_LEN,
+    PART_LABEL, REQUEST_TAG, SEALED_BUNDLE_NEW_PAD_DELETED_WORLD, SEALED_KEY_PADS_STEP_BYTES,
+    SECTION_KEY_CONTEXT, SECTION_LABEL, SECTION_PAD_FLOOR, SECTION_RECIPIENT, SECTION_TAG_CONTEXT,
+    SIGNATURE_CONTEXT, SLOT_LABEL, SLOT_PLAINTEXT_LEN, SLOT_RECIPIENT, SLOT_STEP, SYMMETRIC,
+    SealedObject, even_sizes, fit, fitting_total, open_framed, open_outer, open_parts, open_slots,
+    parse_envelope, parse_frame, put_counted, seal_outer, seal_params, seal_parts, seal_slots,
+    symmetric_policy,
+};
+#[cfg(feature = "sync")]
+use self::codec::{EraseKey, SEALED_BUNDLE_ERASE_KEY_SOURCE, open_outer_with_key};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
@@ -97,73 +114,6 @@ pub use self::retirement::{
     SealedBundleGeneration, retired_bundle_generations, sealed_bundle_slot,
 };
 pub use self::sections::OpenedBundleSection;
-pub(super) use self::bodies::{
-    PadsBody,
-    decode_bundle_body,
-    decode_pads_body,
-    decode_section_body,
-    encode_bundle_body,
-    encode_pads_body,
-    encode_section_body,
-    section_digest,
-    section_digest_into,
-    section_kek,
-    section_padded_len,
-    signed_digest,
-};
-pub(super) use self::codec::{
-    AEAD,
-    BODY_RECIPIENT,
-    BUNDLE,
-    BUNDLE_LABEL,
-    CHUNK,
-    Cursor,
-    DeletedWorldPads,
-    EraseKey,
-    FRAME_VERSION,
-    Frame,
-    HYBRID,
-    KEM,
-    KEY_ID_LEN,
-    Kind,
-    OpenedOuter,
-    PADS,
-    PADS_LABEL,
-    PART_HEADER_LEN,
-    PART_LABEL,
-    REQUEST_TAG,
-    SEALED_BUNDLE_ERASE_KEY_SOURCE,
-    SEALED_BUNDLE_NEW_PAD_DELETED_WORLD,
-    SEALED_KEY_PADS_STEP_BYTES,
-    SECTION_KEY_CONTEXT,
-    SECTION_LABEL,
-    SECTION_PAD_FLOOR,
-    SECTION_RECIPIENT,
-    SECTION_TAG_CONTEXT,
-    SIGNATURE_CONTEXT,
-    SLOT_LABEL,
-    SLOT_PLAINTEXT_LEN,
-    SLOT_RECIPIENT,
-    SLOT_STEP,
-    SYMMETRIC,
-    SealedObject,
-    even_sizes,
-    fit,
-    fitting_total,
-    open_framed,
-    open_outer,
-    open_outer_with_key,
-    open_parts,
-    open_slots,
-    parse_envelope,
-    parse_frame,
-    put_counted,
-    seal_outer,
-    seal_params,
-    seal_parts,
-    seal_slots,
-    symmetric_policy,
-};
 
 use crate::bundle_generations::GENERATION_LEN;
 
@@ -307,4 +257,3 @@ fn open_sections(
     }
     Ok(out)
 }
-

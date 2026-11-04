@@ -191,7 +191,7 @@ pub(super) fn run_bound(
     // FIX 1876: a run no seat bore and no plan bound is stamped with the
     // model its settled config runs on, before any pack loads.
     if model_seat.is_none() && planned.is_none() {
-        super::attribution::stamp_seatless_executor(vault, &status.attempt, &config);
+        super::attribution::stamp_seatless_executor(vault, &status.attempt, &config, &template);
     }
     super::attribution::bind_before_entry(vault, &status.attempt);
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern

@@ -156,7 +156,7 @@ impl Vault {
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
-                self.soft_erase_active_store_in_txn(wtxn, id, false)?;
+                self.soft_erase_active_store_in_txn(wtxn, id, false, None)?;
             if had_vector {
                 crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
@@ -429,7 +429,7 @@ impl Vault {
                 return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
-                || crate::workspace_roster::is_project_revision_type(
+                || crate::store::project_kind::is_project_revision_type(
                     &self.store,
                     header.entity_type,
                 )

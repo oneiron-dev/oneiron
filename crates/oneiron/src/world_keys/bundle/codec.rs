@@ -5,32 +5,10 @@
 //! behaviour change. The root re-exports every name so existing
 //! `super::X` paths keep resolving.
 use super::{
-    Argon2Cost,
-    EntityId,
-    Envelope,
-    Error,
-    GENERATION_LEN,
-    HybridPublicKey,
-    HybridSecretKey,
-    Kek,
-    OpenKey,
-    OpenPolicy,
-    Purpose,
-    Result,
-    SEALED_BUNDLE_PAD_STEP_BYTES,
-    SealKey,
-    SealParams,
-    SealedBundleGeneration,
-    SecretError,
-    SuiteId,
-    SysRng,
-    WORLD_KEY_EPOCH,
-    WorldKeyId,
-    WrapType,
-    Zeroizing,
-    os_fill,
-    refused,
-    seal,
+    Argon2Cost, EntityId, Envelope, Error, GENERATION_LEN, HybridPublicKey, HybridSecretKey, Kek,
+    OpenKey, OpenPolicy, Purpose, Result, SEALED_BUNDLE_PAD_STEP_BYTES, SealKey, SealParams,
+    SealedBundleGeneration, SecretError, SuiteId, SysRng, WORLD_KEY_EPOCH, WorldKeyId, WrapType,
+    Zeroizing, os_fill, refused, seal,
 };
 /// The pad object's size step. Pads are small: a bundle's step would cost 64 MiB
 /// a day for a few kilobytes.
@@ -116,14 +94,6 @@ pub(super) const PADS: Kind = Kind {
     step: SEALED_KEY_PADS_STEP_BYTES,
 };
 
-impl SealedBundleGeneration {
-    pub(super) fn fresh(slot: u64) -> Result<Self> {
-        let mut nonce = [0u8; 16];
-        os_fill(&mut nonce)?;
-        Ok(Self { slot, nonce })
-    }
-}
-
 /// One sealed object's bytes and the generation its frame names.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct SealedObject {
@@ -132,7 +102,7 @@ pub(super) struct SealedObject {
 }
 
 impl std::fmt::Debug for SealedObject {
-    pub(super) fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SealedObject")
             .field("generation", &self.generation)
             .field("len", &self.bytes.len())

@@ -5,40 +5,13 @@
 //! change. The root re-exports every name so existing `super::X` paths keep
 //! resolving.
 use super::{
-    Argon2Cost,
-    Deserialize,
-    DeviceKeystore,
-    Envelope,
-    EscrowAddWarning,
-    EscrowRetirement,
-    HybridPublicKey,
-    HybridSecretKey,
-    Kek,
-    Named,
-    OpenKey,
-    OpenPolicy,
-    Passphrase,
-    Purpose,
-    Result,
-    SealKey,
-    SealParams,
-    Serialize,
-    SideTable,
-    StoredWrap,
-    SuiteId,
-    SysRng,
-    VaultDataKey,
-    VaultKeyWrapInfo,
-    VaultKeyWrapKind,
-    WrapDigest,
-    Zeroizing,
-    refused,
-    seal,
-    side_table,
+    Argon2Cost, Deserialize, DeviceKeystore, Envelope, EscrowAddWarning, EscrowRetirement,
+    HybridPublicKey, HybridSecretKey, Kek, Named, OpenKey, OpenPolicy, Passphrase, Purpose, Result,
+    SealKey, SealParams, Serialize, SideTable, StoredWrap, SuiteId, SysRng, VaultDataKey,
+    VaultKeyWrapInfo, VaultKeyWrapKind, WrapDigest, Zeroizing, refused, seal, side_table,
 };
 pub(super) const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 pub(super) const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
-pub(super) const COMMITMENT_CONTEXT: &str = "oneiron/vault-key-commitment/v1";
 pub(super) const PASSKEY_PRF_CONTEXT: &str = "oneiron/vault-key-passkey-prf-input/v1";
 pub(super) const ESCROW_SEED_LABEL: &[u8] = b"oneiron/vault-key-escrow-recipient/v1";
 pub(super) const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
@@ -64,10 +37,10 @@ pub(super) struct VaultKeyState {
 
 /// A stored wrap's digest: its id and its envelope's BLAKE3.
 pub(super) fn wrap_digest(stored: &StoredWrap) -> WrapDigest {
-    WrapDigest {
-        id: stored.info.id.clone(),
-        envelope: *blake3::hash(&stored.envelope).as_bytes(),
-    }
+    WrapDigest::new(
+        stored.info.id.clone(),
+        *blake3::hash(&stored.envelope).as_bytes(),
+    )
 }
 /// An escrow capsule presented from outside the vault's wraps, filed as
 /// escrow wrap `label` would be, so it opens under that wrap's id. None
@@ -155,7 +128,7 @@ pub(super) fn seal_wrap(
     };
     let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
     payload.extend_from_slice(PAYLOAD_LABEL);
-    payload.extend_from_slice(&key.0[..]);
+    payload.extend_from_slice(&key.guarded_bytes()[..]);
     let envelope = seal(&params, seal_key, &payload, &mut SysRng)
         .map_err(|_| refused("sealing the vault key failed"))?;
     Ok(envelope.to_bytes())
@@ -201,7 +174,7 @@ pub(super) fn open_wrap(
     }
     let mut bytes = Zeroizing::new([0u8; 32]);
     bytes.copy_from_slice(&payload[PAYLOAD_LABEL.len()..]);
-    let key = VaultDataKey(bytes);
+    let key = VaultDataKey::from_guarded(bytes);
     if key.commitment(vault_id) != *commitment {
         return Err(refused("the vault key wrap opens to another key"));
     }

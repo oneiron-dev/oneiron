@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/region.rs` | src | s | 2 struct · 8 fn | MappedRegion, SharedRegion | Read-only shared regions: how blob bytes cross without being copied |
 | `src/runtime.rs` | src | m | 6 struct · 1 trait · 10 fn · 2 const · 1 re-export | Answer, AskReply, Asker, CallContext, InputBytes, Organ, OutputBytes | The organ side: handshake, frames, a small worker pool and cancel flags |
 | `src/runtime/answer.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 crate-vis | AnswerMemory, AskBytes | An answer's bytes, in the organ's own memory (FIX 8454) |
-| `src/seal.rs` | src | s | 4 struct · 5 enum | SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification, SealRevisionEvidence, SealRevisionKind, SealSignatureEvidence +1 | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
+| `src/seal.rs` | src | s | 4 struct · 5 enum · 1 fn · 2 const | SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification, SealRevisionEvidence, SealRevisionKind, SealSignatureEvidence +1 | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
 | `src/spin.rs` | src | s | 2 fn · 1 const | — | Spinning a moment before sleeping |
 | `src/value.rs` | src | s | 1 struct · 1 enum · 15 fn · 3 crate-vis | Integer, Value | A MessagePack value, as the protocol carries args, bodies, reports and asks (protocol 2.0, FIX 6191) |
 | `src/value/ops.rs` | src | s | 6 crate-vis | — | A value's drop, clone, comparison and print, none of which recurses: each walks the value with a stack on… |
