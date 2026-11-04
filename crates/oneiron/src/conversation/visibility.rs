@@ -69,6 +69,29 @@ fn own_windows_admit(windows: &Option<Vec<MembershipWindow>>, at: u64) -> bool {
         .is_none_or(|windows| windows.iter().any(|w| w.contains(at)))
 }
 
+/// Whether `reader`'s live own-entry windows admit a candidate's header
+/// time in every anchored room. No row is fabricated for this check.
+/// An unreadable roster omits the candidate, as an ordinary own-entry read.
+pub(crate) fn anchors_own_windows_admit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rooms: &[EntityId],
+    reader: EntityId,
+    at: u64,
+) -> bool {
+    for &room in rooms {
+        let Ok(windows) =
+            crate::workspace_roster::own_room_windows_in_txn(vault, txn, room, reader)
+        else {
+            return false;
+        };
+        if !own_windows_admit(&windows, at) {
+            return false;
+        }
+    }
+    true
+}
+
 impl AudienceCache {
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads
@@ -550,36 +573,7 @@ fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
     )
 }
 
-/// The records a persisted `conversation.summary` claim covers, or `None` for
-/// any other claim. A value that is not a map with a `covers` array of 16-byte
-/// ids is malformed, and a malformed summary is denied like any other.
-pub(crate) fn conversation_summary_covers(
-    claim: &crate::ClaimBody,
-) -> Result<Option<Vec<EntityId>>> {
-    if claim.predicate != "conversation.summary" {
-        return Ok(None);
-    }
-    let malformed = || Error::Record(RecordError::InvalidScopeSummary("summary coverage"));
-    let rmpv::Value::Map(entries) = &claim.value else {
-        return Err(malformed());
-    };
-    let Some((_, rmpv::Value::Array(covers))) =
-        entries.iter().find(|(k, _)| k.as_str() == Some("covers"))
-    else {
-        return Err(malformed());
-    };
-    covers
-        .iter()
-        .map(|covered| {
-            let rmpv::Value::Binary(raw) = covered else {
-                return Err(malformed());
-            };
-            let bytes: [u8; 16] = raw.as_slice().try_into().map_err(|_| malformed())?;
-            EntityId::from_bytes(bytes).map_err(|_| malformed())
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
-}
+pub(crate) use crate::store::conversation_summary::conversation_summary_covers;
 
 pub(crate) fn room_for_record_in(
     vault: &Vault,

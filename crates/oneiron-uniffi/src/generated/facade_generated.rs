@@ -2816,6 +2816,11 @@ export_facade! {
     let output = client.vault_settings_learning_clear(&input)?;
     crate::codec::lift_record("vault.settings.learning.clear", &output)
 };
+"vault.secrets.code_run_lifts" => fn vault_secrets_code_run_lifts(&self, input: CodeRunSecretLiftRequest) -> CodeRunSecretLiftStatus = |client| {
+    let input: oneiron::code_run::CodeRunSecretLiftRequest = crate::codec::lower_record("vault.secrets.code_run_lifts", input)?;
+    let output = client.vault_secrets_code_run_lifts(&input)?;
+    crate::codec::lift_record("vault.secrets.code_run_lifts", &output)
+};
 "vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
     let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
     let output = client.vault_secrets_lift_history(&input)?;
@@ -4310,6 +4315,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.skills.callables")?;
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
+};
+"vault.skills.callable.amend" => fn vault_skills_callable_amend(&self, input: CallableAmendRequest) -> CallableAmendReceipt = |client| {
+    let input: oneiron::skill::helper::CallableAmendRequest = crate::codec::lower_record("vault.skills.callable.amend", input)?;
+    let output = client.vault_skills_callable_amend(&input)?;
+    crate::codec::lift_record("vault.skills.callable.amend", &output)
 };
 "vault.skills.pack_receipt" => fn vault_skills_pack_receipt(&self, input: SkillPackReceiptRequest) -> SkillPackReceipt = |client| {
     let input: oneiron::task_verb::sdk::SkillPackReceiptRequest = crate::codec::lower_record("vault.skills.pack_receipt", input)?;

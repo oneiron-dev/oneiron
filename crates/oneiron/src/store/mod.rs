@@ -119,19 +119,74 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
+pub(crate) mod agent_birth_identity;
+pub(crate) mod agent_definition;
+pub(crate) mod agent_definition_codec;
+pub(crate) mod agent_manifest;
+pub(crate) mod agent_memory_profile;
+pub(crate) mod agent_model;
+pub(crate) mod agent_optional_memory;
 pub mod agent_record;
+pub(crate) mod agent_refusal;
+pub(crate) mod agent_scope;
+pub(crate) mod attempt_archive_mark;
+pub mod attempt_cancel;
 pub mod attempt_cleanup;
+pub mod attempt_hold;
+pub mod attempt_id;
 pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
+pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_response;
+pub(crate) mod attempt_payload_retire;
+pub(crate) mod attempt_payload_route;
+pub mod attempt_read_producer;
+pub mod attempt_record;
+pub(crate) mod attempt_record_codec;
+pub(crate) mod attempt_record_read;
 pub mod attempt_result;
+pub(crate) mod attempt_retention;
+pub(crate) mod attempt_run_root;
+pub mod attempt_run_signal;
+pub mod attempt_state;
+pub(crate) mod base_agent;
 pub mod canonical_document;
+pub(crate) mod centroid_evidence;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub mod claim_refinement_control;
+pub(crate) mod claim_vad_payment;
+pub mod consolidation_evidence;
+pub(crate) mod conversation_residency;
+pub(crate) mod housekeeping_wake;
+pub(crate) mod writer_hold;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
-pub mod conversation_record;
+pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
+mod project_writes;
+pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
+pub(crate) mod attempt_operations;
+pub(crate) use attempt_operations::StoreAttemptOperations;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod critical_confirm_record;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
@@ -139,19 +194,33 @@ pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
 pub mod materialization_event;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_step_response_carriage;
+pub mod model_step_submission;
+pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub(crate) mod output_decay;
+pub mod pack_hook_actor_class;
+pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub mod person_billing_account;
+pub mod positive_skill_proposals;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
 pub mod repo_fork;
+pub mod resident_budget_rows;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
-pub mod retained_memory;
+pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
 #[cfg(feature = "sync")]
@@ -160,8 +229,11 @@ pub mod window_protocol;
 pub(crate) mod window_rows;
 
 pub mod consolidation_scope;
+pub(crate) mod context_field_profile;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
+pub(crate) mod dreamer_attempt_payload;
+pub mod dreamer_wake_policy;
 pub mod setting_seed;
 pub mod snapshot_key;
 pub mod snapshot_lock_result;
@@ -191,26 +263,55 @@ pub(crate) use claim_vad_owed::{
     claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
     settle_claim_vad_in_txn,
 };
+pub mod birth_record;
 pub mod body_descriptor;
+pub(crate) mod claim_lineage;
+pub(crate) mod claim_projection;
 mod commitment_due;
+pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
+pub mod decision_rule_rows;
+pub mod default_skill_hub;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
+pub(crate) mod executor_speech_identity;
+pub mod executor_wait_delivery;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
 mod gate_decision;
+pub(crate) mod gate_receipt;
 pub(crate) mod graph_version;
+pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
+pub mod owned_body;
+pub(crate) mod pending_custody_revoke;
 pub mod receipt_identity;
+pub mod receipt_row;
+pub mod reference_refusal;
+pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_reader;
+pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
+pub mod seat_model_description;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
+pub(crate) mod side_table_erase_scan;
+pub mod site_skill_exposure;
+pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
@@ -218,6 +319,8 @@ pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
+pub mod world_authority;
+pub(crate) mod world_pad_rows;
 pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
@@ -233,6 +336,8 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
+pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -247,18 +352,27 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
+pub mod revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
+pub(crate) mod skill_attribution_judgments;
 pub(crate) mod skill_content_index;
+pub mod skill_hub_predicates;
 pub mod skill_package;
+pub(crate) mod skill_refinement_custody;
+pub(crate) mod skill_refinement_origin;
 pub(crate) mod skill_source_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
 pub(crate) mod task_body_checks;
@@ -299,8 +413,8 @@ pub(crate) use body_envelope::{
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
     erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
@@ -428,6 +542,7 @@ pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 pub mod dispatch_attempt_kind;
 
 pub mod checkout_lease;
+pub mod contract_oracle;
 
 pub mod repo_mutation_record;
 
@@ -462,3 +577,35 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+
+pub(crate) mod container_output;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+
+pub(crate) mod identity_redirect_rows;
+
+pub(crate) mod authority_rows;
+pub mod channel_class;
+pub mod claim_source_ranking;
+pub mod code_document_receipt;
+pub(crate) mod consent_bound;
+pub(crate) mod conversation_summary;
+pub(crate) mod gate_metrics;
+pub(crate) mod gate_reason;
+pub mod healer_oversight;
+pub(crate) mod pending_comm_stop;
+pub mod plugin_section_predicate;
+pub(crate) mod policy_record;
+pub(crate) mod ppr_cache_invalidation;
+pub(crate) mod record_links;
+pub(crate) mod record_references;
+pub(crate) mod scan_count;
+pub(crate) mod skill_resident;
+pub(crate) mod vector_insert_plan;
+
+pub(crate) mod host_issuer_seed;
+pub(crate) mod principal_record;
+pub(crate) mod witness_message_body;

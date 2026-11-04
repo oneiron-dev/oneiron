@@ -53,6 +53,7 @@ mod coach_offer_doors;
 mod code_doors;
 mod code_import_doors;
 mod code_run_doors;
+mod code_run_secret_lift_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
@@ -107,6 +108,8 @@ mod guest_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
+#[path = "facade/generated/host_door_rows.rs"]
+mod host_door_rows;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
@@ -185,6 +188,7 @@ mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;
 mod stream_recovery_doors;
+mod streamed_claims;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
@@ -231,6 +235,7 @@ use receipts::*;
 pub(crate) use release::*;
 pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
+pub(crate) use streamed_claims::*;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

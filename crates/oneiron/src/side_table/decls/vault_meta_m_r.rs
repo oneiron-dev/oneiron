@@ -16,15 +16,24 @@ side_tables! {
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
+    /// One merge batch filed under a proposal, run work or run declaration it names, so a run's
+    /// enqueue, stage and observe read its own batches by key (FIX 7067). Key: hex(repo
+    /// identity) ":" kind ":" id ":" hex64(batch id).
+    MERGE_QUEUE_BATCH_INDEX: VaultMeta b"merge_queue:batch_index:v1:" Named Engine;
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
     MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
+    /// One checker receipt filed under its inputs digest and verdict, so a reused, bound or
+    /// sealed receipt is read by key (FIX 7349). Key: hex(repo identity) ":" inputs digest ":"
+    /// verdict ref (empty for none) ":" hex64(request digest).
+    MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine;
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked];
+    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked]
+        => crate::merge_queue::erase_review_policy_actor_in_txn;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -41,10 +50,10 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
@@ -181,6 +190,13 @@ side_tables! {
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
     ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact
         => crate::origin::erase_code_operations_actor_in_txn;
+    /// Marker (empty): one retained received ref of an object store that the candidate intake
+    /// still reads, unresolved or resolved from a masked copy (FIX 7535). Key: hash32 (the store)
+    /// + id16 (the push provenance) + hash32 (blake3 of the ref name).
+    ORIGIN_CODE_PENDING: VaultMeta b"origin:code_pending:v1:" Raw;
+    /// Marker (empty): a received ref of an object store resolved to a candidate with this
+    /// incoming tip (FIX 7535). Key: hash32 (the store) + string (the tip's hex).
+    ORIGIN_CODE_RESOLVED_TIP: VaultMeta b"origin:code_resolved_tip:v1:" Raw;
     /// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key: string
     /// ":" id16.
     ORIGIN_ENGINE_EXPORT: VaultMeta b"origin:engine_export:v1:" Raw;
@@ -250,6 +266,10 @@ side_tables! {
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
+    /// Index (empty marker) of each received ref update by its exact (store, ref, old, new),
+    /// so an import finds its receive by key, never by a walk of the store's receipts (FIX
+    /// 7595). Key: hash32 (the update) + id16 (the push provenance).
+    ORIGIN_RECEIVED_UPDATE: VaultMeta b"origin:received_update:v1:" Raw;
     /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
     /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
     /// or the u8 alone for a vault-wide scan.
@@ -368,7 +388,7 @@ side_tables! {
     /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
     /// (ARCH-0080 §10). Key: id16(binding claim).
     SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
-        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
+        => crate::store::pack_hook_proposal::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
@@ -398,7 +418,7 @@ side_tables! {
     /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
     /// 3332). Key: id16 (PERSON).
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
-        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
+        => crate::store::person_billing_account::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
@@ -482,14 +502,14 @@ side_tables! {
     /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
     /// and its state. Key: blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named
-        => crate::workspace_roster::erase_card_actor_in_txn;
+        => crate::store::actor_scrubs::erase_card_actor_in_txn;
     /// The source message of each card shown in one conversation. Key: id16 (conversation) +
     /// blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
     /// A conversation's latest person turn awaiting the project question. Key: id16
     /// (conversation).
     PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named
-        => crate::workspace_roster::erase_pending_actor_in_txn;
+        => crate::store::actor_scrubs::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
     PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
@@ -516,13 +536,13 @@ side_tables! {
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
     PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
-        => crate::gate::proposal_observation::erase_count_actor_in_txn;
+        => crate::store::gate_hooks::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
-        => crate::gate::proposal_observation::erase_history_actor_in_txn;
+        => crate::store::gate_hooks::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
-        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+        => crate::store::gate_hooks::erase_submission_actor_in_txn;
     /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
     /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
@@ -633,6 +653,10 @@ side_tables! {
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.
     REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
+    /// A source record a derived text was written from that a repo mark covered by its media
+    /// bytes, not its id, bound to that blob's whole BLAKE3, so it stays marked once erased as a
+    /// snapshot record does (FIX 10887). A hash, no value. Key: id16 (the source).
+    REPO_DERIVED_SOURCE_BLOB: VaultMeta b"repo_index:derived_source_blob:v1:" Named;
     /// FIX 6870: the portable repo id that stands for one CODE entity (value = 32 bytes). Key:
     /// id16 (CODE entity).
     REPO_MANIFEST_BY_CODE: VaultMeta b"repo_manifest:by_code:v1:" Raw;
@@ -726,19 +750,19 @@ side_tables! {
     /// handoff, by the host it replaced. Latest write wins; it grants no scope, role or admission.
     /// Key: id16 (room).
     ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named
-        => crate::workspace_roster::erase_host_pin_actor_in_txn;
+        => crate::store::actor_scrubs::erase_host_pin_actor_in_txn;
     /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
     /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
     /// join ref).
     ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson
-        => crate::workspace_roster::erase_join_actor_in_txn;
+        => crate::store::actor_scrubs::erase_join_actor_in_txn;
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
     /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
     /// host's answer that settled it. Key: string (hex64 offer id).
     ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson
-        => crate::workspace_roster::erase_offer_actor_in_txn;
+        => crate::store::actor_scrubs::erase_offer_actor_in_txn;
     /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
     /// hex or "-" "/" agent hex).
     ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
@@ -763,7 +787,7 @@ side_tables! {
     /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
     /// (turn id).
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson
-        => crate::workspace_roster::erase_turn_actor_in_txn;
+        => crate::store::actor_scrubs::erase_turn_actor_in_txn;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
     /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.

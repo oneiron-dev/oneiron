@@ -9,8 +9,8 @@ use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
 use crate::origin::lfs::LfsOid;
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 #[cfg(test)]

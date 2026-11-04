@@ -19,7 +19,7 @@ use tokio::time::Instant;
 
 use super::super::media::{MediaAnswer, MediaDispatchRelease, RungVoices};
 use super::super::walk::Walk;
-use super::{Call, OfferLadder};
+use super::{Call, ModelCallBinding, OfferLadder};
 
 /// How long one call may take.
 #[derive(Clone, Copy, Debug)]
@@ -128,6 +128,23 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<(LlmResponse, ModelId)> {
+        self.generate_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, binding)| (response, binding.rung.model))
+    }
+
+    /// [`Self::generate_served_by`], with the full binding of the rung that
+    /// answered for the model-call record (FIX 12743): the exact answering
+    /// rung's model, locality, prompt and route pin, the owner's fallback
+    /// included.
+    pub(crate) async fn generate_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.generate_from(run, request, selector, may_send, deadline, true, None)
             .await
     }
@@ -145,6 +162,32 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_recorded_by`], asking `may_send` as
+    /// [`Self::generate_while`] does, on the vault's longest wait (FIX 12743).
+    pub(crate) async fn generate_recorded_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_recorded_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
+    /// [`Self::generate_exact_while`] with the actual answering binding and
+    /// the same vault-longest-wait deadline.
+    pub(crate) async fn generate_exact_recorded_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_exact_within`] on `deadline` (FIX 7792): only a
     /// ladder that is one picked model takes the call.
     pub async fn generate_exact_by(
@@ -155,12 +198,27 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<LlmResponse> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_by`], with the actual answering binding for
+    /// the model-call record. The picked-model guard and no-fallback walk
+    /// are the same call's, not a lookup after it answered (FIX 12742).
+    pub(crate) async fn generate_exact_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
         self.generate_from(run, request, selector, may_send, deadline, false, None)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::stream`] on `deadline` (FIX 8213).
@@ -171,7 +229,27 @@ impl OfferLadder {
         selector: Option<&str>,
         deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
-        self.stream_from(run, request, selector, true, deadline)
+        self.stream_from(run, request, selector, true, deadline, None)
+    }
+
+    /// [`Self::stream_by`], with the binding of the rung that answers for the
+    /// model-call record (FIX 12743): the exact answering rung's model,
+    /// locality, prompt and route pin, the owner's fallback included. The
+    /// receiver resolves exactly when a `Done` event goes out, sent before
+    /// it on the same task; any other end leaves it unresolved.
+    pub(crate) fn stream_recorded_by(
+        self: &std::sync::Arc<Self>,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        deadline: CallDeadline,
+    ) -> LlmResult<(
+        LlmStream<'static>,
+        tokio::sync::oneshot::Receiver<ModelCallBinding>,
+    )> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.stream_from(run, request, selector, true, deadline, Some(tx))
+            .map(|stream| (stream, rx))
     }
 
     /// [`Self::media`] on `deadline` (FIX 8134): the caller's one deadline

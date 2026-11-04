@@ -150,7 +150,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             });
         }
         // A queued summary for a conversation excluded after it was requested
-        // parks for retry before any source read (FIX 12551(b)): it runs if
+        // parks for retry before source text is read (FIX 12551(b)): it runs if
         // the conversation is later un-excluded. The weave planner already
         // requests no fresh ones (#4382); this gates the queued remainder.
         // Malformed input falls through to the planner's own error below.
@@ -164,7 +164,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .as_ref()
                     .is_some_and(|scope| excluded.contains(&scope.conversation)),
                 ScopeSummaryTarget::Thread { trunk } => ctx.vault.dreamer_turn_excluded(trunk)?,
-                ScopeSummaryTarget::Session { .. } => false,
+                ScopeSummaryTarget::Session { session } => {
+                    crate::scope_summary::session_summary_excluded(ctx.vault, session)?
+                }
             };
             if gated {
                 return Ok(DreamerAttemptExecution::Park {
@@ -371,7 +373,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             // A failed call's paid usage has no terminal step: it is handed
             // to the driver's settlement with the park (FIX 11554).
             Err(other) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &other
+                {
                     charges.record_usage(usage);
                 }
                 ctx.note_spend_before_error(charges.units, &charges.step_hashes);

@@ -9,11 +9,11 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -121,7 +121,9 @@ pub(super) fn validate_public_raw_put(
         ENTITY_TYPE_SKILL => {
             crate::write_envelope::skill_record::validate_skill_record_bytes(data)?
         }
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::validate_agent_definition_bytes(data)?
+        }
         // STO-03: the Habit streak counters are derived from the check-in
         // children, so no public writer may name them. The sync-only
         // replicated door deliberately does NOT run this check — it accepts a

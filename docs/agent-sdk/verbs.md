@@ -569,6 +569,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
+- `vault.secrets.code_run_lifts`
 - `vault.secrets.lift_history`
 - `vault.secrets.register`
 - `vault.secrets.rotate`
@@ -868,6 +869,7 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `vault.skills.callable.amend`
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`

@@ -313,6 +313,9 @@ pub(crate) fn withdraw_from_lost_source_in_session_txn(
 
 /// The room half of the stale mark and index sheds, without base-only
 /// dreamer, weave, provenance, PPR, pending-embedding or version work.
+/// The stale mark stages last (FIX 12704, PARTIAL): the deindex and vector
+/// frees below land first, so a room near its byte budget keeps a
+/// net-shrinking source delete instead of refusing the new mark key.
 fn mark_room_stale_in_txn(
     view: &SessionStoreView<'_>,
     txn: &mut RwTxn<'_>,
@@ -328,8 +331,6 @@ fn mark_room_stale_in_txn(
         })
         .transpose()?
         .unwrap_or(0);
-    view.vault_meta
-        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     crate::bm25::deindex_text(view, txn, id)?;
     // A room's count is advisory: base can advance after the room snapshot.
     // Reconcile it before the shared delete applies base's strict decrement.
@@ -338,8 +339,11 @@ fn mark_room_stale_in_txn(
     // the reconciled count instead of the stale advisory one.
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
-        view.hnsw_meta
-            .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+        view.hnsw_meta.put(
+            txn,
+            crate::store::vector_index::keys::COUNT_KEY,
+            &count.to_le_bytes(),
+        )?;
         // A room can outlive base's entry point: base deleted its sole node
         // while the overlay still holds neighbor rows. Seed the missing
         // entry point from the composed graph so the strict delete finds
@@ -366,6 +370,8 @@ fn mark_room_stale_in_txn(
     crate::hnsw::hnsw_deindex(&write_view, txn, id)?;
     view.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
+    view.vault_meta
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     Ok(())
 }
 
@@ -460,6 +466,19 @@ pub(super) fn epoch_summary_in(
         }
         _ => Ok(false),
     }
+}
+/// Stages a stale mark for `id` at `revision` in `dbs`'s own `vault_meta`, so
+/// `id` reads withdrawn there: a room's epoch summary born from a source that
+/// no longer stands takes it in the room's view (FIX 3448).
+pub(crate) fn stage_stale_mark_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    revision: u64,
+) -> Result<()> {
+    dbs.vault_meta()
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
+    Ok(())
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     withdraw_in_txn(store, txn, id, &CarriedWorlds::default())
@@ -595,7 +614,7 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     if had_vector {
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &[])?;
     // Withdrawn words are never embedded: a queued or leased fill finds no
     // current marker, so it neither sends them out nor writes a vector back.
     store.clear_pending_embedding(txn, id)?;

@@ -15,9 +15,12 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::secret_custody::types::SECRET_NAME_MAX_BYTES;
-use crate::side_table::{self, Named, SideTable};
+use crate::store::secret_handle_labels::LABEL;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
+
+pub use crate::store::secret_handle_labels::SecretHandleLabel;
+pub(crate) use crate::store::secret_handle_labels::erase_secret_handle_label_in_txn;
 
 /// Gate reason code: the owner set a handle's label.
 const HANDLE_LABEL_REASON_SET: &str = "gate.secret.handle_label.set";
@@ -29,10 +32,6 @@ const HANDLE_LABEL_CONTENT_KIND: &str = "secret_handle_label";
 
 /// The scan-reason prefix a kind suggestion strips.
 const SCAN_REASON_PREFIX: &str = "gate.secret_scan.";
-
-/// One handle's owner-set label. Key: id16 (the custody record id).
-const LABEL: SideTable<EntityId, SecretHandleLabel, Named> =
-    SideTable::new(&side_table::SECRET_HANDLE_LABEL);
 
 /// Provider prefixes that suggest a label, longest first so `sk-proj-`
 /// wins over `sk-`.
@@ -58,14 +57,6 @@ const PREFIX_LABELS: &[(&str, &str)] = &[
     ("ASIA", "AWS access key"),
     ("sk-", "OpenAI key"),
 ];
-
-/// The stored owner-set label on one custody handle: the label text and the
-/// Gate receipt of the set that wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretHandleLabel {
-    pub label: String,
-    pub receipt: String,
-}
 
 /// What setting or clearing a handle's label leaves behind: the stored
 /// label (`None` after a clear), the kind suggestion the card falls back
@@ -102,17 +93,6 @@ pub(crate) fn suggested_secret_handle_label_in_txn(
         .strip_prefix(SCAN_REASON_PREFIX)
         .unwrap_or(&origin.reason);
     Ok(suggest_secret_handle_label_for_kind(kind).map(str::to_owned))
-}
-
-/// Drops the label on the custody record `custody`, whose row is being
-/// erased: the label must not survive it.
-pub(crate) fn erase_secret_handle_label_in_txn(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    custody: &EntityId,
-) -> Result<()> {
-    LABEL.delete(store, wtxn, custody)?;
-    Ok(())
 }
 
 /// The label a scan kind suggests, if any. Generic and depth codes

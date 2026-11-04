@@ -31,6 +31,8 @@ pub(super) const FORMAT_DOCX: &str = "docx";
 
 pub(super) const FORMAT_PPTX: &str = "pptx";
 
+pub(super) const FORMAT_HTML: &str = "html";
+
 pub(super) const STATE_OPEN: &str = "open";
 
 pub(super) const STATE_RESOLVED: &str = "resolved";
@@ -130,6 +132,15 @@ pub enum Locator {
         /// Shape identifier on the slide.
         shape_id: String,
     },
+    /// HTML `{part_id, char_span}` in decoded visible text (FIX 7905).
+    Html {
+        /// Stable producer data-part-id or deterministic structural id.
+        part_id: String,
+        /// Inclusive character-span start.
+        char_start: u64,
+        /// Exclusive character-span end.
+        char_end: u64,
+    },
 }
 
 impl Locator {
@@ -176,6 +187,22 @@ impl Locator {
         Ok(Self::Pptx { slide, shape_id })
     }
 
+    /// Builds an HTML locator, validating its stable part id and char span.
+    pub fn html(part_id: impl Into<String>, char_start: u64, char_end: u64) -> Result<Self> {
+        let part_id = part_id.into();
+        validate_locator_text(&part_id, "html locator part_id")?;
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "html locator char span is inverted",
+            )));
+        }
+        Ok(Self::Html {
+            part_id,
+            char_start,
+            char_end,
+        })
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
@@ -183,6 +210,7 @@ impl Locator {
             Self::Xlsx { .. } => FORMAT_XLSX,
             Self::Docx { .. } => FORMAT_DOCX,
             Self::Pptx { .. } => FORMAT_PPTX,
+            Self::Html { .. } => FORMAT_HTML,
         }
     }
 }
@@ -197,18 +225,36 @@ pub struct Anchor {
     pub version: u64,
     /// The format-typed position within that version.
     pub locator: Locator,
+    /// The same unit in the artifact's live body, when the body held the
+    /// anchor's version; `None` is a version-only anchor.
+    pub body: Option<BodyAnchor>,
 }
 
 impl Anchor {
-    /// Builds an anchor.
+    /// Builds a version-only anchor.
     #[must_use]
     pub fn new(artifact_id: EntityId, version: u64, locator: Locator) -> Self {
         Self {
             artifact_id,
             version,
             locator,
+            body: None,
         }
     }
+}
+
+/// The body-frontier anchor (ARCH-0075 section 4): where an anchored unit
+/// stands in its artifact's live body. Live edits move no version, so the
+/// thread follows the body here and lands on the version an export makes.
+/// A deck's locator names the node, not the file's ids: its slide's
+/// position at `frontier` and, as `shape_id`, its node id (FIX 12264).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BodyAnchor {
+    /// The live body's frontier the locator was read at.
+    pub frontier: Vec<u8>,
+    /// The unit's position in the body at that frontier.
+    pub locator: Locator,
 }
 
 /// A thread's lifecycle state.

@@ -10,14 +10,14 @@ use oneiron::code_run::{CacheBoundary, cache_boundaries};
 use oneiron::{ContentPart, FatalLlmError, LlmMessageRole, LlmRequest, LlmResult};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
-use super::text_content;
+use super::{anthropic_content_part, text_content};
 use crate::AnthropicCacheTier;
 
 /// Marks `body`, the Messages body `request` was built into, at each cache
 /// boundary the request's host descriptor names, at `tier` (the request's
 /// own, as [`crate::AnthropicProviderOptions::cache_tier`] reads it). A
-/// boundary on a part this wire cannot mark (a reasoning or audio part)
-/// makes the request invalid.
+/// boundary on a wire-present part this wire cannot mark (thinking or audio)
+/// makes the request invalid. A part omitted from this wire has no marker.
 pub(super) fn mark(
     request: &LlmRequest,
     body: &mut JsonMap<String, JsonValue>,
@@ -38,14 +38,31 @@ pub(super) fn mark(
                 let Some(held) = request.messages.get(message) else {
                     return Err(FatalLlmError::InvalidRequest.into());
                 };
+                let Some(original) = held.content.get(part) else {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                };
                 if held.role == LlmMessageRole::System {
+                    if matches!(original, ContentPart::Reasoning { .. })
+                        && text_content(original).is_none()
+                    {
+                        continue;
+                    }
                     system.push((message, part));
                     continue;
                 }
-                if matches!(held.content.get(part), Some(ContentPart::Reasoning { .. })) {
+                let Some(wire) = wire_part_index(&held.content, part) else {
+                    // An omitted part has no cache block. Its marker cannot
+                    // turn an otherwise valid request into a refusal.
+                    continue;
+                };
+                if matches!(original, ContentPart::Reasoning { .. }) {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }
-                // The wire's messages hold every message but the system ones.
+                // The wire's messages hold every message but the system ones,
+                // and each message's content holds only the parts the wire
+                // keeps: an omitted part shifts every later part's wire index,
+                // so the boundary's original index is translated through the
+                // same constructor that built the blocks.
                 let index = request.messages[..message]
                     .iter()
                     .filter(|earlier| earlier.role != LlmMessageRole::System)
@@ -56,7 +73,7 @@ pub(super) fn mark(
                         .and_then(|messages| messages.get_mut(index))
                         .and_then(|message| message.get_mut("content"))
                         .and_then(JsonValue::as_array_mut)
-                        .and_then(|content| content.get_mut(part)),
+                        .and_then(|content| content.get_mut(wire)),
                     &control,
                 )?;
             }
@@ -69,6 +86,27 @@ pub(super) fn mark(
         );
     }
     Ok(())
+}
+
+/// The wire block a message part became: its rank among the parts the wire
+/// keeps, counted through the same constructor that built the blocks, so the
+/// projection can never drift from it. `None` when the part never reached the
+/// wire or names no part at all.
+fn wire_part_index(content: &[ContentPart], part: usize) -> Option<usize> {
+    let mut wire = 0;
+    for (at, candidate) in content.iter().enumerate() {
+        if anthropic_content_part(candidate).is_none() {
+            if at == part {
+                return None;
+            }
+            continue;
+        }
+        if at == part {
+            return Some(wire);
+        }
+        wire += 1;
+    }
+    None
 }
 
 /// The marker a block carries at `tier`: the bare marker the wire always

@@ -42,7 +42,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
     CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
     WorkerStatus,
@@ -399,8 +399,9 @@ async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
     }
 }
 
-/// Returns one hosted supervisor by id for a victim-watch subscription.
-fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
+/// Returns one hosted supervisor by id: a victim-watch subscription, or a
+/// released-body stats report naming its worker (FIX 9297).
+pub(super) fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
     HOST.get().and_then(|host| {
         host.lock()
             .get(worker_id)
@@ -431,10 +432,21 @@ pub(super) fn admit_bound_work(
         request.physical = context.physical;
         request.priority = context.priority;
         request.deadline = context.deadline;
-        request.parent = context.parent;
+        // A parent resolves only against the admission its ticket was
+        // taken on (FIX 11960): the same number on another admission is
+        // unrelated work, and parents nothing.
+        request.parent = context
+            .parent
+            .filter(|_| context.parent_admission == Some(admission.admission_id()));
         request.cancel = context.cancel.shared();
         request.cancel_changed = context.cancel.shared_notify();
-        Some(admission.enqueue(request))
+        let ticket = admission.enqueue(request);
+        // The run or attempt behind this context parents its retries and
+        // scoped children on this ticket (FIX 11960).
+        if let Some(entity) = context.entity {
+            record_work_parent(entity, ticket.admission_id(), ticket.ticket);
+        }
+        Some(ticket)
     });
     BoundWork {
         ticket,

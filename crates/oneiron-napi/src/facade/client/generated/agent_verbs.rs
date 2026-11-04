@@ -4908,6 +4908,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_secrets_code_run_lifts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.code_run_lifts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_secrets_lift_history(
         &self,
         input: serde_json::Value,
@@ -7702,6 +7711,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.callables", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.callable.amend", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

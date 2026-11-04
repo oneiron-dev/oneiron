@@ -17,7 +17,6 @@ pub(crate) mod task_assignee;
 pub(crate) mod training_ask_kind;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
-pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
 mod coach_offer_reach;
 mod confirm;
@@ -105,11 +104,11 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 mod tests;
 
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
+pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
 };
-pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub(crate) use self::ceiling::{
     OwnerRowAction, PolicyApprovalCeiling, PolicyCriticality, dispatched_agent_effective_ceiling,
 };
@@ -122,9 +121,9 @@ pub use self::confirm::{
     GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub(crate) use self::confirm::{
-    ConfirmDemotionRetries, claim_critical_confirm_settled_in_txn,
-    critical_confirm_has_no_deadline, critical_write_confirm_binding,
-    pending_row_holds_critical_confirm, reconcile_critical_write_confirm_on_replicated_overwrite,
+    claim_critical_confirm_settled_in_txn, critical_confirm_has_no_deadline,
+    critical_write_confirm_binding, pending_row_holds_critical_confirm,
+    reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::consolidation_readers::{
@@ -254,7 +253,7 @@ pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
     WitnessMessageEnvelope, check_witness_message_ceiling,
     check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
-    validate_own_device_witness_message_body, validate_replicated_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

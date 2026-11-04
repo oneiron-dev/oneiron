@@ -9,6 +9,8 @@ mod builder;
 mod child_of_overlay;
 pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
+mod stored_actor_erasure;
+pub(crate) use stored_actor_erasure::materialize_stored_section_fit_actor_erasure_in_txn;
 mod verified_claim_transition;
 pub(crate) use verified_claim_transition::VerifiedClaimTransition;
 mod deindex;
@@ -20,6 +22,7 @@ mod gate_mode;
 mod gate_staging;
 mod leader_chat_admission;
 mod lexical_query_hints;
+mod ops_derived_copies;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
@@ -32,6 +35,8 @@ mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;
+pub(crate) mod row_put;
+pub(crate) mod shared_vault_write;
 #[cfg(feature = "sync")]
 pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;

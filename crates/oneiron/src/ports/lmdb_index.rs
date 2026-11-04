@@ -215,7 +215,9 @@ impl RetrievalIndex for Vault {
         batch.apply(txn)
     }
     fn port_retrieval_mark_stale(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         super::integrity::mark_stale_in_txn(&self.store, txn, id)
     }
     fn port_retrieval_vector_search(
@@ -399,7 +401,9 @@ impl TombstoneStore for Vault {
     ) -> Result<()> {
         // Standalone tombstone carries deletion intent even after active row removal.
         // Publishing to peers and historical erasure remain the deletion facade's job.
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;
@@ -474,7 +478,7 @@ impl super::RetrievalIndexMaintenance for Vault {
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
-            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+            crate::store::vector_index::rebuild::validate_rebuild_vector(self, &id, &value)?;
         }
         Ok(())
     }

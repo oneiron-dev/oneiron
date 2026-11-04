@@ -224,8 +224,10 @@ pub(super) fn observe(
     verified_actor: Option<EntityId>,
 ) -> Result<()> {
     let window = now / WINDOW_SECS * WINDOW_SECS;
-    let thresholds =
-        crate::gate::esign_rate_policy::esign_rate_thresholds_in_txn(&vault.store, txn);
+    let thresholds = vault
+        .store
+        .gate_hooks
+        .esign_rate_thresholds_in_txn(&vault.store, txn);
     for (scope, threshold) in [
         (Some(recipient), thresholds.recipient),
         (None, thresholds.document),
@@ -331,8 +333,7 @@ impl Vault {
         COUNT
             .get(&self.store, &txn, &count_key(&document.to_hex(), recipient))?
             .map(|raw| {
-                let (window_started_at_secs, count, verb, actor_class, actor) =
-                    decode_count(&raw)?;
+                let (window_started_at_secs, count, verb, actor_class, actor) = decode_count(&raw)?;
                 Ok(EsignRateReceipt {
                     document: document.to_hex(),
                     recipient: recipient.map(str::to_owned),
