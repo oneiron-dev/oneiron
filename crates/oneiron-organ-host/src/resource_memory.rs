@@ -28,6 +28,8 @@ pub trait FloorLease: Send {
     /// Grows this lease on its original line, waiting no later than
     /// `deadline` and no longer than `stopped` allows. A refused growth
     /// leaves the original lease and the line's byte counts unchanged.
+    /// Earlier unallocated reservations remain charged against live memory;
+    /// growing a handle alone does not establish that they were allocated.
     ///
     /// # Errors
     /// The machine's floor when the cumulative lease cannot fit even with
@@ -39,6 +41,10 @@ pub trait FloorLease: Send {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), FloorRefusal>;
+
+    /// Gives back at most `bytes` previously reserved by this lease. Never
+    /// waits; used to roll back growth whose budget admission failed.
+    fn shrink(&mut self, bytes: u64);
 
     /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
     ///

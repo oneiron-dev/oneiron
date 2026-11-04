@@ -179,7 +179,8 @@ impl Store {
         }
         TRAY.delete(self, wtxn, claim_id.as_bytes())?;
         if removal == TrayRemoval::Unanswered {
-            crate::gate::show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
+            self.gate_hooks
+                .show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
         }
         Ok(())
     }

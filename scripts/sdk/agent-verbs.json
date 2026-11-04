@@ -8722,6 +8722,21 @@
       "section": false
     },
     {
+      "name": "vault.secrets.code_run_lifts",
+      "description": "The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged.",
+      "input": "crate::code_run::CodeRunSecretLiftRequest",
+      "output": "crate::code_run::CodeRunSecretLiftStatus",
+      "call": "memory.vault().code_run_secret_lifts_as_owner(&memory.embedded_owner(\"vault.secrets.code_run_lifts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.secrets.lift_history",
       "description": "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued.",
       "input": "crate::policy_model::SecretLiftRequest",

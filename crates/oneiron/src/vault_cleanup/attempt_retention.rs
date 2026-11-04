@@ -7,6 +7,7 @@ use crate::error::{Error, MaintenanceError, Result};
 use crate::ports::JobQueueRead;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
+pub(crate) use crate::store::attempt_archive_mark::refresh_archived_attempt_in_txn;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Vault};
@@ -69,30 +70,6 @@ pub(crate) fn attempt_is_archived(
         marks::mark_in_txn(store, txn, id.as_bytes())?,
         Some(CleanupMark::Archived { revision, .. }) if revision == marks::revision_of(raw)
     ))
-}
-
-/// Moves an attempt's cleanup mark to the bytes its row was rewritten to in
-/// this transaction, when the mark bound the row as it stood (`before`): an
-/// erase that rewrites a row in place leaves it archived by the same run
-/// (FIX 7076), or kept by the owner. A stale or unreadable mark bound bytes
-/// the row no longer holds, so it is removed, never rebound: no hash of
-/// those bytes outlives the erase (FIX 7615). An absent mark stays absent.
-pub(crate) fn refresh_archived_attempt_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: AttemptId,
-    before: &[u8],
-    after: &[u8],
-) -> Result<()> {
-    let bound = marks::revision_of(before);
-    let revision = marks::revision_of(after);
-    let Some(raw) = marks::raw_in_txn(store, txn, id.as_bytes())? else {
-        return Ok(());
-    };
-    match CleanupMark::decode(&raw).and_then(|mark| mark.moved(&bound, &revision)) {
-        Some(moved) => marks::put_in_txn(store, txn, id.as_bytes(), moved),
-        None => marks::delete_in_txn(store, txn, id.as_bytes()),
-    }
 }
 
 /// [`refresh_archived_attempt_in_txn`] over a checkpoint image's sorted

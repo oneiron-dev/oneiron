@@ -163,7 +163,8 @@ impl Vault {
     /// The owner revokes the GitPush grant `grant_ref`: his signed act,
     /// then the row's delete, in one writer, so no admission counts it
     /// again. A grant already revoked (its revoke act stands in the
-    /// authority log) answers unchanged and signs nothing.
+    /// authority log), or whose signed mint a counted membership withdrawal
+    /// names, answers unchanged and signs nothing.
     ///
     /// # Errors
     /// An owner refusal; `EntityNotFound` for an id that names no live
@@ -185,7 +186,12 @@ impl Vault {
                 } => body,
                 LiveEntityRow::Live { .. } => return Err(Error::EntityNotFound),
                 LiveEntityRow::DeletedShell | LiveEntityRow::Absent
-                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref) =>
+                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref)
+                        || self.membership_withdrew_owner_grant_in_txn(
+                            txn,
+                            grant_ref,
+                            FederationGrantKind::GitPush,
+                        )? =>
                 {
                     return Ok(GitPushRevokeOutcome {
                         member: None,
