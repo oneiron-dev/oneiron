@@ -302,7 +302,7 @@ side_tables! {
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored [accepts: crate::outbound_intent_ledger::outbound_intent_ledger_record_accepts_masked]
         => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
     /// What one ledger row's send came to beside its state, written with the ledger change it
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
@@ -321,7 +321,7 @@ side_tables! {
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
     OUTBOUND_SUPPRESSION_RECEIPT: VaultMeta b"outbound:suppression_receipt:v1:" Named;
     /// Direct host dispatch receipt by content-derived hash32.
-    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named Authored;
+    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named Authored [accepts: crate::receipt::outbound_direct_receipt_accepts_masked];
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`
@@ -338,10 +338,10 @@ side_tables! {
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
-        => crate::own_rate::erase_check_actor_in_txn;
+        => crate::store::own_rate_rows::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
-        => crate::own_rate::erase_window_actor_in_txn;
+        => crate::store::own_rate_rows::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
@@ -733,7 +733,7 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored [accepts: crate::critic::review::critic_review_result_accepts_masked]
         => crate::learning::erase_review_scope_in_txn;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
     CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;

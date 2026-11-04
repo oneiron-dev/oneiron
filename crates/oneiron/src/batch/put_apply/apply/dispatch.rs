@@ -246,13 +246,15 @@ pub(super) fn dispatch_put_type(
             fixed.occurred,
             data,
         )?;
-        crate::store::diagnostic_record::admission::reject_off_record_diagnostic_sources(store, data)?;
+        crate::store::diagnostic_record::admission::reject_off_record_diagnostic_sources(
+            store, data,
+        )?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::write_envelope::profile_snapshot::validate_psych_profile_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
-        crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
+        crate::store::persona_snapshot_record::validate_persona_snapshot_export_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         store
             .record_hooks

@@ -268,7 +268,7 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
-    /// The request's `limit` was past 1,000 and was served at 1,000.
+    /// Whether this door lowered the requested result count; always false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) limit_clamped: bool,
 }

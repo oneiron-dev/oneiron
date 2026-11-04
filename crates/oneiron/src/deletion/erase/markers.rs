@@ -209,7 +209,11 @@ impl Vault {
             || self.port_short_id_mapping_exists(txn, id)?
             || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
             || crate::store::turn_missing::delete_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::store::identity_redirect_rows::redirect_row_exists_in_txn(&self.store, txn, id)?
+            || crate::store::identity_redirect_rows::redirect_row_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || self.store.known_history_scope_exists_in_txn(txn, id)?
             || crate::world_keys::world_pad_scope_exists_in_txn(&self.store, txn, id)?
         {
