@@ -8048,6 +8048,8 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
  "schemars 0.8.22",
  "serde",
  "thiserror 2.0.20",
