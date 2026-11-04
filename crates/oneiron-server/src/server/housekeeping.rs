@@ -200,6 +200,9 @@ impl SyncServer {
                     tracing::warn!(panicked = error.is_panic(), "housekeeping task failed");
                 }
             }
+            server
+                .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
+                .await;
             super::consult_settle::settle_consults(Arc::clone(server.vault())).await;
             server.prune_mcp_credentials().await;
             // OF-181: a parked run cancelled, which no entry or call touches
