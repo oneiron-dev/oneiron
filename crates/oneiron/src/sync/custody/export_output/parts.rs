@@ -289,9 +289,18 @@ fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
         return Joined::Disagrees;
     };
     // The frame holds at most one carrier part per count, so this upper
-    // bound only ever waits, never over-admits (FIX 12295).
-    let frame_upper = u64::from(first.count) * PART_BYTES as u64;
-    if !assembly_fits(frame_upper) {
+    // bound only ever waits, never over-admits (FIX 12295). Budget the peak
+    // live bytes, not just the frame: the staged scratch runs, the frame
+    // join_parts allocates, and the sealed payload KeptExportOutput::decode
+    // clones are all live together (review P1 on #4467). Unprovable size
+    // waits, fail-closed.
+    let Some(peak_upper) = u64::from(first.count)
+        .checked_mul(PART_BYTES as u64)
+        .and_then(|frame| frame.checked_mul(3))
+    else {
+        return Joined::Waiting;
+    };
+    if !assembly_fits(peak_upper) {
         return Joined::Waiting;
     }
     let scratch = LoroDoc::new();
