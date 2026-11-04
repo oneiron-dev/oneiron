@@ -336,7 +336,9 @@ pub(crate) fn record_raw_response(
         summary_requested: false,
         erased: false,
     };
-    if let Err(error) = vault.with_write_txn_grouped(|txn| record_model_call_in_txn(txn, &record)) {
+    if let Err(error) =
+        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
+    {
         tracing::warn!(%error, "model-call record failed");
     }
 }

@@ -24,7 +24,7 @@ mod consent_wait;
 mod contribution;
 mod coordination_codec;
 mod dispatcher;
-pub(crate) mod model_call;
+pub mod model_call;
 mod payload;
 mod read_set;
 mod reader;
