@@ -53623,7 +53623,7 @@
      "path": "src/origin/secret_marks.rs",
      "purpose": "A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -61297,7 +61297,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 5,
       "mod": 1,
       "re-export": 4,
@@ -61367,6 +61367,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/resolve_handles.rs",
+     "purpose": "A reviewed proposal whose file carries lifted secret handles lands as a NEW resolved proposal (FIX 2938…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -90752,7 +90762,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91258,7 +91268,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6281,
+   "source_files": 6282,
    "test_files": 900
   },
   "oneiron-android": {
