@@ -161,6 +161,26 @@ fn room_party_entry_with(
     })
 }
 
+/// [`room_party_entry_with`]'s party alone, for classification that needs
+/// no contact. A member the live-Owner census names short-circuits to
+/// VaultOwner before the fallible roster-contact reads (FIX 6558 P1): a
+/// damaged linked contact must not turn a live Owner's clearance into an
+/// error, as the pre-6558 classifier never read it. Consumers that need the
+/// contact keep reading the full entry.
+fn room_party_only_with(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    owners: &[EntityId],
+    admits: Option<&dyn Fn(&EntityId) -> Result<bool>>,
+    member: EntityId,
+) -> Result<RoomParty> {
+    if owners.contains(&member) {
+        return Ok(RoomParty::VaultOwner);
+    }
+    Ok(room_party_entry_with(vault, txn, fold, owners, admits, member)?.party)
+}
+
 /// [`room_party_entry_with`] reading the live-Owner census itself.
 pub(crate) fn room_party_entry_in(
     vault: &Vault,
@@ -180,7 +200,8 @@ pub(crate) fn room_party_in(
     fold: &AuthorityFold,
     member: EntityId,
 ) -> Result<RoomParty> {
-    Ok(room_party_entry_in(vault, txn, fold, member)?.party)
+    let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
+    room_party_only_with(vault, txn, fold, &owners, None, member)
 }
 
 /// Whether `contact` is a contact Active in `txn`, by its claims. A revoked
@@ -202,11 +223,13 @@ impl Vault {
     /// included (FIX 6526, FIX 6558); a co-Owner's contact rides on
     /// [`Self::room_party_entries`].
     pub fn room_parties(&self, members: &[EntityId]) -> Result<Vec<RoomParty>> {
-        Ok(self
-            .room_party_entries(members)?
-            .into_iter()
-            .map(|entry| entry.party)
-            .collect())
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let owners = crate::policy_model::owners_in_txn(self, &txn).unwrap_or_default();
+        members
+            .iter()
+            .map(|member| room_party_only_with(self, &txn, &fold, &owners, None, *member))
+            .collect()
     }
 
     /// [`Self::room_parties`] with each member's full entry: its party, the
@@ -231,11 +254,18 @@ impl Vault {
         read: &crate::claim::ScopedRead<'_>,
         members: &[EntityId],
     ) -> Result<Vec<RoomParty>> {
-        Ok(self
-            .room_party_entries_under(read, members)?
-            .into_iter()
-            .map(|entry| entry.party)
-            .collect())
+        read.persist_grant_clock()?;
+        let txn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let owners = crate::policy_model::owners_in_txn(self, &txn).unwrap_or_default();
+        let admits = |id: &EntityId| read.is_ref_readable_with_policy_in(&txn, &policy, id);
+        members
+            .iter()
+            .map(|member| {
+                room_party_only_with(self, &txn, &fold, &owners, Some(&admits), *member)
+            })
+            .collect()
     }
 
     /// [`Self::room_party_entries`] in `read`'s own snapshot (FIX 8150): each
