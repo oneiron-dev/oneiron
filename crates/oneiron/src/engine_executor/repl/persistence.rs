@@ -168,7 +168,7 @@ impl EngineNativeExecutor<'_> {
                 .find(|output| output.path == path)
                 .cloned()
             {
-                bind_published_output(&mut record, &mut bindings, &output);
+                bind_published_output(record, &mut bindings, &output);
             }
         }
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
