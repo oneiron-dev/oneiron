@@ -43,7 +43,7 @@ pub fn whole_vault_export_excludes_entity_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    if store.off_record_sessions.contains_entity(id) {
+    if store.off_record_sessions.contains_entity(id)? {
         return Ok(true);
     }
     Ok(crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())

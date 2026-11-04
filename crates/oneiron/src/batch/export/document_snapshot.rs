@@ -367,6 +367,25 @@ impl Vault {
             {
                 continue;
             }
+            // FIX 1496 S5: an epoch summary stays home when any transitive
+            // source is excluded (use-limited or off-record), same as the
+            // JSON bundle door. Non-epoch rows answer None and pass through.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                |source, _| {
+                    Ok(!whole_vault_export_excludes_entity_in_txn(
+                        &self.store,
+                        &rtxn,
+                        source,
+                    )?)
+                },
+            )? == Some(false)
+            {
+                continue;
+            }
             sources.insert(id);
             // A file-plane ASSET goes out as its body, never the manifest its
             // row keeps, and any other row as the snapshot holds it, never
