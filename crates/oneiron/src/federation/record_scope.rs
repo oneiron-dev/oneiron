@@ -428,9 +428,34 @@ impl Vault {
     /// Storage errors.
     pub fn record_world(&self, id: &EntityId) -> Result<Option<Option<EntityId>>> {
         let txn = self.store.env.read_txn()?;
-        match crate::vault::live_entity_row_in_txn(&self.store, &txn, id)? {
+        self.record_world_in_txn(&txn, id)
+    }
+
+    /// One read snapshot for a dependency walk: every row the walk reads
+    /// comes from this transaction, so the walk pays one transaction, not
+    /// two per row plus one per summary (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn dependency_read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        Ok(self.store.env.read_txn()?)
+    }
+
+    /// [`Self::record_world`] on the caller's read snapshot, so a walk over
+    /// many rows pays one transaction, not one per row (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Option<EntityId>>> {
+        match crate::vault::live_entity_row_in_txn(&self.store, txn, id)? {
             crate::vault::LiveEntityRow::Live { entity_type, body } => {
-                record_world_in(&self.store, &txn, *id, entity_type, &body)
+                record_world_in(&self.store, txn, *id, entity_type, &body)
             }
             crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
                 Ok(None)
