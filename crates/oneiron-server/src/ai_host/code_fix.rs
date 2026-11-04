@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::dreamer_runner::maintenance::coach::COACH_CODE_FIX_FACET;
 use oneiron::dreamer_runner::maintenance::coach_heal::HealRoute;
 use oneiron::dreamer_runner::maintenance::code_fix::{
     CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixShadowHost, PublisherCandidate,
@@ -92,6 +93,7 @@ pub(super) fn run(
         models: HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?,
         publisher,
         shadow,
+        caller: coach_model_call_principal(vault, admitted, COACH_CODE_FIX_FACET),
     };
     let settled = vault.run_coach_code_fix(admitted, &decisions, &models, now)?;
     tracing::debug!(
@@ -108,11 +110,12 @@ struct CodeFixModels<'a> {
     models: HostModels<'a>,
     publisher: &'a [PublisherCandidate],
     shadow: Option<shadow::CoachShadow>,
+    caller: Option<EntityId>,
 }
 
 impl CodeFixHost for CodeFixModels<'_> {
     fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
-        self.models.draft(job)
+        self.models.draft_recorded(job, self.caller)
     }
 
     fn reply(
@@ -135,6 +138,27 @@ impl CodeFixHost for CodeFixModels<'_> {
     fn shadow_runner(&self) -> Option<&dyn CodeFixShadowHost> {
         let shadow: &dyn CodeFixShadowHost = self.shadow.as_ref()?;
         Some(shadow)
+    }
+}
+
+/// Resolves evidence identity from the actual attempt's execution stamp.
+/// The core door must validate this same facet against its Coach authority
+/// before invoking the recorded model call. This never changes admission.
+pub(super) fn coach_model_call_principal(
+    vault: &Vault,
+    admitted: &DreamerAdmittedAttempt,
+    facet: &str,
+) -> Option<EntityId> {
+    match vault.dreamer_attempt_authority(admitted.status.attempt.id) {
+        Ok(Some(stamp))
+            if admitted.status.payload.attempt_type == facet && stamp.facet == facet =>
+        {
+            Some(stamp.actor)
+        }
+        _ => {
+            tracing::warn!("Coach model-call record skipped: no matching execution stamp");
+            None
+        }
     }
 }
 
@@ -222,9 +246,9 @@ impl<'a> HostModels<'a> {
             .map(|(text, _)| text))
     }
 
-    /// The session distill's sourced call, with its execution actor from
-    /// the admitted attempt's validated authority stamp. No other Coach
-    /// call acquires that identity or records through this method.
+    /// A sourced call from a validated Coach execution actor. Only the
+    /// distill and code-fix draft bind this capture; other calls keep the
+    /// ordinary uncaptured path.
     pub(super) fn generate_sourced_recorded(
         &self,
         role: ModelRole,
@@ -345,6 +369,48 @@ impl<'a> HostModels<'a> {
         Ok(Some((text, served.as_str().to_owned())))
     }
 
+    /// The code-fix draft keeps its caller only when its actual attempt
+    /// supplied one; the generic host implementation stays uncaptured.
+    fn draft_recorded(
+        &self,
+        job: &CodeFixJob,
+        caller: Option<EntityId>,
+    ) -> oneiron::Result<Option<CodeFixDraft>> {
+        let source = &job.source;
+        // Rule 5 (FIX 2343): the real failure's texts go whole, measured.
+        let longest = [source.briefing.as_deref(), source.task.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::len)
+            .fold(source.instructions.len(), usize::max);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        let data = serde_json::json!({
+            "failure_class": job.failure_class,
+            "heal_route": job.route.as_str(),
+            "wants_fix": matches!(job.route, HealRoute::SkillEdit | HealRoute::PromptInject),
+            "reports": job.reports,
+            "agent_instructions": source.instructions,
+            "briefing": source.briefing,
+            "task": source.task,
+        });
+        // The draft reads the job's texts, reports and heal (FIX 6997).
+        let Some(text) = self.generate_sourced_recorded(
+            self.coach(),
+            vec![
+                message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
+                message(LlmMessageRole::User, data.to_string()),
+            ],
+            job.source_rows.clone(),
+            caller,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(parse_draft(&text))
+    }
+
     /// The kept request of a failing call sent again (FIX 1662), whole and
     /// with its tool declarations, to its own model by its own route: the
     /// rung that answered it, when one did, under the route prompt it
@@ -401,38 +467,7 @@ fn answer_text(response: &LlmResponse) -> String {
 
 impl CodeFixHost for HostModels<'_> {
     fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
-        let source = &job.source;
-        // Rule 5 (FIX 2343): the real failure's texts go whole, measured.
-        let longest = [source.briefing.as_deref(), source.task.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(str::len)
-            .fold(source.instructions.len(), usize::max);
-        let _ = self
-            .vault
-            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
-        let data = serde_json::json!({
-            "failure_class": job.failure_class,
-            "heal_route": job.route.as_str(),
-            "wants_fix": matches!(job.route, HealRoute::SkillEdit | HealRoute::PromptInject),
-            "reports": job.reports,
-            "agent_instructions": source.instructions,
-            "briefing": source.briefing,
-            "task": source.task,
-        });
-        // The draft reads the job's texts, reports and heal (FIX 6997).
-        let Some(text) = self.generate_sourced(
-            self.coach(),
-            vec![
-                message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
-                message(LlmMessageRole::User, data.to_string()),
-            ],
-            job.source_rows.clone(),
-        )?
-        else {
-            return Ok(None);
-        };
-        Ok(parse_draft(&text))
+        self.draft_recorded(job, None)
     }
 
     fn reply(

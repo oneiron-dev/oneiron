@@ -67,7 +67,7 @@ use serde::Deserialize;
 
 use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_health::coach_role;
-use super::code_fix::{HostModels, message};
+use super::code_fix::{HostModels, coach_model_call_principal, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
@@ -343,23 +343,7 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
         )?,
         vault,
         owner: vault.ensure_embedded_owner_actor().ok(),
-        // The core door validates the same stamp against the Coach's actual
-        // authority before calling this distiller. A missing binding loses
-        // only evidence, never the existing distill.
-        caller: match vault.dreamer_attempt_authority(admitted.status.attempt.id) {
-            Ok(Some(stamp))
-                if admitted.status.payload.attempt_type == COACH_SKILL_DISTILL_FACET
-                    && stamp.facet == COACH_SKILL_DISTILL_FACET =>
-            {
-                Some(stamp.actor)
-            }
-            _ => {
-                tracing::warn!(
-                    "Coach distill model-call record skipped: no matching execution stamp"
-                );
-                None
-            }
-        },
+        caller: coach_model_call_principal(vault, admitted, COACH_SKILL_DISTILL_FACET),
     };
     let drain = vault.run_coach_skill_distill(admitted, DISTILL_SESSIONS, &distiller)?;
     tracing::debug!(
