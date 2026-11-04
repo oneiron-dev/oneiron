@@ -53,7 +53,7 @@ pub use self::genui_state::{
     GeneratedUiStatePatch, GeneratedUiStateSnapshot, SelfUiBindableProperty, SelfUiBinding,
     SelfUiStateValue,
 };
-pub(in crate::lens) use self::genui_state::{
+pub use self::genui_state::{
     LensElementRef, apply_generated_ui_state_patch, validate_generated_ui_state_bindings,
 };
 pub use self::genui_stream::{

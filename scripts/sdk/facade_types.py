@@ -29,6 +29,7 @@ CRATES = {
     'oneiron_base': 'crates/oneiron-base/src',
     'oneiron_store': 'crates/oneiron-store/src',
     'oneiron_web_fetch': 'crates/oneiron-web-fetch/src',
+    'oneiron_lens_wire': 'crates/oneiron-lens-wire/src',
     'oneiron_contracts': 'crates/oneiron-contracts/src',
     'oneiron_authority': 'crates/oneiron-authority/src',
     'oneiron_crypto': 'crates/oneiron-crypto/src',
