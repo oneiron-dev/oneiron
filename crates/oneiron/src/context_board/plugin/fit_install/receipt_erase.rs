@@ -251,9 +251,8 @@ fn scrub_receipt_actor_in_txn(
     }
     vault.put_reserved_claim_in_txn(wtxn, receipt, &body, stored.occurred, stored.learned_at)?;
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, receipt)?;
-    let staged =
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
-            .ok_or(crate::error::Error::EntityNotFound)?;
+    let staged = crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
     let encoded = staged.encode();
     crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, receipt, &encoded)?;
     Ok(())
