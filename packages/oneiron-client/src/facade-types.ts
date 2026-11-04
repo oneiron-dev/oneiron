@@ -7970,17 +7970,17 @@ export type SieveEvidenceCursor = { learned_at: number; turn: EntityId }
 export type SieveEvidenceView = { turn: EntityId; reading?: number[] | null; cursor?: SieveEvidenceCursor | null; owed: boolean; continuing: boolean }
 /** `oneiron::dreamer_wake::policy::observation::WakeCadenceRequest` */
 export type WakeCadenceRequest = Record<string, never>
-/** `oneiron::dreamer_wake::policy::AgentWakeRole` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakeRole` */
 export type AgentWakeRole = "companion" | "leader" | "worker"
-/** `oneiron::dreamer_wake::policy::CadencePrecedence` */
+/** `oneiron::store::dreamer_wake_policy::CadencePrecedence` */
 export type CadencePrecedence = "vault_floor" | "agent_override"
-/** `oneiron::dreamer_wake::policy::AgentWakeTriggers` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakeTriggers` */
 export type AgentWakeTriggers = { cadence: boolean; surprise: boolean; agency: boolean; event: boolean }
-/** `oneiron::dreamer_wake::policy::AgentWakePolicy` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakePolicy` */
 export type AgentWakePolicy = { absent_role: AgentWakeRole; precedence: CadencePrecedence; companion: AgentWakeTriggers; leader: AgentWakeTriggers; worker: AgentWakeTriggers }
-/** `oneiron::dreamer_wake::policy::WeaveRecipePriority` */
+/** `oneiron::store::dreamer_wake_policy::WeaveRecipePriority` */
 export type WeaveRecipePriority = "before_connector_event" | "after_connector_event"
-/** `oneiron::dreamer_wake::policy::DreamerWakePolicy` */
+/** `oneiron::store::dreamer_wake_policy::DreamerWakePolicy` */
 export type DreamerWakePolicy = { wake_grain_turns: number; agent_cadence: AgentWakePolicy; new_records: number; longest_wait_secs: number; nightly_secs: number; idle_secs: number; quiet_weave_secs: number; weave_recipe_priority: WeaveRecipePriority; surprise_permille: number }
 /** `oneiron::dreamer_wake::policy::WakeIdleState` */
 export type WakeIdleState = { running_turns: boolean; live_background_work: boolean; compute_available: boolean; last_inbound_at: number }
