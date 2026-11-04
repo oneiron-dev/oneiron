@@ -33,6 +33,7 @@ impl ScopedRead<'_> {
         record: &EntityId,
         counted: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
+        self.persist_grant_clock()?;
         let policy = self.live_policy_manifest_in(snapshot.txn())?;
         self.reaction_lines_in(snapshot.txn(), &policy, None, record, counted)
     }
