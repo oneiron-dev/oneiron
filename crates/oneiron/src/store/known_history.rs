@@ -286,13 +286,26 @@ impl Store {
         drop(key);
         let subject = holder_subject(custody.binding(), holder)?;
         let mut refs = HISTORY.get(self, wtxn, holder)?.unwrap_or_default();
+        let mut live_slot = None;
         for slot in refs.slots() {
             let id = subject.at(slot);
             if custody.state(&id)? == EntryState::Live
                 && custody.read(&id)?.expose() == secret.expose()
             {
-                return Ok(false);
+                live_slot = Some(slot);
+                break;
             }
+        }
+        if let Some(slot) = live_slot {
+            // The bytes are already indexed under this holder, so no entry
+            // is written twice; the calling generation still gets its own
+            // reference to the live slot, or a per-generation read finds
+            // nothing at it (REVIEW-4461 P1, FIX 10550).
+            if !refs.0.iter().any(|held| held.generation == generation) {
+                refs.0.push(HistoryRef { generation, slot });
+                HISTORY.put(self, wtxn, holder, &refs)?;
+            }
+            return Ok(false);
         }
         let slot = match refs.slots().max().max(custody.newest_generation(&subject)?) {
             None => 0,

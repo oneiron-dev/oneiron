@@ -85,7 +85,14 @@ pub(in crate::batch) fn mask_batch_ops(
     };
     plan.mask_ops(&mut planned)?;
     if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
-        return refusal.map_or_else(|| Ok((MaskedFiles::default(), Vec::new())), Err);
+        // Nothing to place, but the original refusal was read before the
+        // plan screened the owner's kept values: a kept-screened re-scan
+        // decides, so a kept-as-text restoration lands instead of rolling
+        // back on its own value (REVIEW-4461 P1).
+        if refusal.is_some() {
+            scan_screened(store, wtxn, &plan.kept, ops)?;
+        }
+        return Ok((MaskedFiles::default(), Vec::new()));
     }
     // A hit no span places is still in the copy, and refuses as before. A
     // copy of a batch the first scan read clean, with no value kept, is read
