@@ -19,6 +19,7 @@ pub mod learning_estimate;
 pub mod learning_ranking;
 pub mod limits;
 pub mod live_rows;
+pub mod message_body_fields;
 pub mod msgpack_shape;
 pub mod panic_report;
 pub mod posterior;
