@@ -658,17 +658,18 @@ impl Vault {
             }
             // The version carries the export's envelope (ARCH-0078 made_by);
             // a DOCX projection recalculates nothing and adapts nothing.
-            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
+            let version = self.append_blob_artifact_version_from_host_in_txn(
                 wtxn,
                 artifact,
                 &projection.bytes,
                 &provenance,
-                None,
                 request.actor,
                 TimeRange { start: at, end: at },
                 at,
                 None,
+                None,
                 request.made_by,
+                request.host,
             )?;
             let record = OfficeBodyExportRecord {
                 artifact: *artifact,

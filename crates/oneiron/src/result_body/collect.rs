@@ -1,11 +1,12 @@
 //! The result body collector: released bodies first, then orphan files.
 
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use super::ResultBodyPin;
 use super::files::{
-    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_now, sync_dir,
-    unlink_body,
+    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_entry_now,
+    remove_unnamed_now, sync_dir, unlink_body,
 };
 use super::{
     RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
@@ -303,6 +304,52 @@ impl Vault {
             sync_dir(dir)?;
         }
         Ok((removed, pinned))
+    }
+
+    /// Removes the staged `digests` an aborted import left unnamed (FIX
+    /// 588): the import's post-error cleanup, run once its pins are
+    /// released. Each entry goes only once a fresh writer finds it unnamed
+    /// again, as the orphan sweep's do, so a newly named or shared body is
+    /// never deleted; there is no age floor, as a just-staged body is
+    /// still debris once its writer aborted. Returns how many went, how
+    /// many a reader's pin kept, and how many were not their entry's to
+    /// remove. The hourly sweep stays the backstop for what this leaves.
+    pub(crate) fn cleanup_import_staged_bodies(
+        &self,
+        staged: &[[u8; 32]],
+    ) -> Result<(usize, usize, usize)> {
+        if staged.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        let dir = self.store.body_dir()?;
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let wanted: BTreeSet<&[u8; 32]> = staged.iter().collect();
+        let entries = body_entries(&dir)?
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|entry| wanted.contains(&entry.digest))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        let (mut removed, mut pinned, mut skipped) = (0, 0, 0);
+        self.with_write_txn_grouped(|txn| {
+            for entry in &entries {
+                if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
+                    continue;
+                }
+                match remove_unnamed_entry_now(&dir, entry, &self.result_body_pins)? {
+                    RemoveOutcome::Removed => removed += 1,
+                    RemoveOutcome::Pinned => pinned += 1,
+                    RemoveOutcome::Skipped => skipped += 1,
+                }
+            }
+            Ok(())
+        })?;
+        if removed > 0 {
+            sync_dir(&dir)?;
+        }
+        Ok((removed, pinned, skipped))
     }
 
     /// The entries of `batch` nothing names, read in one transaction (see

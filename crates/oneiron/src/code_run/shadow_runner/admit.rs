@@ -16,7 +16,7 @@
 //! same wall, in one writer ([`admit_published_inline`]), as does the type
 //! feedback of the program it ran (FIX 10389), which quotes that program.
 
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -59,7 +59,7 @@ impl ShadowAdmission {
         })?;
         let at = (ARM_PLACE, self.run.as_bytes().as_slice());
         let mut wtxn = vault.store.env.write_txn()?;
-        let known = KnownValues::load_in_writer(&vault.store, &wtxn)?.map(Arc::new);
+        let known = KnownValues::shared_in_writer(&vault.store, &wtxn)?;
         let admitted = admit_spool_in_txn(&vault, &mut wtxn, at, spool, (known.as_ref(), false))?;
         if matches!(admitted, SpoolAdmission::Copy(_)) {
             wtxn.commit()?;

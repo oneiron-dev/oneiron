@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use crate::batch::BatchOp;
-use crate::error::{Error, Result};
-use oneiron_store::index_keys::{encode_edge_key, encode_temporal_key, encode_type_key};
-use oneiron_store::long_interval::LONG_INTERVAL_THRESHOLD_SECS;
+use crate::batch_op::BatchOp;
+use crate::index_keys::{encode_edge_key, encode_temporal_key, encode_type_key};
+use crate::long_interval::LONG_INTERVAL_THRESHOLD_SECS;
+use oneiron_contracts::error::{Error, Result};
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
 use super::super::journal::{PromotePlan, replayed_subject};
 use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayValue, drop_overlay_row};
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
@@ -48,7 +48,7 @@ impl SessionOverlay {
     /// those). A witness never restages a row it already staged (it verifies
     /// an existing TURN or MESSAGE instead), so no entry left in the journal
     /// owns a row this removes.
-    pub(crate) fn retire_promoted_closure(
+    pub fn retire_promoted_closure(
         self: &Arc<Self>,
         plan: &PromotePlan,
         kept: &BTreeSet<EntityId>,

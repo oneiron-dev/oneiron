@@ -88,7 +88,7 @@ impl Lease {
                 .source_runs
                 .iter()
                 .flatten()
-                .map(crate::skill_attribution::RunWriteToken::heap_allocation)
+                .map(crate::run_write_token::RunWriteToken::heap_allocation)
                 .collect(),
         });
         self.overlay

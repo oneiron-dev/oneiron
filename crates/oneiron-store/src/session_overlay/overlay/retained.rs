@@ -17,9 +17,9 @@ use super::super::keyspace::{
 };
 use super::held::Held;
 use super::segment::TxnSegment;
-use crate::batch::BatchOp;
-use crate::entity_id::EntityId;
-use crate::skill_attribution::RunWriteToken;
+use crate::batch_op::BatchOp;
+use crate::run_write_token::RunWriteToken;
+use oneiron_contracts::entity_id::EntityId;
 
 /// A B-tree map or set entry's share of its node: room for a sparse node's
 /// unused slots, the node header and its edges (as the host's room entry

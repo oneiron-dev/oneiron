@@ -124,6 +124,8 @@ pub struct OfficeBodyExportRequest<'a> {
     pub made_by: Option<&'a MadeBy>,
     /// The local time a workbook recalculates at.
     pub zone: &'a OfficeRecalcZone,
+    /// The sealed host context the export version records; `None` is explicitly unknown.
+    pub host: Option<&'a crate::task_verb::HostBinding>,
 }
 
 /// The local time a workbook export or preview recalculates TODAY() and

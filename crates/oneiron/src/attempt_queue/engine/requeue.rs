@@ -11,8 +11,6 @@
 //! lease can never settle the next one. Nothing is capped, dropped or
 //! coalesced: every failure stays on the row, repeats included.
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
@@ -22,20 +20,7 @@ use crate::attempt_queue::validate::{
 use crate::error::Result;
 
 use super::AttemptQueue;
-
-/// One failed try a requeue kept on its row: when it was recorded, the lease
-/// it ended and the worker's reason.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RequeuedFailure {
-    /// The vault's recorded instant the failure was kept at.
-    pub at: u64,
-    /// The owner of the lease the failure ended.
-    pub lease_owner: String,
-    /// That lease's generation within the row.
-    pub attempt_count: u32,
-    /// The worker's reason, as it gave it.
-    pub reason: String,
-}
+pub use crate::store::attempt_record::RequeuedFailure;
 
 /// Input of [`AttemptQueue::requeue`]: the lease it answers, the failure and
 /// the instant the row becomes claimable again.

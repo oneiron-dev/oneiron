@@ -1,8 +1,12 @@
 //! Durable branch signal and ask vocabulary with persisted-row validation.
 
-use crate::attempt_queue::{AttemptId, CancelStanding};
+use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
-use serde::{Deserialize, Serialize};
+pub(crate) use crate::store::attempt_run_signal::SignalIntent;
+pub use crate::store::attempt_run_signal::{
+    RunAsk, RunAskAnswer, RunAskAnswerKind, RunAskQuestion, RunBranchSignal, RunSignalKind,
+    RunSignalState,
+};
 
 /// Caller-authenticated control intent; the adapter must resolve the actor and
 /// cancel standing before calling this storage door.
@@ -13,80 +17,6 @@ pub struct RunSignalInput {
     pub key: String,
     pub actor: String,
     pub kind: RunSignalKind,
-}
-
-/// No answer variant grants effect confirmation: that remains at the
-/// authenticated effect/consent door, not at this message transport.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunSignalKind {
-    Steer {
-        instruction: String,
-    },
-    Interject {
-        content: String,
-    },
-    Cancel {
-        standing: CancelStanding,
-        reason: Option<String>,
-    },
-    AskAnswer {
-        handle: String,
-        who: String,
-        answer: String,
-        kind: RunAskAnswerKind,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunSignalState {
-    Pending,
-    Settled,
-    /// A cancel target ceased being available before its breakpoint.
-    RefusedCancelUnavailable,
-}
-
-/// A per-branch idempotency receipt, kept after consumption for retry replay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunBranchSignal {
-    pub key: String,
-    pub actor: String,
-    pub kind: RunSignalKind,
-    pub state: RunSignalState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunAskAnswerKind {
-    Word,
-    Companion,
-    Default,
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunAskAnswer {
-    pub who: String,
-    pub answer: String,
-    pub kind: RunAskAnswerKind,
-    pub at: u64,
-}
-
-/// One question on a durable needs_input handle. The host can display the
-/// exact prompt and choices without a live round trip to the worker.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunAskQuestion {
-    pub who: String,
-    pub prompt: String,
-    pub options: Vec<String>,
-    pub deadline: Option<u64>,
-}
-
-/// Durable needs_input handle; `answers` may be partial and is readable even
-/// after every question was answered. Silence is never treated as consent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunAsk {
-    pub handle: String,
-    pub questions: Vec<RunAskQuestion>,
-    pub answers: Vec<RunAskAnswer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,13 +50,6 @@ pub(crate) fn validate_questions(questions: &[RunAskQuestion]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// One masked signal's intent fingerprint, by the signal's key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SignalIntent {
-    pub(crate) key: String,
-    pub(crate) fingerprint: [u8; 32],
 }
 
 /// Corrupted persisted intent data fails at the read door, not just admission.

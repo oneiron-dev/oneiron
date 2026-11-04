@@ -112,7 +112,23 @@ pub(super) fn dispatch_put_type(
                 "local claim write policy snapshot missing",
             ))?;
             if fixed.allow_reserved_predicate {
-                crate::gate::check_reserved_claim_policy(&body, fixed.write_envelope, policy)?;
+                let stored_actor_erasure = fixed
+                    .transition
+                    .map(|proof| {
+                        proof.matches_stored_section_fit_actor_erasure(
+                            store,
+                            wtxn,
+                            &fixed.id,
+                            &body,
+                            fixed.occurred,
+                            fixed.learned_at,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                if !stored_actor_erasure {
+                    crate::gate::check_reserved_claim_policy(&body, fixed.write_envelope, policy)?;
+                }
             } else {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
                     store,

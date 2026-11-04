@@ -9,6 +9,8 @@ mod builder;
 mod child_of_overlay;
 pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
+mod stored_actor_erasure;
+pub(crate) use stored_actor_erasure::materialize_stored_section_fit_actor_erasure_in_txn;
 mod verified_claim_transition;
 pub(crate) use verified_claim_transition::VerifiedClaimTransition;
 mod deindex;

@@ -457,6 +457,7 @@ impl Memory<'_> {
                         made_by: Some(self.actor()),
                         trigger: input.trigger.clone(),
                         actor: self.write_actor(),
+                        host: self.task_host(),
                     },
                 )
                 .map_err(creation_error)?;
