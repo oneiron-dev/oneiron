@@ -15,17 +15,17 @@
 //! transaction of its own, and carried exactly as the door carries a revoke
 //! it can carry at once.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
 use super::{CustodyKeptHere, SecretCustodyWork};
 use crate::authority::{ActSurface, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
-use crate::side_table::{self, Named, SideTable};
+use crate::store::pending_custody_revoke::{PENDING, PendingRevoke};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
+
+pub(crate) use crate::store::pending_custody_revoke::erase_pending_revoke_actor_in_txn;
 
 /// How a portable secret's revoke reaches the owner's other machines when
 /// the install he revoked it on cannot carry his act yet (CALLS
@@ -49,29 +49,10 @@ enum CustodyRevokePendingCarry {
 const CUSTODY_REVOKE_PENDING_CARRY: CustodyRevokePendingCarry =
     CustodyRevokePendingCarry::CarryWhenSignerLoads;
 
-/// Each revoke this install still owes the owner's other machines, by
-/// custody record id.
-const PENDING: SideTable<EntityId, PendingRevoke, Named> =
-    SideTable::new(&side_table::SECRET_CUSTODY_PENDING_REVOKE);
-
 /// The Gate content kind of a pending revoke's carry outcome.
 const REVOKE_CARRY_CONTENT_KIND: &str = "secret_custody_revoke_carry";
 /// The owner no longer lives in the vault, so their pending revoke is not carried.
 const REVOKE_CARRY_OWNER_NOT_LIVE_REASON: &str = "gate.secret.custody.revoke_carry.owner_not_live";
-
-/// One revoke this install has not carried yet. It holds no value and no
-/// proof.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct PendingRevoke {
-    /// The owner PERSON the revoke is by.
-    owner: EntityId,
-    /// Where he decided it: audit only.
-    surface: ActSurface,
-    /// The second the revoke was made at: its transition's.
-    at: u64,
-    /// The generation it revoked.
-    generation: u32,
-}
 
 /// Whether `error` says this install's signing keys are not loaded here:
 /// the one failure a revoke's carry waits out.
@@ -118,25 +99,6 @@ pub(super) fn defer_revoke_in_txn(
             Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending))
         }
     }
-}
-
-/// Erasing `actor` (FIX 3520): a revoke still owed for him is dropped, so
-/// no act is carried in his name. One-way, in the erase's own transaction.
-///
-/// # Errors
-///
-/// Storage errors, or a row that cannot be read.
-pub(crate) fn erase_pending_revoke_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    for (id, pending) in PENDING.scan(&vault.store, wtxn)? {
-        if pending.owner == *actor {
-            PENDING.delete(&vault.store, wtxn, &id)?;
-        }
-    }
-    Ok(())
 }
 
 impl Vault {
