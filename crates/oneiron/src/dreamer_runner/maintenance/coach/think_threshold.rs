@@ -13,7 +13,7 @@ use std::ops::Bound;
 use super::super::proposals;
 use super::{COACH_THINK_THRESHOLD_FACET, COACH_THINK_THRESHOLD_PROPOSAL_PREDICATE};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
-use crate::llm::decision::{PersonChangedAnswer, ThinkThreshold};
+use crate::model_decision::{PersonChangedAnswer, ThinkThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,

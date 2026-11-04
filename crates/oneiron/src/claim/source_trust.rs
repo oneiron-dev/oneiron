@@ -8,8 +8,10 @@ use rmpv::Value;
 use super::*;
 use crate::error::{Error, Result};
 
-pub use crate::write_envelope::claim_body::{ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung};
 pub(crate) use crate::write_envelope::claim_body::*;
+pub use crate::write_envelope::claim_body::{
+    ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung,
+};
 
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
@@ -282,13 +284,16 @@ pub(crate) fn claim_evidence_admissible(body: &ClaimBody) -> bool {
 
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
-    let affect = crate::affect::decode_affect_trigger_claim(body)?.map_or(0.0, |trigger| {
-        let delta = trigger.vad_delta();
-        let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
-        let arousal = delta.arousal().abs().clamp(0.0, 1.0);
-        let dominance = delta.dominance().abs().clamp(0.0, 1.0);
-        ((valence + arousal + dominance) / 3.0) * trigger.confidence()
-    });
+    let affect = crate::write_envelope::affect_trigger::decode_affect_trigger_claim(body)?.map_or(
+        0.0,
+        |trigger| {
+            let delta = trigger.vad_delta();
+            let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
+            let arousal = delta.arousal().abs().clamp(0.0, 1.0);
+            let dominance = delta.dominance().abs().clamp(0.0, 1.0);
+            ((valence + arousal + dominance) / 3.0) * trigger.confidence()
+        },
+    );
     Ok(salience.max(affect).clamp(0.0, 1.0))
 }
 

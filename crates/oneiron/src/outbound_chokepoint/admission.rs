@@ -707,7 +707,8 @@ pub(super) fn enforce_step_failure_policy(
     payload: &[u8],
     actor: Option<crate::entity_id::EntityId>,
 ) -> Result<(), IntentLedgerError> {
-    let Some(binding) = crate::llm::StepEffectBinding::from_frozen_payload(payload)? else {
+    let Some(binding) = crate::model_step_effect::StepEffectBinding::from_frozen_payload(payload)?
+    else {
         return Ok(());
     };
     let actor = actor.ok_or(IntentLedgerError::InvalidBoundActor)?;
@@ -733,8 +734,8 @@ pub(super) fn verify_booking_effect(
             // owner-binding half of the same refusal family FORBIDDEN carries,
             // and classifying it as stale input would tell a caller to refresh
             // state when the actor is simply no longer authorized.
-            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
-                || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+            if error.code == oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN
+                || error.code == oneiron_contracts::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
             {
                 IntentLedgerError::InvalidBoundActor
             } else {

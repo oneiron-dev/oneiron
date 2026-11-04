@@ -1,6 +1,6 @@
 //! Provider read formats share prepared rows and always null credential-bearing fields.
 use super::pack_entry::PreparedPack;
-use crate::context_pack::PackFormat;
+use crate::serialize::pack_format::PackFormat;
 use serde_json::{Value, json};
 
 pub(super) fn serialize_provider(format: PackFormat, prepared: PreparedPack) -> Vec<u8> {

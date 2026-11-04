@@ -371,13 +371,13 @@ pub(crate) fn trusted_machine_handoff(
 }
 
 pub(crate) fn verify_handoff_signature(packet: &ClaimHistoryHandoff) -> bool {
-    let signature = crate::authority::AuthoritySignature {
+    let signature = oneiron_authority::authority::AuthoritySignature {
         suite: packet.signer.suite(),
         public_key: packet.signer.clone(),
         signature: packet.signature.to_vec(),
     };
     packet.transcript().is_ok_and(|transcript| {
-        crate::authority::verify_authority_signature(&signature, &transcript)
+        oneiron_authority::authority::verify_authority_signature(&signature, &transcript)
     })
 }
 

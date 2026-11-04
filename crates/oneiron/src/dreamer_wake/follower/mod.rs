@@ -44,8 +44,8 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::llm::Scope;
 use crate::store::Store;
+use oneiron_model::llm::Scope;
 
 pub(crate) use keyframe::{
     FoldWork, KeyframeCommit, Sizing, commit_keyframe_in_txn, erase_in_txn, fold_groups,

@@ -17,8 +17,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::Vault;
-
 /// A count of live work the engine bounds by a row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LiveRow {
@@ -94,13 +92,13 @@ pub struct LiveWaitedOut {
 
 /// One vault's rows and the host's crossing door.
 #[derive(Default)]
-pub(crate) struct LiveRowsCell {
-    rows: RwLock<LiveRows>,
-    crossing: RwLock<Option<LiveRowCrossing>>,
+pub struct LiveRowsCell {
+    pub rows: RwLock<LiveRows>,
+    pub crossing: RwLock<Option<LiveRowCrossing>>,
 }
 
 impl LiveRowsCell {
-    fn rows(&self) -> LiveRows {
+    pub fn rows(&self) -> LiveRows {
         *self.rows.read().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -123,36 +121,20 @@ impl LiveRowsCell {
     }
 }
 
-impl Vault {
-    /// Sets this vault's live rows and wait deadline. Work already waiting
-    /// keeps the deadline it started with; a bound takes effect at the next
-    /// open and the next close.
-    pub fn set_live_rows(&self, rows: LiveRows) {
-        *self
-            .live_rows
-            .rows
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = rows;
-    }
+/// What holds a vault's live-row cell: [`LiveLine::enter`] reads the rows
+/// and asks the crossing through it. The engine's `Vault` holds one.
+pub trait LiveRowsHolder {
+    fn live_rows_cell(&self) -> &LiveRowsCell;
+}
 
-    /// The live rows in force.
-    pub fn live_rows(&self) -> LiveRows {
-        self.live_rows.rows()
-    }
-
-    /// Points this vault's row crossings at the host's question door. With
-    /// none set, a crossing is logged.
-    pub fn set_live_row_crossing(&self, crossing: Option<LiveRowCrossing>) {
-        *self
-            .live_rows
-            .crossing
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = crossing;
+impl<T: LiveRowsHolder + ?Sized> LiveRowsHolder for Arc<T> {
+    fn live_rows_cell(&self) -> &LiveRowsCell {
+        (**self).live_rows_cell()
     }
 }
 
 /// The fair line of one row: who holds a turn, and who waits for one.
-pub(crate) struct LiveLine {
+pub struct LiveLine {
     row: LiveRow,
     queue: Arc<Mutex<Queue>>,
 }
@@ -180,13 +162,13 @@ struct Waiter {
 
 /// One turn held. Dropping it hands the turn to the next waiter.
 #[must_use = "live work holds its turn only as long as this is"]
-pub(crate) struct LivePermit {
+pub struct LivePermit {
     queue: Arc<Mutex<Queue>>,
     waited: Duration,
 }
 
 impl LiveLine {
-    pub(crate) fn new(row: LiveRow) -> Self {
+    pub fn new(row: LiveRow) -> Self {
         Self {
             row,
             queue: Arc::new(Mutex::new(Queue {
@@ -201,8 +183,12 @@ impl LiveLine {
 
     /// A turn for `key`'s work, now or at its turn, under `vault`'s row. The
     /// caller holds no transaction, lock or lease while this waits.
-    pub(crate) fn enter(&self, vault: &Vault, key: &[u8]) -> Result<LivePermit, LiveWaitedOut> {
-        let rows = vault.live_rows.rows();
+    pub fn enter<V: LiveRowsHolder + ?Sized>(
+        &self,
+        vault: &V,
+        key: &[u8],
+    ) -> Result<LivePermit, LiveWaitedOut> {
+        let rows = vault.live_rows_cell().rows();
         let bound = rows.bound(self.row).max(1);
         let waiter = {
             let mut queue = lock(&self.queue);
@@ -227,7 +213,7 @@ impl LiveLine {
             let observed = queue.held + queue.waiters();
             drop(queue);
             if first {
-                vault.live_rows.ask(self.row, bound, observed);
+                vault.live_rows_cell().ask(self.row, bound, observed);
             }
             waiter
         };
@@ -277,9 +263,10 @@ impl LiveLine {
         }
     }
 
-    /// Openers waiting for a turn now.
-    #[cfg(test)]
-    pub(crate) fn waiting(&self) -> usize {
+    /// Openers waiting for a turn now. Core's tests read it, so it is
+    /// compiled for `oneiron-base/test-support` too.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn waiting(&self) -> usize {
         lock(&self.queue).waiters()
     }
 }
@@ -320,7 +307,7 @@ impl Queue {
 
 impl LivePermit {
     /// How long the work waited for this turn; zero when one was free.
-    pub(crate) fn waited(&self) -> Duration {
+    pub fn waited(&self) -> Duration {
         self.waited
     }
 }

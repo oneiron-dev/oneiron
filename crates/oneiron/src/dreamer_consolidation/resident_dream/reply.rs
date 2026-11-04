@@ -5,7 +5,7 @@
 use serde::Deserialize;
 
 use crate::actor_claims::ResidentCraftCandidate;
-use crate::llm::LlmResponse;
+use oneiron_model::llm::LlmResponse;
 
 /// Why a dreaming reply is refused: it holds no diary entry.
 const EMPTY_ENTRY: &str = "the model wrote an empty diary entry";

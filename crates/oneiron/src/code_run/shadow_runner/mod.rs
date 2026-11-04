@@ -50,9 +50,7 @@ pub use self::types::{
 };
 use crate::Result;
 
-/// The shadow protocol's version: a request or frame of another is
-/// unavailable (`ProtocolUnsupported`). CALLS "shadow protocol version 1".
-pub const SHADOW_PROTOCOL_VERSION: u32 = 1;
+pub use crate::dreamer_runner::shadow_values::SHADOW_PROTOCOL_VERSION;
 
 /// One arm's run, as a runner answers it.
 pub type ShadowRunFuture<'a> = Pin<Box<dyn Future<Output = Result<ShadowRunResult>> + Send + 'a>>;

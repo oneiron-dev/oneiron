@@ -1,9 +1,9 @@
 //! Canonical citation checks on the same document snapshot a promotion commits,
 //! and the citation pins every local claim write keeps (FIX 904).
 use super::{invalid, storage, verbs};
-use crate::write_envelope::claim_body::{ClaimBody, EvidenceKind, EvidenceRef};
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, EvidenceKind, EvidenceRef};
 use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
 

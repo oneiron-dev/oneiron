@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::authority::{PolicyRevision, WorldPrivacy};
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::llm::decision::{
-    AnswerContract, AskTo, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
-    HumanDecisionRequest, ProviderPin, WORLD_PRIVACY_ASK_QUEUE,
+use crate::llm::decision::{AskTo, HumanDecisionRequest, WORLD_PRIVACY_ASK_QUEUE};
+use crate::model_decision::{
+    AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};

@@ -16,6 +16,7 @@ mod device_only;
 pub mod model_versioning;
 mod models;
 pub(crate) mod room_threads;
+pub mod web_connector;
 
 pub use destination::{
     CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,

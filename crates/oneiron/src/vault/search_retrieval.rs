@@ -3,7 +3,7 @@
 use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
 use crate::error::{Error, Result};
-use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
+use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
     RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
@@ -11,7 +11,8 @@ use crate::store::{
     RetrievalPolicyPins, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
     RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
-use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25};
+use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder};
+use oneiron_retrieval::pipeline::ScoredEntity;
 use std::time::Instant;
 
 /// One scored search plus the timing its telemetry row is built from.
@@ -91,7 +92,7 @@ impl Vault {
     /// what was persisted by prior writes.
     pub fn text_index_status(&self) -> Result<TextIndexStatus> {
         let rtxn = self.store.env.read_txn()?;
-        let total_docs = bm25::read_total_docs(&self.store, &rtxn)?;
+        let total_docs = crate::store::text_index::read_total_docs(&self.store, &rtxn)?;
         let schema_version = read_text_schema_version(&self.store, &rtxn)?;
         Ok(TextIndexStatus {
             total_docs,

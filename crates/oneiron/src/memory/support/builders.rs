@@ -99,7 +99,10 @@ impl Memory<'_> {
     /// Binds the logical verb's id a transport carried in, so a verb hook
     /// fires once for it however many wrappers it crosses.
     #[must_use]
-    pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
+    pub fn with_invocation(
+        mut self,
+        invocation: crate::store::verb_invocation::InvocationId,
+    ) -> Self {
         self.invocation = Some(invocation);
         self
     }
@@ -139,13 +142,15 @@ impl Memory<'_> {
 
     /// The code-mode call site the bound origin carries, if any (DOOR-079
     /// 1a): only the dispatcher puts one there.
-    pub(crate) fn code_consent_site(&self) -> Option<&crate::code_run::CodeConsentCallSite> {
+    pub(crate) fn code_consent_site(
+        &self,
+    ) -> Option<&crate::consent::code_wait_state::CodeConsentCallSite> {
         self.host_origin.as_ref()?.code_consent.as_ref()
     }
 
     /// The code-mode step the bound origin's call is, if any (FIX 11683):
     /// only the dispatcher puts one there.
-    pub(crate) fn host_step(&self) -> Option<crate::runtime_hooks::InvocationId> {
+    pub(crate) fn host_step(&self) -> Option<crate::store::verb_invocation::InvocationId> {
         self.host_origin.as_ref()?.step
     }
 
@@ -269,7 +274,7 @@ impl Memory<'_> {
 
     /// The logical verb's id a host bound, if any.
     #[must_use]
-    pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
+    pub fn invocation(&self) -> Option<crate::store::verb_invocation::InvocationId> {
         self.invocation
     }
 

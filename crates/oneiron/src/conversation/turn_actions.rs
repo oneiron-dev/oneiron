@@ -47,8 +47,7 @@ mod standing;
 pub use rebind::{TurnActionRebindReceipt, TurnActionRebindRequest};
 pub use standing::TurnActionAuthority;
 
-/// The attempt kind a host's turn-action worker claims.
-pub const TURN_ACTION_ATTEMPT_KIND: &str = "conversation.turn_action";
+pub use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
 
 /// Names the assistant TURN an action acts on.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -58,15 +57,7 @@ pub struct TurnActionRequest {
     pub turn_id: String,
 }
 
-/// What a queued turn action does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnAction {
-    /// Resume generation on the same MESSAGE from its saved text.
-    Continue,
-    /// Answer the same user turn again in a new assistant TURN.
-    Retry,
-}
+pub use crate::attempt_queue::turn_action_kind::TurnAction;
 
 /// A queued action: the attempt that will run it, never a claim that text
 /// exists.

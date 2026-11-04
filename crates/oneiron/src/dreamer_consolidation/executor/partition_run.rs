@@ -149,7 +149,7 @@ impl ConsolidationExecutor<'_> {
             }
             // The error leaves as it is; what the partition already spent
             // settles with it (FIX 7432).
-            Err(crate::llm::DurableStepError::Engine(error)) => {
+            Err(crate::model_step_error::DurableStepError::Engine(error)) => {
                 super::super::residency::spent_or_deferred(error, ctx, &charges)
             }
             // Every other failure parks with what the attempt spent, a

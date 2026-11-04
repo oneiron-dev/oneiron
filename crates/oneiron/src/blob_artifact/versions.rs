@@ -4,13 +4,13 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::write_envelope::claim_body::ClaimSubject;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::Store;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
@@ -27,8 +27,8 @@ use super::store_keys::{
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
-use crate::provenance::made_by::MadeBy;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
@@ -193,7 +193,7 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if header.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -439,8 +439,12 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let fingerprint =
-            crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
+        let fingerprint = crate::store::blob_fingerprint::prepare_blob_artifact_birth(
+            &self.store,
+            wtxn,
+            artifact_id,
+            bytes,
+        )?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
         // HEAD is the greatest version that stays; a released one (FIX 6225)
@@ -576,9 +580,9 @@ impl Vault {
                 &self.store,
                 wtxn,
                 artifact_id,
-                &crate::provenance::birth::RowBirth {
+                &crate::store::row_birth::RowBirth {
                     made_by: record.made_by.clone(),
-                    content_hash: crate::provenance::birth::RowBirth::content_hash_of(&[
+                    content_hash: crate::store::row_birth::RowBirth::content_hash_of(&[
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),

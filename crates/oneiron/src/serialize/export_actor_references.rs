@@ -1,6 +1,6 @@
 //! Preserve only the actor ledger's validated binary reference positions.
 use super::ExportValue;
-use crate::{write_envelope::claim_body::ClaimBody, entity_id::EntityId};
+use crate::{entity_id::EntityId, write_envelope::claim_body::ClaimBody};
 fn field<'a>(value: &'a mut ExportValue, name: &str) -> Option<&'a mut ExportValue> {
     let ExportValue::Map(entries) = value else {
         return None;

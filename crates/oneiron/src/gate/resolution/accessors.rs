@@ -2,15 +2,16 @@
 
 use std::collections::BTreeMap;
 
-use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
+use crate::gate::experiment_selection_policy::SelectionPolicy;
+use crate::gate::experiment_selection_policy::SelectionPrecedence;
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
 
 use crate::error::Result;
 use crate::gate::hosted_tts_policy::HostedTtsLimits;
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
 #[cfg(feature = "sync")]
@@ -79,7 +80,7 @@ impl PolicyManifestResolution {
     /// shipped default row; a malformed or unreadable manifest refuses.
     pub(crate) fn consult_fanout_policy_for(
         &self,
-        scope: &crate::task_verb::ConsultFanOutScope,
+        scope: &crate::gate::consult_fanout_values::ConsultFanOutScope,
     ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
@@ -189,7 +190,7 @@ impl PolicyManifestResolution {
     pub(crate) fn retry_budget_for(
         &self,
         actor: crate::EntityId,
-        scope: Option<&crate::llm::Scope>,
+        scope: Option<&oneiron_model::llm::Scope>,
     ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
         crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
     }
@@ -239,7 +240,7 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
-    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+    ) -> Option<crate::gate::judge_calibration::JudgeCalibrationPolicy> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
@@ -411,7 +412,7 @@ impl PolicyManifestResolution {
     pub(crate) fn voice_ref_limits(
         &self,
         owner: &crate::EntityId,
-    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+    ) -> Option<crate::gate::voice_ref_limits::VoiceRefLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
@@ -488,7 +489,7 @@ impl PolicyManifestResolution {
     pub(crate) fn teacher_probe_policy(
         &self,
         holder_ref: Option<&str>,
-    ) -> Option<crate::llm::manifest::TeacherProbePolicy> {
+    ) -> Option<crate::teacher_probe_policy::TeacherProbePolicy> {
         if self.is_fail_closed() || !self.teacher_probe_trusted {
             return None;
         }
@@ -497,7 +498,8 @@ impl PolicyManifestResolution {
             .and_then(|holder| self.teacher_probe_holders.get(holder).copied())
             .unwrap_or(vault_min)
             .max(vault_min);
-        crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
+        crate::teacher_probe_policy::TeacherProbePolicy::resolved(vault_min, effective, holder_ref)
+            .ok()
     }
 
     /// Conversion UI/notification choices from trusted, resolved manifest
@@ -725,7 +727,7 @@ impl PolicyManifestResolution {
     pub(crate) fn slide_review_limits(
         &self,
         holder: crate::EntityId,
-    ) -> Option<crate::llm::decision::SlideReviewLimits> {
+    ) -> Option<crate::model_decision::SlideReviewLimits> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed())
             .then(|| self.slide_review_policy.resolve(holder))
     }
@@ -733,7 +735,7 @@ impl PolicyManifestResolution {
     pub(crate) fn slide_review_route(
         &self,
         holder: crate::EntityId,
-    ) -> Option<crate::llm::decision::SlideReviewRoute> {
+    ) -> Option<crate::model_decision::SlideReviewRoute> {
         (!self.diagnostics.loaded_manifest_forces_fail_closed())
             .then(|| self.slide_review_policy.resolve_route(holder))
     }

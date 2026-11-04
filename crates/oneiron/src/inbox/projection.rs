@@ -5,15 +5,15 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::calendar::outcome::{DueOutcomeCheckIn, check_in_is_still_due};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
-use crate::write_envelope::claim_predicate::PREDICATE_CONFLICT_OPEN;
 use crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
 use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use crate::write_envelope::claim_predicate::PREDICATE_CONFLICT_OPEN;
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 use super::model::{
     INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY, INBOX_SUBCLUSTER_MIN_MEMBERS,

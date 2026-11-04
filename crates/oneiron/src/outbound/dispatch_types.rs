@@ -8,7 +8,6 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
-use crate::campaign::send_hygiene::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
@@ -20,7 +19,8 @@ use crate::delivery_window::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
-use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
+use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
+use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
@@ -636,35 +636,7 @@ pub trait OutboundExecutionSink {
     }
 }
 
-/// Coarse pipeline outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum OutboundDispatchOutcome {
-    DeliveredToChannel,
-    Held,
-    Degraded,
-    Suppressed,
-    LetGo,
-    Failed,
-    Ambiguous,
-    /// The provider accepted the send as a remote task (FIX 7960).
-    Deferred,
-}
-
-impl OutboundDispatchOutcome {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DeliveredToChannel => "delivered_to_channel",
-            Self::Held => "held",
-            Self::Degraded => "degraded",
-            Self::Suppressed => "suppressed",
-            Self::LetGo => "let_go",
-            Self::Failed => "failed",
-            Self::Ambiguous => "ambiguous",
-            Self::Deferred => "deferred",
-        }
-    }
-}
+pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
 
 /// Result of the single dispatch pipeline.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -715,7 +687,7 @@ pub enum OutboundDispatchError {
     #[error("the resident failure rule makes this step result ineligible for effects")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

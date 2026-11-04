@@ -2,15 +2,15 @@
 
 use heed::RoTxn;
 
-use crate::affect::Vad;
 #[cfg(test)]
 use crate::config::PPR_VAD_ALPHA_DEFAULT;
 use crate::edge::EdgeKind;
-pub(crate) use oneiron_base::edge::kind_tables::lambda_for_kind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::ManifestDbs;
+pub(crate) use oneiron_base::edge::kind_tables::lambda_for_kind;
+use oneiron_contracts::affect::Vad;
 
 use super::walk::PprNodeVisibility;
 

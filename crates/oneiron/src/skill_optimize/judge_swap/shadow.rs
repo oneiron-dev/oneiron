@@ -198,7 +198,7 @@ fn shadow(
         None => (
             judge_takeover_verdict(&divergence, noise, MIN_CASES_PER_FAMILY),
             "retest_noise",
-            noise.map(crate::learning::Estimate::mean),
+            noise.map(crate::claim::learning_estimate::Estimate::mean),
         ),
     };
     let mut anchors = Anchors::default();

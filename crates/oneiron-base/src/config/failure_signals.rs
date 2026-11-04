@@ -4,14 +4,14 @@
 //! chosen on its own.
 //!
 //! What a vault exports is the content-free tier-1 aggregate
-//! ([`Vault::export_tier1_failure_counts`](crate::Vault::export_tier1_failure_counts)):
+//! (`Vault::export_tier1_failure_counts`):
 //! closed dimensions and counts. Nothing samples transcript text for export.
 //! Telemetry never carries world text (owner ruling 2026-10-14), and redacting
 //! a sample does not make it safe to send, so there is no text tier to opt into.
 //!
 //! The same switch gates the two code-fix exports (FIX6, owner ruling
 //! 2026-10-16): the Coach's invented examples and candidate fixes' fixed or
-//! not-fixed results ([`Vault::pending_code_fix_records`](crate::Vault::pending_code_fix_records)).
+//! not-fixed results (`Vault::pending_code_fix_records`).
 //! Neither carries real chat text, and a failure that touched a private world
 //! sends counts only.
 //!

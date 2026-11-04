@@ -23,7 +23,8 @@ impl Vault {
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_at(self, &rtxn, crate::settings::CallerLocality::OffDevice)?;
+        let flagged =
+            device_local_worlds_at(self, &rtxn, crate::settings::CallerLocality::OffDevice)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}

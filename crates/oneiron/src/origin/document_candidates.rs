@@ -25,17 +25,18 @@ use super::document_candidate_types::{
 };
 use super::document_ingress::{CODE_OPERATIONS, ProvenanceRefKey};
 use super::publication::OriginPublicationStatus;
-use crate::code_revision::{CodeRevision, CodeRevisionFork};
-use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SESSION;
-use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{
-    PreparedRepoProposal, ReceivedFilesProposalInput, received_proposal_id,
-};
+use crate::store::code_revision_record::{CodeRevision, CodeRevisionFork};
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::repo_proposal_record::RepoProposedFile;
 use crate::{EntityId, TimeRange, Vault};
+use crate::{
+    repo_mutation::PreparedRepoProposal,
+    store::repo_proposal_record::{ReceivedFilesProposalInput, received_proposal_id},
+};
 
 mod files;
 pub(crate) mod projected;
@@ -525,7 +526,7 @@ impl Vault {
         }
         let anchor = self
             .resolve_code_revision_import_anchor(revision.revision_id)?
-            .map(|manifest| crate::code_revision::manifest_id(&manifest.digest))
+            .map(|manifest| crate::store::code_import_manifest::manifest_id(&manifest.digest))
             .transpose()?;
         Ok(Ok(PushCandidateBase { revision, anchor }))
     }
