@@ -99,11 +99,8 @@ pub(crate) fn encode_admitted_signal_record(
     payload_erase::scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
     encoding::encode_admitted_record(vault, wtxn, record)
 }
-pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
-    validate::validate_cancel_actor(actor)?;
-    validate::validate_optional_failure_reason(reason)
-}
 
+pub(crate) use crate::store::attempt_record_codec::signal_validators::validate_signal_cancel;
 pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
