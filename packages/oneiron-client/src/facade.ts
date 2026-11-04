@@ -1719,9 +1719,9 @@ export interface FacadeResults {
   "vault.authority.handoff_alarms": Facade.AuthorityHandoffAlarm[];
   "vault.authority.handoff_alarms.acknowledge": Facade.AuthorityHandoffAlarm;
   "vault.roots.requests.cancel": Facade.OwnerWorkReceipt;
-  "vault.roots.requests.create": Facade.OwnerWorkReceipt;
+  "vault.roots.requests.create": Facade.OwnerWorkView;
   "vault.roots.requests.list": Facade.PendingRootRequestView[];
-  "vault.owner_work.get": Facade.OwnerWorkReceipt;
+  "vault.owner_work.get": Facade.OwnerWorkView;
   "vault.cleanup.run": Facade.CleanupRunView;
   "vault.cleanup.review": Facade.CleanupReviewView;
   "vault.cleanup.decide": Facade.CleanupDecideView;
