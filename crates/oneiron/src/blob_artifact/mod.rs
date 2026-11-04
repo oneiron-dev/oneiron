@@ -34,20 +34,25 @@ mod born_from;
 pub(crate) mod checkpoint;
 mod create;
 pub mod deck_creation;
+pub mod deck_context;
+pub mod deck_inspection;
 mod deck_doors;
 mod family;
 mod holders;
 mod lifecycle;
 mod made_by;
+pub mod native_output;
 pub mod office_address;
 mod provenance;
 mod references;
 mod review_request;
+pub mod slide_review;
 mod store_keys;
 mod verbs;
 mod version_codec;
 mod version_rows;
 mod versions;
+pub mod unit_refusal;
 
 pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{

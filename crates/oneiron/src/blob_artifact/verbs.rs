@@ -17,19 +17,26 @@ use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    REVIEW_IMAGE, SlideAbstention, SlideJudgment, SlideRenderer, SlideReviewError,
+     SlideAbstention, SlideJudgment,  SlideReviewError,
     SlideReviewImage, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
-    SlideUnitRefusalReason, review_copy_bytes,
+
 };
+use crate::blob_artifact::slide_review::REVIEW_IMAGE;
+use crate::blob_artifact::slide_review::SlideRenderer;
+use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
+use crate::blob_artifact::slide_review::review_copy_bytes;
 use crate::edit_roundtrip::{
-    ArtifactAsk, DeckEditContext, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
-    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    ArtifactAsk,  DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
+    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider,
 };
+use crate::blob_artifact::unit_refusal::UnitRefusal;
+use crate::blob_artifact::deck_context::DeckEditContext;
 use crate::blob_artifact::office_address::RangeRef;
 use crate::edit_settle::{
-    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+    KeepUndo, MadeByReader,  OrganWaitView, PendingProposalView, SettleConsent,
     SettledReview,
 };
+use crate::blob_artifact::native_output::NativeOutput;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
@@ -253,7 +260,7 @@ pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
-    pub judged_live: Option<crate::office_body::LivePin>,
+    pub judged_live: Option<crate::typed_body::live_pin::LivePin>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
