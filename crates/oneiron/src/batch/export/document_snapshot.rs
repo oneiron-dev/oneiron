@@ -643,7 +643,7 @@ impl Vault {
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
             let replay = self.get_code_run_replay_record_in_txn(rtxn, &run_id)?;
-            let determinism = replay.as_ref().map(|record| record.determinism);
+            let determinism = replay.as_ref().and_then(|record| record.determinism);
             let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
@@ -674,8 +674,7 @@ impl Vault {
                     occurrences
                         .iter()
                         .find(|(output, _)| {
-                            output.handle == binding.handle
-                                && output.path == binding.path
+                            output.handle == binding.handle && output.path == binding.path
                         })
                         .map(|(_, withheld)| (binding, *withheld))
                 })

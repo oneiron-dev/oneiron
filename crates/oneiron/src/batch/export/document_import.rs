@@ -743,14 +743,12 @@ fn put_run_results_in_txn<R: Read + Seek>(
                     crate::code_run::CodeRunDeterminism::new(determinism.frozen_unix_ms, seed)
                 })
             })
-            .transpose()?
-            // Zero is an explicit unknown here, not a claim that the run used
-            // these inputs; full replayability remains FIX 12543.
-            .unwrap_or(crate::code_run::CodeRunDeterminism::new(0, [0; 32]));
+            .transpose()?;
         if outputs.is_empty() {
             continue;
         }
-        let mut record = crate::code_run::CodeRunReplayRecord::new(run_id, determinism);
+        let mut record =
+            crate::code_run::CodeRunReplayRecord::with_determinism(run_id, determinism);
         record.outputs = outputs
             .iter()
             .map(|restored| restored.output.clone())
