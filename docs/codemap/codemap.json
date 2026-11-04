@@ -14186,31 +14186,6 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "ClaimBirth",
-      "ClaimHistoryHandoff",
-      "ClaimHistoryHandoffPin",
-      "ClaimTransition",
-      "HandoffCodecError",
-      "HandoffKind",
-      "HandoffRefusal",
-      "HandoffStanding",
-      "HandoffVerification",
-      "VerifiedClaimHistoryHandoff"
-     ],
-     "path": "src/claim/history_handoff.rs",
-     "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time",
-     "surface": {
-      "const": 3,
-      "crate-vis": 2,
-      "enum": 5,
-      "fn": 5,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
      "notable": [],
      "path": "src/claim/history_pin_exchange.rs",
      "purpose": "Own-vault machine-history pin exchange (FIX 3821): a device adopts its vault's machine-claim histories as…",
@@ -14324,29 +14299,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "BetaView",
-      "Estimate",
-      "EstimateForm",
-      "EstimateLabels",
-      "EstimateValue",
-      "Prior",
-      "PriorOrigin",
-      "Window"
-     ],
-     "path": "src/claim/learning_estimate.rs",
-     "purpose": "The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and…",
-     "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "enum": 3,
-      "fn": 17,
-      "struct": 5
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -14441,8 +14393,8 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 23,
-      "mod": 14,
-      "re-export": 13
+      "mod": 13,
+      "re-export": 14
      }
     },
     {
@@ -41833,16 +41785,6 @@
       "crate-vis": 12,
       "fn": 1,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/learning/ranking.rs",
-     "purpose": "The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus…",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -88730,7 +88672,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 134,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89297,7 +89239,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 17,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90104,7 +90046,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6236,
+   "source_files": 6233,
    "test_files": 898
   },
   "oneiron-android": {
@@ -90881,6 +90823,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimBirth",
+      "ClaimHistoryHandoff",
+      "ClaimHistoryHandoffPin",
+      "ClaimTransition",
+      "DeltaClosure",
+      "HandoffCodecError",
+      "HandoffKind",
+      "HandoffRefusal",
+      "HandoffStanding",
+      "HandoffVerification",
+      "VerifiedClaimHistoryHandoff"
+     ],
+     "path": "src/claim_history_handoff.rs",
+     "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time",
+     "surface": {
+      "const": 3,
+      "enum": 6,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91016,7 +90983,7 @@
      "path": "src/lib.rs",
      "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
      "surface": {
-      "mod": 7
+      "mod": 8
      }
     },
     {
@@ -91074,6 +91041,13 @@
      "layout": "file",
      "purpose": "ChannelIdentity addressability shapes with wire serde"
     },
+    "claim_history_handoff": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time"
+    },
     "credential_door": {
      "files": 1,
      "impl_vault": false,
@@ -91098,7 +91072,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 56,
+   "source_files": 57,
    "test_files": 1
   },
   "oneiron-base": {
@@ -91272,6 +91246,39 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BetaView",
+      "Estimate",
+      "EstimateForm",
+      "EstimateLabels",
+      "EstimateValue",
+      "OwnTally",
+      "Prior",
+      "PriorOrigin",
+      "Window"
+     ],
+     "path": "src/learning_estimate.rs",
+     "purpose": "The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and…",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 20,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_ranking.rs",
+     "purpose": "The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91279,7 +91286,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 18
+      "mod": 20
      }
     },
     {
@@ -91495,6 +91502,20 @@
      "layout": "file",
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
+    "learning_estimate": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and…"
+    },
+    "learning_ranking": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus…"
+    },
     "limits": {
      "files": 1,
      "impl_vault": false,
@@ -91568,7 +91589,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 24,
+   "source_files": 26,
    "test_files": 2
   },
   "oneiron-bench": {
