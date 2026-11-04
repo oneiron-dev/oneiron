@@ -182,6 +182,17 @@ fn keep_press_in(
     actor: EntityId,
     task: EntityId,
 ) -> crate::error::Result<()> {
+    // FIX 6835 P1: this writer opens after the admission committed, so an
+    // erase of the pressing actor or the mirrored TASK may have committed in
+    // between and already run the scrub below on a press that did not exist
+    // yet. An erased id leaves no entity row (the admission's own liveness
+    // probe), so recheck both here and skip the keep when either is gone. A
+    // missing press only re-asks on retry.
+    for id in [&actor, &task] {
+        if vault.get_entity_type_in_txn(&*txn, id)?.is_none() {
+            return Ok(());
+        }
+    }
     KEPT_PRESS.put(
         &vault.store,
         txn,

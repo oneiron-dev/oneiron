@@ -87,6 +87,18 @@ pub(crate) fn keep_pinned_approval_in_txn(
     let Some(approval) = approval else {
         return Ok(());
     };
+    // FIX 6835 P1: the admission committed before this writer opened, so an
+    // erase of the request may have committed in between and already dropped
+    // any press beside it; recheck the ledger row here and skip the put when
+    // its request is erased or absent. A missing press only re-asks on retry.
+    let intent_id = approval.proof.intent_id();
+    let erased_or_absent = match super::store::get_ledger_record(vault, &*wtxn, &intent_id)? {
+        Some(record) => super::payload::payload_erased(record.payload())?,
+        None => true,
+    };
+    if erased_or_absent {
+        return Ok(());
+    }
     let mut value = [0_u8; 34];
     value[0] = PINNED_APPROVAL_VERSION;
     value[1] = approval.family.tag();
