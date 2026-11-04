@@ -112,6 +112,30 @@ pub(crate) fn mask_origin_in_txn(
     MASK_ORIGIN.get(store, txn, id)
 }
 
+/// Rebinds one custody record's mask origin from `old` to `new` (FIX 12779):
+/// the same custody-keyed row, only `record` changes, `reason`/`place`/
+/// `masked_at` verbatim. Skips cleanly when the row is missing or names
+/// another record, so a known value the row references keeps its owner.
+pub(crate) fn rebind_mask_origin_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: &EntityId,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    let Some(mut origin) = MASK_ORIGIN.get(store, wtxn, custody)? else {
+        return Ok(());
+    };
+    if origin.record != *old {
+        return Ok(());
+    }
+    origin.record = *new;
+    MASK_ORIGIN.put(store, wtxn, custody, &origin)
+}
+
 /// Records each file `files` marks: each key's span, in the file's bytes or
 /// in the member that holds it, with the custody record `minted` holds it in
 /// or the record custody held it in before, and the file's band.
