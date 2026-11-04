@@ -583,6 +583,7 @@ pub(super) fn project_in_txn(
                     .get(&row.cell)
                     .is_some_and(|(_, rows)| rows.iter().any(|row| row.receipt == receipt))
             {
+                let stale = EVIDENCE.get(&vault.store, txn, &(digest, receipt.clone()))?;
                 EVIDENCE.delete(&vault.store, txn, &(digest, receipt.clone()))?;
                 changed.insert(digest);
                 // The same stale row under the person's cell (FIX 8968).
@@ -604,15 +605,19 @@ pub(super) fn project_in_txn(
                             .project(row.cell.project);
                     let person_digest = person_cell.digest();
                     let person_key = (person_digest, receipt.clone());
-                    // A native-credit restatement for the same receipt survives
-                    // (REVIEW-4322 P1): only an ordinary row leaves with the
-                    // stale skill row.
-                    let anchored = matches!(
-                        EVIDENCE.get(&vault.store, txn, &person_key)?,
-                        Some(stored)
-                            if matches!(stored.source, EvidenceSource::Anchored(_))
-                    );
-                    if !anchored {
+                    // A person row holding another observation than this
+                    // skill's stale one survives (REVIEW-4322 P1): another
+                    // skill's or the native-credit path's row is not this
+                    // skill's to withdraw. Only a row with this skill's own
+                    // stale observation leaves with it.
+                    let keep = match (EVIDENCE.get(&vault.store, txn, &person_key)?, stale) {
+                        (Some(stored), Some(old)) => {
+                            stored.observation != old.observation
+                                || stored.weight != old.weight
+                        }
+                        _ => false,
+                    };
+                    if !keep {
                         EVIDENCE.delete(&vault.store, txn, &(person_digest, receipt))?;
                         changed.insert(person_digest);
                     }
@@ -695,14 +700,14 @@ pub(super) fn project_in_txn(
                         &mut changed,
                     )?;
                 } else {
-                    crate::learning::record_evidence_in_txn(
+                    record_combined_person_evidence_in_txn(
                         vault,
                         txn,
                         &person_cell,
                         &evidence,
                         at,
+                        &mut changed,
                     )?;
-                    changed.remove(&person_cell.digest());
                 }
             }
         }
@@ -784,8 +789,14 @@ pub(super) fn project_in_txn(
                 &mut changed,
             )?;
         } else {
-            crate::learning::record_evidence_in_txn(vault, txn, &person_cell, &evidence, at)?;
-            changed.remove(&person_cell.digest());
+            record_combined_person_evidence_in_txn(
+                vault,
+                txn,
+                &person_cell,
+                &evidence,
+                at,
+                &mut changed,
+            )?;
         }
     }
     for (cell, receipt) in anchored_withdrawals {
