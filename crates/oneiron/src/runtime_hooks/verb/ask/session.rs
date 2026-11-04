@@ -31,9 +31,10 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::super::storage::{PausedRoute, SessionHookKey, SessionHooks, SessionVerbAsk};
-use super::super::{InvocationId, VerbCall, VerbHookStop};
+use super::super::{InvocationId, VerbCall, VerbDomain, VerbHookStop};
 use super::{
-    AskToken, HOLD, PROCEED, Retry, USED, VERB_HOOK_INTENT, author_memory, cut, pending, proceeds,
+    AskToken, HOLD, PROCEED, Retry, UNKNOWN, USED, VERB_HOOK_INTENT, author_memory, cut, pending,
+    proceeds,
 };
 
 /// What a session-only call's hook ask tells whoever answers it, after the
@@ -110,8 +111,34 @@ pub(in crate::runtime_hooks::verb) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.used {
-        return skipped(USED);
+        // FIX 1443: a used-but-unfinished READ re-opens inline and resumes;
+        // the same state on a WRITE answers Skipped with an honest reason.
+        if row.domain == VerbDomain::Write {
+            return skipped(UNKNOWN);
+        }
+        if !keep.unuse_ask(key, invocation, row.ask) {
+            return skipped(USED);
+        }
+        return resume_open(vault, hooks, call, row, turn);
     }
+    resume_open(vault, hooks, call, row, turn)
+}
+
+/// The Open-path resume construction, shared by a fresh pause and a
+/// used-but-unfinished READ pause re-opened inline (FIX 1443).
+fn resume_open(
+    vault: &Vault,
+    hooks: &SessionHooks<'_>,
+    call: &VerbCall,
+    row: SessionVerbAsk,
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<Retry> {
+    let skipped = |reason: &str| -> Result<Retry> {
+        Ok(Retry::Stop(VerbHookStop::Skipped {
+            hook: row.hook.clone(),
+            reason: reason.to_owned(),
+        }))
+    };
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
@@ -139,7 +166,7 @@ pub(in crate::runtime_hooks::verb) fn retry(
         position: row.position,
         args: row.args,
         token: AskToken {
-            key: invocation,
+            key: call.invocation.0,
             ask: row.ask,
             hook: row.hook,
         },
@@ -211,6 +238,7 @@ pub(in crate::runtime_hooks::verb) fn open(
         author_class: binding.author_class(),
         ask: group,
         used: false,
+        domain: call.domain,
         route: route.clone(),
     };
     let Some((_receipt, idempotent, pause_existed)) = keep.open_ask(

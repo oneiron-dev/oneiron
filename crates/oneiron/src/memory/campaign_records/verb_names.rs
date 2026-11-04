@@ -3,6 +3,9 @@
 /// `self.*` verb: create a CAMPAIGN owned by the authenticated principal.
 pub const SELF_CAMPAIGN_CREATE: &str = "self.campaign.create";
 
+/// `self.*` verb: launch a Draft campaign or resume a Paused one.
+pub const SELF_CAMPAIGN_LAUNCH: &str = "self.campaign.launch";
+
 /// `self.*` verb: read one CAMPAIGN the principal owns.
 pub const SELF_CAMPAIGN_READ: &str = "self.campaign.read";
 
@@ -72,6 +75,7 @@ pub const CAMPAIGN_PROGRAM_VERBS: &[&str] = &[
 /// verb that is discoverable is callable.
 pub const CAMPAIGN_SELF_VERBS: &[&str] = &[
     SELF_CAMPAIGN_CREATE,
+    SELF_CAMPAIGN_LAUNCH,
     SELF_CAMPAIGN_READ,
     SELF_CAMPAIGN_UPDATE,
     SELF_CAMPAIGN_ARCHIVE,

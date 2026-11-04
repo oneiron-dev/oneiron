@@ -68,6 +68,7 @@ impl Vault {
             state: ThreadState::Open,
             locator: anchor.locator.clone(),
             drift: None,
+            body: None,
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
@@ -205,6 +206,7 @@ impl Vault {
                 state,
                 locator: thread.anchor.locator.clone(),
                 drift: thread.drift,
+                body: thread.anchor.body.clone(),
             };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
@@ -727,6 +729,7 @@ pub(super) fn thread_from_head(
             artifact_id,
             version: head.anchor_version,
             locator: head.locator,
+            body: head.body,
         },
         origin_version: head.origin_version,
         state: head.state,
