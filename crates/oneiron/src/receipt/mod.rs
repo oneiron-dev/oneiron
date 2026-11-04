@@ -232,4 +232,5 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
