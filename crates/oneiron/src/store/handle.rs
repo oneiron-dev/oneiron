@@ -690,7 +690,9 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
+        pub(crate) trait ManifestDbs:
+            policy_fold::PolicyFoldSource + oneiron_store::vector_index::VectorIndexDbs
+        {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs

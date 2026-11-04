@@ -78,3 +78,29 @@ pub fn increment_embedding_model_epoch(hnsw_meta: &OverlayDb, wtxn: &mut RwTxn<'
 /// Whether a read admits one node a walk scored as a match, judged in the
 /// walk's own transaction. A node it refuses still connects the walk.
 pub type Admission<'a> = dyn Fn(&RoTxn<'_>, &EntityId) -> Result<bool> + 'a;
+
+/// What the vector index reads and writes through a store handle: its three
+/// tables, whether reads see an overlay over base, and the engine checks a
+/// walk and a graph clear run. The engine implements it for each of its
+/// store handles; each check is the engine function of the same purpose,
+/// run on that handle.
+pub trait VectorIndexDbs {
+    /// The stored vector rows.
+    fn index_vectors(&self) -> &OverlayDb;
+    /// The HNSW neighbor lists.
+    fn index_neighbors(&self) -> &OverlayDb;
+    /// The HNSW metadata: entry point, count, markers and counters.
+    fn index_meta(&self) -> &OverlayDb;
+    /// Whether reads see an overlay over base rather than base alone.
+    fn index_reads_union(&self) -> bool;
+    /// Whether the entity row `id` is present in `txn`.
+    fn index_entity_present(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>;
+    /// Whether any dependent walk is pending in `txn`.
+    fn index_any_pending_walk(&self, txn: &RoTxn<'_>) -> Result<bool>;
+    /// Whether `id` is archived in `txn`.
+    fn index_is_archived(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>;
+    /// Whether `id` is stale behind a pending dependent walk in `txn`.
+    fn index_is_stale(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>;
+    /// Clears every source vector's embedding-device row in `wtxn`.
+    fn index_clear_embedding_devices(&self, wtxn: &mut RwTxn<'_>) -> Result<()>;
+}
