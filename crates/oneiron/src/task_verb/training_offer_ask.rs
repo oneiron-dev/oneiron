@@ -396,6 +396,7 @@ fn issue_one(
                 author: WitnessAuthor::System,
                 message_type: OFFER_QUESTION_TYPE.to_owned(),
                 content: offer_question_text(offer),
+                parts: None,
                 metadata: Some(offer_question_metadata(&key)),
                 is_visible: true,
                 order: 0,

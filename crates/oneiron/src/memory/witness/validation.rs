@@ -378,7 +378,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         let key = key.as_str().ok_or_else(fail)?;
         if !matches!(
             key,
-            "author" | "type" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
+            "author" | "type" | "parts" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
         ) || !keys.insert(key)
         {
             return Err(fail());
@@ -388,10 +388,13 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         }
     }
     let mut canonical = Vec::new();
+    // The stored parts axis rides the pointer body, never the document: it is
+    // carried verbatim so a parted MESSAGE still validates its order here.
     for name in [
         "author",
         "type",
         "content",
+        "parts",
         "metadata",
         "is_visible",
         "order",
@@ -402,7 +405,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         }
         if let Some((key, value)) = fields.iter().find(|(key, _)| key.as_str() == Some(name)) {
             canonical.push((key.clone(), value.clone()));
-        } else if name != "metadata" {
+        } else if name != "metadata" && name != "parts" {
             return Err(fail());
         }
     }

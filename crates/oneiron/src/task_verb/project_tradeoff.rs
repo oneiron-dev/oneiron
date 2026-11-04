@@ -243,6 +243,7 @@ impl Memory<'_> {
                     },
                     message_type: "skill_tradeoff_question".into(),
                     content,
+                    parts: None,
                     metadata: Some(serde_json::json!({
                         "skill_tradeoff_proposal": ask.question.proposal.to_hex(),
                         "skill_tradeoff_question_digest": digest,
