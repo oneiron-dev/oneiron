@@ -7944,13 +7944,17 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -8314,6 +8318,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-linear"
 version = "0.1.0"
 dependencies = [
@@ -8521,6 +8537,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-py"
 version = "1.0.0"
 dependencies = [
@@ -8571,6 +8601,16 @@ dependencies = [
  "unicode-script",
  "unicode-segmentation",
  "whichlang",
+]
+
+[[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -8768,6 +8808,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
