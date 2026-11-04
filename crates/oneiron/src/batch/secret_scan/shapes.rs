@@ -275,6 +275,17 @@ fn segment_break(ch: char) -> bool {
 }
 
 fn list_word_index(word: &str) -> Option<u16> {
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_word_lookup runs the old binary search.
+    if crate::stage_timing::try_on("no_word_lookup") {
+        if word.len() > MAX_LIST_WORD_LEN {
+            return None;
+        }
+        let lower = word.to_ascii_lowercase();
+        return WORDS
+            .binary_search(&lower.as_str())
+            .ok()
+            .and_then(|index| u16::try_from(index).ok());
+    }
     word_lookup::lookup().index(word_lookup::word_key(word.as_bytes())?)
 }
 
