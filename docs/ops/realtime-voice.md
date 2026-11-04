@@ -60,8 +60,8 @@ at 30 seconds.
 OpenAI starts a response on `response.created` and settles it on
 `response.done`, using `response.usage.total_tokens`.
 
-Gemini model content, generation completion or interruption marks an
-observed response. Only `serverContent.turnComplete` ends that turn;
+Gemini model content, a tool call, generation completion or interruption
+marks an observed response. Only `serverContent.turnComplete` ends that turn;
 `generationComplete` or `interrupted` alone does not. The last actual
 `usageMetadata.totalTokenCount` observed during that response, including
 its completion frame, settles it. Repeated count snapshots are not summed.
