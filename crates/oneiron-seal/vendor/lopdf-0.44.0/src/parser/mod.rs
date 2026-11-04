@@ -530,9 +530,9 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
         (|input| {
             _indirect_object(input, 0, None, reader, &mut HashSet::new())
                 .map(|(_, mut obj)| {
-                    let res = match std::mem::replace(&mut obj, Object::Null) {
+                    let res = match &mut obj {
                         Object::Stream(stream) => decode_xref_stream_admitted(
-                            stream,
+                            std::mem::replace(stream, Stream::new(Dictionary::new(), Vec::new())),
                             reader.max_decompressed_size,
                             reader.decode_admission.as_deref(),
                         ),
