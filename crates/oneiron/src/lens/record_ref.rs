@@ -55,16 +55,11 @@ const SNIPPET_FIELDS: [&str; 6] = [
 pub use crate::store::record_ref::RecordRef;
 use crate::store::record_ref::{bare_short_ref, bounded, fallback_label, first_text, kind_label};
 
-/// Builds a record reference from an admitted engine view.
-pub trait RecordRefFromView {
-    fn from_view(view: &EntityView) -> Self;
-}
-
-impl RecordRefFromView for RecordRef {
+impl RecordRef {
     /// The ref one admitted view names, labelled from that view's body: no
     /// other read.
     #[must_use]
-    fn from_view(view: &EntityView) -> Self {
+    pub fn from_view(view: &EntityView) -> Self {
         let short_id = view.short_ref.as_deref().map(bare_short_ref);
         let label = view
             .body

@@ -73,7 +73,7 @@ mod record_ref;
 pub use record_ref::{
     LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
     RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks,
-    RecordLinksRequest, RecordRef, RecordRefFromView, RecordRefPreview, ResolveRecordRefRequest,
+    RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest,
 };
 mod selection;
 pub use selection::{
