@@ -313,7 +313,7 @@ pub(crate) fn record_raw_response(
         store: None,
         captured_at: vault.now_recorded_at(),
         usage: response.usage.clone(),
-        finish_reason: response.finish_reason,
+        finish_reason: response.finish_reason.clone(),
         receipt_ref: None,
         actor: run.principal(),
         produced_pending: false,
@@ -364,6 +364,8 @@ async fn generate(
         .vault()
         .model_call_keeps_no_record_for(session.as_deref(), principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
+    // generate_by takes the request by value; the record keeps its own copy.
+    let record_request = request.clone();
     match ladder
         .generate_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
@@ -377,7 +379,7 @@ async fn generate(
                 server.vault(),
                 &ladder,
                 &run,
-                &request,
+                &record_request,
                 &response,
                 no_record,
             );
@@ -416,6 +418,8 @@ async fn stream(
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
+    // stream_by takes the request by value; the record keeps its own copy.
+    let record_request = request.clone();
     let mut source = match ladder.stream_by(&run, request, None, CallDeadline::Open) {
         Ok(source) => source,
         Err(e) => return failure(e),
@@ -452,6 +456,7 @@ async fn stream(
                     message,
                     usage,
                     finish_reason,
+                    ..
                 } = &event
                 {
                     let response = LlmResponse {
@@ -469,7 +474,7 @@ async fn stream(
                         server.vault(),
                         &ladder,
                         &run,
-                        &request,
+                        &record_request,
                         &response,
                         no_record,
                     );
@@ -513,11 +518,19 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
+            let record_request = request.clone();
             let answered = ladder
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
                 .await;
             if let Ok(response) = &answered {
-                record_raw_response(server.vault(), &ladder, &run, &request, response, false);
+                record_raw_response(
+                    server.vault(),
+                    &ladder,
+                    &run,
+                    &record_request,
+                    response,
+                    false,
+                );
             }
             answered
         })
