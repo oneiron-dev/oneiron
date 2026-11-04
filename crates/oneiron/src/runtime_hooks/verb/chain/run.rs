@@ -45,6 +45,10 @@ pub(super) struct RunRecord<'c> {
     pub(super) usage: HookBodyUsage,
     /// The exact input the body saw, as its grant showed it (FIX 10084).
     pub(super) input: String,
+    /// The caller's own args the pre chain's restrictive landing was judged
+    /// on, when it was (FIX 2393): the saved run keeps them so replay
+    /// rebuilds that landing instead of inferring it from the seen input.
+    pub(super) landing_original: Option<String>,
     /// The rows whose content that input showed.
     pub(super) dependencies: Vec<EntityId>,
     /// That input also showed content whose rows no host names.
@@ -171,6 +175,10 @@ impl<'c> Chain<'c> {
             rows_read,
             usage: verdict.usage,
             input: input.json,
+            landing_original: self
+                .landing
+                .as_ref()
+                .and_then(|landing| serde_json::to_string(landing.snapshot_parts().1).ok()),
             dependencies: input.dependencies,
             unattributed: input.unattributed,
             grant: grant.digest(),

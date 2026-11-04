@@ -5,7 +5,7 @@
 //! the room's view and its records stage in the room's own store
 //! ([`session`], [`storage`]; WILL L11-01 S01-2c).
 
-mod projection;
+pub(super) mod projection;
 mod run;
 mod session;
 mod storage;

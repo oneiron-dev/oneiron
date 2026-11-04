@@ -8,7 +8,7 @@ use crate::runtime_hooks::read::{self, HistoryAdmission, grant_view::shows_row};
 use crate::runtime_hooks::runner::{Verdict, ask_verdict, input_json, judge, verdict_context};
 use crate::runtime_hooks::source::FactEntry;
 use crate::runtime_hooks::store::{self, HookRunRecord, HookRunState};
-use crate::runtime_hooks::verb::{HookVerbRunRecord, admit_verb_outcome};
+use crate::runtime_hooks::verb::{HookVerbRunRecord, admit_verb_outcome, merge_withheld};
 use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Error, Result};
 
@@ -243,20 +243,42 @@ impl Replay<'_> {
                 // (Landing::select). Repair the rewrite the same way before
                 // the static checks below; static rows only, as the saved
                 // input shows them.
+                // The landing the live chain repaired against was judged on
+                // the caller's own args, not on what this hook saw (an
+                // earlier hook may have moved the call off its restrictive
+                // row since): rebuild it from the saved original when the
+                // run kept one, and repair against the seen args as live
+                // did. Records saved before the field existed infer as
+                // before.
                 let repaired;
+                let merged;
                 let next = match &before {
                     Some(before) => {
+                        let base = saved
+                            .landing_original
+                            .as_deref()
+                            .and_then(|original| serde_json::from_str(original).ok())
+                            .unwrap_or_else(|| before.clone());
                         match crate::task_verb::revoke_lands::Landing::from_snapshot(
                             &saved.verb,
-                            before.clone(),
+                            base,
                             Vec::new(),
                         ) {
                             Some(mut landing) => {
                                 repaired = landing.select(before, next.clone(), &|_| Ok(())).0;
-                                &repaired
                             }
-                            None => next,
+                            None => {
+                                repaired = next.clone();
+                            }
                         }
+                        // A narrowed hook's Rewrite keeps withheld markers
+                        // where its grant hid values: the live chain merged
+                        // them against the seen args before admission, so
+                        // replay merges against the saved seen args before
+                        // the static checks below. Without markers this
+                        // changes nothing.
+                        merged = merge_withheld(before, repaired);
+                        &merged
                     }
                     None => next,
                 };

@@ -262,6 +262,11 @@ impl Chain<'_> {
             phase: self.phase,
             verb: self.call.verb.clone(),
             input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
+            landing_original: run
+                .landing_original
+                .as_ref()
+                .filter(|original| original.len() <= MAX_PINNED_INPUT)
+                .cloned(),
             history_erased: false,
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
             dependencies: run.dependencies.clone(),

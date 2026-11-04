@@ -40,6 +40,13 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// Source erasure retired this run's retained payload (FIX 10080).
     pub(in crate::runtime_hooks) history_erased: bool,
     pub(in crate::runtime_hooks) input_hash: String,
+    /// The caller's own args the chain's restrictive landing was judged on
+    /// (FIX 2393): replay rebuilds that landing from these, not from the
+    /// hook's seen input, so a hook that moved the call off its restrictive
+    /// row does not lose the repair. `None` for non-restrictive calls,
+    /// oversize args, and records saved before the field existed.
+    #[serde(default)]
+    pub(in crate::runtime_hooks) landing_original: Option<String>,
     /// The rows whose content that input showed: a replay runs it again only
     /// while the hook's current grant still shows each of them.
     #[serde(default, with = "crate::serialize::entity_ref::sequence")]
