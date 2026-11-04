@@ -209,7 +209,7 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         if !matches!(grant.scope, FederationGrantScope::Vault { .. })
             || grant.role == crate::federation::FederationGrantRole::Delegate
-            || crate::federation::own_device::is_own_device_grant(&grant)
+            || crate::federation::is_own_device_grant(&grant)
         {
             return Ok(None);
         }
