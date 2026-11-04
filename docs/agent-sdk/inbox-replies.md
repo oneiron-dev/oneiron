@@ -23,8 +23,11 @@ Keep `event_ref`, `request_ref` and `text` unchanged when retrying a request.
 A new request reference allows an intentional follow-up or correction on
 that same event, even if the words are identical. Changed text also names a
 new logical reply. A row gaining another message does not retarget a retry.
-The chosen words are persisted with the queue job. The worker does not ask
-a model to rewrite them. Existing provider-specific limits still apply.
+The chosen words are kept and read back before the job is queued. A retry
+always tries enqueue again after validating the same body, including after
+a previous enqueue failed. The queue carries the body pointer and hash, not
+raw text through its metadata wall. The worker does not ask a model to
+rewrite the words. Existing provider-specific limits still apply.
 
 A message has no reply anchor until this actor's standing subscription has
 frozen its connector event. Non-message cards and standing memberships with
