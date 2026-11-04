@@ -38,7 +38,8 @@ use serde::{Deserialize, Serialize};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::carrier_parts::{
-    Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts, write_parts,
+    Parts, admit_part, is_part_key, join_parts, part_key, split_parts, unreferenced_parts,
+    write_parts,
 };
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
@@ -122,9 +123,9 @@ pub(crate) fn admit_repo_manifest_map(key: Option<&WindowKey>, map: &LoroMap) ->
 /// Writes into `doc` the standing manifest of each CODE row of `codes`
 /// the reverse pass just mirrored there, where this vault's copy replaces
 /// the window's: rule 7 order, read from the joined held copy. A held copy
-/// that does not join or decode is written over: no merge door could ever
-/// take it, so leaving it would poison the head for every later pass. The
-/// head and each part commit on their own.
+/// still waiting for its parts, or deferred for memory, stays pending for
+/// a later pass; only a complete carrier proved invalid is written over.
+/// The head and each part commit on their own.
 pub(crate) fn mirror_repo_manifests(
     vault: &Vault,
     doc: &LoroDoc,
@@ -142,14 +143,17 @@ pub(crate) fn mirror_repo_manifests(
         let key = manifest.portable.to_hex();
         let held = map_get_bytes(&map, &key).and_then(|bytes| decode(&bytes).ok());
         if let Some(held) = &held {
-            let held_manifest =
-                join_parts(&map, &held.body).and_then(|joined| RepoManifest::decode(&joined));
+            let joined = join_parts(&map, &held.body);
+            let held_manifest = joined.as_deref().and_then(RepoManifest::decode);
             if let Some(held_manifest) = held_manifest
                 && (held.code != manifest.code
                     || held_manifest.portable != manifest.portable
                     || held_manifest.code != manifest.code
                     || !manifest.replaces(&held_manifest)?)
             {
+                continue;
+            }
+            if joined.is_none() && !held_carrier_proved_invalid(&map, &held.body) {
                 continue;
             }
         }
@@ -164,8 +168,19 @@ pub(crate) fn mirror_repo_manifests(
         write_parts(&map, &pieces, || commit(doc))?;
         if let Some(held) = held {
             let listed: BTreeSet<String> = carried.body.keys().collect();
+            // Manifests share digest-keyed chunks across heads: a part this
+            // head dropped stays while another head still lists it.
+            let mut shared: BTreeSet<String> = BTreeSet::new();
+            for (_, bytes) in head_rows(&map, |other| other != key) {
+                if let Ok(other) = decode(&bytes) {
+                    shared.extend(other.body.keys());
+                }
+            }
             for part in held.body.keys() {
-                if !listed.contains(&part) && map_contains_binary(&map, &part) {
+                if !listed.contains(&part)
+                    && !shared.contains(&part)
+                    && map_contains_binary(&map, &part)
+                {
                     map_delete(&map, &part)?;
                 }
             }
@@ -173,6 +188,25 @@ pub(crate) fn mirror_repo_manifests(
         }
     }
     Ok(())
+}
+
+/// Whether the held head's carrier is complete but proved invalid:
+/// every part present, yet a part's bytes do not match its digest or the
+/// sizes do not add up. A head still waiting for a part is not invalid;
+/// nor is one whose present, digest-clean parts fail only the join's
+/// memory reserve. Both stay pending for a later pass.
+fn held_carrier_proved_invalid(map: &LoroMap, body: &Parts) -> bool {
+    let mut total = 0_usize;
+    for digest in &body.parts {
+        let Some(part) = map_get_bytes(map, &part_key(digest)) else {
+            return false;
+        };
+        if blake3::hash(&part).as_bytes() != digest {
+            return true;
+        }
+        total += part.len();
+    }
+    usize::try_from(body.len).is_ok_and(|len| total != len)
 }
 
 fn commit(doc: &LoroDoc) {

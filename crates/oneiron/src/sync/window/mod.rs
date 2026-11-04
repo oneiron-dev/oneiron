@@ -133,7 +133,7 @@ pub struct LoadedWindow {
     /// Observer B for the MESSAGE document map (FIX 853), on a base window
     /// only.
     _observer_message_docs: Option<Subscription>,
-    /// Observer B for the repo manifest map (FIX 6870), on a base window only.
+    /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
     _observer_repo_manifests: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
@@ -214,9 +214,12 @@ impl LoadedWindow {
         let observer_message_docs = key.world().is_none().then(|| {
             bridge::register_message_docs_observer(&doc, vault, materializer, key.as_str())
         });
-        let observer_repo_manifests = key.world().is_none().then(|| {
-            bridge::register_repo_manifests_observer(&doc, vault, materializer, key.as_str())
-        });
+        let observer_repo_manifests = Some(bridge::register_repo_manifests_observer(
+            &doc,
+            vault,
+            materializer,
+            key.as_str(),
+        ));
 
         Self {
             doc,

@@ -38,7 +38,8 @@ use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
+use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The manifest version this build writes and reads.
@@ -238,6 +239,39 @@ fn code_anchor_live(vault: &Vault, txn: &heed::RoTxn<'_>, code: &EntityId) -> Re
             ..
         }
     ))
+}
+
+/// Removes every repo manifest anchored at erased CODE entity `id`: the
+/// standing manifest, every alias of it, and their minted markers, with the
+/// CODE index row (FIX 6870). Registered in `deletion/derived_rows.rs`, so it
+/// runs in the erase's own transaction at both delete doors, before the
+/// record's body and edges go; without it the origin name, refs and LFS
+/// pointers stay stored and readable after the anchor's erase. A row that
+/// does not decode stays as it is (FIX 5736).
+pub(crate) fn erase_repo_manifests_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    BY_CODE.delete(store, txn, id)?;
+    let mut gone = Vec::new();
+    for row in MANIFESTS.iter_raw_from(store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Ok(manifest) = MANIFESTS.decode_value(&bytes) else {
+            continue;
+        };
+        if manifest.code == *id {
+            gone.push(key);
+        }
+    }
+    for key in gone {
+        let Some(portable) = <[u8; 32] as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        MANIFESTS.delete(store, txn, &portable)?;
+        MINTED.delete(store, txn, &portable)?;
+    }
+    Ok(())
 }
 
 impl Vault {

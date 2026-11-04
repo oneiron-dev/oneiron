@@ -52,6 +52,35 @@ impl Vault {
         if !dir.exists() {
             return Ok(());
         }
+        // The carried name alone does not prove this store is the CODE
+        // anchor's: two vaults can serve different repos under one name,
+        // and the authority and publications below are the local store's.
+        // The anchor's stored local path names its own store
+        // (`bind_served_repo_anchor`), so anything else leaves the
+        // imported manifest as it stands.
+        {
+            let txn = self.store.env.read_txn()?;
+            let crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_CODE_ARTIFACT,
+                body,
+            } = crate::vault::live_entity_row_in_txn(&self.store, &txn, &code)?
+            else {
+                return Ok(());
+            };
+            let Some(crate::codebase::RepoRef::LocalFolder { path, .. }) =
+                crate::code_artifact::decode_code_artifact_body(&body)
+                    .ok()
+                    .and_then(|artifact| crate::codebase::RepoRef::parse(&artifact.repo_ref).ok())
+            else {
+                return Ok(());
+            };
+            let Ok(stored) = std::path::Path::new(&path).canonicalize() else {
+                return Ok(());
+            };
+            if stored != dir {
+                return Ok(());
+            }
+        }
         // The writer standing is read here and the write lands below: an
         // authority change in between lets one stale-epoch write through,
         // which the next mirror pass corrects.
