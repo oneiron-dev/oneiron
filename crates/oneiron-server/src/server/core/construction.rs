@@ -233,7 +233,7 @@ impl SyncServer {
         }
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
-        let memory = crate::machine::MachineMemory::new();
+        let memory = crate::machine::MachineMemory::process();
         // FIX 8569, 8574, 8596, 8598: office reads and edits reserve from
         // the same line, each reservation waiting the host's queue wait.
         // The first server of a process registers it.
