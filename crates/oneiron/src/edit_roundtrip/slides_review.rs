@@ -200,8 +200,10 @@ pub struct SlideReviewAnchor {
     pub slide_part: String,
     pub sld_id: u32,
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub slide_fingerprint: [u8; 32],
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_fingerprint: [u8; 32],
     pub shape: Option<ShapeReviewAnchor>,
 }
@@ -213,6 +215,7 @@ pub struct ShapeReviewAnchor {
     pub node_index: u64,
     pub shape_id: Option<u32>,
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub fingerprint: [u8; 32],
 }
 
@@ -246,6 +249,7 @@ pub struct SlideJudgment {
     pub ceiling: DecisionRung,
     pub renderer: String,
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub frontier: [u8; 32],
     /// The unit's `state.media`: its image's ref and whether its pixels rode
     /// with the call.
@@ -253,10 +257,12 @@ pub struct SlideJudgment {
     pub media: Vec<DecisionMedia>,
     /// The hash of the image its media entry names (its ref's `hash`).
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// media entries.
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     /// The deck's live body when it was reviewed: an edit to it never
