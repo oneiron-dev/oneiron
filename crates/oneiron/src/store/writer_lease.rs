@@ -78,7 +78,7 @@ impl Store {
         path: &Path,
         config: &VaultConfig,
         lease: &VaultWriterLease,
-        delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+        hooks: crate::store::StoreHooks,
     ) -> Result<Self> {
         let mut store = Self::open_with_lease(
             path,
@@ -86,7 +86,7 @@ impl Store {
             STORAGE_ABI_VERSION,
             DefaultPolicySeedMode::Required,
             Some(lease),
-            delete_guards,
+            hooks,
         )?;
         store.owner.opened_with_writer_lease = true;
         // A crashed lease holder's journaled decision times rise into the
