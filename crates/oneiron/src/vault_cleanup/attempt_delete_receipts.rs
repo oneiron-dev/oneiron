@@ -75,7 +75,7 @@ pub(crate) fn erase_attempt_delete_actor_in_txn(
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    if crate::deletion::actor_fields::names_no_actor(vault, txn, actor)? {
+    if crate::typed_body::names_no_actor(vault, txn, actor)? {
         return Ok(());
     }
     let resident_run = format!("resident:{}", actor.to_hex());
