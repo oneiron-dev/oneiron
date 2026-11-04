@@ -276,6 +276,15 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
+    fn carried_source(&self, source: [u8; 32], bytes: &[u8]) -> [u8; 32] {
+        let own = *blake3::hash(bytes).as_bytes();
+        if own != source && self.is_marked(&own) {
+            own
+        } else {
+            source
+        }
+    }
+
     /// Every marked blob's snapshot ASSET id with its whole BLAKE3 (FIX
     /// 7608 slice 4: the sync copy is made once per marked blob per pass).
     pub(crate) fn marked_sources(&self) -> Vec<(EntityId, [u8; 32])> {
@@ -455,7 +464,10 @@ impl RepoIndexMarks {
             return Ok(body);
         }
         Ok(match self.source_of(entity) {
-            Some(source) => self.source_input_in_txn(vault, txn, &source, body)?,
+            Some(source) => {
+                let source = self.carried_source(source, &body);
+                self.source_input_in_txn(vault, txn, &source, body)?
+            }
             None => {
                 if let Some(text) = crate::embed::repo_derived_index_text_in(
                     vault,
@@ -475,7 +487,8 @@ impl RepoIndexMarks {
     /// The text fields record `entity` indexes, each as its copy. A marked
     /// blob's snapshot ASSET (or the document it owns) reads its first field,
     /// its body text, as the blob's copy: masked when it is the blob's exact
-    /// bytes, else the placeholder. Its other fields keep their text unless
+    /// bytes or a landed edit's marked bytes, else the placeholder. Its
+    /// other fields keep their text unless
     /// they are a marked blob's bytes, and an opaque blob's record reads the
     /// placeholder in every field, never its old title or tags. Any other
     /// record's field is a copy only when it is a marked blob's whole bytes,
@@ -506,6 +519,9 @@ impl RepoIndexMarks {
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))
                 .collect();
         };
+        let source = fields.first().map_or(source, |(_, value)| {
+            self.carried_source(source, value.as_bytes())
+        });
         let opaque = self.facts.for_hash(&source).opaque();
         let mut out = Vec::with_capacity(fields.len());
         for (index, (name, value)) in fields.into_iter().enumerate() {
