@@ -117,6 +117,10 @@ pub(crate) fn erase_launch_actor_in_txn(
         launch.scope = launch.scope.replacen(&hex, ERASED_CALL_IDENTITY, 1);
         FANOUT_LAUNCHES.put(&vault.store, wtxn, &key, &launch)?;
     }
+    // FIX 4699: recipient pass over the launches the launcher pass kept.
+    super::fanout_launch::erase_launch_recipient_in_txn(vault, wtxn, actor)?;
+    super::consult_fanout_store::erase_fanout_run_recipient_in_txn(vault, wtxn, actor)?;
+    super::wave_port::scrub_wave_index_copies_in_txn(vault, wtxn, actor)?;
     Ok(())
 }
 

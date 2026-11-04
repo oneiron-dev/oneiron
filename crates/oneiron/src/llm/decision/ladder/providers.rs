@@ -113,6 +113,12 @@ pub trait DecisionProvider: Send + Sync {
     fn cost_per_thousand(&self) -> Option<f64> {
         None
     }
+    /// The provider's own wire budget for the call's serialized state, in bytes,
+    /// when the provider itself reports one; else `None` (unknown). A provider
+    /// that knows only tokens answers `None`: bytes convert to nothing here.
+    fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
     /// question over the same state in turn, so a server's prompt cache carries the shared
@@ -208,6 +214,10 @@ pub trait DecisionModel: Send + Sync {
     fn cost_per_thousand(&self) -> Option<f64> {
         None
     }
+    /// See [`DecisionProvider::state_budget_bytes`].
+    fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -257,6 +267,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn cost_per_thousand(&self) -> Option<f64> {
         self.model.cost_per_thousand()
+    }
+    fn state_budget_bytes(&self) -> Option<usize> {
+        self.model.state_budget_bytes()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

@@ -148,7 +148,8 @@ pub enum FeedbackTriageStep {
 pub enum FeedbackTriageParkOutcome {
     /// The job parked on its graph under its current lease.
     Parked(FeedbackTriageWork),
-    /// A `Wait` found a complete current level, so the same run can continue.
+    /// A `Wait` — or an empty-split `Repartition` (FIX 12546) — found a
+    /// complete current level, so the same run can continue.
     Ready(FeedbackTriageWork),
 }
 

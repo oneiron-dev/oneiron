@@ -43,6 +43,11 @@ impl Vault {
         let Some(record) = VERSIONS.get(&self.store, &rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
+        // A filed compaction step's response whose words are withdrawn reads as
+        // absent, as `read_blob_artifact_version_in_txn` does (FIX 6183).
+        if !self.blob_artifact_bytes_readable_in_txn(&rtxn, artifact_id)? {
+            return Ok(None);
+        }
         let bytes = crate::ports::BlobStore::port_blob_get(self, &rtxn, &record.content_hash)?
             .ok_or(Error::EntityNotFound)?;
         Ok(Some((bytes, blob_version_rows(&record)?)))
