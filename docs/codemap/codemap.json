@@ -3104,25 +3104,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AbandonAttempt",
-      "AbandonOutcome",
-      "ClaimOutcome",
-      "CompleteOutcome",
-      "EnqueueOutcome",
-      "FailOutcome",
-      "InterveneAttempt",
-      "InterveneOutcome",
-      "RetryOutcome"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 6,
-      "enum": 6,
       "fn": 10,
-      "re-export": 15,
-      "struct": 3
+      "re-export": 16
      }
     },
     {
@@ -66398,15 +66386,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "RunWriteToken"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/run_writes.rs",
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 11,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69405,14 +69391,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptId"
-     ],
+     "notable": [],
      "path": "src/store/attempt_id.rs",
-     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "purpose": "Stable queued-attempt identifiers: defined in `oneiron-store`, with the side-table raw codec the engine…",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69461,6 +69444,27 @@
       "enum": 1,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AbandonAttempt",
+      "AbandonOutcome",
+      "ClaimOutcome",
+      "CompleteOutcome",
+      "EnqueueOutcome",
+      "FailOutcome",
+      "InterveneAttempt",
+      "InterveneOutcome",
+      "RetryOutcome"
+     ],
+     "path": "src/store/attempt_outcomes.rs",
+     "purpose": "What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim…",
+     "surface": {
+      "enum": 6,
+      "struct": 3
      }
     },
     {
@@ -72209,7 +72213,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 105,
+      "mod": 106,
       "re-export": 31
      }
     },
@@ -90534,7 +90538,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 411,
+     "files": 412,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90774,7 +90778,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6307,
+   "source_files": 6308,
    "test_files": 898
   },
   "oneiron-android": {
@@ -106173,7 +106177,18 @@
      "surface": {
       "const": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/borrowed.rs",
+     "purpose": "Borrowed decoding for the two fixed-size memory control types",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -106378,10 +106393,10 @@
      "purpose": "Framing (protocol 2.0): a message is one or more frames back to back, each `len: u32 LE | more: u8 | len…"
     },
     "memory": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…"
     },
     "region": {
@@ -106429,7 +106444,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 2
   },
   "oneiron-policy-vocabulary": {
@@ -126762,6 +126777,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptId"
+     ],
+     "path": "src/attempt_id.rs",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BatchOp"
      ],
      "path": "src/batch_op.rs",
@@ -127147,7 +127175,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 25
+      "mod": 27
      }
     },
     {
@@ -127433,6 +127461,19 @@
      "purpose": "Host-owned retained-memory accounting for in-memory storage",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunWriteToken"
+     ],
+     "path": "src/run_write_token.rs",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -128576,6 +128617,13 @@
     }
    ],
    "modules": {
+    "attempt_id": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation"
+    },
     "batch_op": {
      "files": 1,
      "impl_vault": false,
@@ -128702,6 +128750,13 @@
      "layout": "file",
      "purpose": "Host-owned retained-memory accounting for in-memory storage"
     },
+    "run_write_token": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write"
+    },
     "secret_manifest": {
      "files": 1,
      "impl_vault": false,
@@ -128754,7 +128809,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 123,
+   "source_files": 125,
    "test_files": 1
   },
   "oneiron-uniffi": {
