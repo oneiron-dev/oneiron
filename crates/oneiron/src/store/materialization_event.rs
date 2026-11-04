@@ -1,7 +1,7 @@
 //! Commit-bound materialization revisions and read invalidation data.
 
 use crate::EntityId;
-use crate::vault::RevisionRef;
+use crate::store::revision_ref::RevisionRef;
 
 /// A committed original or the exact source revision of a mirrored carrier.
 /// A mirror without a source is an independent, foreign local contribution.
