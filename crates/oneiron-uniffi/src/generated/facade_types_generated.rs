@@ -43924,7 +43924,7 @@ pub struct WorkflowUpdateRequest {
     pub steps: Vec<String>,
 }
 
-/// `oneiron::config::context_spec::MemoryProjection`.
+/// `oneiron_store::config::context_spec::MemoryProjection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
 pub enum MemoryProjection {
@@ -43941,7 +43941,7 @@ pub enum MemoryProjection {
     },
 }
 
-/// `oneiron::config::context_spec::ChatProjection`.
+/// `oneiron_store::config::context_spec::ChatProjection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
 pub enum ChatProjection {
@@ -43956,7 +43956,7 @@ pub enum ChatProjection {
     },
 }
 
-/// `oneiron::config::context_spec::ContextSpec`.
+/// `oneiron_store::config::context_spec::ContextSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ContextSpec {
     #[serde(rename = "layers", default, skip_serializing_if = "Option::is_none")]

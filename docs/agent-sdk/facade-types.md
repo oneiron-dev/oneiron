@@ -5569,11 +5569,11 @@ export type WorkflowView = { workflow_ref: EntityId; name: string; steps: Entity
 export type WorkflowRequest = { workflow_ref: EntityId }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowUpdateRequest` */
 export type WorkflowUpdateRequest = { workflow_ref: EntityId; expected_revision: number; name: string; steps: EntityId[] }
-/** `oneiron::config::context_spec::MemoryProjection` */
+/** `oneiron_store::config::context_spec::MemoryProjection` */
 export type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number }
-/** `oneiron::config::context_spec::ChatProjection` */
+/** `oneiron_store::config::context_spec::ChatProjection` */
 export type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number }
-/** `oneiron::config::context_spec::ContextSpec` */
+/** `oneiron_store::config::context_spec::ContextSpec` */
 export type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowDispatchRequest` */
 export type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref?: EntityId | null }
