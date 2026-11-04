@@ -32,7 +32,7 @@ pub(crate) struct ApplyOpsGateMode {
     /// HNSW insert plans of this batch's vector ops, searched under a read
     /// snapshot before the write transaction opened; consumed per id in op
     /// order.
-    pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     /// The vault owner's in-person authorship of this batch's claim
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
