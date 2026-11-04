@@ -526,6 +526,8 @@ vaultCleanupReview(input: unknown): unknown
 vaultCleanupDecide(input: unknown): unknown
 vaultArchiveDeletePreview(input: unknown): unknown
 vaultArchiveDeleteConfirm(input: unknown): unknown
+vaultArchiveAttemptDeletePreview(input: unknown): unknown
+vaultArchiveAttemptDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
 vaultUsageRepairReceipts(input: unknown): unknown

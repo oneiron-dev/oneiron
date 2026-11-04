@@ -640,6 +640,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.cleanup.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.archive.delete.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.archive.delete.confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.archive.attempt.delete.preview" => a.spec.clone().ok_or_else(invalid),
+        "vault.archive.attempt.delete.confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.events.undecodable" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.events.remove_undecodable" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.repair.receipts" => a.spec.clone().ok_or_else(invalid),
@@ -3032,6 +3034,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.archive.delete.confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.archive.attempt.delete.preview" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.archive.attempt.delete.confirm" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.usage.events.undecodable" => {
@@ -13924,6 +13932,24 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_archive_delete_confirm(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.archive.attempt.delete.preview" => {
+            let input: oneiron::vault_cleanup::AttemptArchiveDeletePreviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_archive_attempt_delete_preview(&memory, input)
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.archive.attempt.delete.confirm" => {
+            let input: oneiron::vault_cleanup::AttemptArchiveDeleteConfirmRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_archive_attempt_delete_confirm(&memory, input)
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

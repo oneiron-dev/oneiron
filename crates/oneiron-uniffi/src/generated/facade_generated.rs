@@ -2461,6 +2461,16 @@ export_facade! {
     let output = client.vault_archive_delete_confirm(&input)?;
     crate::codec::lift_record("vault.archive.delete.confirm", &output)
 };
+"vault.archive.attempt.delete.preview" => fn vault_archive_attempt_delete_preview(&self, input: AttemptArchiveDeletePreviewRequest) -> AttemptArchiveDeletePreviewView = |client| {
+    let input: oneiron::vault_cleanup::AttemptArchiveDeletePreviewRequest = crate::codec::lower_record("vault.archive.attempt.delete.preview", input)?;
+    let output = client.vault_archive_attempt_delete_preview(&input)?;
+    crate::codec::lift_record("vault.archive.attempt.delete.preview", &output)
+};
+"vault.archive.attempt.delete.confirm" => fn vault_archive_attempt_delete_confirm(&self, input: AttemptArchiveDeleteConfirmRequest) -> AttemptArchiveDeleteReceiptView = |client| {
+    let input: oneiron::vault_cleanup::AttemptArchiveDeleteConfirmRequest = crate::codec::lower_record("vault.archive.attempt.delete.confirm", input)?;
+    let output = client.vault_archive_attempt_delete_confirm(&input)?;
+    crate::codec::lift_record("vault.archive.attempt.delete.confirm", &output)
+};
 "vault.usage.events.undecodable" => fn vault_usage_events_undecodable(&self) -> UndecodableUsageList = |client| {
     let input: oneiron::memory::usage_repair::UsageRepairListRequest = crate::codec::lower_empty("vault.usage.events.undecodable")?;
     let output = client.vault_usage_events_undecodable(&input)?;

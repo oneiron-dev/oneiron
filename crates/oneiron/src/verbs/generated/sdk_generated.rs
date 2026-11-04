@@ -2643,6 +2643,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.archive.attempt.delete.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::AttemptArchiveDeletePreviewRequest,
+                >(),
+            ),
+            (
+                "vault.archive.attempt.delete.confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest,
+                >(),
+            ),
+            (
                 "vault.usage.events.undecodable",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::usage_repair::UsageRepairListRequest,
@@ -7405,6 +7417,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.cleanup.decide",
     "vault.archive.delete.preview",
     "vault.archive.delete.confirm",
+    "vault.archive.attempt.delete.preview",
+    "vault.archive.attempt.delete.confirm",
     "vault.usage.events.undecodable",
     "vault.usage.events.remove_undecodable",
     "vault.usage.repair.receipts",
@@ -8987,6 +9001,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.archive.delete.confirm" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ArchiveDeleteBatchResult>()
         }
+        "vault.archive.attempt.delete.preview" => crate::code_run::vault_read::request_schema::<
+            crate::vault_cleanup::AttemptArchiveDeletePreviewView,
+        >(),
+        "vault.archive.attempt.delete.confirm" => crate::code_run::vault_read::request_schema::<
+            crate::vault_cleanup::AttemptArchiveDeleteReceiptView,
+        >(),
         "vault.usage.events.undecodable" => crate::code_run::vault_read::request_schema::<
             crate::memory::usage_repair::UndecodableUsageList,
         >(),
@@ -14017,6 +14037,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.archive.delete.confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.archive.attempt.delete.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.archive.attempt.delete.confirm" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20733,6 +20767,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.archive.delete.confirm" => {
             let _input: crate::memory::ArchiveDeleteConfirmRequest = decode(value.clone())?;
         }
+        "vault.archive.attempt.delete.preview" => {
+            let _input: crate::vault_cleanup::AttemptArchiveDeletePreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.archive.attempt.delete.confirm" => {
+            let _input: crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest =
+                decode(value.clone())?;
+        }
         "vault.usage.events.undecodable" => {
             let _input: crate::memory::usage_repair::UsageRepairListRequest =
                 decode(value.clone())?;
@@ -24369,6 +24411,14 @@ pub fn invoke(
         "vault.archive.delete.confirm" => {
             encode(vault_archive_delete_confirm(memory, decode(value)?)?)
         }
+        "vault.archive.attempt.delete.preview" => encode(vault_archive_attempt_delete_preview(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.archive.attempt.delete.confirm" => encode(vault_archive_attempt_delete_confirm(
+            memory,
+            decode(value)?,
+        )?),
         "vault.usage.events.undecodable" => {
             encode(vault_usage_events_undecodable(memory, decode(value)?)?)
         }
@@ -30051,6 +30101,18 @@ pub fn vault_archive_delete_confirm(
     input: crate::memory::ArchiveDeleteConfirmRequest,
 ) -> MemoryResult<crate::memory::ArchiveDeleteBatchResult> {
     crate::memory::confirm_archive_delete_wire(memory, &input)
+}
+pub fn vault_archive_attempt_delete_preview(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::AttemptArchiveDeletePreviewRequest,
+) -> MemoryResult<crate::vault_cleanup::AttemptArchiveDeletePreviewView> {
+    crate::vault_cleanup::preview_attempt_archive_delete_wire(memory, &input)
+}
+pub fn vault_archive_attempt_delete_confirm(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest,
+) -> MemoryResult<crate::vault_cleanup::AttemptArchiveDeleteReceiptView> {
+    crate::vault_cleanup::confirm_attempt_archive_delete_wire(memory, &input)
 }
 pub fn vault_usage_events_undecodable(
     memory: &Memory<'_>,

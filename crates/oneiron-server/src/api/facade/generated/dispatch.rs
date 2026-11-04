@@ -15584,6 +15584,50 @@ async fn vault_archive_delete_confirm(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_archive_attempt_delete_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.attempt.delete.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_archive_attempt_delete_confirm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.attempt.delete.confirm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_usage_events_undecodable(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39941,6 +39985,12 @@ async fn call_verb_row(
         }
         "vault.archive.delete.confirm" => {
             Box::pin(vault_archive_delete_confirm(server, call, input)).await
+        }
+        "vault.archive.attempt.delete.preview" => {
+            Box::pin(vault_archive_attempt_delete_preview(server, call, input)).await
+        }
+        "vault.archive.attempt.delete.confirm" => {
+            Box::pin(vault_archive_attempt_delete_confirm(server, call, input)).await
         }
         "vault.usage.events.undecodable" => {
             Box::pin(vault_usage_events_undecodable(server, call, input)).await

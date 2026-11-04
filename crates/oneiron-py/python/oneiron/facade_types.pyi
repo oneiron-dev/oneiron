@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4457 declarations.
-Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1226 facade rows, 4463 declarations.
+Inputs: 1157 of 1226 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1062 of 1226 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -641,10 +641,15 @@ class RunTreeRepairParentCycle(TypedDict):
     job_id: str
     parent_id: str
 RunTreeRepair = RunTreeRepairMissingParent | RunTreeRepairParentCycle
+class RunTreeDeletion(TypedDict):
+    attempt_id: str
+    deleted_by: NotRequired[str | None]
+    deleted_at: int
 class RunTreeWire(TypedDict):
     nodes: list[RunTreeWireNode]
     roots: list[int]
     repairs: list[RunTreeRepair]
+    deletions: list[RunTreeDeletion]
 RunTree = RunTreeWire
 class AgentHealthRunTree(TypedDict):
     run_id: str
@@ -9755,6 +9760,26 @@ class ArchiveDeleteConfirmEntry(TypedDict):
     result: ArchiveDeleteConfirmOutcome
 class ArchiveDeleteBatchResult(TypedDict):
     entries: list[ArchiveDeleteConfirmEntry]
+class AttemptArchiveDeletePreviewRequest(TypedDict):
+    attempt: str
+class AttemptArchiveDeleteExpectation(TypedDict):
+    record_hash: str
+    archive_marker: str
+class AttemptArchiveDeletePreviewView(TypedDict):
+    attempt: str
+    record_bytes: int
+    expected: AttemptArchiveDeleteExpectation
+class AttemptArchiveDeleteConfirmRequest(TypedDict):
+    attempt: str
+    expected: AttemptArchiveDeleteExpectation
+class AttemptArchiveDeleteReceiptView(TypedDict):
+    attempt: str
+    deleted_by: str
+    deleted_at: int
+    run_id: NotRequired[str | None]
+    receipt_ref: str
+    role: str
+    grant_ref: NotRequired[str | None]
 class UsageRepairListRequest(TypedDict):
     ...
 UndecodableUsageReason = Literal["stored_event_decode_failed"]
