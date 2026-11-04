@@ -311,6 +311,9 @@ side_tables! {
     /// and the delivered wait reply answering it. Refs and digests only, never an effect's body.
     /// Key: id16(code run) + be64(kind: 0 head, 1 page) + be64(page).
     CODE_RUN_PROGRAM_RESUME: VaultMeta b"code_run:program_resume:v1:" Named;
+    /// The owner's value-free dismissal of one code-run secret lift proposal. The
+    /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
+    CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
     /// content handle; absent for a body it found nothing in. Key: string.
     CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
