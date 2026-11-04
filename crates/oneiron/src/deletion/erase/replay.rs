@@ -147,8 +147,11 @@ impl Vault {
                     wtxn,
                     id,
                 )?;
-            let had_sources =
-                crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
+            let had_sources = crate::store::skill_source_custody::source_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
