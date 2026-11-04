@@ -259,7 +259,7 @@ fn spans_values(
 fn substitute(
     content: &[u8],
     spans: &[(usize, usize, String)],
-    values: &[(String, Vec<u8>)],
+    values: &[(String, Vec<u8>, EntityId, String)],
 ) -> Vec<u8> {
     let mut resolved = Vec::with_capacity(content.len());
     let mut at = 0;
@@ -352,9 +352,12 @@ fn push_bounded(out: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
 /// The inverse substitution, for the review-carry proof: each bound value
 /// back to its span. An empty value proves nothing and is left, which the
 /// caller's byte equality then refuses.
-fn reredact(resolved: &[u8], values: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
+fn reredact(
+    resolved: &[u8],
+    values: &[(String, Vec<u8>, EntityId, String)],
+) -> Result<Vec<u8>> {
     let mut out = resolved.to_vec();
-    for (text, value) in values {
+    for (text, value, _, _) in values {
         if value.is_empty() {
             continue;
         }
