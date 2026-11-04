@@ -82,7 +82,8 @@ fn answer(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     let agent = job.agent;
-    let origin = if job.chosen_text().is_some() {
+    let chosen_body = job.chosen_body();
+    let origin = if chosen_body.is_some() {
         let Ok(origin) = SurfaceConnectorPayload::from_connector_event(&job.event) else {
             // Erase leaves a queued job without its event payload.
             return Ok(());
@@ -110,21 +111,30 @@ fn answer(
     };
     let event_id = job.event.event_id.as_str();
     let reply_ref = job.reply_ref();
-    let kept = match vault.connector_reply_body(event_id, agent, reply_ref)? {
-        Some(kept) => {
-            // A rerun: the words are kept. The message's witness is tried
-            // again, never in the send's way.
-            match inbound_text(vault, &origin) {
-                Ok(Some(text)) => witness(result, "inbound", || {
-                    vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
-                }),
-                Ok(None) => {}
-                Err(error) => owe_repair(result, "inbound", &error),
-            }
-            kept
+    let kept = if let Some(kept) = chosen_body {
+        result.body_ref = Some(kept.content_ref.clone());
+        match inbound_text(vault, &origin) {
+            Ok(Some(text)) => witness(result, "inbound", || {
+                vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
+            }),
+            Ok(None) => {}
+            Err(error) => owe_repair(result, "inbound", &error),
         }
-        None => match job.chosen_text() {
-            Some(answer) => {
+        let text = vault.connector_reply_body_text(&kept.content_ref)?.ok_or(
+            Error::InvariantViolation("chosen reply body did not read back"),
+        )?;
+        let digest = blake3::hash(text.as_bytes()).to_hex();
+        if job.chosen_text_hash() != Some(digest.as_str()) {
+            return Err(Error::InvariantViolation(
+                "chosen reply body does not match its request",
+            ));
+        }
+        kept
+    } else {
+        match vault.connector_reply_body(event_id, agent, reply_ref)? {
+            Some(kept) => {
+                // A rerun: the words are kept. The message's witness is tried
+                // again, never in the send's way.
                 match inbound_text(vault, &origin) {
                     Ok(Some(text)) => witness(result, "inbound", || {
                         vault.witness_connector_inbound(
@@ -137,15 +147,7 @@ fn answer(
                     Ok(None) => {}
                     Err(error) => owe_repair(result, "inbound", &error),
                 }
-                // The queue already holds these exact words. After a crash,
-                // reclaim keeps this request rather than generating another.
-                vault.save_connector_reply_body(
-                    event_id,
-                    agent,
-                    reply_ref,
-                    answer,
-                    super::super::unix_now(),
-                )?
+                kept
             }
             None => {
                 let definition = match AgentDispatcher::new(vault)
@@ -211,18 +213,8 @@ fn answer(
                     super::super::unix_now(),
                 )?
             }
-        },
+        }
     };
-    if let Some(chosen) = job.chosen_text()
-        && vault
-            .connector_reply_body_text(&kept.content_ref)?
-            .as_deref()
-            != Some(chosen)
-    {
-        return Err(Error::InvariantViolation(
-            "chosen reply body does not match its request",
-        ));
-    }
     result.body_ref = Some(kept.content_ref.clone());
     let reply = reply_of(agent, &origin.channel, reply_ref, kept);
     let mut sink = OwnedServedChannelSink::new(
