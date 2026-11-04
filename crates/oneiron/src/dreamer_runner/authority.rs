@@ -440,7 +440,8 @@ fn stamp_resident_attempt(
     }
     let definition = vault.read_agent_definition_in_txn(txn, &resident)?;
     if !definition.enabled
-        || (!for_human && definition.dreaming_mode() == crate::store::agent_record::DreamingMode::Off)
+        || (!for_human
+            && definition.dreaming_mode() == crate::store::agent_record::DreamingMode::Off)
     {
         return Err(Error::InvalidConfig(
             "a resident whose dreaming is off does not dream".into(),

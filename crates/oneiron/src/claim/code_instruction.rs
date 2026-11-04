@@ -15,4 +15,3 @@ pub struct CodeInstructionHandle {
     /// The returned units on whose ancestor path the file sits.
     pub units: Vec<EntityId>,
 }
-

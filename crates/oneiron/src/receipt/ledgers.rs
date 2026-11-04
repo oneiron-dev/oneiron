@@ -20,9 +20,9 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::EngineScan;
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
 /// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the

@@ -25,7 +25,8 @@ const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";
 const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";
 
 pub use crate::store::recovery_kit::{
-    KitSecretKind, PieceHome, CodeKeeping, KitMachine, KitCoverage, PassphraseCost, KitPassphrase, KitIssue, KitManifest, IssuedKit, RestoredKitSecret, KitError,
+    CodeKeeping, IssuedKit, KitCoverage, KitError, KitIssue, KitMachine, KitManifest,
+    KitPassphrase, KitSecretKind, PassphraseCost, PieceHome, RestoredKitSecret,
 };
 
 /// Issues a kit for a vault's data key on any valid custody, a hosted one included: the

@@ -8,14 +8,16 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::temporal::TimeRange;
 
-pub use crate::store::code_artifact_body::{
-    CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_SUMMARY_HASH_LEN,
-    CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CODE_ARTIFACT_REPO_REF_MAX_BYTES,
-    CodeArtifactClass, CodeArtifactBody, encode_code_artifact_body, decode_code_artifact_body,
-};
 pub(crate) use crate::store::code_artifact_body::validate_code_artifact_body_bytes;
+pub use crate::store::code_artifact_body::{
+    CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
+    CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, CodeArtifactClass,
+    decode_code_artifact_body, encode_code_artifact_body,
+};
 #[cfg(test)]
-use crate::store::code_artifact_body::{KEY_SUMMARY_PROMPT, KEY_SUMMARY_HASH, KEY_REPO_REF, KEY_CLASS};
+use crate::store::code_artifact_body::{
+    KEY_CLASS, KEY_REPO_REF, KEY_SUMMARY_HASH, KEY_SUMMARY_PROMPT,
+};
 
 impl Vault {
     pub fn put_code_artifact(
