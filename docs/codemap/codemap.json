@@ -42613,8 +42613,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 211,
-      "re-export": 93
+      "mod": 210,
+      "re-export": 94
      }
     },
     {
@@ -50905,28 +50905,6 @@
      "surface": {
       "enum": 1,
       "type": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "DreamerTrapKind",
-      "DreamerTrapState",
-      "ModelStepCheckpoint",
-      "SettledStepRequest",
-      "SettledStepView",
-      "StepProgression",
-      "TrapRef"
-     ],
-     "path": "src/model_step_record.rs",
-     "purpose": "Durable model-step claim vocabulary and progression values",
-     "surface": {
-      "const": 8,
-      "crate-vis": 7,
-      "enum": 3,
-      "fn": 3,
-      "struct": 4
      }
     },
     {
@@ -90547,13 +90525,6 @@
      "layout": "file",
      "purpose": "Durable model-step failure and reply-check contracts"
     },
-    "model_step_record": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Durable model-step claim vocabulary and progression values"
-    },
     "note": {
      "files": 69,
      "impl_vault": true,
@@ -91250,7 +91221,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6280,
+   "source_files": 6279,
    "test_files": 900
   },
   "oneiron-android": {
@@ -125529,7 +125500,29 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 3
+      "mod": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallerSettledStep",
+      "DreamerTrapKind",
+      "DreamerTrapState",
+      "ModelStepCheckpoint",
+      "SettledStepRequest",
+      "SettledStepView",
+      "StepProgression",
+      "TrapRef"
+     ],
+     "path": "src/model_step_record.rs",
+     "purpose": "Durable model-step claim vocabulary and progression values",
+     "surface": {
+      "const": 9,
+      "enum": 4,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -125565,6 +125558,13 @@
      "layout": "file",
      "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
     },
+    "model_step_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Durable model-step claim vocabulary and progression values"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -125575,7 +125575,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 0
   },
   "oneiron-uniffi": {
