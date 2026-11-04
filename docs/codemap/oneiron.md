@@ -75,7 +75,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/optional_memory.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 const · 2 crate-vis | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 10 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
 | `src/agent_def/portable_binding.rs` | src | m | 3 crate-vis | — | Frozen source tree identity at genuine local birth |
-| `src/agent_def/portable_knowledge.rs` | src | s | 4 crate-vis | — | The selected-knowledge facet's bytes (`knowledge/selected.json`) |
+| `src/agent_def/portable_knowledge.rs` | src | s | 3 crate-vis | — | The selected-knowledge facet's bytes (`knowledge/selected.json`) |
 | `src/agent_def/portable_source.rs` | src | s | 12 crate-vis | — | Immutable captured agent source |
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
 | `src/agent_def/refusal.rs` | src | s | 1 struct · 4 enum · 12 fn · 1 const · 4 crate-vis | RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
@@ -584,6 +584,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions/timestamp_guards.rs` | test | s | — | — | Closing timestamps cannot precede the authored claim's occurred start |
 | `src/batch/deindex.rs` | src | m | 10 crate-vis | — | — |
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
+| `src/batch/export/agent_knowledge_format.rs` | src | s | 2 crate-vis | — | The form of an agent pack's selected-knowledge facet (`knowledge/selected.json`): which of its two encodings… |
 | `src/batch/export/agent_person_import.rs` | src | s | 1 crate-vis | — | Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after… |
 | `src/batch/export/archive_index.rs` | src | m | 56 crate-vis | — | FIX 3678 (rule 5): the whole-vault import's disk-backed row index |
 | `src/batch/export/archive_project.rs` | src | m | 1 crate-vis | — | Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224… |
@@ -613,7 +614,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 7 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
 | `src/batch/export/home_room_project.rs` | src | s | 1 crate-vis | — | The project a home-room body names, read by an importer to order a room after its project |
-| `src/batch/export/mod.rs` | src | s | 13 re-export · 11 crate-vis | — | — |
+| `src/batch/export/mod.rs` | src | s | 13 re-export · 12 crate-vis | — | — |
 | `src/batch/export/provenance_import.rs` | src | m | 10 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
 | `src/batch/export/receipt_source_tests.rs` | test | m | — | — | Readable task trace sources are data, never local receipt authority |
 | `src/batch/export/receipt_sources.rs` | src | s | 3 enum · 2 fn · 6 crate-vis | ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin | Actual cited pack receipts in an archive |
@@ -4540,7 +4541,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/trace/replay_inputs.rs` | src | s | 1 crate-vis | — | Opt-in replay input capture from the resolved query, never from a fork hash |
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
-| `src/pipeline/types.rs` | src | m | 3 struct · 3 enum · 5 fn · 5 re-export · 36 crate-vis | DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, Signal, WorldScope | — |
+| `src/pipeline/types.rs` | src | m | 3 struct · 2 enum · 5 fn · 6 re-export · 36 crate-vis | DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, WorldScope | — |
 | `src/pipeline/vector_refinement.rs` | src | s | 1 struct · 1 crate-vis | VectorRefinement | The dimensional space the existing HNSW funnel actually scores in |
 | `src/pipeline/world_authority.rs` | src | m | 1 fn · 9 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
 | `src/pipeline/world_authority_tests.rs` | test | m | — | — | ONE-1420 principal binding, durable default authorship, and authority reuse |
@@ -5795,7 +5796,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 72 mod · 29 re-export · 71 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 73 mod · 29 re-export · 71 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/notification_updates.rs` | src | s | 1 fn · 2 crate-vis | — | The vault's one committed-notification signal (FIX 3084) |
 | `src/store/open_gates/create_commit.rs` | src | s | 1 crate-vis | — | Create-door commit phase: build handles, re-key, seed and commit |
 | `src/store/open_gates/create_dbs.rs` | src | s | 2 crate-vis | — | Create-door database phase: open the manifest databases and gate versions |
@@ -5856,6 +5857,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/retrieval_deadline.rs` | src | s | 2 struct · 10 fn · 10 crate-vis | RetrievalDeadline, SlowRetrievalStage | Deadline state shared by store-backed decision and retrieval stages |
 | `src/store/retrieval_policy/mod.rs` | src | s | 4 struct · 2 enum · 1 re-export · 1 crate-vis | RetrievalPolicyAction, RetrievalPolicyDecision, RetrievalPolicyEnvelope, RetrievalPolicyIdentity, RetrievalPolicyTier, RetrievalPolicyTrace | Stored retrieval policy actions, trajectories and learned evidence |
 | `src/store/retrieval_policy/posterior.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | RetrievalPolicyPosterior | A continuous-context Beta kernel posterior |
+| `src/store/retrieval_signal.rs` | src | s | 1 enum | Signal | The retrieval signals a run scores entities by: which channel ranked a result |
 | `src/store/retrieval_telemetry/blend_tuning.rs` | src | m | 8 fn · 4 crate-vis | — | Reward-weighted retrieval-blend tuning: weight-table methods, codecs, validators, and gradient math |
 | `src/store/retrieval_telemetry/end_outcome.rs` | src | s | 1 crate-vis | — | Terminal attribution-gated retrieval outcome writer |
 | `src/store/retrieval_telemetry/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning |
