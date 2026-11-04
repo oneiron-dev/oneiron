@@ -631,16 +631,22 @@ impl NativeArms {
                         );
                     }
                 };
-                let decision = match ladder.ladder().run_with_run(
-                    &question,
+                let decision = match crate::decision_verdict::with_model_call_context(
                     decisions.principal,
-                    &[],
-                    &state,
-                    MODEL_DIAL,
-                    &decisions.bands,
-                    Reversibility::ReversibleRead,
-                    clock,
-                    run,
+                    None,
+                    || {
+                        ladder.ladder().run_with_run(
+                            &question,
+                            decisions.principal,
+                            &[],
+                            &state,
+                            MODEL_DIAL,
+                            &decisions.bands,
+                            Reversibility::ReversibleRead,
+                            clock,
+                            run,
+                        )
+                    },
                 ) {
                     Ok(decision) => decision,
                     Err(error) => {
