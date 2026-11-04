@@ -182,7 +182,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             )?;
         }
         if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
-            crate::federation::record_scope::backfill_task_base(
+            store.scope_stamps.backfill_task_base(
                 store,
                 &mut txn,
                 id,

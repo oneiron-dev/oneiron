@@ -47,7 +47,7 @@ fn hnsw_deindex_scrubs_backlinks() -> Result<()> {
     let store = Store::open(
         temp_dir.path(),
         &test_config(),
-        &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
     )?;
     let mut wtxn = store.env.write_txn()?;
     let a = EntityId::now();
@@ -230,7 +230,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let store = Store::open(
             temp_dir.path(),
             &test_config(),
-            &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
         )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
@@ -260,7 +260,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let store = Store::open(
             temp_dir.path(),
             &test_config(),
-            &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
         )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
@@ -288,7 +288,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let store = Store::open(
             temp_dir.path(),
             &test_config(),
-            &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
         )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
@@ -319,7 +319,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let store = Store::open(
             temp_dir.path(),
             &test_config(),
-            &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
         )?;
         let mut wtxn = store.env.write_txn()?;
         store
@@ -335,7 +335,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let store = Store::open(
             temp_dir.path(),
             &test_config(),
-            &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
         )?;
         let mut wtxn = store.env.write_txn()?;
         store
