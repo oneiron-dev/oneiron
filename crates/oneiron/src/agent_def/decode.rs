@@ -18,6 +18,8 @@ use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
 use rmpv::Value;
 use std::collections::HashSet;
 
+pub(super) use crate::store::agent_manifest::validate_text_field;
+
 /// Strict [`MemoryProfile`] sub-map decode, mirroring the parent map's
 /// discipline exactly: non-map value, non-string keys, unknown keys and
 /// duplicate keys are all refused.
@@ -648,19 +650,4 @@ pub(super) fn text_value(value: &Value, max_bytes: usize, context: &'static str)
         .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)))?;
     validate_text_field(text, max_bytes, context)?;
     Ok(text.to_owned())
-}
-
-/// A text field is non-blank. Its length refuses nothing (rule 5, FIX
-/// 10542): `_old_max_bytes`, the length it once refused past, is now the
-/// default a definition's put observes it against
-/// (`super::byte_observation`).
-pub(super) fn validate_text_field(
-    text: &str,
-    _old_max_bytes: usize,
-    context: &'static str,
-) -> Result<()> {
-    if text.trim().is_empty() {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)));
-    }
-    Ok(())
 }

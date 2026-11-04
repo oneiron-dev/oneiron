@@ -148,16 +148,9 @@ pub(super) const SCOPE_BASE: &str = "base";
 
 pub(super) const SCOPE_WORLD: &str = "world";
 
-/// Reserved logical-id prefix for seeded system rows. Enforced at the
-/// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
-/// place that holds both the body and the row id it is being stored at.
-pub(super) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
-
-/// Bytes of a `logical_id` past which a put asks; any length is kept.
-pub(super) const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;
-
-/// Bytes of the runtime-editable `display_name` past which a put asks.
-pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
+pub(super) use crate::store::agent_manifest::{
+    AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, SYSTEM_AGENT_DEFINITIONS_V1_JSON,
+};
 
 pub use crate::store::agent_record::McpRef;
 
@@ -386,13 +379,6 @@ impl AgentDefinition {
         self
     }
 }
-
-/// The canonical seeded system-agent roster (OF-334 / ONE-1890): data, not a
-/// compiled enum. Every baseline row is an ordinary byte-17 `AGENT_DEF` entity
-/// with a pinned row id, a pinned actor id equal to it, and a stable `sys.*`
-/// logical id. ONE-1709 appends `sys.team_lead` to this same file.
-pub(super) const SYSTEM_AGENT_DEFINITIONS_V1_JSON: &str =
-    include_str!("data/system_agent_definitions.v1.json");
 
 /// Seam shim (SEAM-GATE-PRESET-NEUTRALIZATION): gate.rs resolves a fork parent
 /// through ONE call. Post-ONE-1890 `forked_from` already IS the parent row id,
