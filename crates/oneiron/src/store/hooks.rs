@@ -1,5 +1,7 @@
 //! The engine hooks every store opens with.
 
+#[cfg(feature = "sync")]
+use crate::store::StoreSyncHooks;
 use crate::store::{StoreDeleteGuards, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps};
 
 /// The engine hooks a store is assembled with. Every open door takes one as a
@@ -18,4 +20,8 @@ pub struct StoreHooks {
     /// The identity-topology, federation and room hooks the store layer's
     /// write, erase and read paths run.
     pub record_hooks: &'static dyn StoreRecordHooks,
+    /// The sync hooks the store layer's write, erase and maintenance paths
+    /// run in a build with sync.
+    #[cfg(feature = "sync")]
+    pub sync_hooks: &'static dyn StoreSyncHooks,
 }
