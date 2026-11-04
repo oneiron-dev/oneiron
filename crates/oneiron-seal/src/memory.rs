@@ -27,6 +27,8 @@
 
 use std::fmt;
 use std::ops::Deref;
+
+use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use lopdf::{DecodeAdmission, DecodeAdmissionError};
