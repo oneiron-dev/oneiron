@@ -1,6 +1,6 @@
 //! Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out.
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
 /// Schema version for every row this module persists.
 pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
@@ -18,9 +18,9 @@ pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
 /// approval that carried an edit, where the extra question is whether anything
 /// was WRONG at all. They share this enum rather than forking a parallel
 /// taxonomy because the wrong-on-its-own-terms case routes through the very
-/// same skill/actor ladder — [`crate::edit_distance::attribution`] pre-filters
+/// same skill/actor ladder — `edit_distance::attribution` pre-filters
 /// the amendment causes and delegates the rest to
-/// [`AttributionDecisions`](crate::skill_attribution::AttributionDecisions). Every label
+/// `AttributionDecisions`. Every label
 /// is valid in both lanes except [`Self::PreferenceShift`]
 /// ([`Self::valid_in`]).
 ///
@@ -28,7 +28,6 @@ pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
 /// each changed hunk, and [`AttributionSplit`] carries each label's share of
 /// the edit mass. One label at 100% is the simple case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum AttributionVerdict {
     /// The skill's content was wrong. Routes against the SKILL entity; the
     /// reliability CLAIM is ONE-1738's projection over these judgments.
@@ -46,16 +45,16 @@ pub enum AttributionVerdict {
     Environment,
     /// AMENDMENT lane only: the proposal was not wrong; the decider wanted it
     /// otherwise. Routes to a PREFERENCE proposal
-    /// ([`crate::edit_distance::attribution::pending_preference_proposals`]),
+    /// (`edit_distance::attribution::pending_preference_proposals`),
     /// never to an edit-cost claim — taste is a fact about the decider, not a
     /// defect in anyone's work. A failed attempt is measured against its own
     /// stated goal, so taste never explains one.
     PreferenceShift,
     /// Either lane: no label fits, or the judge's confidence fell below the
-    /// [`attribution_unclear_floor`](crate::learning_setting::ATTRIBUTION_UNCLEAR_FLOOR)
+    /// `attribution_unclear_floor`
     /// setting (ARCH-0056 §5 #unclear). It HOLDS: it charges nobody and makes
     /// no reliability update. Its note lands in the unclear ledger
-    /// ([`crate::skill_attribution::unclear_attributions`]), where the Dreamer
+    /// (`skill_attribution::unclear_attributions`), where the Dreamer
     /// clusters the notes into a new label once a pattern forms.
     Unclear,
 }
@@ -378,8 +377,8 @@ pub enum DeviationCause {
 /// One attributable outcome, as recorded by the caller that observed it.
 ///
 /// The `receipt_ref` is the id of the terminal PACK RECEIPT the attempt's
-/// close stamped ([`crate::receipt::attempt_pack_receipt_id`]) — a string on
-/// the landed spine, not an entity id. [`record_attribution_evidence`](crate::skill_attribution::record_attribution_evidence)
+/// close stamped (`receipt::attempt_pack_receipt_id`) — a string on
+/// the landed spine, not an entity id. `record_attribution_evidence`
 /// resolves it, and the `skill` must appear in that receipt's manifest, so a
 /// verdict is always traceable back to the record that produced it.
 ///
