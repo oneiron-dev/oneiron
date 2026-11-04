@@ -3162,6 +3162,12 @@ export class Oneiron {
         reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
       },
     },
+    dreamer: {
+      follower: {
+        /** The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed. */
+        keyframe: (input: Facade.EmptyRequest): Facade.DreamerFollowerKeyframeResult => this.#call(() => this.#client.vaultDreamerFollowerKeyframe(input) as Facade.DreamerFollowerKeyframeResult),
+      },
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }

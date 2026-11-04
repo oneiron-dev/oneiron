@@ -131,6 +131,7 @@
 //! - `self.run.attach`
 //! - `self.folds.describe`
 //! - `self.history`
+//! - `vault.dreamer.follower.keyframe`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`

@@ -37351,6 +37351,41 @@ async fn vault_custody_members_reenrol(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_dreamer_follower_keyframe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.dreamer.follower.keyframe")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.dreamer.follower.keyframe", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.dreamer.follower.keyframe", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_dreamer_follower_keyframe(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn connector_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41407,6 +41442,9 @@ async fn call_verb_row(
         }
         "vault.custody.members.reenrol" => {
             Box::pin(vault_custody_members_reenrol(server, call, input)).await
+        }
+        "vault.dreamer.follower.keyframe" => {
+            Box::pin(vault_dreamer_follower_keyframe(server, call, input)).await
         }
         "connector.answer" => Box::pin(connector_answer(server, call, input)).await,
         "self.browser.open" => Box::pin(self_browser_open(server, call, input)).await,

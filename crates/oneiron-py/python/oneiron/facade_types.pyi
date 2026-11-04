@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1225 facade rows, 4462 declarations.
-Inputs: 1156 of 1225 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1061 of 1225 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1226 facade rows, 4464 declarations.
+Inputs: 1157 of 1226 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1062 of 1226 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -7878,6 +7878,10 @@ class FileReadinessNameOnlyBody(TypedDict):
 class FileReadinessNameOnly(TypedDict):
     name_only: FileReadinessNameOnlyBody
 FileReadiness = Literal["text"] | FileReadinessNameOnly
+class FileOriginal(TypedDict):
+    artifact: EntityId
+    version: int
+    content_hash: str
 class FilesFileView(TypedDict):
     handle: FileHandle
     state: FilesFileState
@@ -7885,6 +7889,7 @@ class FilesFileView(TypedDict):
     note: NotRequired[EntityId | None]
     fork: NotRequired[EntityId | None]
     revision: NotRequired[str | None]
+    original: NotRequired[FileOriginal | None]
     bytes: NotRequired[int | None]
     modified_at: NotRequired[int | None]
     first_seen_at: NotRequired[int | None]
@@ -22283,6 +22288,8 @@ class CustodyMemberReenrolRequest(TypedDict):
     target_id: NotRequired[str | None]
     folder: NotRequired[str | None]
     scope: NotRequired[TargetScope | None]
+class DreamerFollowerKeyframeResult(TypedDict):
+    sessions_marked: int
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
