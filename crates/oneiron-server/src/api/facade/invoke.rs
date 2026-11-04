@@ -38,45 +38,47 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
-    crate::server::blocking(move || -> Result<(serde_json::Value, bool), FacadeApiError> {
-        const VERB: &str = "self.inbox.concern.move";
-        let auth = call.auth();
-        let memory = facade_invocation(
-            credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(producers),
-            call,
-        )?;
-        let memory = facade_task_decisions(server, VERB, memory)?;
-        let memory = facade_rewrites_admitted(server, auth, &value, memory);
-        // Settlement's run of the call enters its boundary here as the drain's.
-        let _drain = call.drain().map(VerbAskDrainPermit::enter);
-        // Room turns serve only report/rooms verbs, so concern.move is
-        // refused here exactly as in [`facade_invoke_in_turn`]; the wake
-        // reports false on a path that never commits.
-        let (output, wake) = match call.room_turn()? {
-            Some(room) => (memory.for_room_turn(room)?.invoke(VERB, value)?, false),
-            None => {
-                // Same authorship as [`facade_invoke_in_turn`]; this verb
-                // never takes the guest-revoking host-issuer path.
-                let memory = match direct_authorship(auth, server, VERB)? {
-                    Some(owner) => memory
-                        .with_owner_authorship(&owner)
-                        .with_owner_surface(call.surface()),
-                    None => memory,
-                };
-                let mut wake = false;
-                let output =
-                    oneiron::task_verb::verb_hook_boundary::row_tapped(&memory, VERB, value,
+    crate::server::blocking(
+        move || -> Result<(serde_json::Value, bool), FacadeApiError> {
+            const VERB: &str = "self.inbox.concern.move";
+            let auth = call.auth();
+            let memory = facade_invocation(
+                credential_memory(&server.vault, Some(auth), actor, class)
+                    .at(auth.locality())
+                    .listing_producers(producers),
+                call,
+            )?;
+            let memory = facade_task_decisions(server, VERB, memory)?;
+            let memory = facade_rewrites_admitted(server, auth, &value, memory);
+            // Settlement's run of the call enters its boundary here as the drain's.
+            let _drain = call.drain().map(VerbAskDrainPermit::enter);
+            // Room turns serve only report/rooms verbs, so concern.move is
+            // refused here exactly as in [`facade_invoke_in_turn`]; the wake
+            // reports false on a path that never commits.
+            let (output, wake) = match call.room_turn()? {
+                Some(room) => (memory.for_room_turn(room)?.invoke(VERB, value)?, false),
+                None => {
+                    // Same authorship as [`facade_invoke_in_turn`]; this verb
+                    // never takes the guest-revoking host-issuer path.
+                    let memory = match direct_authorship(auth, server, VERB)? {
+                        Some(owner) => memory
+                            .with_owner_authorship(&owner)
+                            .with_owner_surface(call.surface()),
+                        None => memory,
+                    };
+                    let mut wake = false;
+                    let output = oneiron::task_verb::verb_hook_boundary::row_tapped(
+                        &memory,
+                        VERB,
+                        value,
                         |value| {
                             let input = serde_json::from_value(value).map_err(|error| {
                                 oneiron::memory::MemoryError::bad_request(format!(
                                     "invalid SDK request: {error}"
                                 ))
                             })?;
-                            let outcome = oneiron::task_verb::sdk::self_inbox_concern_move(
-                                &memory, input,
-                            )?;
+                            let outcome =
+                                oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)?;
                             serde_json::to_value(outcome).map_err(|_| {
                                 oneiron::memory::MemoryError::bad_request(
                                     "SDK result encoding failed",
@@ -93,11 +95,12 @@ pub(super) fn facade_invoke_concern_move(
                             }
                         },
                     )?;
-                (output, wake)
-            }
-        };
-        Ok((output, wake))
-    })
+                    (output, wake)
+                }
+            };
+            Ok((output, wake))
+        },
+    )
 }
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
