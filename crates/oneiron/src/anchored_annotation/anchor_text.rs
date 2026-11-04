@@ -209,8 +209,15 @@ pub(super) fn find_text(
             .unwrap_or_default(),
         UnitFormat::Html => html_blocks(bytes)?
             .map(|blocks| {
+                let mut counts = BTreeMap::new();
+                for block in &blocks {
+                    *counts.entry(block.part_id.as_str()).or_insert(0) += 1;
+                }
                 blocks
                     .iter()
+                    .filter(|block| {
+                        counts.get(block.part_id.as_str()).copied().unwrap_or(0) == 1
+                    })
                     .flat_map(|block| {
                         char_occurrences(&block.text, text).into_iter().filter_map(
                             |(start, end)| Locator::html(block.part_id.clone(), start, end).ok(),
@@ -325,46 +332,13 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
         found.unwrap_or(root)
     };
     let mut pending = vec![(body, vec![0])];
-    let mut blocks = Vec::new();
-    let mut used_ids = BTreeSet::new();
+    let mut candidates = Vec::new();
     while let Some((node, path)) = pending.pop() {
         if html_ignored(&node) {
             continue;
         }
         if html_block_candidate(&node) {
-            let explicit = node
-                .attr("data-part-id")
-                .map(|value| value.trim().to_owned())
-                .filter(|value| {
-                    !value.is_empty() && value.len() <= ANNOTATION_LOCATOR_TEXT_MAX_BYTES
-                });
-            let (part_id, explicit) = match explicit {
-                Some(id) => {
-                    used_ids.insert(id.clone());
-                    (id, true)
-                }
-                _ => {
-                    let ordinals = path
-                        .iter()
-                        .map(usize::to_string)
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    let tag = node.node_name().unwrap_or_else(|| "block".into());
-                    let base = format!("{tag}/{ordinals}");
-                    let mut structural = base.clone();
-                    let mut collision = 0;
-                    while !used_ids.insert(structural.clone()) {
-                        collision += 1;
-                        structural = format!("{base}#{collision}");
-                    }
-                    (structural, false)
-                }
-            };
-            blocks.push(HtmlBlock {
-                part_id,
-                text: html_text(node),
-                explicit,
-            });
+            candidates.push((node, path));
             continue;
         }
         let children = node
@@ -378,6 +352,52 @@ pub(super) fn html_blocks(bytes: &[u8]) -> crate::Result<Option<Vec<HtmlBlock>>>
             })
             .collect::<Vec<_>>();
         pending.extend(children.into_iter().rev());
+    }
+    // Every admitted producer id is reserved before any structural id is
+    // allocated, so a structural block never takes a producer's id and the
+    // producer's own id stays pinnable.
+    let admitted = |node: &NodeRef<'_>| {
+        node.attr("data-part-id")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| {
+                !value.is_empty() && value.len() <= ANNOTATION_LOCATOR_TEXT_MAX_BYTES
+            })
+    };
+    let mut used_ids = BTreeSet::new();
+    for (node, _) in &candidates {
+        if let Some(id) = admitted(node) {
+            used_ids.insert(id);
+        }
+    }
+    let mut blocks = Vec::new();
+    for (node, path) in candidates {
+        let (part_id, explicit) = match admitted(&node) {
+            Some(id) => {
+                used_ids.insert(id.clone());
+                (id, true)
+            }
+            _ => {
+                let ordinals = path
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let tag = node.node_name().unwrap_or_else(|| "block".into());
+                let base = format!("{tag}/{ordinals}");
+                let mut structural = base.clone();
+                let mut collision = 0;
+                while !used_ids.insert(structural.clone()) {
+                    collision += 1;
+                    structural = format!("{base}#{collision}");
+                }
+                (structural, false)
+            }
+        };
+        blocks.push(HtmlBlock {
+            part_id,
+            text: html_text(node),
+            explicit,
+        });
     }
     if blocks.is_empty() {
         return Ok(None);
@@ -732,7 +752,7 @@ pub(super) fn unit_texts(
             };
             let mut counts = BTreeMap::new();
             for block in &blocks {
-                *counts.entry(block.part_id.as_str()).or_insert(0) += 1;
+                *counts.entry(block.part_id.clone()).or_insert(0) += 1;
             }
             Ok(blocks
                 .into_iter()

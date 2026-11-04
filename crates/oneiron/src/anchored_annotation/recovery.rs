@@ -318,19 +318,12 @@ fn pair_paragraph(
     index: usize,
     shares_ids: bool,
 ) -> Option<usize> {
-    // A paraId one paragraph alone carries on each side is its identity;
-    // gone from the new version, the paragraph was deleted. Two carrying it
-    // there prove nothing, so the text decides.
-    let id = before.blocks[index]
-        .para_id
-        .as_deref()
-        .filter(|id| shares_ids && before.only(id).is_some());
-    if let Some(id) = id {
-        match after.ids.get(id).map_or(0, Vec::len) {
-            0 => return None,
-            1 => return after.only(id),
-            _ => {}
-        }
+    // An explicit producer id pairs only on a unique exact match on both
+    // sides: a renamed or duplicated id drifts, and text never re-pins it.
+    // Text/position pairing is for structural blocks alone.
+    if let Some(id) = before.blocks[index].para_id.as_deref() {
+        before.only(id)?;
+        return after.only(id);
     }
     let found = pair_by_text(&before.blocks, &after.blocks, index)?;
     // The text never pairs it with a paragraph another one's id follows.
