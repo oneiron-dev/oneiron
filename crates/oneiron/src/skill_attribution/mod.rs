@@ -169,7 +169,7 @@ pub(crate) use run_writes::{
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
     run_derivations,
 };
-pub use run_writes::{RunWriteToken, with_run_write_token};
+pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
