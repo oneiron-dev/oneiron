@@ -4,11 +4,12 @@
 //! call receipt: the organ and its version are the process, the args digest
 //! the replay key, the vault versions it read the inputs.
 
-use oneiron::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use oneiron::edit_settle::{NativeOutput, PendingProposalView};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 use oneiron::{EntityId, Vault, WriteActor};
+use oneiron_organ_protocol::{Value, to_value};
 
 use crate::outcome::OrganOutcome;
 
@@ -48,11 +49,14 @@ impl OrganOutcome {
     /// call that made several files names them `<run_ref>/<n>`.
     #[must_use]
     pub fn native_outputs(&self, run_ref: &str, made_by: Option<&MadeBy>) -> Vec<NativeOutput> {
-        let receipt = rmpv::ext::to_value(&self.receipt).unwrap_or(rmpv::Value::Nil);
-        let report = NativeOutput::report_from_msgpack(&rmpv::Value::Map(vec![
-            (rmpv::Value::from("report"), self.report.clone()),
-            (rmpv::Value::from("receipt"), receipt),
-        ]));
+        let receipt = to_value(&self.receipt).unwrap_or_default();
+        let both = Value::Map(vec![
+            (Value::from("report"), self.report.clone()),
+            (Value::from("receipt"), receipt),
+        ]);
+        let msgpack = rmpv_of(&both);
+        let report = NativeOutput::report_from_msgpack(&msgpack);
+        dismantle(msgpack);
         let several = self.outputs.len() > 1;
         self.outputs
             .iter()
@@ -73,15 +77,94 @@ impl OrganOutcome {
     }
 }
 
+/// `value` as the engine's report reader takes it, built bottom-up with a
+/// stack of its own, so a deep report costs no thread stack here.
+fn rmpv_of(value: &Value) -> rmpv::Value {
+    enum Step<'a> {
+        Enter(&'a Value),
+        Array(usize),
+        Map(usize),
+    }
+    let mut built: Vec<rmpv::Value> = Vec::new();
+    let mut steps = vec![Step::Enter(value)];
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(Value::Array(items)) => {
+                steps.push(Step::Array(items.len()));
+                steps.extend(items.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(Value::Map(entries)) => {
+                steps.push(Step::Map(entries.len()));
+                for (key, item) in entries.iter().rev() {
+                    steps.push(Step::Enter(item));
+                    steps.push(Step::Enter(key));
+                }
+            }
+            Step::Enter(leaf) => built.push(rmpv_leaf(leaf)),
+            Step::Array(len) => {
+                let items = built.split_off(built.len().saturating_sub(len));
+                built.push(rmpv::Value::Array(items));
+            }
+            Step::Map(len) => {
+                let flat = built.split_off(built.len().saturating_sub(len * 2));
+                let mut flat = flat.into_iter();
+                let mut entries = Vec::with_capacity(len);
+                while let (Some(key), Some(item)) = (flat.next(), flat.next()) {
+                    entries.push((key, item));
+                }
+                built.push(rmpv::Value::Map(entries));
+            }
+        }
+    }
+    built.pop().unwrap_or(rmpv::Value::Nil)
+}
+
+fn rmpv_leaf(value: &Value) -> rmpv::Value {
+    match value {
+        Value::Nil | Value::Array(_) | Value::Map(_) => rmpv::Value::Nil,
+        Value::Boolean(flag) => rmpv::Value::Boolean(*flag),
+        Value::Integer(integer) => match (integer.as_u64(), integer.as_i64()) {
+            (Some(unsigned), _) => rmpv::Value::from(unsigned),
+            (None, Some(signed)) => rmpv::Value::from(signed),
+            (None, None) => rmpv::Value::Nil,
+        },
+        Value::F32(float) => rmpv::Value::F32(*float),
+        Value::F64(float) => rmpv::Value::F64(*float),
+        Value::String(text) => rmpv::Value::from(text.as_str()),
+        Value::Binary(bytes) => rmpv::Value::Binary(bytes.clone()),
+        Value::Ext(kind, bytes) => rmpv::Value::Ext(*kind, bytes.clone()),
+    }
+}
+
+/// Drops an [`rmpv::Value`] child by child, as [`Value`] drops itself.
+fn dismantle(value: rmpv::Value) {
+    let mut stack = vec![value];
+    while let Some(mut value) = stack.pop() {
+        match &mut value {
+            rmpv::Value::Array(items) => stack.append(items),
+            rmpv::Value::Map(entries) => {
+                for (key, item) in std::mem::take(entries) {
+                    stack.push(key);
+                    stack.push(item);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by. No caller
-/// credential reaches this rail, so the envelope waits as the host built it
-/// ([`MadeByReader::OrganReceipt`], FIX 1229).
+/// waiting for Keep, with the call receipt as its made_by. A call a principal
+/// submitted has its envelope's trigger and receipt inputs admitted through
+/// that principal's own read as each proposal is retained (FIX 9310); a
+/// host's own call, with no submitter, keeps the envelope as the host built
+/// it ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
 /// The vault's refusal of an output: another media type than the artifact's,
-/// an empty file, a ref already settled or waiting.
+/// an empty file, a ref already settled or waiting, or a source the
+/// submitter cannot read.
 pub fn propose_organ_outputs(
     vault: &Vault,
     artifact: &EntityId,
@@ -89,6 +172,7 @@ pub fn propose_organ_outputs(
     run_ref: &str,
     trigger: Option<MadeByTrigger>,
     actor: WriteActor,
+    submitter: Option<EntityId>,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
     let now = vault.now_recorded_at();
     let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
@@ -96,13 +180,8 @@ pub fn propose_organ_outputs(
         .native_outputs(run_ref, Some(&made_by))
         .iter()
         .map(|output| {
-            vault.propose_native_output(
-                artifact,
-                output,
-                Some(MadeByReader::OrganReceipt),
-                actor,
-                now,
-            )
+            let reader = vault.organ_landing_reader(submitter)?;
+            vault.propose_native_output(artifact, output, Some(reader), actor, now)
         })
         .collect()
 }

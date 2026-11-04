@@ -399,9 +399,9 @@ pub use crate::compaction::{
     CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
     CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
-    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
-    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody, MarginLaw, SwapPlan,
+    ValidatedCompactionPacket, admit_compaction_packet, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -508,8 +508,8 @@ pub use crate::llm::{
     IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

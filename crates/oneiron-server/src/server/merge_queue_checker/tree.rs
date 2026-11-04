@@ -2,10 +2,12 @@
 //! carries in (FIX 6868).
 //!
 //! A frame is a 4-byte big-endian length, a kind byte and its payload; the
-//! length counts the kind byte. The host sends one header, the tree's files
-//! and an end frame, then keeps the helper's input open: its closing ends
-//! the helper and its child. The helper answers each command's result,
-//! stdout and stderr, the input digests it observed, and a terminal frame.
+//! length counts the kind byte. The host sends one header, the pinned
+//! commit's commit and tree objects (FIX 7228), the tree's files and an end
+//! frame, then keeps the helper's input open: its closing ends the helper
+//! and its child. The helper answers each command's result, stdout and
+//! stderr, the declared output files it left (FIX 7235), the input digests
+//! it observed, and a terminal frame.
 //! A command's own stdout is a payload on its own frame, never parsed as
 //! protocol. The digests match `checker.py`'s: sha256 over every file in
 //! path order, each as its path length, path, mode and content sha256.
@@ -23,6 +25,12 @@ pub(super) const FRAME_STDOUT: u8 = b'O';
 pub(super) const FRAME_STDERR: u8 = b'X';
 pub(super) const FRAME_INPUTS: u8 = b'I';
 pub(super) const FRAME_DONE: u8 = b'D';
+/// One Git object of the guest's local-only object store: its type, a
+/// space and its raw bytes (FIX 7228).
+pub(super) const FRAME_GIT: u8 = b'G';
+/// One declared output file a command left: its path length, path and
+/// bytes (FIX 7235).
+pub(super) const FRAME_OUTPUT: u8 = b'U';
 
 /// Writes one frame.
 pub(super) fn write_frame(writer: &mut dyn Write, kind: u8, payload: &[u8]) -> io::Result<()> {
@@ -63,34 +71,58 @@ pub(super) enum Sent {
     Closed(io::Error),
 }
 
-/// Sends every file of `tree` as file frames, then the end frame.
+/// Sends `commit`'s commit and tree objects as Git frames (FIX 7228), then
+/// every file of `tree` as file frames, then the end frame. The objects are
+/// read in the tree's bounded batches (FIX 7229), the files in path order.
 ///
 /// # Errors
 /// An object store read failure.
 pub(super) fn send_tree(
     writer: &mut dyn Write,
     tree: &dyn QueueCheckTreeSource,
+    commit: &str,
 ) -> oneiron::Result<Sent> {
+    let mut closed = None;
+    tree.git_objects(commit, &mut |kind, bytes| {
+        let mut payload = Vec::with_capacity(kind.len() + 1 + bytes.len());
+        payload.extend_from_slice(kind.as_bytes());
+        payload.push(b' ');
+        payload.extend_from_slice(bytes);
+        if let Err(error) = write_frame(writer, FRAME_GIT, &payload) {
+            closed = Some(error);
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    if let Some(error) = closed.take() {
+        return Ok(Sent::Closed(error));
+    }
     let mut digest = Sha256::new();
-    for file in tree.files()? {
-        let bytes = tree.blob(&file.oid)?;
+    let files = tree.files()?;
+    let oids: Vec<&str> = files.iter().map(|file| file.oid.as_str()).collect();
+    tree.blobs(&oids, &mut |index, bytes| {
+        let file = &files[index];
         let Ok(path_length) = u32::try_from(file.path.len()) else {
-            return Ok(Sent::Closed(io::Error::other(
-                "a path exceeds the frame codec",
-            )));
+            closed = Some(io::Error::other("a path exceeds the frame codec"));
+            return Ok(false);
         };
         digest.update(path_length.to_be_bytes());
         digest.update(&file.path);
         digest.update(observed_mode(file.mode).to_be_bytes());
-        digest.update(Sha256::digest(&bytes));
+        digest.update(Sha256::digest(bytes));
         let mut payload = Vec::with_capacity(8 + file.path.len() + bytes.len());
         payload.extend_from_slice(&path_length.to_be_bytes());
         payload.extend_from_slice(&file.path);
         payload.extend_from_slice(&file.mode.to_be_bytes());
-        payload.extend_from_slice(&bytes);
+        payload.extend_from_slice(bytes);
         if let Err(error) = write_frame(writer, FRAME_FILE, &payload) {
-            return Ok(Sent::Closed(error));
+            closed = Some(error);
+            return Ok(false);
         }
+        Ok(true)
+    })?;
+    if let Some(error) = closed {
+        return Ok(Sent::Closed(error));
     }
     if let Err(error) = write_frame(writer, FRAME_END, &[]).and_then(|()| writer.flush()) {
         return Ok(Sent::Closed(error));

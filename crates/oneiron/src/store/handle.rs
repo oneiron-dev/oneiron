@@ -155,6 +155,13 @@ impl StoreCore {
         self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
+    /// Whether every write on this handle refuses: its vault opened archived,
+    /// or a restore's swap has sealed it since. An admission that writes
+    /// nothing before its reply reads it (FIX 12023 W0).
+    pub(crate) fn writes_sealed(&self) -> bool {
+        self.env.is_sealed()
+    }
+
     /// The page size this store writes in: the creating host's, which LMDB
     /// keeps with the file. A value too large for a leaf takes whole pages
     /// of it.
@@ -372,6 +379,10 @@ pub struct StoreOwner {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     pub(in crate::store) _registered_path: RegisteredPath,
+    /// This open took the vault's writer lease ([`Store::open_with_writer_lease`]),
+    /// read while the handle assembles, before its lease is set on it: a
+    /// lease holder's open alone replays the slip-spend journal (FIX 12023 W0).
+    pub(in crate::store) opened_with_writer_lease: bool,
 }
 
 /// LMDB environment and database handles for a vault.
@@ -857,6 +868,26 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// The vault directory's identity from the descriptor the open bound,
+    /// never a fresh pathname lookup: a rename after open cannot redirect
+    /// it (REVIEW-4381 P1). None where the open retained no descriptor.
+    pub(crate) fn bound_root_identity(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .map(|meta| (meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
         #[cfg(unix)]

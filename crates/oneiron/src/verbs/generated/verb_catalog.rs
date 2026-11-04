@@ -220,6 +220,9 @@ pub enum AgentVerb {
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
+    SelfInboxGet,
+    SelfInboxDone,
+    SelfInboxLater,
     VaultSkillsBootstrap,
     VaultSkillHubsDefaultGet,
     VaultSkillsRestoredefaults,
@@ -863,6 +866,7 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    VaultSkillsCallableAmend,
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
@@ -1465,6 +1469,9 @@ impl AgentVerb {
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
+        Self::SelfInboxGet,
+        Self::SelfInboxDone,
+        Self::SelfInboxLater,
         Self::VaultSkillsBootstrap,
         Self::VaultSkillHubsDefaultGet,
         Self::VaultSkillsRestoredefaults,
@@ -2108,6 +2115,7 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::VaultSkillsCallableAmend,
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
@@ -2713,6 +2721,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
+            Self::SelfInboxGet => "self.inbox.get",
+            Self::SelfInboxDone => "self.inbox.done",
+            Self::SelfInboxLater => "self.inbox.later",
             Self::VaultSkillsBootstrap => "vault.skills.bootstrap",
             Self::VaultSkillHubsDefaultGet => "vault.skill_hubs.default.get",
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
@@ -3382,6 +3393,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::VaultSkillsCallableAmend => "vault.skills.callable.amend",
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
@@ -3994,6 +4006,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -4637,6 +4652,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -5268,6 +5284,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -5911,6 +5930,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -6687,6 +6707,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -7297,6 +7320,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -7753,6 +7777,9 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsPublishersAdmit
@@ -8153,6 +8180,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
@@ -8633,6 +8661,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxDone => &["spec"],
+            Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
             Self::VaultSkillHubsDefaultGet => &["spec"],
             Self::VaultSkillsRestoredefaults => &["spec"],
@@ -9276,6 +9307,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsCallableAmend => &["spec"],
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
@@ -9879,6 +9911,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxDone => &["spec"],
+            Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
             Self::VaultSkillHubsDefaultGet => &["spec"],
             Self::VaultSkillsRestoredefaults => &["spec"],
@@ -10522,6 +10557,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsCallableAmend => &["spec"],
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
@@ -11551,6 +11587,15 @@ impl AgentVerb {
             }
             Self::SelfInboxLens => {
                 "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."
+            }
+            Self::SelfInboxGet => {
+                "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."
+            }
+            Self::SelfInboxDone => {
+                "Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."
+            }
+            Self::SelfInboxLater => {
+                "Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."
             }
             Self::VaultSkillsBootstrap => {
                 "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."
@@ -13438,6 +13483,9 @@ impl AgentVerb {
             }
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::VaultSkillsCallableAmend => {
+                "The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."
             }
             Self::VaultSkillsPackReceipt => {
                 "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."

@@ -122,6 +122,8 @@ impl SyncConnection {
         client: SyncClient,
         shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<()> {
+        // Under the host's admission, set by now (FIX 12036).
+        self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());
@@ -145,6 +147,11 @@ impl SyncConnection {
         // The host topology is authoritative even before the first socket
         // attempt, and its watcher remains active during reconnect backoff.
         // There is no fallback election on transport loss or cancellation.
+        // Its first election holds the host's admission (FIX 12036).
+        let mut left_rx = self.left.subscribe();
+        let Some(first_election) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await else {
+            return Ok(());
+        };
         let _topology_watcher = self
             .config
             .client_config
@@ -157,9 +164,11 @@ impl SyncConnection {
                     self.config.client_config.residence_home_route.clone(),
                     self.config.client_config.server_url.clone(),
                     event_tx.clone(),
+                    self.batch_admission.clone(),
                 )
             })
             .transpose()?;
+        drop(first_election);
 
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
@@ -168,7 +177,6 @@ impl SyncConnection {
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
-        let mut left_rx = self.left.subscribe();
         let mut mode_rx = self.mode.subscribe();
         self.running.send_replace(true);
 
@@ -178,6 +186,13 @@ impl SyncConnection {
             if *left_rx.borrow_and_update() {
                 break;
             }
+            // The connect is one exchange under the host's admission; a
+            // paused host is waited out before the dial (FIX 12036).
+            let Some(connect_batch) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await
+            else {
+                let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                break;
+            };
             // A residence-mode switch takes effect at this connect's hello.
             client.config.residence_mode = *mode_rx.borrow_and_update();
             // Attempt connection
@@ -192,6 +207,7 @@ impl SyncConnection {
                     break;
                 }
             };
+            drop(connect_batch);
             let mut renegotiate = false;
             match connected {
                 Ok(ws_stream) => {
@@ -252,7 +268,7 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap
-            self.handle_queue_overflow_check(&mut client, &event_tx, self.queue.is_full());
+            self.admitted_overflow_check(&mut client, &event_tx).await;
             if renegotiate {
                 continue;
             }

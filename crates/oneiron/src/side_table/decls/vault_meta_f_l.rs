@@ -54,8 +54,6 @@ side_tables! {
     /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
     /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).
     FEEDBACK_REPORT_DELIVERY: VaultMeta b"feedback:report-delivery:v1:" Named;
-    /// Owner disclosure preference, keyed by the resolved publisher reference.
-    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
     /// The owner's binding of a publisher to this host's feedback destination (OF-420): its
     /// channel and exact endpoint, where that publisher's issue signatures go. Key: publisher
     /// reference.
@@ -190,6 +188,10 @@ side_tables! {
     /// and when. Node-local, as the cursor is. Key: id16 (identity) + bytes32 (sha256 of the
     /// provider message id).
     GMAIL_MAILBOX_SKIPPED: VaultMeta b"gmail:mailbox_skipped:v1:" Named;
+    /// A frozen Gmail member send plan its host kept for a send that dispatches later (FIX 1053):
+    /// its From, To, Subject, body, Date, Message-ID and reply headers; dropped once delivered.
+    /// Key: its content ref.
+    GMAIL_SEND_PLAN: VaultMeta b"gmail:send_plan:v1:" Named;
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw;
@@ -310,6 +312,10 @@ side_tables! {
     /// drawn at random).
     INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
         => crate::inference_snapshot::erase_actor_in_txn;
+    /// One conversation's kept snapshots, by catalog id, so a restore reads
+    /// only its conversation's rows (FIX 11286): conversation id16 + catalog
+    /// id16, empty markers, written in the row's own transaction.
+    INFERENCE_SNAPSHOT_CONVERSATION_INDEX: VaultMeta b"inference_snapshot:conversation:v1:" Raw;
     /// Blob birth fingerprint tree used for perceptual/exact duplicate detection on ingest. Key:
     /// id16.
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;

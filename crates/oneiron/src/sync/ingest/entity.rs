@@ -13,7 +13,7 @@ use crate::registry::{
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
 use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoted_landing_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
-use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn};
+use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn, carried_section_fit_in_txn};
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -22,6 +22,7 @@ use crate::sync::quota;
 use crate::vault::Vault;
 
 mod asset_ref;
+mod beside;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
@@ -37,7 +38,7 @@ pub(in crate::sync) struct IngestCtx<'a> {
     pub(super) authority_beside: Option<crate::sync::selector::authority_beside::AuthorityBeside>,
     pub(super) staged: super::task_pairs::Staging,
     /// A by-reference body a transfer received, for its carrier (FIX 5489).
-    asset_body: Option<(EntityId, &'a crate::store::StagedAssetBody)>,
+    asset_body: Option<asset_ref::ReceivedBody<'a>>,
     /// The window whose body references a residence-free caller reads.
     body_refs: Option<&'a loro::LoroDoc>,
 }
@@ -166,10 +167,7 @@ impl RefusalRetry {
             )
         {
             Self::DependencyPending
-        } else if matches!(
-            err,
-            Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-        ) || err.kind() == ErrorKind::AuthorityLogFull
+        } else if err.kind() == ErrorKind::AuthorityLogFull
             || pack_sync::pack_rejection_keeps_retry_marker(err)
         {
             Self::Retry
@@ -629,6 +627,12 @@ fn admit(
     // FIX 3877: an origin claim lands in this vault's erased form, and a copy its held erased
     // form stands for is skipped.
     let data = match carried_claim_in_txn(vault, wtxn, &id, blob, data)? {
+        CarriedClaim::Put(data) => data,
+        CarriedClaim::Held => return Ok(EntityStep::Skip),
+        CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
+    };
+    // FIX 12713: a carried section-fit receipt names no erased actor here.
+    let data = match carried_section_fit_in_txn(vault, wtxn, &id, blob, data)? {
         CarriedClaim::Put(data) => data,
         CarriedClaim::Held => return Ok(EntityStep::Skip),
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),

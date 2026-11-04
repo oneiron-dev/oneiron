@@ -645,7 +645,13 @@ fn app() -> Result<&'static SharedActionExecutor, FacadeApiError> {
     SharedActionExecutor::app().map_err(engine)
 }
 
+/// The action's engine failure as its caller reads it: a verb hook's stop on
+/// one of its rows as that stop, as the row's own route answers it (FIX
+/// 1450), any other failure as the engine's error.
 fn engine(error: oneiron::Error) -> FacadeApiError {
+    if matches!(error, oneiron::Error::VerbHook(_)) {
+        return MemoryError::from(error).into();
+    }
     crate::api::error_map::core_engine_error("action", error).into()
 }
 

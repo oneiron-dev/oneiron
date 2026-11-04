@@ -81,7 +81,22 @@ impl Vault {
         summary: &EntityId,
     ) -> Result<Option<Vec<ConversationTurnSpan>>> {
         let txn = self.store.env.read_txn()?;
-        Ok(conversation_receipt_in(&self.store, &txn, summary)?
+        self.summary_folded_spans_in_txn(&txn, summary)
+    }
+
+    /// [`Self::summary_folded_spans`] on the caller's read snapshot, so a
+    /// walk over many summaries pays one transaction, not one per summary
+    /// plus one per span read (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn summary_folded_spans_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        summary: &EntityId,
+    ) -> Result<Option<Vec<ConversationTurnSpan>>> {
+        Ok(conversation_receipt_in(&self.store, txn, summary)?
             .and_then(|receipt| receipt.evidence().map(|evidence| evidence.turns.clone())))
     }
 }

@@ -6,9 +6,11 @@ mod budgets;
 mod catalog_views;
 mod charter_ops;
 mod manifest_ops;
+mod pack_routes;
 mod proxy;
 mod qualification;
 mod registration;
+mod staged_slate;
 mod status;
 mod tool_grant;
 
