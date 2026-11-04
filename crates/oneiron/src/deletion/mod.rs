@@ -105,7 +105,7 @@ pub use actor_fields::{
 
 // Whether an id is no actor: the one header check every lane's actor scrub
 // asks (FIX 8908).
-pub(crate) use actor_fields::names_no_actor;
+pub(crate) use actor_fields::{ActorErasureWriter, names_no_actor};
 
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
 pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};

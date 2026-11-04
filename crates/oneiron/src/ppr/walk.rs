@@ -50,25 +50,6 @@ pub(super) struct PprCacheState {
     pub(super) residual: Vec<PprFrontierEntry>,
     pub(super) push_threshold: f32,
 }
-pub(super) enum CachedPprRow {
-    Scores(Vec<ScoredEntity>),
-    State(PprCacheState),
-}
-impl CachedPprRow {
-    pub(super) fn into_scores(self) -> Vec<ScoredEntity> {
-        match self {
-            Self::Scores(scores) => scores,
-            Self::State(state) => state.scores,
-        }
-    }
-
-    pub(super) fn into_state(self) -> Option<PprCacheState> {
-        match self {
-            Self::Scores(_) => None,
-            Self::State(state) => Some(state),
-        }
-    }
-}
 /// Personalized PageRank over the edge graph.
 ///
 /// Propagation follows the ARCH-0039 Layer-1 formula pinned by decision D7:
