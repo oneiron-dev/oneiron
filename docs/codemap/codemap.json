@@ -33875,6 +33875,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/engine_delete_guards.rs",
+     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/engine_executor/attempt_cancels.rs",
      "purpose": "The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so…",
      "surface": {
@@ -40099,7 +40109,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/hnsw/tests.rs",
@@ -42702,7 +42712,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 206,
       "re-export": 98
      }
@@ -70877,6 +70887,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "StoreDeleteGuards"
+     ],
+     "path": "src/store/delete_guards.rs",
+     "purpose": "The delete guards the store layer's delete paths run, supplied by the engine when a store opens",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DerivationBindError",
       "DerivationKey",
       "DerivationKind",
@@ -72249,7 +72271,7 @@
      "surface": {
       "crate-vis": 64,
       "mod": 74,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -90279,6 +90301,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "engine_delete_guards": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…"
+    },
     "engine_executor": {
      "files": 49,
      "impl_vault": false,
@@ -91050,7 +91079,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 324,
+     "files": 325,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91304,7 +91333,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6313,
+   "source_files": 6315,
    "test_files": 898
   },
   "oneiron-android": {
