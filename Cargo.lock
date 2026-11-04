@@ -8710,6 +8710,8 @@ dependencies = [
  "getrandom 0.4.3",
  "heed",
  "oneiron-contracts",
+ "oneiron-model",
+ "schemars 0.8.22",
  "serde",
  "zeroize",
 ]

@@ -454,3 +454,12 @@ pub(crate) fn invalid_grant() -> Error {
         "body failed validation",
     ))
 }
+
+/// A body whose principal FIX 4980 scrubbed: inert history, not a corrupt
+/// grant (FIX 4981). Strict by-id readers name this instead of answering
+/// the strict decode's raw error.
+pub(crate) fn erased_grant() -> Error {
+    Error::Record(RecordError::InvalidAccessGrantBody(
+        "access grant principal was erased",
+    ))
+}
