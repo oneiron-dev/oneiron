@@ -27,9 +27,9 @@ pub(crate) use self::continuation::{
     StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run,
 };
+pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
-    read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
