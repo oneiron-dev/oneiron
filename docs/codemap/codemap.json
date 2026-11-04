@@ -135,10 +135,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/access_grant/erase.rs",
+     "purpose": "Scrub an erased principal out of non-brief ACCESS_GRANT bodies (FIX 4980)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -9283,6 +9293,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlobArtifactAppendOutcome",
       "BlobArtifactVersion",
       "CalcEngineStamp"
      ],
@@ -9291,7 +9302,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 23,
-      "fn": 8,
+      "enum": 1,
+      "fn": 9,
       "re-export": 1,
       "struct": 2
      }
@@ -20996,19 +21008,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ConnectorKeyStatus"
-     ],
-     "path": "src/connector_key_status.rs",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings",
-     "surface": {
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
      "purpose": "—",
@@ -22062,7 +22061,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 3,
       "re-export": 25
      }
@@ -22223,7 +22222,7 @@
      "purpose": "The fitted section install (FIX 9752; owner law ARCH-0053 \"Everything installs; permissions ask\")",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -22236,7 +22235,7 @@
      "path": "src/context_board/plugin/fit_install/receipt_erase.rs",
      "purpose": "The erase of a fitted install's `skill.section_fit` receipt (FIX 9752)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -22289,7 +22288,7 @@
      "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 12
      }
     },
@@ -32967,7 +32966,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "NativeOutput",
@@ -32978,7 +32977,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "re-export": 1,
@@ -42603,8 +42602,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 212,
-      "re-export": 92
+      "mod": 211,
+      "re-export": 93
      }
     },
     {
@@ -59649,16 +59648,6 @@
      "path": "src/receipt/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/receive_scan.rs",
-     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name",
-     "surface": {
-      "crate-vis": 5
-     }
     },
     {
      "bucket": "m",
@@ -78703,7 +78692,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -78955,7 +78944,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "struct": 1
      }
@@ -78999,6 +78988,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/scrub.rs",
+     "purpose": "Erasure scrub of fan-out recipients (FIX 4699, Engine ruling 13:2x)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -80002,7 +80001,7 @@
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -86772,7 +86771,7 @@
      "path": "src/workspace_roster/rooms/thread_reads.rs",
      "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -89578,7 +89577,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89947,13 +89946,6 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
-    },
-    "connector_key_status": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings"
     },
     "consent": {
      "files": 40,
@@ -90690,13 +90682,6 @@
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
-    "receive_scan": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
-    },
     "recovery": {
      "files": 114,
      "impl_vault": true,
@@ -91013,7 +90998,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91216,7 +91201,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 117,
+   "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6275,
    "test_files": 900
@@ -100894,7 +100879,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 21,
+      "fn": 22,
       "re-export": 1,
       "struct": 8,
       "type": 2
@@ -100946,7 +100931,7 @@
      "path": "src/supervisor/inference_admission/ticket.rs",
      "purpose": "Ticket waits and cancellation for the parent device queue",
      "surface": {
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -100966,12 +100951,12 @@
      "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency…",
      "surface": {
       "enum": 2,
-      "fn": 20,
+      "fn": 21,
       "struct": 6
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "InferenceWorker",
@@ -100990,7 +100975,7 @@
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 22,
+      "fn": 23,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -101305,7 +101290,7 @@
     "supervisor": {
      "files": 27,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…"
     },
@@ -101331,7 +101316,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 34,
    "test_files": 10
@@ -104021,7 +104006,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 9,
       "type": 1
      }
@@ -107862,11 +107847,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "LiveLeaseState"
+     ],
      "path": "src/ai_host/live_lease.rs",
      "purpose": "A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9,
+      "struct": 1
      }
     },
     {
@@ -107889,8 +107877,8 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 24,
-      "mod": 3,
+      "crate-vis": 23,
+      "mod": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -108485,7 +108473,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/mod.rs",
@@ -120760,7 +120748,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionReadDoor"
@@ -120948,7 +120936,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 28,
-      "fn": 12,
+      "fn": 13,
       "re-export": 1,
       "struct": 1
      }
@@ -121162,7 +121150,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -121193,7 +121181,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -121576,7 +121564,8 @@
       "SeatStatus",
       "SnapshotReceipt",
       "SnapshotSkips",
-      "SnapshotStatus"
+      "SnapshotStatus",
+      "TaggerStatus"
      ],
      "path": "src/models/status.rs",
      "purpose": "What the model runtime built, for the owner-facing status route",
@@ -121584,7 +121573,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -121652,7 +121641,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host.rs",
@@ -125398,7 +125387,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 35,
+   "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
@@ -125445,6 +125434,70 @@
    "purpose": "Starting a subprocess with only the descriptors it is meant to have",
    "source_files": 1,
    "test_files": 2
+  },
+  "oneiron-store": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorKeyStatus"
+     ],
+     "path": "src/connector_key_status.rs",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The store layer of the oneiron engine",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PushedBlob",
+      "ReceiveBlobKind",
+      "ReceiveScanHit"
+     ],
+     "path": "src/receive_scan.rs",
+     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    }
+   ],
+   "modules": {
+    "connector_key_status": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings"
+    },
+    "receive_scan": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The store layer of the oneiron engine",
+   "source_files": 3,
+   "test_files": 0
   },
   "oneiron-uniffi": {
    "files": [
