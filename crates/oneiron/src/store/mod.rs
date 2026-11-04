@@ -227,6 +227,7 @@ pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
+pub(crate) mod executor_speech_identity;
 mod gate_decision;
 pub(crate) mod file_key_masks;
 pub(crate) mod found_key_notice_queue;
