@@ -10,7 +10,7 @@ use super::{
     CleanupRunReport, fresh_row_id, live_slots, put_digest_in_txn, put_proposal_in_txn,
 };
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;

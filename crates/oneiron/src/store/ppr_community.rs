@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::EngineScan;
 use crate::store::graph_version::read_graph_version;

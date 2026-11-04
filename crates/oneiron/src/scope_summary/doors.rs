@@ -5,7 +5,8 @@ use super::codec::{
     encode_scope_summary_body, invalid, scope_value,
 };
 use crate::batch::EdgeValueFields;
-use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
@@ -509,7 +510,7 @@ pub(super) fn mint_in_txn(
         &[],
         now,
     ) {
-        crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, &birth)?;
+        crate::store::birth_record::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, &birth)?;
     }
     for source in word_sources(&body) {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, source)?;

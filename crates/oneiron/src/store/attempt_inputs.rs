@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::attempt_id::AttemptId;
+use super::attempt_result::AttemptResultRef;
+
 /// Durable intervention kind recorded on an attempt row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,4 +87,51 @@ impl AttemptInterventionEffect {
             Self::AlreadyRedirected => "already_redirected",
         }
     }
+}
+
+/// Input for completing a leased attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteAttempt {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub now: u64,
+}
+
+/// Input for failing a leased attempt terminally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailAttempt {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub reason: String,
+    pub now: u64,
+}
+
+/// Input for naming the artifact version a live attempt's result lives in.
+///
+/// Attaching a result is deliberately its own verb rather than a field on
+/// [`CompleteAttempt`]: the exhaust an executor produces is durable BEFORE the
+/// row settles, and an executor that then stops without completing must still
+/// point at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetAttemptResult {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub result_ref: AttemptResultRef,
+    pub now: u64,
+}
+
+/// Input for finalizing a leased attempt and scheduling its next try.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryAttempt {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    /// Field spelling is retained for source compatibility; it becomes the new
+    /// row's `scheduled_at`.
+    pub backoff_until: u64,
+    pub last_error: Option<String>,
+    pub now: u64,
 }

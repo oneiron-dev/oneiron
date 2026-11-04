@@ -18,7 +18,8 @@ use super::{
     enqueue_with_lineage_in_txn, plan_in_txn,
 };
 use crate::Vault;
-use crate::claim::{ClaimReadStatus, FrozenReadLane, ScopedRead};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{FrozenReadLane, ScopedRead};
 use crate::error::Result;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
 

@@ -678,7 +678,7 @@ impl crate::Vault {
         if let Some(birth) = birth
             && crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.is_live()
         {
-            match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
+            match crate::store::birth_record::stamp_replicated_row_birth_in_txn(
                 &self.store,
                 txn,
                 id,

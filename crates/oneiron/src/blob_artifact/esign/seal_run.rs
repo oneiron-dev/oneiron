@@ -5,7 +5,8 @@
 //! document again: a retryable op, never a nominally complete document.
 
 use super::{ESIGN_SEAL_ATTEMPT_KIND, EsignSealer, SealProfile};
-use crate::attempt_queue::{AttemptQueue, ClaimOutcome, FailAttempt};
+use crate::attempt_queue::{AttemptQueue, ClaimOutcome};
+use crate::store::attempt_inputs::FailAttempt;
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::{EntityId, Result, Vault};
 

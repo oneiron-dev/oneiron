@@ -4,10 +4,12 @@ use super::{
     ledger::{events_in, hash, state_in},
     model::invalid,
 };
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt,
-    FailAttempt, RetryAttempt,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord, ClaimOutcome};
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_state::AttemptState;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_inputs::RetryAttempt;
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundExecutionOutcome,
     OutboundExecutionRequest, OutboundExecutionSink,

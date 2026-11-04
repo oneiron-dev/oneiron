@@ -447,7 +447,7 @@ pub(crate) fn apply_ops_session(
                 // divergent retry is refused before any overlay mutation or
                 // journal entry stages.
                 if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-                    crate::gate::validate_canonical_witness_message_body(data)?;
+                    crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
                 }
                 // Every row keeps its type, as on base (`apply_put`, which
                 // reads the old row wiped too): promote would refuse the

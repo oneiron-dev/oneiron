@@ -1,7 +1,7 @@
 //! Persisted queue records and sealed landing/check boundaries.
 use crate::store::repo_fork::RepoForkHash;
 use crate::{
-    contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
+    store::contract_oracle::{AffectedTests, CommandOutput, WorkspaceGraph},
     error::Result,
     store::repo_mutation_record::RepoMutationOutcome,
 };

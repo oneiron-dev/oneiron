@@ -13,7 +13,7 @@ use super::plan::FrozenCheckPlan;
 use super::{CheckPhase, MergeQueue, REPO_CHECK_PLAN_PATH, ServedQueueSource};
 use crate::EntityId;
 use crate::consent::QueuedCheckApproval;
-use crate::contract_oracle::invalid;
+use crate::store::contract_oracle::invalid;
 use crate::error::Result;
 use crate::git_wire::{GitOid, lock_repository};
 

@@ -19,6 +19,7 @@ use super::made_by::{
     bind_version_made_by, births_row, default_version_made_by, made_by_text,
     validate_version_made_by_in_txn,
 };
+use super::production::OutputProductionStamp;
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
     validate_provenance, write_provenance_value,
@@ -151,9 +152,11 @@ pub struct BlobArtifactVersion {
     /// What this version was made from, what made it and when (ARCH-0078
     /// "The provenance receipt"). Its trigger is the version's born-from.
     pub made_by: MadeBy,
+    /// Historical host production context, or explicit unknown.
+    pub production: OutputProductionStamp,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 13] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 14] = [
     "version",
     "content_hash",
     "provenance",
@@ -167,6 +170,7 @@ pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 13] = [
     "export_name",
     "export_media_type",
     "made_by",
+    "production",
 ];
 
 pub(super) const KEY_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[0];
@@ -192,6 +196,7 @@ pub(super) const KEY_CALC_ENGINE_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KE
 pub(super) const KEY_EXPORT_NAME: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[10];
 pub(super) const KEY_EXPORT_MEDIA_TYPE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[11];
 pub(super) const KEY_MADE_BY: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[12];
+pub(super) const KEY_PRODUCTION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[13];
 
 /// What a checked direct append did: landed immediately, or retained through
 /// the ordinary proposal door for an authorized Keep (FIX 8208).
@@ -351,6 +356,71 @@ impl Vault {
             fork_base,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
+    }
+
+    /// Appends from the actual surface's sealed host context. A missing
+    /// binding is explicitly unknown, never inferred from made_by or run_ref.
+    /// This records history only and does not validate a live lease.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_from_host(
+        &self,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        actor: WriteActor,
+        host: Option<&crate::task_verb::HostBinding>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        self.with_write_txn_grouped(|wtxn| {
+            self.append_blob_artifact_version_from_host_in_txn(
+                wtxn,
+                artifact_id,
+                bytes,
+                provenance,
+                actor,
+                occurred,
+                learned_at,
+                None,
+                None,
+                made_by,
+                host,
+            )
+        })
+    }
+
+    /// The host-aware append in a caller's existing writer. Captures the
+    /// actual writer and sealed binding in the same transaction as its claim.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_from_host_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        fork_parent: Option<u64>,
+        calc_engine: Option<&CalcEngineStamp>,
+        made_by: Option<&MadeBy>,
+        host: Option<&crate::task_verb::HostBinding>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            fork_parent,
+            calc_engine,
+            made_by,
+            false,
+            host,
+        )
     }
 
     /// Appends one version to the artifact's append-only chain.
@@ -515,6 +585,7 @@ impl Vault {
             None,
             Some(made_by),
             true,
+            None,
         )
     }
 
@@ -593,6 +664,7 @@ impl Vault {
             None,
             None,
             false,
+            None,
         )?;
         Ok((version, staged))
     }
@@ -679,6 +751,7 @@ impl Vault {
             calc_engine,
             made_by,
             false,
+            None,
         )
     }
 
@@ -700,6 +773,7 @@ impl Vault {
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
+        host: Option<&crate::task_verb::HostBinding>,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -779,6 +853,7 @@ impl Vault {
             None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
         };
         let made_by_json = made_by_text(&made_by)?;
+        let production = OutputProductionStamp::capture(&actor, host);
         // Deletion removes the current chain, and a response pin's release
         // one version (FIX 6225), but never the high-water mark: the next
         // number is above every one ever issued, never reused.
@@ -803,6 +878,7 @@ impl Vault {
                 fork_parent,
                 calc_engine,
                 &made_by_json,
+                &production,
             ),
             1.0,
         );
@@ -848,6 +924,7 @@ impl Vault {
             parent_version,
             fork_of_version: fork_parent,
             made_by,
+            production,
         };
         let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::ChangeLogStore::port_changelog_append(
@@ -873,7 +950,7 @@ impl Vault {
         // The first version is the artifact's birth: its envelope is the
         // artifact row's Rule A birth, read backwards by `rows_born_from`.
         if previous_version == 0 && births_row(&record.made_by) {
-            crate::provenance::birth::stamp_row_birth_in_txn(
+            crate::store::birth_record::stamp_row_birth_in_txn(
                 &self.store,
                 wtxn,
                 artifact_id,

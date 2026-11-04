@@ -3,9 +3,12 @@ mod auxiliary;
 mod query;
 use super::*;
 use crate::attempt_queue::{
-    AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome,
-    EnqueueOutcome, FailAttempt, FailOutcome,
+    AttemptRecord, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
 };
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_state::AttemptState;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;

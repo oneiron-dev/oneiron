@@ -2,7 +2,8 @@
 use super::*;
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{ScopedRead};
 use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,

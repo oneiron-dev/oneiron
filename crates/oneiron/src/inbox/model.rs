@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edit_distance::delta::AmendmentDelta;
 use crate::error::Error;
-use crate::receipt::{ReceiptRecord, ReceiptView};
+use crate::store::receipt_row::{ReceiptRecord, ReceiptView};
 use crate::side_table::{CodecError, RawValue};
 use crate::store::PendingGateConsentRecord;
 

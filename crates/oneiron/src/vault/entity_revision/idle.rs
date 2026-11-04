@@ -104,7 +104,7 @@ impl Vault {
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                    let text = crate::claim::claim_value_index_text(&claim.value);
+                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
                     if text.is_empty() {
                         Vec::new()
                     } else {

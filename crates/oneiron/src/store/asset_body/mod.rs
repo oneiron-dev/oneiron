@@ -51,9 +51,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
-use crate::provenance::body::{
-    owned_body_in_txn, publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
-};
+use crate::store::owned_body::{owned_body_in_txn};
+use crate::provenance::body::{publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::{read_local_registration_in_txn, teardown_local_registration_in_txn};
 use super::types::{LocalRegistration, SecretLease, SecretLeaseStatus};
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};

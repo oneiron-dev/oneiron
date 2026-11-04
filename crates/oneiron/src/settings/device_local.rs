@@ -206,7 +206,7 @@ pub(crate) fn device_local_worlds_for(
 pub(crate) fn device_local_worlds_for_machine(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    receiving: crate::machine_destination::Destination,
+    receiving: oneiron_base::machine_destination::Destination,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     crate::authority::WorldPrivacyView::load_in(vault, txn)?.withheld_for(receiving)
 }

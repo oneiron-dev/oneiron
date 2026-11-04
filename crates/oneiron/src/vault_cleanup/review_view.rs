@@ -29,7 +29,8 @@ use super::{
     CleanupCandidate, CleanupKind, CleanupProposal, decode_proposal, zero_live_members_in_txn,
 };
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, decode_record};
+use crate::attempt_queue::decode_record;
+use crate::store::attempt_id::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

@@ -321,7 +321,7 @@ pub(crate) fn roll_back_summary_in_txn(
     summary: EntityId,
 ) -> Result<(Option<EntityId>, Option<EntityId>)> {
     let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &summary)?;
-    let attempt = crate::attempt_queue::AttemptId::from_bytes(&meta.derivation.trigger)?;
+    let attempt = crate::store::attempt_id::AttemptId::from_bytes(&meta.derivation.trigger)?;
     let header = super::status::result_in_txn(vault, txn, attempt)?
         .and_then(|result| result.claim)
         .map(|claim| EntityId::from_hex(&claim))

@@ -6,7 +6,8 @@ use std::time::Instant;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
+use crate::gate::{PolicyManifestResolution};
+use crate::store::policy_record::{SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 use crate::write_envelope::claim_body::decode_claim_body;
