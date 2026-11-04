@@ -43020,7 +43020,7 @@
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -43843,17 +43843,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HostRule",
       "HostRuleProvider"
      ],
      "path": "src/llm/decision/rules.rs",
      "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
-      "fn": 6,
-      "re-export": 1,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 5,
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
@@ -66807,7 +66806,6 @@
      "path": "src/skill_hub/claim_refinement.rs",
      "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
      "surface": {
-      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 3
@@ -67029,7 +67027,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 21
      }
@@ -67200,19 +67198,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HookOutcomeKind",
-      "HookPhase",
-      "HookRenderClass",
-      "HookSelector",
       "PackHook"
      ],
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 3,
-      "re-export": 4,
-      "struct": 2
+      "crate-vis": 7,
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
@@ -67254,20 +67247,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HookWidening",
-      "PackHookProposal",
-      "PackHookProposalStatus"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/hooks/proposal.rs",
      "purpose": "An agent's hook that asks wider than its own ceiling (ARCH-0080 §10): Skip, Ask or Rewrite on another…",
      "surface": {
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 5,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -67757,7 +67745,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 8
      }
     },
     {
@@ -67781,17 +67769,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SharedSkillDelta",
-      "SharedSkillLane"
-     ],
+     "notable": [],
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69985,6 +69969,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedSkillDelta",
+      "SharedSkillLane"
+     ],
+     "path": "src/store/claim_refinement_control.rs",
+     "purpose": "A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/claim_vad_owed.rs",
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
@@ -70449,6 +70448,20 @@
      "purpose": "Which units a typed question watches for arrivals: the units its outcome binding names, and the sources its…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostRule"
+     ],
+     "path": "src/store/decision_rule_rows.rs",
+     "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): every revision of every rule row the authenticated…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -71963,7 +71976,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 84,
+      "mod": 87,
       "re-export": 31
      }
     },
@@ -72246,6 +72259,26 @@
      "purpose": "The actor classes a pack hook's selector may name",
      "surface": {
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookOutcomeKind",
+      "HookPhase",
+      "HookRenderClass",
+      "HookSelector",
+      "HookWidening",
+      "PackHookProposal",
+      "PackHookProposalStatus"
+     ],
+     "path": "src/store/pack_hook_proposal.rs",
+     "purpose": "The pack hook selector types and the agent hook proposal rows (ARCH-0080 §3, §10): when a hook fires, how it…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 2
      }
     },
     {
@@ -90059,7 +90092,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 367,
+     "files": 370,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90299,7 +90332,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6263,
+   "source_files": 6266,
    "test_files": 898
   },
   "oneiron-android": {
