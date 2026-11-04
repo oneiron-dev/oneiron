@@ -137,7 +137,9 @@ pub(super) fn apply_old_record(
         }
         if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
-            && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &fixed.id)?
+            && crate::store::code_revision_record::tables::has_finalized_code_revision_in_txn(
+                store, wtxn, &fixed.id,
+            )?
         {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "finalized code revision artifacts are immutable",

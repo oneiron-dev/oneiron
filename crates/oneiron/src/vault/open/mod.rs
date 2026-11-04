@@ -259,7 +259,7 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         let default = crate::gate::default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
@@ -373,7 +373,7 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         let default = crate::gate::default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
@@ -713,7 +713,7 @@ impl Vault {
             }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
-            crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
             crate::comm::seed_claim_class_descriptors(&vault)?;
             vault.store.project_writes.seed_root_project(&vault)?;
         }

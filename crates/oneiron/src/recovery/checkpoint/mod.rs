@@ -29,6 +29,7 @@ mod epochs;
 mod host_holds;
 mod image;
 mod landing;
+pub(crate) use landing::RestoreActorScrubWriter;
 mod landing_lengths;
 mod pad_custody;
 mod pad_objects;
