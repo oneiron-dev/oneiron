@@ -37131,6 +37131,8 @@ pub enum RepoProposalStatus {
     Failed,
     #[serde(rename = "Rejected")]
     Rejected,
+    #[serde(rename = "Superseded")]
+    Superseded,
 }
 
 /// `oneiron::code_document::review_views::CodeProposedStamp`.
