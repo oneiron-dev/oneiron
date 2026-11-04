@@ -42831,7 +42831,7 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
-/// `oneiron::agent_def::refusal::RefusalLevel`.
+/// `oneiron::store::agent_refusal::RefusalLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RefusalLevel {
     #[serde(rename = "none")]
@@ -42844,7 +42844,7 @@ pub enum RefusalLevel {
     Full,
 }
 
-/// `oneiron::agent_def::refusal::RefusalDial`.
+/// `oneiron::store::agent_refusal::RefusalDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefusalDial {
@@ -42854,7 +42854,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
