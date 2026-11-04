@@ -2653,15 +2653,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RequeueAttempt",
-      "RequeuedFailure"
+      "RequeueAttempt"
      ],
      "path": "src/attempt_queue/engine/requeue.rs",
      "purpose": "Same-intent requeue (FIX 5240): a leased try its worker answered failed goes back to the queue as the SAME…",
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "struct": 2
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -2865,16 +2865,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptReadSet"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
       "crate-vis": 1,
       "fn": 4,
-      "re-export": 1,
-      "struct": 1
+      "re-export": 2
      }
     },
     {
@@ -3105,31 +3102,27 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AbandonAttempt",
       "AbandonOutcome",
-      "AttemptPlacement",
-      "AttemptRecord",
       "ClaimOutcome",
       "CompleteOutcome",
       "EnqueueOutcome",
       "FailOutcome",
       "InterveneAttempt",
       "InterveneOutcome",
-      "PlannedBinding",
-      "PlannedExactness",
       "RetryOutcome"
      ],
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 6,
-      "enum": 7,
+      "enum": 6,
       "fn": 10,
-      "re-export": 14,
-      "struct": 6
+      "re-export": 15,
+      "struct": 3
      }
     },
     {
@@ -3145,13 +3138,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptTerminalExhaust"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types/exhaust.rs",
      "purpose": "What a terminal attempt left behind (FIX 9578): its durable outputs and the checkpoint frontier it recorded…",
      "surface": {
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69490,6 +69481,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptPlacement",
+      "AttemptReadSet",
+      "AttemptRecord",
+      "AttemptTerminalExhaust",
+      "PlannedBinding",
+      "PlannedExactness",
+      "RequeuedFailure"
+     ],
+     "path": "src/store/attempt_record.rs",
+     "purpose": "The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AttemptResultRef"
      ],
      "path": "src/store/attempt_result.rs",
@@ -72198,7 +72209,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 104,
+      "mod": 105,
       "re-export": 31
      }
     },
@@ -90523,7 +90534,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 410,
+     "files": 411,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90763,7 +90774,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6306,
+   "source_files": 6307,
    "test_files": 898
   },
   "oneiron-android": {
