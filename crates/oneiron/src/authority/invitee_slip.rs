@@ -65,6 +65,46 @@ impl Vault {
         self.mint_slip_in_txn(txn, issuer, claims)
     }
 
+    /// Mints the regular human credential for the actual grant selected by
+    /// the acceptance writer. The caller supplies that same writer's decoded
+    /// grant and its id; normal minting still checks the host and authority log.
+    pub(crate) fn mint_accepted_member_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+        grant: &crate::federation::FederationGrant,
+        holder_key: [u8; 32],
+        expires_at: u64,
+    ) -> Result<CapabilitySlip> {
+        let vault_id = self
+            .authority_view_readonly_in_txn(txn)?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let claims = SlipClaims {
+            slip_id: random_slip_id(),
+            vault_id,
+            parent_id: None,
+            holder_ref: grant.member_ref.to_hex(),
+            binding_key: holder_key,
+            scope: grant.authority_scope.clone(),
+            issued_at: now,
+            expires_at,
+            ttl_secs: expires_at.checked_sub(now).ok_or_else(invalid_authority)?,
+            single_use: false,
+            records: BTreeSet::new(),
+            channels: BTreeSet::new(),
+            actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
+            org_ref: None,
+            grant_ref: Some(grant_ref.to_hex()),
+            invitation_ref: None,
+            delegation: None,
+            comm: None,
+        };
+        self.mint_slip_in_txn(txn, issuer, claims)
+    }
+
     /// An invitation-bound slip stands only while its invitation does: the
     /// invitation its claims name, its holder's own, is pending and unexpired
     /// at `now`. A slip that names no invitation passes.
