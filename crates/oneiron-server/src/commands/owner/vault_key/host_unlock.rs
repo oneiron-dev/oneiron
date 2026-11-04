@@ -41,11 +41,14 @@ pub(crate) enum HostUnlock {
         capsule: Vec<u8>,
         secret: HybridSecretKey,
     },
-    /// A world kit's pieces for a plain vault already open: the seed is
-    /// rebuilt on that vault, so this install's kept recovery-root piece
-    /// joins as a data-key kit's does (FIX 11974). Never constructed pre-open.
+    /// A world kit's pieces for a plain vault already open, or a sealed
+    /// vault before it opens: the seed is rebuilt on that vault, so this
+    /// install's kept recovery-root piece joins as a data-key kit's does
+    /// (FIX 11974). `kit` is the exact kit whose kept count was taken, so
+    /// the engine joins that kit's kept and pending pieces (FIX 12055).
     WorldKit {
         vault_id: [u8; 32],
+        kit: oneiron::recovery::KitId,
         pieces: Vec<oneiron::recovery::KitPiece>,
         passphrase: Option<oneiron::recovery::KitPassphrase>,
     },
@@ -56,6 +59,19 @@ pub(crate) enum HostUnlock {
         vault_id: [u8; 32],
         pieces: Vec<oneiron::recovery::KitPiece>,
         passphrase: Option<oneiron::recovery::KitPassphrase>,
+    },
+}
+
+/// What vault the kit unlock reads for: an already-open plain vault
+/// resolves the kit against its own kept pieces; a sealed vault before it
+/// opens counts this install's kept piece of the pieces' kit first, so one
+/// piece plus the kept piece asks for no passphrase (FIX 11974, FIX 12055,
+/// FIX 12396).
+pub(super) enum VaultForUnlock<'v> {
+    Open(&'v oneiron::Vault),
+    SealedPreopen {
+        config: &'v ServeConfig,
+        path: &'v Path,
     },
 }
 
@@ -151,7 +167,7 @@ impl HostUnlock {
     pub(super) fn read_for_vault(
         request: &UnlockRequest<'_>,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
-        open_vault: Option<&oneiron::Vault>,
+        vault: VaultForUnlock<'_>,
     ) -> anyhow::Result<Self> {
         if let Some(path) = request.capsule {
             let report = read_capsule_report(path)?;
@@ -172,18 +188,22 @@ impl HostUnlock {
             });
         }
         if request.method == UnlockMethod::Kit {
-            return match open_vault {
-                Some(vault) => super::super::recovery_kit::kit_unlock_with_vault(
+            return match vault {
+                VaultForUnlock::Open(vault) => super::super::recovery_kit::kit_unlock_with_vault(
                     request.vault_id,
                     request.pieces,
                     request.secret.secret_file.as_deref(),
                     vault,
                 ),
-                None => super::super::recovery_kit::kit_unlock_with(
-                    request.vault_id,
-                    request.pieces,
-                    request.secret.secret_file.as_deref(),
-                ),
+                VaultForUnlock::SealedPreopen { config, path } => {
+                    super::super::recovery_kit::kit_unlock_with_sealed(
+                        config,
+                        path,
+                        request.vault_id,
+                        request.pieces,
+                        request.secret.secret_file.as_deref(),
+                    )
+                }
             };
         }
         Self::read_with(
@@ -263,9 +283,21 @@ impl HostUnlock {
             Self::Password(password) => Some(VaultKeyUnlock::Password(password)),
             Self::Passkey { credential, prf } => Some(VaultKeyUnlock::Passkey { credential, prf }),
             Self::Escrow { label, secret, .. } => Some(VaultKeyUnlock::Escrow { label, secret }),
-            // WorldKit exists only for an already-open plain vault and is
-            // resolved by unlock_live; no pre-open engine consumer sees it.
-            Self::WorldKit { .. } => None,
+            // A world kit's engine unlock carries no keystore of its own:
+            // prepare_page_seal joins this install's keystore beside it, so a
+            // sealed vault's pages unlock on the kept piece it names.
+            Self::WorldKit {
+                vault_id,
+                kit,
+                pieces,
+                passphrase,
+            } => Some(VaultKeyUnlock::WorldKit {
+                vault_id: *vault_id,
+                kit: *kit,
+                pieces,
+                passphrase: passphrase.as_ref(),
+                keystore: None,
+            }),
             Self::EscrowCapsule {
                 label,
                 capsule,
@@ -299,7 +331,7 @@ impl HostUnlock {
         config: &ServeConfig,
         vault_path: &Path,
     ) -> Option<Arc<dyn DeviceKeystore>> {
-        if !matches!(self, Self::VaultKeyKit { .. }) {
+        if !matches!(self, Self::VaultKeyKit { .. } | Self::WorldKit { .. }) {
             return None;
         }
         match config.keystore.open(vault_path) {
@@ -334,6 +366,7 @@ impl HostUnlock {
             // recovery-root piece joins the pieces given (FIX 11974).
             Self::WorldKit {
                 vault_id,
+                kit: _,
                 pieces,
                 passphrase,
             } => {
