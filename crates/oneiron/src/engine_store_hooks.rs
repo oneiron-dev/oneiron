@@ -458,6 +458,15 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<()> {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn read_secret_custody_meta_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
+        crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -768,6 +777,29 @@ impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
         input: crate::store::attempt_inputs::RetryAttempt,
     ) -> Result<crate::store::attempt_outcomes::RetryOutcome> {
         crate::attempt_queue::AttemptQueue::new(vault).retry_in_txn(wtxn, input)
+    }
+
+    fn erase_dispatch_payload_text_target(
+        &self,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) -> Result<bool> {
+        crate::attempt_queue::erase_dispatch_payload_text_target(record)
+    }
+
+    fn dispatch_payload_actor(
+        &self,
+        record: &crate::store::attempt_record::AttemptRecord,
+    ) -> Option<EntityId> {
+        crate::attempt_queue::dispatch_payload_actor(record)
+    }
+
+    fn scrub_hard_erased_payload_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) {
+        crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
     }
 }
 
