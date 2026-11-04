@@ -207,11 +207,29 @@ impl EngineNativeExecutor<'_> {
                     },
                     None => (None, CompactHooks::default()),
                 };
+                // A fold-sealing or ledger error after the pre-chain keeps
+                // the unlanded pre-chain records in the room (REVIEW-4357
+                // P1): the flight never lands, so the hooks never reach a
+                // post chain, and no post hooks run here.
                 let folds =
-                    self.seal_folds(driver, config, record, &marks, note.as_deref(), room)?;
+                    match self.seal_folds(driver, config, record, &marks, note.as_deref(), room) {
+                        Ok(folds) => folds,
+                        Err(error) => {
+                            self.keep_unlanded_compact_hooks(hooks);
+                            return Err(error);
+                        }
+                    };
                 if asked.is_some() {
-                    self.storage
-                        .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
+                    match self
+                        .storage
+                        .update_code_run_folds(run_id, |ledger| ledger.compact = None)
+                    {
+                        Ok(()) => {}
+                        Err(error) => {
+                            self.keep_unlanded_compact_hooks(hooks);
+                            return Err(error.into());
+                        }
+                    }
                 }
                 Ok(super::compaction::Flight {
                     epoch,
