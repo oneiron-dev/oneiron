@@ -3,6 +3,7 @@
 use napi::bindgen_prelude::*;
 use oneiron::authority::MachineDeviceClass;
 use oneiron::codebase::CODEBASE_FILE_PATH_MAX_BYTES;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId, MemoryError};
 
 pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
@@ -22,8 +23,6 @@ pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTI
 /// The entities one transaction of a batch write holds (FIX 11125): a batch
 /// past it is written frame by frame, never refused for its size.
 pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
-
-pub(super) const MAX_NAPI_CODEBASE_FILES: usize = oneiron_remote::MAX_CODEBASE_FILES;
 
 pub(super) const MAX_NAPI_DIMENSIONS: usize = oneiron_remote::MAX_DIMENSIONS;
 
@@ -124,10 +123,11 @@ pub(super) fn read_vector(
 /// for a size check and a long one if we asked for `files` again during DTO
 /// conversion, so convert the checked array rather than re-reading the object.
 pub(super) fn read_codebase_snapshot(
+    vault: &oneiron::Vault,
     snapshot: Object<'_>,
 ) -> napi::Result<super::types::NapiCodebaseSnapshot> {
     let files: Array<'_> = required_field(&snapshot, "files")?;
-    validate_codebase_file_count(files.len() as usize).map_err(napi::Error::from_reason)?;
+    let _ = vault.measure_limit(EngineLimit::CodebaseManifestFiles, files.len() as u64);
     let files = (0..files.len())
         .map(|index| read_codebase_file_entry(&files, index))
         .collect::<napi::Result<Vec<_>>>()?;
@@ -190,16 +190,6 @@ pub(super) fn validate_entity_payload_len(len: usize) -> BoundaryResult<()> {
     if len > MAX_NAPI_ENTITY_PAYLOAD_BYTES {
         return Err(format!(
             "entity data payload must be <= {MAX_NAPI_ENTITY_PAYLOAD_BYTES} bytes, got {len}"
-        ));
-    }
-    Ok(())
-}
-
-/// Validate codebase manifest size before allocating core snapshot entries.
-pub(super) fn validate_codebase_file_count(len: usize) -> BoundaryResult<()> {
-    if len > MAX_NAPI_CODEBASE_FILES {
-        return Err(format!(
-            "codebase snapshot accepts at most {MAX_NAPI_CODEBASE_FILES} files, got {len}"
         ));
     }
     Ok(())

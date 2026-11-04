@@ -7,14 +7,12 @@ use oneiron::{
 
 use super::boundary::{
     BoundaryResult, parse_content_hash, parse_file_size, parse_fixed_hash, to_napi_err,
-    validate_codebase_file_count,
 };
 use super::types::{NapiCodebaseFileEntry, NapiCodebaseSnapshot};
 
 pub(super) fn core_codebase_snapshot(
     input: NapiCodebaseSnapshot,
 ) -> BoundaryResult<CodebaseSnapshot> {
-    validate_codebase_file_count(input.files.len())?;
     let repo_ref = RepoRef::parse(&input.repo_ref).map_err(|e| e.to_string())?;
     let files = input
         .files
