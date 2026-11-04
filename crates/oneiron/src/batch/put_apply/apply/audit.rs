@@ -22,11 +22,15 @@ pub(super) fn audit_and_stage_body(
 ) -> Result<()> {
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
         if fixed.replicated {
-            crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &fixed.id, body)?;
+            store
+                .gate_hooks
+                .attach_replicated_critical_confirm_in_txn(store, wtxn, &fixed.id, body)?;
         }
         // A claim whose owner has not answered stays held through any new
         // revision, and its owner is shown an item for this one.
-        crate::gate::show_owner_answer_item_in_txn(store, wtxn, &fixed.id, Some(body))?;
+        store
+            .gate_hooks
+            .show_owner_answer_item_in_txn(store, wtxn, &fixed.id, Some(body))?;
     }
 
     // Past every check that can reject this row remotely: a replicated row
@@ -71,7 +75,7 @@ pub(super) fn audit_and_stage_body(
             transition: fixed.transition,
         },
     )?;
-    crate::gate::manifest_authenticity::update_manifest_origin(
+    store.gate_hooks.update_manifest_origin(
         store,
         wtxn,
         &fixed.id,
@@ -118,7 +122,7 @@ pub(super) fn audit_and_stage_body(
         dispatch.decoded_claim_body.as_ref(),
     )?;
     if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
+        crate::store::pending_comm_stop::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still
