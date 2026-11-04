@@ -18,6 +18,16 @@ use crate::side_table::{self, Named, Raw, SideTable};
 
 use super::scope_erase::contains;
 
+/// Whether `bytes` hold `needle` in any ASCII case (REVIEW-4322 P1): a stored
+/// critic ref may be uppercase hex while the erased id renders lowercase, and
+/// the parsed comparison below must still see the row.
+fn contains_folded(bytes: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && bytes
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 /// Terminal attempt receipts, by their raw key.
 const PACK_RECEIPT: SideTable<Vec<u8>, ReceiptRecord, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
@@ -187,14 +197,16 @@ pub(crate) fn erase_review_scope_in_txn(
         .iter_raw_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
     for (key, value) in rows {
-        if !contains(&value, named.as_bytes()) {
+        if !contains_folded(&value, named.as_bytes()) {
             continue;
         }
         let mut artifact = match ARTIFACT.decode_value(&value) {
             Ok(artifact) => artifact,
             Err(_) => continue,
         };
-        if artifact.provenance.critic_ref != named {
+        // Parsed, not string-compared (REVIEW-4322 P1): put accepts an
+        // uppercase critic ref, and from_hex reads any case.
+        if EntityId::from_hex(&artifact.provenance.critic_ref).ok() != Some(*entity) {
             continue;
         }
         let opaque = crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
@@ -219,7 +231,7 @@ pub(crate) fn erase_review_scope_in_txn(
         let Ok(hash) = <[u8; 32]>::try_from(key.as_slice()) else {
             continue;
         };
-        if !contains(&value, named.as_bytes()) {
+        if !contains_folded(&value, named.as_bytes()) {
             continue;
         }
         let mut review = match REVIEW.decode_value(&value) {
@@ -264,8 +276,9 @@ pub(crate) fn erase_review_scope_in_txn(
                 }
                 let old_ref = field_mut(artifact, "provenance")
                     .and_then(|provenance| field_mut(provenance, "critic_ref"))
-                    .and_then(|critic_ref| critic_ref.as_str().map(str::to_owned));
-                if old_ref.as_deref() == Some(named.as_str()) {
+                    .and_then(|critic_ref| critic_ref.as_str())
+                    .and_then(|hex| EntityId::from_hex(hex).ok());
+                if old_ref == Some(*entity) {
                     let token = match &critic_opaque {
                         Some(token) => token.clone(),
                         None => {
@@ -282,7 +295,12 @@ pub(crate) fn erase_review_scope_in_txn(
                     }
                     if let Some(executor) = field_mut(artifact, "calibration")
                         .and_then(|calibration| field_mut(calibration, "executor"))
-                        .filter(|executor| executor.as_str() == Some(named.as_str()))
+                        .filter(|executor| {
+                            executor
+                                .as_str()
+                                .and_then(|hex| EntityId::from_hex(hex).ok())
+                                == Some(*entity)
+                        })
                     {
                         *executor = rmpv::Value::from(token.as_str());
                     }

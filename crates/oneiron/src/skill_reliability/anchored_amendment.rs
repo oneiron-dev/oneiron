@@ -220,11 +220,22 @@ pub(super) fn mint_flipped_from_credit_in_txn(
         if fields.executor != executor {
             continue;
         }
-        let names = credit.direct_subjects.contains(&Some(*skill))
+        // The sealed lists or the latest adjustment's effective subjects
+        // (REVIEW-4322 P1): a subject a later adjustment adds still mints its
+        // amendment loss here.
+        let mut names = credit.direct_subjects.contains(&Some(*skill))
             || credit
                 .shares
                 .iter()
                 .any(|share| share.subject == Some(*skill));
+        if !names {
+            names = crate::skill_attribution::effective_credit_subjects_in_txn(
+                &vault.store,
+                txn,
+                &credit,
+            )?
+            .contains(skill);
+        }
         if !names {
             continue;
         }

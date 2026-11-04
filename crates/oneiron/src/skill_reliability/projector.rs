@@ -115,26 +115,26 @@ fn combine_person_observation(
 /// The person observation the credit's subjects currently stand on
 /// (REVIEW-4322 P1): each credited subject contributes its amended share as
 /// a loss or its standing credit observation, combined like the
-/// pack_learning person rule. Recomputed from the sealed credit every pass,
-/// so an amendment landing, a share shrinking, or a subject leaving moves
-/// the person row the same pass it moves the skill rows; `exclude` drops a
-/// withdrawing subject before the combine.
+/// pack_learning person rule. The subject set is the credit's effective
+/// subjects — the latest adjustment's, else the sealed receipt's — plus the
+/// restated subject, so a later-added subject's loss or standing counts.
+/// Recomputed every pass, so an amendment landing, a share shrinking, or a
+/// subject leaving moves the person row the same pass it moves the skill
+/// rows; `exclude` drops a withdrawing subject before the combine.
 fn recomputed_person_observation(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     credit: &LateCreditReceipt,
     attempt: &str,
+    restated: EntityId,
     exclude: Option<&EntityId>,
 ) -> Result<Option<(bool, f64)>> {
-    let mut subjects: Vec<EntityId> = credit
-        .direct_subjects
-        .iter()
-        .flatten()
-        .copied()
-        .chain(credit.shares.iter().filter_map(|share| share.subject))
-        .collect();
-    subjects.sort();
-    subjects.dedup();
+    let mut subjects =
+        crate::skill_attribution::effective_credit_subjects_in_txn(&vault.store, txn, credit)?;
+    if Some(&restated) != exclude && !subjects.contains(&restated) {
+        subjects.push(restated);
+        subjects.sort();
+    }
     let mut best: Option<(bool, f64)> = None;
     for subject in subjects {
         if Some(&subject) == exclude {
@@ -218,6 +218,47 @@ fn record_recomputed_person_evidence_in_txn(
     recomputed.observation = Observation::Success(observation.0);
     recomputed.weight = observation.1;
     crate::learning::record_evidence_in_txn(vault, txn, cell, &recomputed, at)?;
+    changed.remove(&cell.digest());
+    Ok(())
+}
+
+/// Records an ordinary desired person row folded with the row standing under
+/// the shared cell (REVIEW-4322 P1): the loss-dominates/max-weight fold, so
+/// one skill's win never overwrites another path's loss for the same
+/// receipt. Skips a row that already folds the combine.
+fn record_combined_person_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    evidence: &LearningEvidence,
+    at: u64,
+    changed: &mut BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    let mine = match evidence.observation {
+        Observation::Success(success) => (success, evidence.weight),
+        _ => {
+            crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, at)?;
+            changed.remove(&cell.digest());
+            return Ok(());
+        }
+    };
+    let key = (cell.digest(), evidence.receipt.clone());
+    let mut fold = mine;
+    if let Some(stored) = EVIDENCE.get(&vault.store, txn, &key)?
+        && let Observation::Success(stored_success) = stored.observation
+    {
+        fold = combine_person_observation(Some((stored_success, stored.weight)), Some(mine))
+            .unwrap_or(mine);
+    }
+    if let Some(anchor) = person_anchor(evidence)
+        && person_row_current(vault, txn, cell, &evidence.receipt, anchor, fold, evidence.at)?
+    {
+        return Ok(());
+    }
+    let mut combined = evidence.clone();
+    combined.observation = Observation::Success(fold.0);
+    combined.weight = fold.1;
+    crate::learning::record_evidence_in_txn(vault, txn, cell, &combined, at)?;
     changed.remove(&cell.digest());
     Ok(())
 }
@@ -562,8 +603,19 @@ pub(super) fn project_in_txn(
                             .axis(axis)
                             .project(row.cell.project);
                     let person_digest = person_cell.digest();
-                    EVIDENCE.delete(&vault.store, txn, &(person_digest, receipt))?;
-                    changed.insert(person_digest);
+                    let person_key = (person_digest, receipt.clone());
+                    // A native-credit restatement for the same receipt survives
+                    // (REVIEW-4322 P1): only an ordinary row leaves with the
+                    // stale skill row.
+                    let anchored = matches!(
+                        EVIDENCE.get(&vault.store, txn, &person_key)?,
+                        Some(stored)
+                            if matches!(stored.source, EvidenceSource::Anchored(_))
+                    );
+                    if !anchored {
+                        EVIDENCE.delete(&vault.store, txn, &(person_digest, receipt))?;
+                        changed.insert(person_digest);
+                    }
                 }
             }
         }
@@ -631,7 +683,7 @@ pub(super) fn project_in_txn(
                     txn,
                     &evidence.receipt,
                 )? && let Some(observation) =
-                    recomputed_person_observation(vault, txn, &credit, attempt, None)?
+                    recomputed_person_observation(vault, txn, &credit, attempt, *skill, None)?
                 {
                     record_recomputed_person_evidence_in_txn(
                         vault,
@@ -673,9 +725,8 @@ pub(super) fn project_in_txn(
             crate::learning::EstimateForm::Beta,
         )?;
         for row in evidence {
-            crate::learning::record_evidence_in_txn(vault, txn, &cell, &row, at)?;
+            record_combined_person_evidence_in_txn(vault, txn, &cell, &row, at, &mut changed)?;
         }
-        changed.remove(&cell.digest());
     }
     // The anchored writes land in cells the credit recording already kept a
     // prior for; the stable key replaces the row in place.
@@ -685,7 +736,7 @@ pub(super) fn project_in_txn(
     }
     // The same anchored restatements under person cells (FIX 8968): the
     // person comes from the attempt, the coordinates from the held credit
-    // cell, and the maximum observation across credited subjects stands.
+    // cell, and the recomputed observation across effective subjects stands.
     for (held, attempt_ref, evidence) in anchored_person_writes {
         let Some(attempt) =
             crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &attempt_ref)?
@@ -714,7 +765,14 @@ pub(super) fn project_in_txn(
         if let Some(credit) =
             crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &evidence.receipt)?
             && let Some(observation) =
-                recomputed_person_observation(vault, txn, &credit, &attempt_ref, None)?
+                recomputed_person_observation(
+                    vault,
+                    txn,
+                    &credit,
+                    &attempt_ref,
+                    held.subject,
+                    None,
+                )?
         {
             record_recomputed_person_evidence_in_txn(
                 vault,
@@ -756,8 +814,14 @@ pub(super) fn project_in_txn(
         };
         if let Some(credit) =
             crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &receipt)?
-            && let Some(observation) =
-                recomputed_person_observation(vault, txn, &credit, &attempt_ref, Some(&subject))?
+            && let Some(observation) = recomputed_person_observation(
+                vault,
+                txn,
+                &credit,
+                &attempt_ref,
+                subject,
+                Some(&subject),
+            )?
         {
             let mut restated = LearningEvidence::anchored(
                 receipt.clone(),
