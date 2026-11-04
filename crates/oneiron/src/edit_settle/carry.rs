@@ -1087,7 +1087,7 @@ impl Vault {
         let mut read = None;
         let woke = self.reask(wake, actor, decider, dial, policy, renderer, now, &mut read);
         // A wake that asked nothing (a replay, or no unit left) logs no ask.
-        let asked = !matches!(woke, Ok((Reasked::Nothing, _)));
+        let asked = !matches!(woke, Ok((Reasked::Nothing, _) | (Reasked::Replay, _)));
         let committed = woke.and_then(|(reasked, reask_ref)| {
             self.commit_reask(wake, &key, actor, now, reasked, &reask_ref, read.as_deref())
         });
@@ -1113,8 +1113,8 @@ impl Vault {
     /// Commits what a wake's ask made in ONE transaction (FIX 9174): its
     /// proposal, held for Keep under `reask_ref`; its entry in the standing
     /// question's ask log; and the wake's marks (each asked unit woken, the
-    /// ref listed, the hold cleared). A wake that asked nothing (a replay of
-    /// one already asked) marks the wake alone and logs no ask.
+    /// ref listed, the hold cleared). A replay marks nothing and logs no
+    /// ask; a terminal ask with no unit left retires the wake and logs no ask.
     #[expect(clippy::too_many_arguments)]
     fn commit_reask(
         &self,
@@ -1126,13 +1126,14 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts, read_rows) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new(), Vec::new()),
+        let (asked, proposal, unit_receipts, read_rows, retire) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true),
+            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false),
             Reasked::Asked {
                 proposal,
                 units,
                 read_rows,
-            } => (true, proposal, units, read_rows),
+            } => (true, proposal, units, read_rows, false),
         };
         // The carried envelope is admitted through the principal's own read,
         // inside the asking version's saved lane, as the fresh proposal waits
@@ -1179,18 +1180,21 @@ impl Vault {
             let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
                 return Ok(proposed);
             };
-            // A replay under a ref this wake already evaluated marks nothing:
-            // its first ask already covered the evaluation. A first
-            // evaluation under a new ref — including a terminal no-target ask
-            // that logs nothing — marks the wake so it retires instead of
-            // pumping its expired deadline forever (FIX 9826).
-            let known = row
-                .reask_refs
-                .iter()
-                .any(|known| known.as_str() == reask_ref);
-            if asked || !known {
+            // A replay marks nothing: its first ask already covered the
+            // evaluation. Any evaluation that ran — a real ask, or a
+            // terminal one with no unit left — retires the wake: a terminal
+            // withdrawal marks every answer, not just this wake's subset,
+            // so a partially marked row can never pump its expired deadline
+            // forever (FIX 9826).
+            if asked {
                 for answer in &mut row.answers {
                     if answer.woken_at.is_none() && units.contains(&&answer.unit) {
+                        answer.woken_at = Some(now);
+                    }
+                }
+            } else if retire {
+                for answer in &mut row.answers {
+                    if answer.woken_at.is_none() {
                         answer.woken_at = Some(now);
                     }
                 }
@@ -1265,7 +1269,7 @@ impl Vault {
                 .blob_artifact_settlement(&wake.artifact, &reask_ref)?
                 .is_some()
         {
-            return Ok((Reasked::Nothing, reask_ref));
+            return Ok((Reasked::Replay, reask_ref));
         }
         *read = Some(versions);
         let ask = ArtifactAsk {
@@ -1562,8 +1566,10 @@ impl Vault {
 
 /// What a wake's ask made, before anything commits (FIX 9174).
 enum Reasked {
-    /// Nothing was asked: a replay of a wake already asked, or no unit left.
+    /// No unit was left to ask: the wake retires with no ask logged.
     Nothing,
+    /// A replay of a wake already asked under this ref: nothing is marked.
+    Replay,
     /// The ask ran: its answers' proposal, none when no unit was answered,
     /// the units it left without an answer, as the first ask keeps them,
     /// and the rows its reads picked, which the proposal keeps (FIX 9312).
