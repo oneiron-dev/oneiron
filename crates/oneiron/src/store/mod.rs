@@ -151,6 +151,7 @@ pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod model_description_rows;
+pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
