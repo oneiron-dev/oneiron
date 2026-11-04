@@ -425,7 +425,7 @@ impl Store {
         CRITICAL_CONFIRM_INDEX.put(self, wtxn, &binding.confirm_id, &claim_id)?;
         // A vault that is not running wakes when the window closes, so the
         // expiry sweep can demote a write still waiting on its confirm.
-        crate::housekeeping::note_wake_in_txn(
+        crate::store::housekeeping_wake::note_wake_in_txn(
             self,
             wtxn,
             crate::store::housekeeping_schedule::HousekeepingSweep::CriticalConfirmExpiry,
