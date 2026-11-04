@@ -233,12 +233,14 @@ impl DeckPlanView {
                             .fit
                             .estimates
                             .iter()
-                            .map(|e| crate::blob_artifact::deck_creation::record::CreatedEstimate {
-                                block: e.block.clone(),
-                                need: e.need,
-                                room: e.room,
-                                font: e.font.clone(),
-                            })
+                            .map(
+                                |e| crate::blob_artifact::deck_creation::record::CreatedEstimate {
+                                    block: e.block.clone(),
+                                    need: e.need,
+                                    room: e.room,
+                                    font: e.font.clone(),
+                                },
+                            )
                             .collect(),
                         alternatives: slide
                             .fit

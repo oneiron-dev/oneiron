@@ -10,13 +10,13 @@
 //! authorized hit is lost. A checkpoint carries a memo row as a row-held
 //! response owned by those same rows, so their erase retires every image's
 //! copy too, and a retired memo row leaves nothing behind.
-use crate::store::query_memos::VerdictMemoKey;
-use crate::store::query_health::HEALTH;
-use crate::store::query_memos::MEMOS;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
 use crate::store::Store;
+use crate::store::query_health::HEALTH;
+use crate::store::query_memos::MEMOS;
+use crate::store::query_memos::VerdictMemoKey;
 
 /// The field a memo row names its sources under; a row without it does not
 /// know them whole.
