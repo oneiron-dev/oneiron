@@ -367,19 +367,20 @@ impl Vault {
             }
             (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
                 let head = units_at(units, head);
-                let held = if deck_needs_held_ids(deck, head, anchor.version) {
+                let (held, held_unread) = if deck_needs_held_ids(deck, head, anchor.version) {
                     self.load_held(txn, artifact, anchor.version, held, unread);
                     match held.get(&anchor.version) {
-                        Some(HeldIds::Read(ids)) => ids.as_ref(),
-                        Some(HeldIds::Unread) | None => return Stamp::Retry,
+                        Some(HeldIds::Read(ids)) => (ids.as_ref(), false),
+                        Some(HeldIds::Unread) | None => (None, true),
                     }
                 } else {
-                    None
+                    (None, false)
                 };
                 return match deck_body_locator(deck, head, anchor.version, held, &anchor.locator) {
                     Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
-                    // A head deck that did not read may yet bind the version.
-                    None if head.is_none() => Stamp::Retry,
+                    // An unread head may yet bind the version; an unread
+                    // optional-id record must not memoize a missing match.
+                    None if head.is_none() || held_unread => Stamp::Retry,
                     None => Stamp::Missed,
                 };
             }
@@ -525,16 +526,10 @@ fn plan_thread(
             )
         }
         ReanchorOutcome::Mapped(at_head) => {
-            if let Some((version, frontier)) = landing
-                && let Some(OfficeBodyUnits::Pptx(deck)) = units_at(units, frontier)
-                && deck_needs_held_ids(deck, units_at(units, body_head), *version)
-                && !matches!(held.get(version), Some(HeldIds::Read(_)))
-            {
-                return Follow::Idle;
-            }
             let landing_unread = landing.is_some_and(|(version, frontier)| {
                 units_at(units, frontier).is_none()
                     || matches!(filed.get(version), Some(Filed::Missing | Filed::Unread))
+                    || matches!(held.get(version), Some(HeldIds::Unread))
             });
             let landed = landing.and_then(|(version, frontier)| {
                 let target = units_at(units, frontier)?;
