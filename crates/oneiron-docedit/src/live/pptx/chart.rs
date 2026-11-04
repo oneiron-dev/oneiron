@@ -481,10 +481,10 @@ fn plot_moved(
     // (mates beside it, mates gone, family changed) stays silent.
     // Its side plot's base series, drawn in its family there as in the
     // base: a new series never moves it, and a series that changed family
-    // is judged by that field instead. A co-occupant that left surviving
-    // base-plot mates behind moved here on its own: it names its own move,
-    // never this series' destination; one beside its mates, or with none
-    // surviving elsewhere, still anchors it.
+    // is judged by that field instead. A co-occupant whose base plot holds
+    // a stronger claim elsewhere moved here on its own: it names its own
+    // move, never this series' destination; one this destination retained,
+    // beside its mates, or with none surviving elsewhere, still anchors it.
     let mut targets: Vec<u32> = Vec::new();
     for line in side_series {
         let Some(other) = line.id else {
@@ -503,15 +503,30 @@ fn plot_moved(
             continue;
         }
         if nth != ordinal {
-            let left_mates = base_series.iter().filter_map(|line| line.id).any(|mate| {
-                mate != other
-                    && base_key(mate) == Some((family, nth))
-                    && side_series.iter().any(|line| line.id == Some(mate))
-                    && !side_series.iter().any(|line| {
-                        line.id == Some(mate) && plot_key(side_family, line) == (family, at)
+            // A co-occupant that left surviving base-plot mates behind moved
+            // here on its own: it names its own move, never this series'
+            // destination — unless this destination still holds its base
+            // plot's strongest claim (review-4320 P1): the mates'
+            // departures do not move an occupant the destination retained.
+            // The claim counts the plot's surviving natives, with the
+            // ordinal for a tie; one beside its mates, or with none
+            // surviving elsewhere, still anchors it.
+            let plot_claim = |place: u32| -> (usize, bool) {
+                let count = side_series
+                    .iter()
+                    .filter(|line| {
+                        line.id.is_some_and(|mate| base_key(mate) == Some((family, nth)))
+                            && plot_key(side_family, line) == (family, place)
                     })
+                    .count();
+                (count, place == nth)
+            };
+            let here = plot_claim(at);
+            let moved = side_series.iter().any(|line| {
+                let (_, place) = plot_key(side_family, line);
+                place != at && plot_claim(place) > here
             });
-            if left_mates {
+            if moved {
                 continue;
             }
             targets.push(nth);
