@@ -739,6 +739,31 @@ a restore (LIVE), so a restore never revives a spent push; one whose commit the 
 refused at dispatch (`objects_missing`). Erasing an actor scrubs it from every request it acted
 on.
 
+## Attach a folder as Files
+
+`oneiron files attach <folder>` reads a folder of this host into this install's Files
+world: every file lands as a note, a file past the note bound as its parts, and a file
+the host cannot read by name only. The attach is your standing act — from then on
+`oneiron serve` rescans the folder with the others, and `oneiron files rescan` (no path
+rescans every attached Files folder) does it now. Symbolic links under the folder are
+never followed, and nothing is written to it. The Files world is read on this install
+only; no sealed copy travels. A file that is gone is retracted on the next rescan; a
+folder inside that will not open is counted in the report (the first is named) and
+left alone until a later rescan.
+
+`--include <pattern>` keeps only matching files (`*` within a name, `**` across
+folders, `?` one character). `--exclude <pattern>` also passes over what matches, added
+to the default exclusions (hidden entries, version control, dependency and build
+folders, credential stores and key files); `--no-default-exclude` drops the defaults so
+only `--exclude` is passed over. The same surface on a running server is
+`vault.files.sources.attach` — there `exclude` works the other way: absent keeps the
+default list, and a list, even an empty one, replaces it.
+
+`oneiron files list` shows the attached folders, `oneiron files files <folder>` the
+files one holds, and `oneiron files detach <folder>` stops every rescan from reading
+it again (a folder that is gone is detached by the name it was attached by; its notes
+stay).
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
@@ -2265,6 +2290,14 @@ same under the owner's credential. Where Oneiron hosts the bytes, a legal order 
 can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
 the order whole, with its reference and terms, unless the order itself requires silence; then you
 see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+
+An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
+answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
+confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
+delete has already begun and runs to its end. A withdrawn erase erases nothing, its `erase` act
+goes, a hold the confirm lifted stays lifted, and each hold the confirm met logs
+`erase_withdrawn`.
 
 ## Erase a text's history
 

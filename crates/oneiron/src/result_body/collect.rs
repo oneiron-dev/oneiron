@@ -3,9 +3,10 @@
 use std::collections::BTreeSet;
 use std::time::SystemTime;
 
+use super::ResultBodyPin;
 use super::files::{
-    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_now, sync_dir,
-    unlink_body,
+    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_entry_now,
+    remove_unnamed_now, sync_dir, unlink_body,
 };
 use super::{
     RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
@@ -157,6 +158,55 @@ impl Vault {
         Ok(report)
     }
 
+    /// Gives back a save's `pins` and unlinks each body it brought into
+    /// `bodies/` as a new instance that nothing names once its transaction
+    /// has ended: a refused save, or a copy that skipped its MESSAGE, leaves
+    /// no base copy of off-record bytes for the orphan sweep (FIX 3633). Each
+    /// goes in a fresh writer that finds it unnamed; one a reader pins stays
+    /// for the sweep. Warning-only: it never fails the save it follows.
+    pub(crate) fn discard_unnamed_promoted_bodies(&self, pins: Vec<ResultBodyPin>) {
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let imported: Vec<BodyEntry> = pins
+            .iter()
+            .filter_map(|pin| {
+                let digest = pin.digest()?;
+                let instance = self.result_body_pins.promoted(&digest)?;
+                Some(BodyEntry {
+                    digest,
+                    instance: sealed.then_some(instance),
+                    index: false,
+                })
+            })
+            .collect();
+        drop(pins);
+        if imported.is_empty() {
+            return;
+        }
+        let discarded = self.store.body_dir().and_then(|dir| {
+            let went = self.with_write_txn_grouped(|txn| {
+                let mut went = 0usize;
+                for entry in &imported {
+                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
+                        && remove_unnamed_now(&dir, entry, &self.result_body_pins)?
+                    {
+                        went += 1;
+                    }
+                }
+                Ok(went)
+            })?;
+            if went > 0 {
+                sync_dir(&dir)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = discarded {
+            tracing::warn!(
+                error = %error,
+                "an unnamed promoted result body is left to the orphan sweep"
+            );
+        }
+    }
+
     /// Carries out every body instance retirement nothing names any longer
     /// (KS-2A). Post-commit and warning-only: the intent is durable, so a
     /// failure here is retried by the next pass and never fails the act
@@ -288,7 +338,7 @@ impl Vault {
                 if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
                     continue;
                 }
-                match remove_unnamed_now(&dir, entry, &self.result_body_pins)? {
+                match remove_unnamed_entry_now(&dir, entry, &self.result_body_pins)? {
                     RemoveOutcome::Removed => removed += 1,
                     RemoveOutcome::Pinned => pinned += 1,
                     RemoveOutcome::Skipped => skipped += 1,

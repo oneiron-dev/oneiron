@@ -11,26 +11,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::attempt_queue::AttemptQueue;
 use oneiron::dreamer_consolidation::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
-    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON,
-    TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input,
-    run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts_while,
+    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend,
+    TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON,
+    WeaveLensModel, resident_of_dream_input, run_resident_dream, run_task_realize, run_weave_lens,
+    settle_parked_conflicts_while,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::{
+    HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext,
+};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, Vault, WakeAttemptContext,
-    WriteActor,
+    WakePassDeadline, WriteActor,
 };
 use oneiron_driver::{
     AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
@@ -348,8 +352,11 @@ async fn supervise(
             }),
             confession_instruction: settings.wording.confession().to_owned(),
             windows,
+            pass_deadline: None,
+            device_cancel: None,
             weaver: None,
             weaver_ladder: None,
+            weaver_run: None,
             task_route: None,
             inner: None,
             status: Arc::clone(&status),
@@ -471,6 +478,15 @@ struct ObservedFactory {
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
+    /// The pass's wake deadline, lent after the pass's meter exists (FIX
+    /// 11962): role runs convert what is left into their device-work
+    /// deadlines. `None` runs them un-deadlined, as before.
+    pass_deadline: Option<WakePassDeadline>,
+    /// The pass's device-work cancellation, lent beside the deadline (FIX
+    /// 11963): role runs admit under a clone, so tripping it beside the
+    /// wake flag aborts their in-flight device work. `None` admits
+    /// unlinked, as before.
+    device_cancel: Option<WorkCancel>,
     /// A TASK's realization is asked for its confession in this (FIX 8696).
     confession_instruction: String,
     windows: BTreeMap<ModelId, u64>,
@@ -481,6 +497,9 @@ struct ObservedFactory {
     /// on the weaver's model sends there on a run of its own, never on the
     /// pass's line (FIX 4453).
     weaver_ladder: Option<Arc<OfferLadder>>,
+    /// The run the ladder above sends on: an inherited resident lends it with
+    /// the pass's remaining deadline overlaid, its meter and identity unchanged.
+    weaver_run: Option<RunAdmission>,
     /// The route a TASK realizes on: narrative, else extraction, with the
     /// ladder and run its backend sends on.
     task_route: Option<(ModelRole, RoleBackend, RoleSends)>,
@@ -582,10 +601,26 @@ impl ObservedFactory {
         let mut roles = RoleBackends::default();
         let mut runs = BTreeMap::new();
         for (role, route) in &routes {
-            let run = self.runtime.undeclared_run(
-                format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
-                line.clone(),
-            );
+            let run = self
+                .runtime
+                .undeclared_run(
+                    format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
+                    line.clone(),
+                )
+                // Role runs inherit the pass's remaining time as their
+                // device-work deadline (FIX 11962); without a lent pass
+                // deadline they run un-deadlined, as before.
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    deadline: self.pass_deadline.as_ref().and_then(|deadline| {
+                        Instant::now().checked_add(Duration::from_millis(deadline.remaining_ms()))
+                    }),
+                    // Role runs admit under the pass's device-work
+                    // cancellation (FIX 11963): tripping it beside the wake
+                    // flag aborts their in-flight device work with the pass.
+                    cancel: self.device_cancel.clone().unwrap_or_default(),
+                    ..Default::default()
+                });
             runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
             // Each call the engine knows the rows of sends under them, on
             // this same run (FIX 6998).
@@ -608,6 +643,9 @@ impl ObservedFactory {
         self.weaver_ladder = runs
             .get(&DREAMER_NARRATIVE_ROLE)
             .map(|(ladder, _)| Arc::clone(ladder));
+        self.weaver_run = runs
+            .get(&DREAMER_NARRATIVE_ROLE)
+            .map(|(_, run)| run.clone());
         self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
             .into_iter()
             .find_map(|role| Some((role, roles.get(role).cloned()?, runs.remove(&role)?)));
@@ -695,6 +733,14 @@ impl PassExecutorFactory for ObservedFactory {
     /// chat turn does, so each role's backend attests the model the engine's
     /// admission selects for it. A route this server does not serve stops
     /// the pass before any attempt is admitted.
+    fn set_pass_deadline(&mut self, deadline: &WakePassDeadline) {
+        self.pass_deadline = Some(deadline.clone());
+    }
+
+    fn set_device_cancel(&mut self, cancel: &WorkCancel) {
+        self.device_cancel = Some(cancel.clone());
+    }
+
     fn executor<'p>(
         &'p mut self,
         guard: &'p oneiron::BudgetGuard,
@@ -706,6 +752,7 @@ impl PassExecutorFactory for ObservedFactory {
                 runtime: &self.runtime,
                 weaver,
                 weaver_ladder: self.weaver_ladder.as_ref(),
+                weaver_run: self.weaver_run.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -762,6 +809,7 @@ impl PassExecutorFactory for ObservedFactory {
                 runtime: &self.runtime,
                 weaver,
                 weaver_ladder: self.weaver_ladder.as_ref(),
+                weaver_run: self.weaver_run.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -1157,6 +1205,8 @@ struct ResidentLend<'p> {
     weaver: &'p RoleBackend,
     /// The ladder `weaver` sends on, for a free-time item's own run.
     weaver_ladder: Option<&'p Arc<OfferLadder>>,
+    /// The run that ladder sends on, for an inherited resident's lend.
+    weaver_run: Option<&'p RunAdmission>,
     guard: &'p oneiron::BudgetGuard,
     egress: bool,
     instruction: &'p str,
@@ -1194,13 +1244,23 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
-            let backend = SourcedRunBackend::new(
-                ladder,
-                self.runtime.undeclared_run(
+            let deadline =
+                Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+            let run = self
+                .runtime
+                .undeclared_run(
                     format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
                     line,
-                ),
-            );
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    deadline,
+                    // Resident runs admit under the pass's device-work
+                    // cancellation (FIX 11963), as role runs do.
+                    cancel: ctx.device_cancel.clone().unwrap_or_default(),
+                    ..Default::default()
+                });
+            let backend = SourcedRunBackend::new(ladder, run);
             let egress = self
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
@@ -1248,11 +1308,29 @@ impl ResidentLend<'_> {
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.weaver.model.clone()])));
+        // An inherited resident lends the weaver's own run with the pass's
+        // remaining deadline overlaid: the same meter and identity, the same
+        // sourced view, only the deadline added. Without this the call sends
+        // with deadline=None, against the body's promise.
+        let lent;
+        let (backend, sourced): (&dyn LlmBackend, Option<&dyn SourcedBackend>) =
+            match (self.weaver_ladder, self.weaver_run) {
+                (Some(ladder), Some(run)) => {
+                    let deadline = Instant::now()
+                        .checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+                    let mut context = run.work_context();
+                    context.deadline = deadline;
+                    lent =
+                        SourcedRunBackend::new(Arc::clone(ladder), run.with_work_context(context));
+                    (&lent, Some(&lent))
+                }
+                _ => (self.weaver.backend.as_ref(), self.weaver.sourced.as_deref()),
+            };
         run_resident_dream(
             attempt,
             ctx,
             ResidentDreamModel {
-                backend: self.weaver.backend.as_ref(),
+                backend,
                 guard: self.guard,
                 model: self.weaver.model.clone(),
                 inference: HostInferenceContext {
@@ -1262,7 +1340,7 @@ impl ResidentLend<'_> {
                 role: Some(DREAMER_NARRATIVE_ROLE),
                 instruction: self.instruction,
                 window_tokens: self.windows.get(&self.weaver.model).copied(),
-                sourced: self.weaver.sourced.as_deref(),
+                sourced,
             },
         )
         .await
@@ -1457,6 +1535,49 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         });
         run_log::executed(attempt, ctx, &outcome);
         outcome
+    }
+
+    /// A partition window is work like its attempts: counted started
+    /// together, then each outcome folded into the same counters and
+    /// run log a serial execute feeds. No window attempt is a resident
+    /// or TASK shape, so none can end unserved.
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<oneiron::Result<DreamerAttemptExecution>> {
+        let started = u64::try_from(window.len()).unwrap_or(u64::MAX);
+        self.status.update(|status| {
+            status.dreamer.state = WorkState::Working;
+            status.dreamer.started = status.dreamer.started.saturating_add(started);
+        });
+        let outcomes = self.inner.execute_partition_window(window).await;
+        let one_writer_reads = window
+            .first()
+            .map(|(_, ctx)| ctx.vault.dreamer_one_writer_reads());
+        self.status.update(|status| {
+            status.dreamer.state = WorkState::Waiting;
+            if let Some(reads) = one_writer_reads {
+                status.dreamer_one_writer_reads = reads;
+            }
+            for outcome in &outcomes {
+                match outcome {
+                    Ok(DreamerAttemptExecution::Completed { .. }) => {
+                        status.dreamer.completed += 1;
+                    }
+                    Ok(other) => {
+                        status.dreamer.last_error = Some(format!("{other:?}"));
+                    }
+                    Err(error) => {
+                        status.dreamer.failed += 1;
+                        status.dreamer.last_error = Some(error.to_string());
+                    }
+                }
+            }
+        });
+        for ((attempt, ctx), outcome) in window.iter().zip(&outcomes) {
+            run_log::executed(attempt, ctx, outcome);
+        }
+        outcomes
     }
 
     /// A resident dreaming on its own served model reserves and settles on

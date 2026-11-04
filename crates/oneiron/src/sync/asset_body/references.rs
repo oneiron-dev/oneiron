@@ -270,12 +270,14 @@ pub(crate) fn copy_refs_within(source: &LoroDoc, out: &LoroDoc) -> Result<()> {
 const fn kind_code(kind: AssetFileKind) -> u8 {
     match kind {
         AssetFileKind::Opaque => 1,
+        AssetFileKind::Record => 2,
     }
 }
 
 const fn kind_of(code: u8) -> Option<AssetFileKind> {
     match code {
         1 => Some(AssetFileKind::Opaque),
+        2 => Some(AssetFileKind::Record),
         _ => None,
     }
 }

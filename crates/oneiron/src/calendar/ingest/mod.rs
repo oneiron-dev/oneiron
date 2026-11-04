@@ -47,8 +47,8 @@ mod admission;
 pub mod door;
 pub(crate) use admission::ensure_ics_import_actor;
 pub(in crate::calendar) use admission::{
-    admit_connector_event, connector_event_ref, delete_connector_resource,
-    preflight_connector_feed, sweep_connector_resource,
+    ConnectorAdmissionSource, admit_connector_event, connector_event_ref,
+    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
 };
 pub mod feed_door;
 mod fetch;
@@ -61,7 +61,10 @@ pub(in crate::calendar) mod property_claims;
 pub(crate) use super::{ics, passport, safeguard};
 
 pub(in crate::calendar) use self::admission::admit_calendar_import_claim;
-pub use self::admission::ics_import_actor_id;
+pub use self::admission::{
+    ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload, ics_import_actor_id,
+    run_ics_property_continuation,
+};
 pub use self::fetch::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse,
     IcsHttpTransport,

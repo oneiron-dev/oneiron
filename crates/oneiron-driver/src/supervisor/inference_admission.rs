@@ -8,7 +8,7 @@
 //! or reap. Unknown capacity admits and records under the lead ruling.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -42,6 +42,8 @@ pub struct WorkRequest {
     pub envelope: WorkEnvelope,
     pub parent: Option<TicketId>,
     pub cancel: Arc<AtomicBool>,
+    /// Wakes waits on that flag; fresh whenever a child snapshots the flag.
+    pub cancel_changed: Arc<Notify>,
     pub profile_id: String,
 }
 
@@ -62,6 +64,7 @@ impl WorkRequest {
             envelope: WorkEnvelope::default(),
             parent: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            cancel_changed: Arc::new(Notify::new()),
             profile_id: profile_id.into(),
         }
     }
@@ -251,7 +254,6 @@ struct AdmissionState {
     next_load: u64,
     background_serviced: HashMap<(ResourceClass, String), u64>,
     next_ticket: TicketId,
-    next_grant: GrantId,
     revision: u64,
     pressure: PressureState,
     stopped: bool,
@@ -263,7 +265,14 @@ pub struct DeviceAdmission {
     ledger: Arc<DeviceLedger>,
     state: Mutex<AdmissionState>,
     changed: Notify,
+    /// This admission's own identity (FIX 11960): ticket numbers restart at
+    /// 1 in every admission, so a parent link names its admission with its
+    /// ticket and resolves only against that same live admission.
+    id: u64,
 }
+
+/// The next admission identity, process-wide: never reused.
+static NEXT_ADMISSION_ID: AtomicU64 = AtomicU64::new(1);
 
 impl fmt::Debug for DeviceAdmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -279,6 +288,7 @@ impl DeviceAdmission {
         Self {
             device: device.into(),
             ledger,
+            id: NEXT_ADMISSION_ID.fetch_add(1, Ordering::Relaxed),
             state: Mutex::new(AdmissionState {
                 tickets: BTreeMap::new(),
                 grants: BTreeMap::new(),
@@ -289,13 +299,19 @@ impl DeviceAdmission {
                 next_load: 1,
                 background_serviced: HashMap::new(),
                 next_ticket: 1,
-                next_grant: 1,
                 revision: 1,
                 pressure: PressureState::None,
                 stopped: false,
             }),
             changed: Notify::new(),
         }
+    }
+
+    /// This admission's own identity: a parent link names it with its
+    /// ticket, and resolves only against this same live admission.
+    #[must_use]
+    pub fn admission_id(&self) -> u64 {
+        self.id
     }
 
     /// Registers an executor row for status and idle-unload decisions.
@@ -321,11 +337,13 @@ impl DeviceAdmission {
             request.class = parent.request.class;
             request.deadline = parent.request.deadline;
             request.cancel = fresh_cancel(&parent.request.cancel);
+            request.cancel_changed = fresh_cancel_changed();
             // Physical custody is per-call, never inherited.
         }
         request.parent = parent;
         if state.reaping.contains(&request.worker_id) {
             request.cancel.store(true, Ordering::Release);
+            request.cancel_changed.notify_waiters();
         }
         state.tickets.insert(
             ticket,
@@ -371,7 +389,7 @@ impl DeviceAdmission {
         if next_ticket(&state) != Some(ticket.ticket) {
             return Ok(None);
         }
-        let grant_id = state.next_grant;
+        let grant_id = self.ledger.next_grant_id();
         let holder = work_holder(grant_id);
         let request = state
             .tickets
@@ -391,7 +409,6 @@ impl DeviceAdmission {
             }
             return Ok(None);
         }
-        state.next_grant = state.next_grant.saturating_add(1);
         state.grants.insert(grant_id, ticket.ticket);
         if request.class == WorkClass::Background {
             state
@@ -441,12 +458,14 @@ impl DeviceAdmission {
                     ticket.request.class = parent.class;
                     ticket.request.deadline = parent.deadline;
                     ticket.request.cancel = fresh_cancel(&parent.cancel);
+                    ticket.request.cancel_changed = fresh_cancel_changed();
                     // Physical custody is per-call, never inherited.
                     ticket.request.parent = Some(parent_id);
                     ticket.blocked_by = Some(parent_id);
                 }
                 None => {
                     ticket.request.cancel = fresh_cancel(&ticket.request.cancel);
+                    ticket.request.cancel_changed = fresh_cancel_changed();
                     ticket.request.parent = None;
                     ticket.blocked_by = None;
                 }
@@ -472,6 +491,7 @@ impl DeviceAdmission {
             pending.extend(children);
             if let Some(ticket) = state.tickets.remove(&ticket) {
                 ticket.request.cancel.store(true, Ordering::Release);
+                ticket.request.cancel_changed.notify_waiters();
             }
             if let Some(grant) = state
                 .grants
@@ -502,6 +522,15 @@ impl DeviceAdmission {
             self.cancel(ticket);
         }
         self.changed.notify_waiters();
+    }
+
+    /// Whether actual worker replacement or teardown has stopped this queue.
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopped
     }
 
     /// Fit, else idle unload, then an approved smaller profile, then wait.
@@ -609,6 +638,7 @@ impl DeviceAdmission {
             child.blocked_by = None;
             child.request.parent = None;
             child.request.cancel = fresh_cancel(&child.request.cancel);
+            child.request.cancel_changed = fresh_cancel_changed();
         }
         state.paused.remove(&ticket);
         state.pressure = PressureState::None;
@@ -633,6 +663,10 @@ fn worker_tickets(state: &AdmissionState, worker_id: &str) -> Vec<TicketId> {
 
 fn fresh_cancel(current: &AtomicBool) -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(current.load(Ordering::Acquire)))
+}
+
+fn fresh_cancel_changed() -> Arc<Notify> {
+    Arc::new(Notify::new())
 }
 
 fn dependency_reaches(state: &AdmissionState, parent: TicketId, target: TicketId) -> bool {

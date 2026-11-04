@@ -6,6 +6,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::super::OwnDeviceImport;
 use super::super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
@@ -32,14 +33,24 @@ struct WindowVvReply {
 
 /// [`super::import_promotion_snapshot`] with this vault to judge the custody
 /// transitions an own machine's promotion carries by (OF-422): without one,
-/// admission refuses every custody insert.
+/// admission refuses every custody insert. Under `own_device`, the proof the
+/// home this promotion's socket proved sent `snapshot`, each MESSAGE row it
+/// holds takes the own-device lane as it lands in `window` (FIX 12111).
 fn import_promotion_snapshot_with(
     vault: &crate::Vault,
-    doc: &loro::LoroDoc,
+    (window, doc): (&WindowKey, &loro::LoroDoc),
     snapshot: &[u8],
+    own_device: Option<&OwnDeviceImport>,
 ) -> bool {
     crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
-        && crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)).is_ok()
+        && crate::sync::ingest::with_own_device_import(
+            vault,
+            own_device,
+            (window, doc),
+            snapshot,
+            || crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)),
+        )
+        .is_ok()
 }
 
 /// Sync-state prefix of a window this machine holds in full whose retain the
@@ -149,7 +160,13 @@ impl SyncClient {
                 "unpromoted window has local CRDT history",
             ));
         }
-        if !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot) {
+        let own_device = self.own_device_import(rpc.home);
+        if !import_promotion_snapshot_with(
+            &self.vault,
+            (window, &loaded.doc),
+            &snapshot,
+            own_device.as_ref(),
+        ) {
             self.manager.discard_window(window);
             return Err(refused());
         }
@@ -292,8 +309,14 @@ impl SyncClient {
         // The world's pads reach custody here before the snapshot (FIX 6706).
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
+        let own_device = self.own_device_import(rpc.home);
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
-            || !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot)
+            || !import_promotion_snapshot_with(
+                &self.vault,
+                (window, &loaded.doc),
+                &snapshot,
+                own_device.as_ref(),
+            )
         {
             self.mark_retain_refused(window)?;
             return Ok(false);

@@ -98,8 +98,9 @@ pub(super) struct TurnSegments {
     /// when it did not read.
     revocation: Option<u64>,
     /// The authority a snapshot restored for the turn's call is rechecked
-    /// under, held for the turn's life: the record [`turn_admitted`] keeps
-    /// lapses once it goes.
+    /// under, held at least for the turn's life: [`commit_on_answer`] keeps
+    /// it until the call's outcome ends, so a turn that wrote no rows still
+    /// restores warm. The [`turn_admitted`] record lapses once it goes.
     _turn: Option<Arc<dyn CheckpointAuthority>>,
 }
 
@@ -314,20 +315,24 @@ impl PathDependencies {
 
     /// Adds to `set` the worlds and authors of the notes and summaries and
     /// of what each summary folds, and the summaries and what they fold as
-    /// derived; `None` at the first of them that does not read.
+    /// derived; `None` at the first of them that does not read. The whole
+    /// walk reads on one snapshot: two transactions per row and one per
+    /// summary do not scale to long folded logs (FIX 11338).
     fn read_quoted(&self, vault: &Vault, set: &mut SnapshotDependencies) -> Option<()> {
+        let txn = vault.dependency_read_txn().ok()?;
         let mut folded = Vec::new();
         for summary in &self.summaries {
             folded.push(*summary);
-            for span in vault.summary_folded_spans(summary).ok()?? {
+            for span in vault.summary_folded_spans_in_txn(&txn, summary).ok()?? {
                 folded.push(span.turn);
                 folded.extend(span.messages);
             }
         }
         for id in self.notes.iter().chain(&folded) {
-            let world = vault.record_world(id).ok()??;
+            let world = vault.record_world_in_txn(&txn, id).ok()??;
             set.worlds.push(world.unwrap_or_else(base_world_id));
-            set.authors.push(vault.record_author(id).ok()??);
+            set.authors
+                .push(vault.record_author_in_txn(&txn, id).ok()??);
         }
         set.derived.extend(folded);
         Some(())
@@ -502,8 +507,10 @@ impl CheckpointAuthority for ChatAuthority {
 /// Hands `answering`'s outcome on as it ends; then, when the reply was
 /// saved whole as its own MESSAGE in `turn`, hands the turn to the session
 /// coordinator with what it was admitted under, the user's `written`
-/// MESSAGE rows among its sources. A turn with no segments, or whose rows
-/// are not all known, hands nothing.
+/// MESSAGE rows among its sources. A turn with no segments hands nothing.
+/// The turn's authority is held until the outcome ends even when the turn
+/// wrote no rows, so a restore for its call rechecks under it instead of
+/// running cold; only the commit handoff still needs `written` (FIX 11287).
 pub(super) fn commit_on_answer(
     segments: Option<TurnSegments>,
     reader: &Reader,
@@ -512,30 +519,39 @@ pub(super) fn commit_on_answer(
     turn: EntityId,
     answering: Answering,
 ) -> Answering {
-    let Some((segments, (read_key, mut sources), written)) = segments.and_then(|segments| {
-        let authority = segments.authority.clone()?;
-        Some((segments, authority, written?))
-    }) else {
+    let Some(segments) = segments else {
         return answering;
     };
-    sources.extend_from_slice(written);
-    let authority = ChatAuthority {
-        reader: reader.clone(),
-        credential: credential.clone(),
-        read_key,
-        sources,
-        at: None,
-        path: segments.path.clone(),
-        revocation: segments.revocation,
-    };
+    let commit_authority = written.and_then(|written| {
+        let (read_key, mut sources) = segments.authority.clone()?;
+        sources.extend_from_slice(written);
+        Some(ChatAuthority {
+            reader: reader.clone(),
+            credential: credential.clone(),
+            read_key,
+            sources,
+            at: None,
+            path: segments.path.clone(),
+            revocation: segments.revocation,
+        })
+    });
     let Answering {
         handle,
         subscription,
         outcome,
     } = answering;
+    // The vault the reply lands in, for the FIX 10367 HEAD read below.
+    // `reader` itself does not enter the spawned task.
+    let vault = reader.vault.clone();
+    // The turn authority the task retains: the task only reads `manifest`,
+    // so edition-2024 disjoint capture would otherwise drop `_turn` when
+    // this returns and the restore would run cold (FIX 11287).
+    let retain_turn = segments._turn.clone();
     let message = handle.message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
+        // Held until the outcome ends, whatever the turn wrote.
+        let _retain = retain_turn;
         let Ok(ended) = outcome.await else {
             return;
         };
@@ -543,14 +559,28 @@ pub(super) fn commit_on_answer(
             && ended.saved.as_ref().is_some_and(|saved| {
                 saved.message_id == message && saved.finality == StreamFinality::Final
             });
-        let commit = whole.then(|| ReplyCommit {
-            head: turn,
-            message,
-            text: ended.text.clone(),
+        let commit = whole.then(|| {
+            // The HEAD the reply lands at, read once it has landed (FIX
+            // 10367): HEAD does not always move to this reply's TURN, and
+            // naming the TURN anyway drops the session at the next fork.
+            // No HEAD stands or reads: the TURN names it, as before.
+            let head = segments
+                .manifest
+                .anchor()
+                .map(|anchor| anchor.conversation)
+                .and_then(|conversation| {
+                    crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
+                })
+                .unwrap_or(turn);
+            ReplyCommit {
+                head,
+                message,
+                text: ended.text.clone(),
+            }
         });
         // The outcome goes on as it ended; nothing waits for the session.
         let _ = finished.send(ended);
-        if let Some(commit) = commit {
+        if let (Some(commit), Some(authority)) = (commit, commit_authority) {
             reply_committed(&segments.manifest, commit, Arc::new(authority));
         }
     });

@@ -32,6 +32,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/distance/prepared.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | PreparedCosine | — |
 | `src/fusion.rs` | src | m | 2 struct · 7 fn · 2 const · 2 crate-vis | LinearLogBlendScores, RetrievalBlendInput | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
 | `src/fusion/tests.rs` | test | s | — | — | — |
-| `src/lib.rs` | src | s | 4 mod | — | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion |
+| `src/hnsw_entry_point.rs` | src | m | 2 fn | — | Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it) |
+| `src/lib.rs` | src | s | 5 mod | — | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion |
 | `src/pipeline.rs` | src | s | 1 struct | ScoredEntity | Value types the retrieval pipeline's kernels share |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-retrieval` made `pub` so `oneiron` can reach them across the crate split |

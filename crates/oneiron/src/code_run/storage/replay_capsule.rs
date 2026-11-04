@@ -30,8 +30,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
 pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
+pub(crate) use self::erase::actor_gone_in_txn;
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
-pub(super) use self::erase::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_actor};
+pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,

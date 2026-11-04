@@ -126,6 +126,7 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new
     // sieve read in this commit. A new TURN is owed its first
@@ -161,6 +162,7 @@ pub(super) fn apply_put_arm(
                 transition: transition.as_ref(),
                 posture: config.privacy.posture,
                 owner_authored: None,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
         authority_beside,
