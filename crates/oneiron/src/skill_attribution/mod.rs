@@ -93,8 +93,7 @@ pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
     withdraw_edit_proposal_in_txn,
 };
-mod row_ids;
-pub(crate) use self::row_ids::{attribution_judgment_row_ids, edit_proposal_row_ids};
+pub(crate) use oneiron_skill_attribution::row_ids::{attribution_judgment_row_ids, edit_proposal_row_ids};
 mod skill_erase;
 pub(crate) use self::skill_erase::{
     erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
@@ -105,7 +104,7 @@ pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
     unclear_floor_sourced,
 };
-mod types;
+use oneiron_skill_attribution::types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
 pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};

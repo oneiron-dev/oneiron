@@ -1,7 +1,9 @@
 //! Door inputs and snapshot results.
 
-use crate::error::Error;
-use crate::{EntityId, TimeRange, WriteActor};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::Error;
+use oneiron_contracts::temporal::TimeRange;
+use oneiron_contracts::write_envelope::WriteActor;
 
 /// Which chain or retained sub-session a scope addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,10 +205,10 @@ pub struct DagPage {
 }
 
 /// The row an append's receipts name.
-pub(crate) const APPEND_ROW: &str = "conversation.append_record";
+pub const APPEND_ROW: &str = "conversation.append_record";
 
 /// Why a caller-bound append did not land.
-pub(crate) enum AppendFailure {
+pub enum AppendFailure {
     /// The engine refused or failed the append.
     Engine(Error),
     /// The ref at this pointer does not read for the writer; the append's

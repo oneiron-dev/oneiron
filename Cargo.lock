@@ -7952,6 +7952,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8761,6 +8762,13 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
 ]
 
 [[package]]
