@@ -201,7 +201,27 @@ impl OfferLadder {
         selector: Option<&str>,
         deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
-        self.stream_from(run, request, selector, true, deadline)
+        self.stream_from(run, request, selector, true, deadline, None)
+    }
+
+    /// [`Self::stream_by`], with the binding of the rung that answers for the
+    /// model-call record (FIX 12743): the exact answering rung's model,
+    /// locality, prompt and route pin, the owner's fallback included. The
+    /// receiver resolves exactly when a `Done` event goes out, sent before
+    /// it on the same task; any other end leaves it unresolved.
+    pub(crate) fn stream_recorded_by(
+        self: &std::sync::Arc<Self>,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        deadline: CallDeadline,
+    ) -> LlmResult<(
+        LlmStream<'static>,
+        tokio::sync::oneshot::Receiver<ModelCallBinding>,
+    )> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.stream_from(run, request, selector, true, deadline, Some(tx))
+            .map(|stream| (stream, rx))
     }
 
     /// [`Self::media`] on `deadline` (FIX 8134): the caller's one deadline
