@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::batch::BatchOp;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::batch_op::BatchOp;
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 use super::super::journal::JournalEntry;
 use super::super::keyspace::{OverlayKeyspace, OverlayMutation, OverlayState, drop_overlay_row};
@@ -32,7 +32,7 @@ impl SessionOverlay {
     ///
     /// # Errors
     /// Only a poisoned overlay lock.
-    pub(crate) fn invalidate_repo_media_copies(
+    pub fn invalidate_repo_media_copies(
         self: &Arc<Self>,
         keys: &BTreeSet<Vec<u8>>,
         ids: &BTreeSet<EntityId>,
