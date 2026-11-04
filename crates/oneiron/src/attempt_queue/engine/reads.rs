@@ -5,10 +5,11 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, ready_at, ready_key, validate_dedupe_record,
 };
-use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
+use crate::attempt_queue::types::{AttemptId, AttemptRecord, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::attempt_record_read;
 use crate::store::attempt_run_root::dreamer_run_root_id_in_txn;
 
 use super::AttemptQueue;
@@ -38,10 +39,7 @@ impl AttemptQueue<'_> {
         txn: &heed::RoTxn<'_>,
         id: AttemptId,
     ) -> Result<Option<AttemptRecord>> {
-        let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        decode_record(&raw, id).map(Some)
+        attempt_record_read::get_in_txn(self.store, txn, id)
     }
 
     /// Whether `lease_owner` still holds `id`'s lease at `attempt_count`: the
@@ -55,11 +53,7 @@ impl AttemptQueue<'_> {
         lease_owner: &str,
         attempt_count: u32,
     ) -> Result<bool> {
-        Ok(self.get_in_txn(txn, id)?.is_some_and(|record| {
-            record.state == AttemptState::Leased
-                && record.lease_owner.as_deref() == Some(lease_owner)
-                && record.attempt_count == attempt_count
-        }))
+        attempt_record_read::holds_lease_in_txn(self.store, txn, id, lease_owner, attempt_count)
     }
 
     /// Point-reads the pending realizing attempt for a typed TASK route.
