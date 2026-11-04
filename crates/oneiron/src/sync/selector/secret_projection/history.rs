@@ -158,9 +158,9 @@ impl SyncSecretProjection {
                             continue;
                         };
                         // A re-authored copy carries no edit (FIX 10729, FIX 10874).
-                        let reauthored = self.reauthored_row(peer, &id, &bytes).or_else(|| {
-                            self.reauthored_own_row(store, context, peer, &id, &bytes)
-                        });
+                        let reauthored = self
+                            .reauthored_row(peer, &id, &bytes)
+                            .or_else(|| self.reauthored_own_row(store, context, peer, &id, &bytes));
                         let inbound = match reauthored {
                             Some(row) => row,
                             None => self.source_row(&id, &bytes)?,

@@ -77,8 +77,7 @@ fn gate_claim_anchors_inner(
         }
         worlds.extend(carried.worlds);
     }
-    let stored_own =
-        crate::provenance::birth::prompted::prompt_sources_in_txn(store, txn, id)?;
+    let stored_own = crate::provenance::birth::prompted::prompt_sources_in_txn(store, txn, id)?;
     for prompt in &stored_own {
         let carried = crate::settings::carried_worlds_in(store, txn, prompt)?;
         if carried.unknown {
