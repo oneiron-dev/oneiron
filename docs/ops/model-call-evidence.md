@@ -77,3 +77,16 @@ This is not MESSAGE/chat reasoning delivery, replay admission, or complete
 issuing-login and read-world capture. It adds no retrieval, Dreamer-mining,
 training, or export reader. Native label reads use their separate settled-read
 capture path. Whole-engine model-call coverage remains work in progress.
+
+## Provider signature retention
+
+The Anthropic whole-response decoder retains a thinking block's actual signature
+when its visible text is empty or absent. The Gemini whole and stream decoder
+retains a standalone `thoughtSignature` as its own signature-only reasoning part
+at that position. It does not assign that signature to an earlier part or
+replace an earlier signature. Neither change requests thinking or rewrites the
+provider's bytes.
+
+Signature-only streamed terminals also need the shared terminal-acceptance fix;
+retaining a provider field alone does not prove every path accepts the terminal.
+MESSAGE custody, replay permission and issuing-login identity remain separate.
