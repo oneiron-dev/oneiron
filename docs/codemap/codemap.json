@@ -213,7 +213,7 @@
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 7
      }
     },
@@ -40806,7 +40806,7 @@
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 1
      }
@@ -40818,7 +40818,7 @@
      "path": "src/ingest/connector_witness_grant.rs",
      "purpose": "The witness-read grant (FIX 10895, owner ruling WITNESS-READ)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -54492,7 +54492,7 @@
      "purpose": "The body of an agent's reply to a connector event (OF-519)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -54513,6 +54513,16 @@
       "enum": 1,
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/reply_job/repair.rs",
+     "purpose": "Repays completed replies' owed witnesses without reopening their sends",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -75346,6 +75356,7 @@
      "purpose": "Custody of a verified provider event's body (OF-519)",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -91153,7 +91164,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91785,7 +91796,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6401,
+   "source_files": 6402,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109598,7 +109609,7 @@
      "path": "src/ai_host/connector_event/worker.rs",
      "purpose": "The reply worker's job body (FIX 2405): one connector reply job, run off the Dreamer pass on a blocking…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -122814,7 +122825,7 @@
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
       "crate-vis": 10,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
