@@ -4462,11 +4462,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_intent_ledger/store/validate.rs` | src | s | 2 crate-vis | — | The ledger row's own validation: endpoint, binding, approval, budget marker, state and outcome, payload hash… |
 | `src/outbound_intent_ledger/tests.rs` | test | L | — | — | — |
 | `src/outbound_intent_ledger/types.rs` | src | m | 14 struct · 8 enum · 20 fn · 1 type · 2 const · 2 re-export · 15 crate-vis | BudgetChargeMarker, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError, IntentLedgerListing +14 | Version consts, domain types, record impls, and listing/escalation/report types |
-| `src/overlay_db/accessors.rs` | src | m | 34 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
-| `src/overlay_db/iters.rs` | src | s | 8 crate-vis | — | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
-| `src/overlay_db/merge.rs` | src | m | 15 crate-vis | — | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
-| `src/overlay_db/mod.rs` | src | s | 1 crate-vis | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
-| `src/overlay_db/tests.rs` | test | s | — | — | — |
 | `src/own_rate.rs` | src | s | 1 fn · 2 re-export · 11 crate-vis | — | Node-local OF-520 own-rate windows |
 | `src/persona_snapshot/codec.rs` | src | s | 2 fn · 5 crate-vis | — | Export-body msgpack codec, row-id and fingerprint validators, decode helpers |
 | `src/persona_snapshot/compile.rs` | src | m | 2 fn · 6 crate-vis | — | Tier-A clamp, row build, fingerprint, and Vault compile pass |
@@ -4958,8 +4953,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/rerank/crossencoder/batches.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | CrossEncoderWork | An admitted block of any size, scored in batches of [`BATCH_SIZE`] taken one after another in candidate… |
 | `src/rerank/crossencoder/tests.rs` | test | s | — | — | — |
 | `src/research_budget.rs` | src | s | 5 struct · 4 enum | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose +1 | Research-loop budget configuration, settlement, and refusal values |
-| `src/result_body/collect.rs` | src | m | 1 struct · 1 fn · 3 crate-vis | ResultBodyCollectReport | The result body collector: released bodies first, then orphan files |
-| `src/result_body/files.rs` | src | s | 7 crate-vis | — | Body directory work for the collector, done through the directory's descriptor: nothing here follows a link |
+| `src/result_body/collect.rs` | src | m | 1 struct · 1 fn · 4 crate-vis | ResultBodyCollectReport | The result body collector: released bodies first, then orphan files |
+| `src/result_body/files.rs` | src | s | 8 crate-vis | — | Body directory work for the collector, done through the directory's descriptor: nothing here follows a link |
 | `src/result_body/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of… |
 | `src/result_body/pins.rs` | src | s | 1 crate-vis | — | Result-body reader pins, defined at the store layer |
 | `src/result_body/promote.rs` | src | s | 2 crate-vis | — | Bringing an off-record result body into the vault's `bodies/` |
@@ -5272,22 +5267,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_lifecycle/expiry.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | SessionExpiryPolicy | A sitting's expiry policy (FIX 8600): the vault's own idle-floor and lifetime-ceiling rows, narrowed by… |
 | `src/session_lifecycle/speakers.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | SessionParticipant, SessionSpeakers | Who spoke in a sitting (FIX 2015), kept on its lifecycle record so an ended sitting still names them after… |
 | `src/session_lifecycle/tests.rs` | test | m | — | — | — |
-| `src/session_overlay/hygiene_tests.rs` | test | s | 8 crate-vis | — | Allocation-boundary teardown observer for session-owned buffers |
-| `src/session_overlay/journal.rs` | src | m | 18 crate-vis | — | — |
-| `src/session_overlay/keyspace.rs` | src | m | 14 crate-vis | — | — |
-| `src/session_overlay/mod.rs` | src | s | 6 crate-vis | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
-| `src/session_overlay/overlay/held.rs` | src | s | 7 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
-| `src/session_overlay/overlay/lifecycle.rs` | src | m | 17 crate-vis | — | Overlay lifecycle state machine, leases, seal/rearm/close |
-| `src/session_overlay/overlay/mod.rs` | src | s | 7 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
-| `src/session_overlay/overlay/repo_projection.rs` | src | s | 1 crate-vis | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
-| `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
-| `src/session_overlay/overlay/retire.rs` | src | s | 1 crate-vis | — | Promoted-closure retirement reusing the store's index-key builders |
-| `src/session_overlay/overlay/rows.rs` | src | m | 13 crate-vis | — | Row staging, preflight, budget checks, read probes |
-| `src/session_overlay/overlay/segment.rs` | src | s | 6 crate-vis | — | Txn segment install, leases, commit/apply guards |
-| `src/session_overlay/route.rs` | src | s | 8 crate-vis | — | — |
-| `src/session_overlay/short_id.rs` | src | s | 6 crate-vis | — | — |
-| `src/session_overlay/snapshot.rs` | src | m | 18 crate-vis | — | — |
-| `src/session_overlay/tests.rs` | test | m | — | — | — |
 | `src/settings.rs` | src | m | 7 struct · 2 enum · 13 fn · 3 const · 3 mod · 3 re-export · 8 crate-vis | AccentLayer, CustomizationLayer, CustomizationLayerValue, CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate, ModeLayer, TypeLayer +1 | Persisted customization settings and client-visible change events |
 | `src/settings/backup.rs` | src | s | 1 struct · 3 fn · 2 const | BackupPolicy | The owner's backup setting (FIX 5621): whether a running server takes backups on its own, how many hours… |
 | `src/settings/destination.rs` | src | m | 2 struct · 4 enum · 14 fn · 5 crate-vis | CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold | Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh… |
