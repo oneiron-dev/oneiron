@@ -63,7 +63,7 @@ mod demotion;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
-mod history_handoff;
+use oneiron_authority::claim_history_handoff as history_handoff;
 mod history_pin_exchange;
 pub use oneiron_base::learning_estimate;
 pub mod learning_evidence;
