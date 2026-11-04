@@ -2,6 +2,7 @@
 mod artifact_previews;
 mod board_publisher;
 mod browser_seats;
+mod claim_vad_payment;
 mod connector_events;
 mod connector_replies;
 mod connector_sends;

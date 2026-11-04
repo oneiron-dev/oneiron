@@ -29,7 +29,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::openapi::OwnerRoute;
+use super::openapi::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -92,6 +92,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
 pub(super) mod schema;
@@ -110,6 +111,7 @@ mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
+pub(super) mod weave_digest_channel_routes;
 pub(super) mod weave_routes;
 pub(super) mod widen_proposal_routes;
 pub(super) mod wire_health_routes;
@@ -166,6 +168,7 @@ fn owner_tables() -> OwnerTable {
         agent_grant_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
+        weave_digest_channel_routes::owner_table(),
         pack_routes::owner_table(),
         pack_preview_routes::owner_table(),
         courtesy_delete_routes::owner_table(),
@@ -198,6 +201,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         carrier_table(),

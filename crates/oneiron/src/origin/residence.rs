@@ -54,6 +54,11 @@ pub struct OriginAuthorityLease {
     epoch: u64,
     writer: String,
 }
+impl OriginAuthorityLease {
+    pub(in crate::origin) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
 /// What one host holds of a served repository's origin authority, read from
 /// trusted host configuration and the authority row, never from the pusher.
 #[derive(Debug, Clone)]

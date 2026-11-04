@@ -16,15 +16,24 @@ side_tables! {
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
+    /// One merge batch filed under a proposal, run work or run declaration it names, so a run's
+    /// enqueue, stage and observe read its own batches by key (FIX 7067). Key: hex(repo
+    /// identity) ":" kind ":" id ":" hex64(batch id).
+    MERGE_QUEUE_BATCH_INDEX: VaultMeta b"merge_queue:batch_index:v1:" Named Engine;
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
     MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
+    /// One checker receipt filed under its inputs digest and verdict, so a reused, bound or
+    /// sealed receipt is read by key (FIX 7349). Key: hex(repo identity) ":" inputs digest ":"
+    /// verdict ref (empty for none) ":" hex64(request digest).
+    MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine;
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked];
+    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked]
+        => crate::merge_queue::erase_review_policy_actor_in_txn;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -44,9 +53,14 @@ side_tables! {
     MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
+    /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
+    /// poll, and at most one per identity still stopping it, short of that count: the identity and
+    /// mailbox, the server's message id, the reason, the polls and when. Node-local, as the cursor
+    /// is. Key: id16 (identity) + bytes32 (sha256 of the message id).
+    NATIVE_MAIL_MAILBOX_SKIPPED: VaultMeta b"native_mail:mailbox_skipped:v1:" Named;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
     /// hex32(id).
     NOTE_ERASE_AUTHORITY_FLOOR: VaultMeta b"note.erase/authority-floor/" Raw;
@@ -118,6 +132,10 @@ side_tables! {
     /// (version).
     OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named
         => crate::office_body::erase_export_actor_in_txn;
+    /// One DOCX revision group's opaque author token. Key: id16 (artifact) + u64be (version) +
+    /// u64be (consecutive group index); value: optional actor + token (FIX 595).
+    OFFICE_BODY_EXPORT_AUTHOR: VaultMeta b"office_body:export_author:v1:" Named
+        => crate::office_body::erase_export_author_actor_in_txn;
     /// Machine work on a live office body: opener, base frontier and state. Key: id16 (artifact) +
     /// id16 (fork).
     OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named
@@ -128,6 +146,13 @@ side_tables! {
     /// A live office body's head: kind, imported source version and frontiers. Key: id16
     /// (artifact).
     OFFICE_BODY_HEAD: VaultMeta b"office_body:head:v1:" Named;
+    /// The live-edit route one holder ask group carries (FIX 596): the
+    /// artifact, editor, asked owners and revision. Key: id16 (ask group).
+    /// Sorted slot: `live_edit_ask_group` orders between `head` and
+    /// `oracle`; the decl list must stay strictly ascending
+    /// (side_table assert_disjoint), so it cannot sit after PROPOSAL.
+    OFFICE_LIVE_EDIT_ASK_GROUP: VaultMeta b"office_body:live_edit_ask_group:v1:" Named
+        => crate::office_body::erase_live_edit_ask_group_actor_in_txn;
     /// The deck oracle's latest eight-step receipt per export profile and the projector it
     /// checked; the deck export gate reads it. Key: the profile name.
     OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named
@@ -165,6 +190,13 @@ side_tables! {
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
     ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact
         => crate::origin::erase_code_operations_actor_in_txn;
+    /// Marker (empty): one retained received ref of an object store that the candidate intake
+    /// still reads, unresolved or resolved from a masked copy (FIX 7535). Key: hash32 (the store)
+    /// + id16 (the push provenance) + hash32 (blake3 of the ref name).
+    ORIGIN_CODE_PENDING: VaultMeta b"origin:code_pending:v1:" Raw;
+    /// Marker (empty): a received ref of an object store resolved to a candidate with this
+    /// incoming tip (FIX 7535). Key: hash32 (the store) + string (the tip's hex).
+    ORIGIN_CODE_RESOLVED_TIP: VaultMeta b"origin:code_resolved_tip:v1:" Raw;
     /// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key: string
     /// ":" id16.
     ORIGIN_ENGINE_EXPORT: VaultMeta b"origin:engine_export:v1:" Raw;
@@ -234,6 +266,10 @@ side_tables! {
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
+    /// Index (empty marker) of each received ref update by its exact (store, ref, old, new),
+    /// so an import finds its receive by key, never by a walk of the store's receipts (FIX
+    /// 7595). Key: hash32 (the update) + id16 (the push provenance).
+    ORIGIN_RECEIVED_UPDATE: VaultMeta b"origin:received_update:v1:" Raw;
     /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
     /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
     /// or the u8 alone for a vault-wide scan.
@@ -349,6 +385,10 @@ side_tables! {
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
     SKILL_HUB_PACK_CANDIDATE: VaultMeta b"pack.candidate.v1/" LegacyJson;
+    /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
+    /// (ARCH-0080 §10). Key: id16(binding claim).
+    SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
+        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
@@ -508,6 +548,10 @@ side_tables! {
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
     PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
         => crate::provenance::erase_actor_stamp_cache_in_txn;
+    /// Which records' documents name a stamp token (FIX 11965), so an actor erase's hold check
+    /// finds a held record's tokens without a history walk; a record's erase drops its rows.
+    /// Key: id16 (record) + id16 (token); value: empty.
+    PROVENANCE_ACTOR_STAMP_TOKEN_USE: VaultMeta b"provenance:actor_stamp_token_use:v1:" Raw;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
@@ -609,6 +653,19 @@ side_tables! {
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.
     REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
+    /// A source record a derived text was written from that a repo mark covered by its media
+    /// bytes, not its id, bound to that blob's whole BLAKE3, so it stays marked once erased as a
+    /// snapshot record does (FIX 10887). A hash, no value. Key: id16 (the source).
+    REPO_DERIVED_SOURCE_BLOB: VaultMeta b"repo_index:derived_source_blob:v1:" Named;
+    /// FIX 6870: the portable repo id that stands for one CODE entity (value = 32 bytes). Key:
+    /// id16 (CODE entity).
+    REPO_MANIFEST_BY_CODE: VaultMeta b"repo_manifest:by_code:v1:" Raw;
+    /// FIX 6870: a portable repo id this machine minted, the refs writer while no origin
+    /// authority is held; empty value. Key: 32 bytes (portable id).
+    REPO_MANIFEST_MINTED: VaultMeta b"repo_manifest:minted:v1:" Raw;
+    /// FIX 6870: one repo's portable manifest: its CODE entity, visible refs, LFS pointers and
+    /// origin epoch. Key: 32 bytes (portable id).
+    REPO_MANIFEST: VaultMeta b"repo_manifest:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named

@@ -8,9 +8,10 @@
 //! reference it no longer binds, is not landed. The ladder then judges the
 //! carrier as it judges any (tombstones, delete markers, residence, a
 //! release fence, the echo), and lands the row through the replicated
-//! door. The rows it writes are the window's own: the live mirror never
-//! rewrites the carrier with them. A landed row wakes what waits on it and
-//! notifies the live queries as Observer B's ingest does (FIX 5489).
+//! door, at the tier the transfer's lane lands it at (FIX 12118). The rows it
+//! writes are the window's own: the live mirror never rewrites the carrier
+//! with them. A landed row wakes what waits on it and notifies the live
+//! queries as Observer B's ingest does (FIX 5489).
 
 use super::references::{AssetBodyRef, bound_in};
 use super::session::AssetBodyPeer;
@@ -51,6 +52,9 @@ pub(super) fn land(
     let key = body.key();
     let _import = crate::sync::manager::import_scope();
     let mut unborn = false;
+    // KS-2A (FIX 12120): a body file is one vault instance, minted before
+    // the writer that stages it opens.
+    let mint = spool.body_mint(vault)?;
     // The staged body outlives the commit: its pin keeps a published file
     // from the collector until the row naming it is durable.
     let (landed, carrier, _staged, change) = vault.with_write_txn_grouped(|wtxn| {
@@ -65,13 +69,13 @@ pub(super) fn land(
         let previous_revision =
             revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
         let known = vault.asset_stream_known_in_txn(wtxn)?;
-        let staged = spool.stage(vault, body.mime.as_deref(), known)?;
+        let staged = spool.stage(vault, body.mime.as_deref(), known, mint.as_ref())?;
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let steps = {
             let lease_vault_id = peer.materializer.lease_vault_id();
             let ingest = IngestCtx::new(vault, window.as_str(), lease_vault_id, &tombstones)
                 .with_residence(Residence::Quarantine(&doc))
-                .with_asset_body(body.id, &staged);
+                .with_asset_body(body.id, &staged, peer.lane.landing_tier());
             ingest_rows_in_savepoint(&ingest, wtxn, &[(key.as_str(), Some(&carrier[..]))])?
         };
         let landed = steps.first().and_then(EntityStep::written) == Some(body.id);

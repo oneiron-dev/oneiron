@@ -105,6 +105,13 @@ impl<'a, E> ScopeSummaryExecutor<'a, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ScopeSummaryExecutor<'_, E> {
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -364,7 +371,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             // A failed call's paid usage has no terminal step: it is handed
             // to the driver's settlement with the park (FIX 11554).
             Err(other) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &other
+                {
                     charges.record_usage(usage);
                 }
                 ctx.note_spend_before_error(charges.units, &charges.step_hashes);

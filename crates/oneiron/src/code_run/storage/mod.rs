@@ -27,9 +27,9 @@ pub(crate) use self::continuation::{
     StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run,
 };
+pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
-    read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -42,8 +42,7 @@ pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     CodeRunResultBodyReader, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, code_run_row_inline,
-    lift_code_run_file_hold_in_txn,
+    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -52,9 +51,9 @@ pub(crate) use self::replay_bodies::{
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
-    ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
-    fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
-    step_replay_capsules_in_txn, store_fork_response,
+    ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
+    finalize_capsule, fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule,
+    put_unavailable, step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,

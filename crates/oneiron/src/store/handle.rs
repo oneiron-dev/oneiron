@@ -155,6 +155,13 @@ impl StoreCore {
         self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
+    /// Whether every write on this handle refuses: its vault opened archived,
+    /// or a restore's swap has sealed it since. An admission that writes
+    /// nothing before its reply reads it (FIX 12023 W0).
+    pub(crate) fn writes_sealed(&self) -> bool {
+        self.env.is_sealed()
+    }
+
     /// The page size this store writes in: the creating host's, which LMDB
     /// keeps with the file. A value too large for a leaf takes whole pages
     /// of it.
@@ -239,6 +246,18 @@ pub struct StoreCore {
     /// Forks the project folds over committed snapshots found (decision 10
     /// evidence). Never persisted.
     pub(crate) project_forks: crate::workspace_roster::ProjectForks,
+    /// The engine's delete guards, supplied by the open door: a store never
+    /// exists without them.
+    pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The engine's record-scope stamp hooks, supplied by the open door with
+    /// the delete guards.
+    pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
+    /// The engine's project write hooks, supplied by the open door with the
+    /// delete guards.
+    pub(crate) project_writes: &'static dyn crate::store::StoreProjectWrites,
+    /// The engine's record hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -372,6 +391,10 @@ pub struct StoreOwner {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     pub(in crate::store) _registered_path: RegisteredPath,
+    /// This open took the vault's writer lease ([`Store::open_with_writer_lease`]),
+    /// read while the handle assembles, before its lease is set on it: a
+    /// lease holder's open alone replays the slip-spend journal (FIX 12023 W0).
+    pub(in crate::store) opened_with_writer_lease: bool,
 }
 
 /// LMDB environment and database handles for a vault.
@@ -522,6 +545,13 @@ impl SessionStoreView<'_> {
     )]
     pub(crate) fn install_txn_segment(&self) -> Result<crate::session_overlay::TxnSegmentGuard> {
         self.overlay.install_txn_segment()
+    }
+
+    /// Captures every accessor at the current write-segment position.
+    /// Sequential writers use this when a later index mutation must read the
+    /// preceding mutation's overlay writes rather than the original snapshot.
+    pub(crate) fn write_snapshot(&self) -> Result<SessionStoreView<'_>> {
+        self.base.session_view(self.overlay.clone())
     }
 
     /// Captures entity rows at the current write-segment position for admission.
@@ -698,6 +728,41 @@ macro_rules! manifest_dbs {
                 &self.core.manifest_memo
             }
         }
+
+        /// The vault's canonical accessors built over its shared core, for a
+        /// write that runs where no [`Store`] view is held: the store's own
+        /// leader thread runs detached writes there (FIX 12023). It reads and
+        /// writes base rows, as [`Store`]'s accessors do.
+        pub(crate) struct CoreDbs<'c> {
+            core: &'c StoreCore,
+            $($name: $ty,)+
+        }
+
+        impl StoreCore {
+            /// This core's canonical accessors as a write target.
+            pub(crate) fn canonical_dbs(&self) -> CoreDbs<'_> {
+                CoreDbs {
+                    core: self,
+                    $($name: <$ty>::canonical(self.raw.$name),)+
+                }
+            }
+        }
+
+        impl ManifestDbs for CoreDbs<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
+        }
     };
 }
 
@@ -743,9 +808,11 @@ impl std::ops::Deref for Store {
 /// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
 /// 23:09): it ends first, after the group it leads commits, so a clean close
 /// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
-/// when `core` and then `owner` drop in their declared order.
+/// when `core` and then `owner` drop in their declared order. The detached
+/// writes still queued run before it ends, on this thread (FIX 12023).
 impl Drop for Store {
     fn drop(&mut self) {
+        self.finish_detached_writes(None);
         self.core.group_commit.stop_deferred_commit_leader();
     }
 }
@@ -813,6 +880,26 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// The vault directory's identity from the descriptor the open bound,
+    /// never a fresh pathname lookup: a rename after open cannot redirect
+    /// it (REVIEW-4381 P1). None where the open retained no descriptor.
+    pub(crate) fn bound_root_identity(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .map(|meta| (meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
         #[cfg(unix)]

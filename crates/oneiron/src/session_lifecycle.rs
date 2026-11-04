@@ -490,9 +490,17 @@ impl Vault {
         let pre = self
             .pre_verb_hooks(call, args.clone(), &check)?
             .map_err(Error::from)?;
-        let outcome = self.with_write_txn_grouped(|wtxn| {
+        let outcome = match self.with_write_txn_grouped(|wtxn| {
             self.mint_session_with_id_in_txn(wtxn, key, timestamp, id)
-        })?;
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if crate::runtime_hooks::verb::error_failed_storage(&error) {
+                    self.reopen_resumed_ask(&pre);
+                }
+                return Err(error);
+            }
+        };
         if let SessionMintOutcome::Minted(session) = outcome {
             // The sitting is open whatever a post-hook says.
             let result = json!({
@@ -841,9 +849,19 @@ impl Vault {
             }
             None => (None, None),
         };
-        let ended = self.with_write_txn_grouped(|wtxn| {
+        let ended = match self.with_write_txn_grouped(|wtxn| {
             self.end_session_in_txn(wtxn, expected, predicate, now, wake, end_hint, stop)
-        })?;
+        }) {
+            Ok(ended) => ended,
+            Err(error) => {
+                if crate::runtime_hooks::verb::error_failed_storage(&error) {
+                    if let Some(pre) = &pre {
+                        self.reopen_resumed_ask(pre);
+                    }
+                }
+                return Err(error);
+            }
+        };
         if let (Some(pre), Some(ended)) = (pre, &ended) {
             let result = json!({
                 "session": ended.session.to_hex(),
