@@ -467,3 +467,6 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;

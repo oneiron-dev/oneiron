@@ -45,7 +45,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
-    crate::task_authority::reject_fact_delete(store, wtxn, id)?;
+    crate::store::task_authority_guard::reject_fact_delete(store, wtxn, id)?;
     crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
@@ -300,7 +300,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
     else {
-        let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
+        let cleanup = crate::store::vad_annotation::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
         neighbors.extend(cleanup.neighbors);
@@ -333,7 +333,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     }
     crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
     let mut cleanup = crate::write_envelope::vad_annotation::VadAnnotationCleanup::default();
-    crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
+    crate::store::vad_annotation::delete_vad_annotation_metadata_for_type_in_txn(
         store,
         wtxn,
         id,

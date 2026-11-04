@@ -539,7 +539,7 @@ impl Vault {
                     )
                 })
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
-                .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
+                .and_then(|()| crate::store::task_authority_guard::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
                     crate::workspace_roster::reject_audience_edit_delete(&self.store, &wtxn, id)
                 })

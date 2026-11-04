@@ -67,7 +67,7 @@ impl Vault {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // Its scope outlives the row, for the tombstone's export (FIX 10161).
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
@@ -273,7 +273,7 @@ impl Vault {
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // A carried history read no longer stands for an erased control (FIX
         // 4296), as a delete's deindex does; the row is still here to read.
