@@ -2,7 +2,8 @@
 //! bytes of which [`LlmRequest`](super::LlmRequest) message came from where,
 //! on which clock, behind which trust fence, and whether they belong to the
 //! canonical path (the stable prefix and the selected log) or to the turn's
-//! ephemeral tail (the context board and the newest user message).
+//! ephemeral tail (the context board, the newest user message and a
+//! Continue's request-only suffix).
 //!
 //! The host builds a manifest beside the messages as it assembles them and
 //! sets it on the request after admission

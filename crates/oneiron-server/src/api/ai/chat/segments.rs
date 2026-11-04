@@ -85,6 +85,28 @@ impl Reader {
             }
         }
     }
+
+    /// The reply's current full lane-admitted MESSAGE text while `expected`
+    /// is its latest terminal receipt; `None` when missing, hidden, active,
+    /// changed or differently projected. No raw-store fallback.
+    fn committed_text(&self, expected: &oneiron::memory::MessageStreamReceipt) -> Option<String> {
+        match &self.credential {
+            TurnCredential::Request { auth, .. } => {
+                let memory = match auth.principal_ref() {
+                    Some(_) => credential_memory(&self.vault, Some(auth), self.actor, self.class)
+                        .at(self.locality),
+                    None => self.vault.memory(self.actor, self.class),
+                };
+                memory.message_stream_committed_text(expected).ok()?.value
+            }
+            TurnCredential::Action { action, .. } => {
+                crate::ai_host::action_reader(&self.vault, action)?
+                    .message_stream_committed_text(expected)
+                    .ok()?
+                    .value
+            }
+        }
+    }
 }
 
 /// What the turn assembled, for its manifest.
@@ -568,9 +590,10 @@ pub(super) fn commit_on_answer(
         subscription,
         outcome,
     } = answering;
-    // The vault the reply lands in, for the FIX 10367 HEAD read below.
-    // `reader` itself does not enter the spawned task.
+    // The vault the reply lands in, for the FIX 10367 HEAD read below, and
+    // the reader the committed text is reread under once the outcome ends.
     let vault = reader.vault.clone();
+    let reader = reader.clone();
     // The turn authority the task retains: the task only reads `manifest`,
     // so edition-2024 disjoint capture would otherwise drop `_turn` when
     // this returns and the restore would run cold (FIX 11287).
@@ -587,7 +610,17 @@ pub(super) fn commit_on_answer(
             && ended.saved.as_ref().is_some_and(|saved| {
                 saved.message_id == message && saved.finality == StreamFinality::Final
             });
-        let commit = whole.then(|| {
+        let saved = ended.saved.clone().filter(|_| whole);
+        // The outcome goes on as it ended; nothing waits for the session.
+        let _ = finished.send(ended);
+        if let (Some(saved), Some(authority)) = (saved, commit_authority) {
+            // The committed successor carries the current full lane-admitted
+            // MESSAGE text, not the raw accepted stream text; a reread that
+            // does not resolve stays cold (FIX 13020).
+            let text = crate::server::blocking(|| reader.committed_text(&saved));
+            let Some(text) = text else {
+                return;
+            };
             // The HEAD the reply lands at, read once it has landed (FIX
             // 10367): HEAD does not always move to this reply's TURN, and
             // naming the TURN anyway drops the session at the next fork.
@@ -600,16 +633,15 @@ pub(super) fn commit_on_answer(
                     crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
                 })
                 .unwrap_or(turn);
-            ReplyCommit {
-                head,
-                message,
-                text: ended.text.clone(),
-            }
-        });
-        // The outcome goes on as it ended; nothing waits for the session.
-        let _ = finished.send(ended);
-        if let (Some(commit), Some(authority)) = (commit, commit_authority) {
-            reply_committed(&segments.manifest, commit, Arc::new(authority));
+            reply_committed(
+                &segments.manifest,
+                ReplyCommit {
+                    head,
+                    message,
+                    text,
+                },
+                Arc::new(authority),
+            );
         }
     });
     Answering {
