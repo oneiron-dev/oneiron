@@ -353,10 +353,13 @@ impl Vault {
             }
         };
         Ok(match confirmed.done() {
-            Ok(kit) => RootWorkDone::KitConfirmed {
-                kit: Box::new(kit),
-                mirror_pending,
-            },
+            Ok(mut kit) => {
+                kit.mirror_pending = mirror_pending;
+                RootWorkDone::KitConfirmed {
+                    kit: Box::new(kit),
+                    mirror_pending,
+                }
+            }
             Err(report) => report,
         })
     }

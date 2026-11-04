@@ -391,25 +391,42 @@ impl KeptValues {
                 .any(|decoded| ruled(decoded.as_slice()))
     }
 
-    /// `bytes` of `record` with each kept value in them overwritten by the
-    /// mask's filler, for the door's scan; `None` when none sits there.
+    /// `bytes` of `record` with each kept value's raw or JSON-escaped spelling
+    /// overwritten by the mask's filler, for the door's scan; `None` when none
+    /// sits there.
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
         let values = self.0.get(record)?;
         let mut copy = None::<Vec<u8>>;
-        for value in values.iter().filter(|value| !value.is_empty()) {
+        let fill = |spelling: &[u8], copy: &mut Option<Vec<u8>>| {
             let mut at = 0;
             loop {
                 let haystack = copy.as_deref().unwrap_or(bytes);
                 let Some(found) = haystack.get(at..).and_then(|rest| {
-                    rest.windows(value.len())
-                        .position(|window| window == value.as_slice())
+                    rest.windows(spelling.len())
+                        .position(|window| window == spelling)
                 }) else {
                     break;
                 };
                 let start = at + found;
-                let end = start + value.len();
+                let end = start + spelling.len();
                 copy.get_or_insert_with(|| bytes.to_vec())[start..end].fill(b'*');
                 at = end;
+            }
+        };
+        for value in values.iter().filter(|value| !value.is_empty()) {
+            fill(value.as_slice(), &mut copy);
+            let Ok(text) = std::str::from_utf8(value) else {
+                continue;
+            };
+            let Ok(quoted) = serde_json::to_string(text) else {
+                continue;
+            };
+            let quoted = Zeroizing::new(quoted);
+            let Some(escaped) = quoted.get(1..quoted.len().saturating_sub(1)) else {
+                continue;
+            };
+            if escaped.as_bytes() != value.as_slice() {
+                fill(escaped.as_bytes(), &mut copy);
             }
         }
         copy

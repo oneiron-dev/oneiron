@@ -73,9 +73,8 @@ fn expanded_floor() -> usize {
         (total / 16).max(EXPANDED_RESERVE_FLOOR_BYTES)
     });
     let fixed = MAX_EXPANDED_BYTES as u64;
-    let floor = available_memory_bytes()
-        .or_else(machine_memory_bytes)
-        .map_or(fixed, |room| room.saturating_sub(reserve).max(fixed));
+    let floor =
+        available_memory_bytes().map_or(fixed, |room| room.saturating_sub(reserve).max(fixed));
     usize::try_from(floor).unwrap_or(usize::MAX)
 }
 
