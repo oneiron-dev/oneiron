@@ -3104,25 +3104,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AbandonAttempt",
-      "AbandonOutcome",
-      "ClaimOutcome",
-      "CompleteOutcome",
-      "EnqueueOutcome",
-      "FailOutcome",
-      "InterveneAttempt",
-      "InterveneOutcome",
-      "RetryOutcome"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 6,
-      "enum": 6,
       "fn": 10,
-      "re-export": 15,
-      "struct": 3
+      "re-export": 16
      }
     },
     {
@@ -69467,6 +69455,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AbandonAttempt",
+      "AbandonOutcome",
+      "ClaimOutcome",
+      "CompleteOutcome",
+      "EnqueueOutcome",
+      "FailOutcome",
+      "InterveneAttempt",
+      "InterveneOutcome",
+      "RetryOutcome"
+     ],
+     "path": "src/store/attempt_outcomes.rs",
+     "purpose": "What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim…",
+     "surface": {
+      "enum": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReadSetProducer"
      ],
      "path": "src/store/attempt_read_producer.rs",
@@ -72209,7 +72218,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 105,
+      "mod": 106,
       "re-export": 31
      }
     },
@@ -90534,7 +90543,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 411,
+     "files": 412,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90774,7 +90783,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6307,
+   "source_files": 6308,
    "test_files": 898
   },
   "oneiron-android": {
