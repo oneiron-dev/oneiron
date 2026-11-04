@@ -15,7 +15,9 @@ use crate::{
     },
     engine_executor::StepCancellation,
 };
-use oneiron_sandbox_contract::{MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath};
+use oneiron_sandbox_contract::{
+    GUEST_PROTOCOL_VERSION, MAX_CHUNK_BYTES, MAX_COMPONENT_BYTES, MAX_PROGRAM_BYTES, WorkspacePath,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -78,10 +80,14 @@ enum HostFrame<'a> {
         offset: usize,
         bytes: &'a [u8],
     },
-    File {
+    FileOpen {
         path: &'a str,
+        len: u64,
+    },
+    FileChunk {
         bytes: &'a [u8],
     },
+    FileClose,
     Ready,
     Receipt {
         accepted: bool,
@@ -154,7 +160,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         }
         if !matches!(
             read_frame(&mut stream, deadline)?,
-            GuestFrame::Hello { version: 1 }
+            GuestFrame::Hello { version } if version == GUEST_PROTOCOL_VERSION
         ) {
             return Err(refused("guest protocol version mismatch"));
         }
@@ -162,7 +168,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         write_frame(
             &mut stream,
             &HostFrame::Start {
-                version: 1,
+                version: GUEST_PROTOCOL_VERSION,
                 vm_id: vm.id(),
                 tier: vm.tier().as_str(),
                 pids: budget.pids,
@@ -184,16 +190,34 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         // Snapshot bytes only. There is no host mount device inside the VM
         // and no path from a guest overlay file to the original source
         // directory.
-        let base = super::snapshot::files(vm.base_root())?;
+        let base = super::snapshot::files(vm.base_root(), spool, cancel, deadline)?;
+        let mut frame = vec![0; MAX_CHUNK_BYTES];
         for file in &base.files {
+            cancel.check()?;
             write_frame(
                 &mut stream,
-                &HostFrame::File {
+                &HostFrame::FileOpen {
                     path: file.path.as_str(),
-                    bytes: &file.bytes,
+                    len: file.body.len(),
                 },
                 deadline,
             )?;
+            let mut reader = file.body.reader();
+            loop {
+                cancel.check()?;
+                let read = reader.read(&mut frame)?;
+                if read == 0 {
+                    break;
+                }
+                write_frame(
+                    &mut stream,
+                    &HostFrame::FileChunk {
+                        bytes: &frame[..read],
+                    },
+                    deadline,
+                )?;
+            }
+            write_frame(&mut stream, &HostFrame::FileClose, deadline)?;
         }
         cancel.check()?;
         write_frame(&mut stream, &HostFrame::Ready, deadline)?;
@@ -204,12 +228,11 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         for write in writes {
             match write {
                 SandboxProposalWrite::FileWrite(file) => {
-                    let old = base
-                        .files
-                        .iter()
-                        .find(|entry| entry.path == file.path)
-                        .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
-                    if let Some(edit) = file.lower_to_edit(old)? {
+                    let edit = match base.files.iter().find(|entry| entry.path == file.path) {
+                        Some(entry) => file.lower_to_edit_spooled(&entry.body, cancel, deadline)?,
+                        None => file.lower_to_edit(b"")?,
+                    };
+                    if let Some(edit) = edit {
                         edits.push(SandboxProposalWrite::FileEdit(edit));
                     }
                 }

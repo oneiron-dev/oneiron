@@ -21,6 +21,7 @@ mod call_deadline;
 mod decision_posture;
 mod live_fork;
 mod model_call;
+mod model_list;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
@@ -29,6 +30,7 @@ mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
+use oneiron::agent_def::AgentModel;
 use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
@@ -270,6 +272,8 @@ pub struct OfferLadder {
     /// What the call met on the ladder it fell back from, when this ladder
     /// is that fallback's call-local copy.
     prefix: ReceiptPrefix,
+    /// This call's inherited agent list; shared ladders carry none.
+    listed: Option<Arc<[AgentModel]>>,
 }
 
 /// The serving rung's host-attested custody (FIX 11893): a local payer on
@@ -298,6 +302,7 @@ impl OfferLadder {
             rests,
             scope: SeatScope::default(),
             prefix: ReceiptPrefix::default(),
+            listed: None,
         }
     }
 
@@ -310,6 +315,7 @@ impl OfferLadder {
             rests,
             scope: SeatScope::default(),
             prefix: ReceiptPrefix::default(),
+            listed: None,
         }
     }
 
@@ -322,6 +328,7 @@ impl OfferLadder {
             rests,
             scope: SeatScope::default(),
             prefix: ReceiptPrefix::default(),
+            listed: None,
         }
     }
 
@@ -362,6 +369,7 @@ impl OfferLadder {
             rests: Arc::clone(&self.rests),
             scope: self.scope,
             prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
         }
     }
 
@@ -821,6 +829,7 @@ impl OfferLadder {
             .iter()
             .cloned()
             .enumerate()
+            .filter(|(_, rung)| self.admits_listed_model(&rung.model))
             .map(|(offset, mut rung)| {
                 rung.position = self.scope.configured + offset;
                 rung
@@ -836,6 +845,7 @@ impl OfferLadder {
                 failed: self.prefix.failed + walk.went_out(),
                 passed_over: self.passed_over(walk),
             },
+            listed: self.listed.clone(),
         })
     }
 
@@ -854,7 +864,12 @@ impl OfferLadder {
             .iter()
             .map(|rung| rung.provider.as_str())
             .collect();
-        let fits = |fallback: &OfferLadder| fallback.can_serve(&self.scope, needs);
+        let fits = |fallback: &OfferLadder| match &self.listed {
+            Some(listed) => fallback
+                .for_model_list(listed)
+                .is_ok_and(|view| view.can_serve(&self.scope, needs)),
+            None => fallback.can_serve(&self.scope, needs),
+        };
         for (index, rest) in parked {
             let rung = &self.rungs[index];
             let asked = Asked {
@@ -879,16 +894,18 @@ impl OfferLadder {
                 let rung = &self.rungs[index];
                 self.rests
                     .fallback_for(&rung.offer.binding, &rung.wire_model)
-                    .filter(|fallback| !fallback.rests_now())
-                    .filter(|fallback| fallback.can_serve(&self.scope, call.needs))
-                    .filter(|fallback| {
-                        fallback.rungs.iter().all(|rung| {
+                    .and_then(|fallback| self.listed_fallback(fallback))
+                    .filter(|(_, view)| !view.rests_now())
+                    .filter(|(_, view)| view.can_serve(&self.scope, call.needs))
+                    .filter(|(_, view)| {
+                        view.rungs.iter().all(|rung| {
                             !leaves_device(&rung.offer.binding)
                                 || self
                                     .rests
                                     .world_may_leave(call.request, &rung.offer.destination())
                         })
                     })
+                    .map(|(original, _)| original)
             })
     }
 
