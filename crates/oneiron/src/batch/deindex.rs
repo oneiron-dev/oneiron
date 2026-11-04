@@ -46,10 +46,16 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::task_authority::reject_fact_delete(store, wtxn, id)?;
-    crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
+    store
+        .delete_guards
+        .reject_audience_edit_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
-    crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
-    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
+    store
+        .delete_guards
+        .guard_batch_identity_delete_in_txn(store, wtxn, id)?;
+    store
+        .delete_guards
+        .refuse_revision_delete(store, wtxn, id)?;
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(());
     };
@@ -136,7 +142,9 @@ pub(crate) fn deindex_entity(
     crate::world_keys::reject_held_pad_world_in_txn(store, wtxn, &[*id])?;
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
     // The port's direct delete reaches here without the batch guard.
-    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
+    store
+        .delete_guards
+        .refuse_revision_delete(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(
         store,
         wtxn,
@@ -202,12 +210,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, wtxn, &[*id])?;
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
-    crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
-    crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    store.delete_guards.guard_goal_delete(store, wtxn, *id)?;
+    store.delete_guards.reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
     // A carried history read no longer stands for a deleted control (FIX 4296).
     crate::claim::history_seal::scatter_index_seal_for_delete(store, wtxn, id)?;
-    crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
+    store
+        .delete_guards
+        .reject_audience_edit_delete(store, wtxn, id)?;
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
     // and the pending tray before the entity bytes leave this transaction.
@@ -257,7 +267,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     let (room_vector, room_graph, room_neighbors) =
-        crate::workspace_roster::deindex_project_room(store, wtxn, id)?;
+        store.delete_guards.deindex_project_room(store, wtxn, id)?;
     had_vector |= room_vector;
     had_graph_mutation |= room_graph;
     neighbors.extend(room_neighbors);
@@ -296,7 +306,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.extend(related_neighbors);
 
     delete_short_id_rows_for_id(store, wtxn, id)?;
-    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
+    store.scope_stamps.retire_stamp(store, wtxn, *id)?;
 
     let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
     else {
@@ -390,7 +400,7 @@ pub(crate) fn drop_seeded_actor_row(
     delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
-    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
+    store.scope_stamps.retire_stamp(store, wtxn, *id)?;
     crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
