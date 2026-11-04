@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 use heed::RwTxn;
 
 use crate::claim::ScopedRead;
+use crate::core_write::{CoreBatchCommit, CoreWriteLane};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
 
@@ -83,6 +84,54 @@ impl BatchBuilder<'_> {
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         self.commit_below_owner_inner(Some(reader), guard)
+    }
+
+    /// [`Self::commit`] / [`Self::commit_below_owner`] held to `lane`
+    /// (OF-063, FIX 1216): the batch door's lane rule
+    /// ([`Vault::write_core_batch_in_lane`](crate::Vault::write_core_batch_in_lane))
+    /// for an already-staged batch. A read lane takes a stored row a put
+    /// names only when it reads that row, judged against the row in the
+    /// batch's own writer before any put lands, and each CLAIM's typed
+    /// record refs must resolve under it. A target lane takes a stored row
+    /// only inside the bounds of what its credential may write to, judged
+    /// over the same put ids in that same writer snapshot; its CLAIMs
+    /// commit as an unbound writer's do. An unbound lane commits as the
+    /// grade's plain terminal does. `commit` selects the grade, as the
+    /// batch door's does.
+    pub fn commit_in_core_lane(
+        self,
+        lane: &CoreWriteLane<'_>,
+        commit: CoreBatchCommit,
+    ) -> Result<()> {
+        match (lane, commit) {
+            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => self.commit_read_by(reader),
+            (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
+                self.commit_below_owner_read_by(reader, |_| Ok(()))
+            }
+            (CoreWriteLane::Target(_), commit) => {
+                let ids: Vec<crate::entity_id::EntityId> = self
+                    .ops
+                    .iter()
+                    .filter_map(|op| match op {
+                        BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
+                        _ => None,
+                    })
+                    .collect();
+                let guard = |txn: &heed::RoTxn<'_>| -> Result<()> {
+                    if lane.admits_puts_in(txn, &ids)? {
+                        return Ok(());
+                    }
+                    // As missing: the row's kind, body and scope stay unsaid.
+                    Err(Error::EntityNotFound)
+                };
+                match commit {
+                    CoreBatchCommit::Owner => self.commit_with_target_guard(guard),
+                    CoreBatchCommit::BelowOwner => self.commit_below_owner_with_guard(guard),
+                }
+            }
+            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => self.commit(),
+            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => self.commit_below_owner(),
+        }
     }
 
     fn commit_below_owner_inner(

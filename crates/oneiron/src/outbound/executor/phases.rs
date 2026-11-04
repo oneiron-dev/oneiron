@@ -107,6 +107,10 @@ pub(super) fn settle_held_connector_task(
     mut result: OutboundDispatchResult,
     now: u64,
 ) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch, so the drain's
+    // `now` is stale here; read the clock again for this settlement's retry
+    // edge and stamps, as the window door does (FIX 8817).
+    let now = vault.now_recorded_at();
     // The door supplies a window-edge retry_at when it knows one;
     // a hostless `local_minute_unavailable` hold knows none. Either
     // way the CONCRETE next instant is computed HERE, before the
@@ -163,6 +167,10 @@ pub(super) fn settle_failed_connector_task(
     mut result: OutboundDispatchResult,
     now: u64,
 ) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch, so the drain's
+    // `now` is stale here; read the clock again for this settlement's retry
+    // edge and stamps, as the window door does (FIX 8817).
+    let now = vault.now_recorded_at();
     let ambiguous = result.outcome == OutboundDispatchOutcome::Ambiguous;
     // A recovered non-idempotent Pending intent may be ambiguous
     // even though this attempt never reached the transport.

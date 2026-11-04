@@ -543,6 +543,10 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
         self.inner.reported_cost()
     }
+
+    fn provider_wait(&self) -> Option<crate::outbound_intent_ledger::ProviderWait> {
+        self.inner.provider_wait()
+    }
 }
 
 /// What one live connector question binds (ONE-2510): the original call's

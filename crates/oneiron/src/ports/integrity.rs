@@ -313,6 +313,9 @@ pub(crate) fn withdraw_from_lost_source_in_session_txn(
 
 /// The room half of the stale mark and index sheds, without base-only
 /// dreamer, weave, provenance, PPR, pending-embedding or version work.
+/// The stale mark stages last (FIX 12704, PARTIAL): the deindex and vector
+/// frees below land first, so a room near its byte budget keeps a
+/// net-shrinking source delete instead of refusing the new mark key.
 fn mark_room_stale_in_txn(
     view: &SessionStoreView<'_>,
     txn: &mut RwTxn<'_>,
@@ -328,8 +331,6 @@ fn mark_room_stale_in_txn(
         })
         .transpose()?
         .unwrap_or(0);
-    view.vault_meta
-        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     crate::bm25::deindex_text(view, txn, id)?;
     // A room's count is advisory: base can advance after the room snapshot.
     // Reconcile it before the shared delete applies base's strict decrement.
@@ -366,6 +367,8 @@ fn mark_room_stale_in_txn(
     crate::hnsw::hnsw_deindex(&write_view, txn, id)?;
     view.vectors.delete(txn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(view, txn, id, None)?;
+    view.vault_meta
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     Ok(())
 }
 

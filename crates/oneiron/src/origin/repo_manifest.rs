@@ -209,7 +209,6 @@ impl RepoManifest {
     }
 
     /// Rule 3: whether this manifest stands for its CODE entity over `other`.
-    #[cfg(feature = "sync")]
     fn mints_before(&self, other: &Self) -> bool {
         (self.minted_at, self.portable) < (other.minted_at, other.portable)
     }
@@ -329,6 +328,7 @@ impl Vault {
             let (code, portable) = row?;
             if keep(&code)
                 && let Some(manifest) = MANIFESTS.get(&self.store, &txn, &portable)?
+                && manifest.code == code
             {
                 standing.push(manifest);
             }
@@ -349,6 +349,29 @@ impl Vault {
             if let Some(portable) = BY_CODE.get(&self.store, txn, &code)? {
                 return Ok(Some((RepoPortableId(portable), false)));
             }
+            // Restore a missing index from the oldest held id before minting another.
+            let mut held: Option<RepoManifest> = None;
+            for row in MANIFESTS.iter_raw_from(&self.store, txn, &[])? {
+                let (key, bytes) = row?;
+                let Ok(manifest) = MANIFESTS.decode_value(&bytes) else {
+                    continue;
+                };
+                if manifest.code != code
+                    || <[u8; 32] as SideKey>::decode_key(&key) != Some(manifest.portable.0)
+                {
+                    continue;
+                }
+                if held
+                    .as_ref()
+                    .is_none_or(|other| manifest.mints_before(other))
+                {
+                    held = Some(manifest);
+                }
+            }
+            if let Some(manifest) = held {
+                BY_CODE.put(&self.store, txn, &code, &manifest.portable.0)?;
+                return Ok(Some((manifest.portable, true)));
+            }
             let portable = RepoPortableId::mint();
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let manifest = RepoManifest {
@@ -368,10 +391,10 @@ impl Vault {
             Ok(Some((portable, true)))
         });
         let refreshed = ensured.and_then(|ensured| {
-            let Some((portable, minted)) = ensured else {
+            let Some((portable, written)) = ensured else {
                 return Ok(());
             };
-            if minted {
+            if written {
                 self.note_repo_manifest_written(code);
             }
             self.refresh_repo_manifest(code, portable)

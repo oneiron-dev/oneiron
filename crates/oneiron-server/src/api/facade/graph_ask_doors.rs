@@ -20,7 +20,8 @@
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
 //! decision names as evidence, each neighbour it left out and the
-//! principal it was asked for; a question's principal, units and artifacts.
+//! principal it was asked for; a question's principal, units, artifacts and
+//! saved lane's named rows (records caveat, then room facets).
 //! A standing question, its head, its backfills and its artifact asks live
 //! in side tables, which hold no row.
 use std::sync::Arc;
@@ -566,8 +567,9 @@ fn outcome_rows(outcome: &GraphAskOutcome) -> Vec<EntityId> {
         .collect()
 }
 
-/// The rows a standing question names: its principal, its units and the
-/// artifacts it asks.
+/// The rows a standing question names: its principal, its units, the
+/// artifacts it asks and its saved lane's named rows (records caveat, then
+/// room facets; FIX 12286).
 fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
     std::iter::once(record.principal)
         .chain(record.definition.units.iter().copied())
@@ -578,6 +580,7 @@ fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
                 .iter()
                 .map(|artifact| artifact.artifact),
         )
+        .chain(record.read_lane.named_rows())
         .collect()
 }
 

@@ -6572,7 +6572,7 @@
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -12093,7 +12093,7 @@
      "path": "src/campaign/compliance/mod.rs",
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -12104,7 +12104,7 @@
      "path": "src/campaign/compliance/pack_store.rs",
      "purpose": "Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -12202,7 +12202,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 9
      }
     },
@@ -12228,7 +12228,7 @@
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 7,
       "re-export": 8
      }
@@ -12541,8 +12541,8 @@
      "path": "src/campaign/surface/campaign.rs",
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
-      "crate-vis": 4,
-      "fn": 4,
+      "crate-vis": 7,
+      "fn": 5,
       "re-export": 6
      }
     },
@@ -12648,7 +12648,7 @@
       "const": 2,
       "enum": 1,
       "fn": 4,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
      }
     },
@@ -43555,7 +43555,7 @@
      "path": "src/llm/decision/asks.rs",
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 27,
       "re-export": 1,
       "struct": 4
@@ -45984,7 +45984,7 @@
      "path": "src/memory/campaign.rs",
      "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
      "surface": {
-      "fn": 19
+      "fn": 20
      }
     },
     {
@@ -46139,7 +46139,7 @@
      "path": "src/memory/campaign_records/verb_names.rs",
      "purpose": "Stable names and discovery tables of campaign and standing-query verbs",
      "surface": {
-      "const": 17
+      "const": 18
      }
     },
     {
@@ -47083,14 +47083,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/credential_key.rs",
      "purpose": "The read key a verified credential reads under",
      "surface": {
       "crate-vis": 5,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -50998,7 +50998,7 @@
      "path": "src/model_decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 49,
+      "const": 50,
       "fn": 1,
       "struct": 1
      }
@@ -51606,7 +51606,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/note/folder_source/reconcile.rs",
@@ -55870,7 +55870,7 @@
      "path": "src/outbound_consent/connector_elicitation_asks.rs",
      "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 2
      }
@@ -55882,7 +55882,7 @@
      "path": "src/outbound_consent/connector_elicitation_consent.rs",
      "purpose": "The owner's consent on an answer to a connector's question under `always ask` (FIX 8808): DEC-0006's three…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -60128,7 +60128,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 7,
       "mod": 1,
@@ -61230,7 +61230,7 @@
      "path": "src/recovery/document.rs",
      "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "struct": 3
      }
@@ -71931,7 +71931,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "struct": 4
      }
     },
@@ -74910,7 +74910,7 @@
      "path": "src/sync/carrier_parts.rs",
      "purpose": "Linked parts for a window carrier too large for one map value (Rule 5)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -76926,7 +76926,7 @@
      "path": "src/sync/repo_manifests/checkpoint.rs",
      "purpose": "A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -82045,7 +82045,7 @@
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
       "crate-vis": 9,
-      "fn": 13
+      "fn": 15
      }
     },
     {
@@ -82812,13 +82812,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_shape/retire.rs",
      "purpose": "A retire line for a world or a mask lands as a person's delete of it: a user delete under the owner's gate…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -91182,7 +91182,7 @@
     "note": {
      "files": 70,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
@@ -91873,7 +91873,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 134,
+   "over_bar": 135,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6330,
    "test_files": 900
@@ -109778,7 +109778,7 @@
      "path": "src/api/campaign.rs",
      "purpose": "CA-07 campaign HTTP routes",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -119036,11 +119036,11 @@
      "path": "src/files_intake/confined.rs",
      "purpose": "Reading under one folder without leaving it",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/files_intake/files.rs",
@@ -122278,7 +122278,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/native_exl3/transport.rs",
@@ -122662,7 +122662,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -126412,7 +126412,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 39,
+   "over_bar": 40,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1521,
    "test_files": 182

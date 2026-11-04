@@ -522,23 +522,16 @@ pub(super) fn mcp_verb_family_error(args: &crate::mcp::McpVerbToolArgs) -> McpGa
     )
 }
 
-fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) -> Value {
-    match output {
-        oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => json!({
-            "kind": "expanded",
-            "key": key,
-            "lines": lines,
-        }),
-        oneiron::board_verb::BoardVerbOutput::Frame(frame) => json!({
-            "kind": "frame",
-            "frame": frame,
-        }),
-        oneiron::board_verb::BoardVerbOutput::Subscription(receipt) => json!({
-            "kind": "subscription",
-            "connection": receipt.connection,
-            "active": receipt.active,
-        }),
-    }
+fn mcp_board_verb_output_value(
+    output: &oneiron::board_verb::BoardVerbOutput,
+) -> Result<Value, McpGatewayError> {
+    serde_json::to_value(output).map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "typed agent result cannot be encoded",
+        )
+    })
 }
 
 /// A keyed `describe` and `self.focus.*`: dispatched by the engine's own verb
@@ -617,7 +610,7 @@ pub(super) async fn execute_mcp_board_verb(
     // The present board producer serves TASKS, presence and loaded metadata.
     // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
     // typed entity mapping, so its renderer strings are never parsed for ids.
-    let value = mcp_board_verb_output_value(&output);
+    let value = mcp_board_verb_output_value(&output)?;
     let page_source = mcp_board_verb_page_source(&output, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is
@@ -819,7 +812,10 @@ pub(crate) async fn execute_run_board_verb_in_session(
         }
         oneiron::board_verb::BoardVerbOutput::Subscription(_) => None,
     };
-    Ok((mcp_board_verb_output_value(&output), board.rows))
+    Ok((
+        mcp_board_verb_output_value(&output).map_err(run_board_error)?,
+        board.rows,
+    ))
 }
 
 /// A pumped run's board answer has returned to the run: the receipt its hook

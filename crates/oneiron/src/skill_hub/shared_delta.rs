@@ -145,6 +145,21 @@ impl Vault {
             {
                 return Err(invalid("protected shared skill cannot merge automatically"));
             }
+            // An inherited role is native metadata, not a declaration in the
+            // submitted frontmatter. Never carry the base's call contract.
+            if super::folder::declared_role_call(&package.files)?
+                .0
+                .is_none()
+                && current.role != SkillRole::Callable
+                && current.role != package.record.role
+            {
+                package.record.role = current.role;
+                package = super::folder::package_from_source(
+                    &package.record,
+                    package.files,
+                    super::SkillPackageFormat::Native,
+                )?;
+            }
             package.record.provenance = rmpv::Value::Map(vec![
                 (
                     rmpv::Value::from("source"),
