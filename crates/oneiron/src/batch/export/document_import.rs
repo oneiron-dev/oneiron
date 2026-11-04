@@ -1194,7 +1194,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .into_iter()
             .collect(),
         ENTITY_TYPE_WORKFLOW => {
-            let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
+            let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition
                 .steps
                 .into_iter()

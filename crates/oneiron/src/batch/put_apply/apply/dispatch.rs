@@ -275,7 +275,7 @@ pub(super) fn dispatch_put_type(
             crate::agent_def::agent_id_pin_for_put_in_txn(store, wtxn, &fixed.id, &decoded)?;
         dispatch.new_agent_definition = Some(decoded);
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
-        dispatch.new_workflow = Some(crate::agent_def::workflow::validate_workflow_put(
+        dispatch.new_workflow = Some(crate::store::workflow_definition::validate_workflow_put(
             store,
             wtxn,
             &fixed.id,
