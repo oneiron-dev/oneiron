@@ -1190,9 +1190,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
             definition
