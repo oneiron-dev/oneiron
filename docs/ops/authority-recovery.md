@@ -14,7 +14,7 @@ or serialized signing key, and its debug output contains public facts only.
 
 1. Construct the signer with `RecoveryAuthoritySigner::from_seed` and the actual
    vault authority id. This is a pure material operation, not an enrollment.
-2. `signer.enrollment(machine, owner)` produces the existing `OwnerKeyEnrollment`
+2. The core-only `signer.enrollment(machine, owner)` produces the existing `OwnerKeyEnrollment`
    proof of possession for that vault, machine, owner and public key.
 3. Pass it to the ordinary counted owner-key enrollment door with the owner's
    act, carrying install and live predecessor. That door owns its write
