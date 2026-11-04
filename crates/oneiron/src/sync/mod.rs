@@ -65,7 +65,7 @@ pub mod replay;
 pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;
-mod room_parts;
+pub(crate) mod room_parts;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
 pub mod schema;
@@ -81,7 +81,9 @@ pub mod window;
 pub(crate) mod window_rows;
 pub(crate) mod withdrawn_cutoffs;
 
-pub use asset_body::session::{ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, AssetBodySession};
+pub use asset_body::session::{
+    ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
+};
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
@@ -95,6 +97,7 @@ pub use connection::{
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
+pub use ingest::with_own_device_push;
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,

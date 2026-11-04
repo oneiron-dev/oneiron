@@ -106,6 +106,19 @@ pub(crate) fn source_frontier_in_txn(
     Ok(Some(pin))
 }
 
+/// Resolve an active document's incarnation id in a caller-owned
+/// transaction, reading only its head row. An unmigrated row has none.
+pub(crate) fn source_incarnation_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<Option<String>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    Ok(Some(storage::head(store, txn, entity)?.incarnation))
+}
+
 use crate::error::{ArtifactError, Error};
 
 fn invalid(reason: &'static str) -> Error {

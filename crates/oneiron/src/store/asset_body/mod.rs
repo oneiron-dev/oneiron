@@ -209,12 +209,13 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
     )
 }
 
-/// FIX 3677: the file plane stays off until the raw ASSET readers other lanes
-/// own (sync egress, scoped reads, blob holders, taint, federation export,
-/// codebase ingest) read a manifest's file; the PR's FIX lines name each one.
-/// Off, every ASSET body stays in its row exactly as before; on is this line.
-/// A sealed vault's files are envelopes (FIX 5348).
-pub(crate) const ASSET_FILE_PLANE: bool = false;
+/// FIX 3677: the file plane is on. A long opaque ASSET body lives in its
+/// body file; sync carries its row by reference and moves the body outside
+/// Loro (FIX 5489), an offline bundle carries it as a file part and a point
+/// read serves it whole (FIX 5532). Off, every ASSET body stays in its row
+/// exactly as before; off is this line. A sealed vault's files are
+/// envelopes (FIX 5348).
+pub(crate) const ASSET_FILE_PLANE: bool = true;
 
 /// Whether `body` is bytes no reader of ASSET bodies interprets: no UTF-8
 /// text and no body an owning adapter reads (the serializer would attach it

@@ -5,8 +5,9 @@
 //! **Copy lineage.** A marked snapshot ASSET whose text moved into an entity
 //! document leaves this device only as its copy lineage: a separate document
 //! under the copy id, kept here in that id's document rows, written by one
-//! author derived from the source, and brought current with the copy of the
-//! source's text before every release. A mask may change a text's units, so
+//! author derived from the source and its document's incarnation (FIX 10758),
+//! and brought current with the copy of the source's text before every
+//! release. A mask may change a text's units, so
 //! the lineage never shares an operation with the source (C1 of the s4
 //! soundness read). Its disclosure floor names the copy's stamp: a re-mask
 //! reaches every peer as state, never as history holding an older copy (C3).
@@ -16,9 +17,10 @@
 //! against the source's text and lands as a source text edit, in the one
 //! writer that admits it and keeps the peer's operations, before any
 //! acknowledgement (C2, C5). A ruled hold (`sealed_file_edited`,
-//! `projection_edit_conflict`) lands and keeps nothing, so the peer's
-//! acknowledgement covers none of its operations and it keeps the edit
-//! queued. An update sent under the source id takes today's path.
+//! `projection_edit_conflict`) lands and applies nothing: its held record is
+//! kept and its acknowledgement covers its operations, so the peer stops
+//! sending it (FIX 10598). An update sent under the source id takes today's
+//! path.
 //!
 //! **Residence.** A peer is shown a marked source by its copy id; a copy id
 //! it names is judged as its source.
@@ -28,6 +30,7 @@ use std::collections::BTreeMap;
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
+use super::rows::HeldEdit;
 use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -45,7 +48,7 @@ use crate::sync::documents::storage;
 /// The text root of an entity document.
 const BODY: &str = "body";
 /// The domain the copy lineage's one author is derived in.
-const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v1";
+const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v2";
 
 /// A marked document's copy lineage, current with its source.
 pub(crate) struct DocumentCopy {
@@ -82,18 +85,23 @@ struct TextCopy {
     copy: String,
     /// The spans `copy` overwrites; `None` for the sealed-file placeholder.
     places: Option<KeyPlaces>,
+    /// The marked blob it stands for: what a landed edit's mark is carried
+    /// from (FIX 10732).
+    blob: [u8; 32],
     /// The stamp fingerprint: source, marks, actual copy bytes, kind, rules.
     stamp: [u8; 32],
 }
 
 impl TextCopy {
     /// The sealed-file placeholder under `key`, for a document whose own
-    /// copy is unread this pass (FIX 10793): never its stored text.
-    fn sealed(key: EntityId) -> Self {
+    /// copy of the marked blob `blob` is unread this pass (FIX 10793): never
+    /// its stored text.
+    fn sealed(key: EntityId, blob: [u8; 32]) -> Self {
         Self {
             key,
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
+            blob,
             stamp: super::UNREAD_STAMP,
         }
     }
@@ -107,8 +115,9 @@ impl TextCopy {
 /// The marked blob the document `id` names, and the bytes its copy is made
 /// from: a marked snapshot ASSET's text; a known copy id's source blob, as
 /// stored here (FIX 10795; none held: the placeholder); any other document
-/// whose whole text is a marked blob (FIX 10796). `None` for an unmarked
-/// document.
+/// whose whole text is a marked blob (FIX 10796). A source whose bytes are
+/// now another marked blob (a landed edit's carried mark, FIX 10732) is that
+/// blob. `None` for an unmarked document.
 ///
 /// # Errors
 /// A failed copy id derivation.
@@ -122,7 +131,7 @@ fn text_bound_in_txn(
     if let Some(hash) = marks.source_of(id) {
         return Ok(Some(TextBound {
             key: copy_id(id)?,
-            hash,
+            hash: carried(marks, hash, text.as_bytes()),
             bytes: text.as_bytes().to_vec(),
             own: true,
         }));
@@ -138,10 +147,12 @@ fn text_bound_in_txn(
             .ok()
             .flatten()
             .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
-            .filter(|body| blake3::hash(body).as_bytes() == &hash);
+            .filter(|body| carried(marks, hash, body) == *blake3::hash(body).as_bytes());
         return Ok(Some(TextBound {
             key: *id,
-            hash,
+            hash: stored
+                .as_deref()
+                .map_or(hash, |body| carried(marks, hash, body)),
             bytes: stored.unwrap_or_default(),
             own: false,
         }));
@@ -153,6 +164,18 @@ fn text_bound_in_txn(
         bytes: text.as_bytes().to_vec(),
         own: true,
     }))
+}
+
+/// The marked blob a source bound to `hash` stands for when its bytes are
+/// `bytes`: those bytes' own blob when a mark covers them (a landed edit's
+/// carried mark, FIX 10732), else `hash`.
+fn carried(marks: &RepoIndexMarks, hash: [u8; 32], bytes: &[u8]) -> [u8; 32] {
+    let own = *blake3::hash(bytes).as_bytes();
+    if own != hash && marks.is_marked(&own) {
+        own
+    } else {
+        hash
+    }
 }
 
 /// What [`text_bound_in_txn`] found.
@@ -182,7 +205,7 @@ fn text_copy_in_txn(
     let Some(bound) = text_bound_in_txn(vault, txn, marks, id, text)? else {
         return Ok(None);
     };
-    let key = bound.key;
+    let (key, blob) = (bound.key, bound.hash);
     match project_text_in_txn(vault, txn, marks, bound) {
         Ok(copy) => Ok(copy),
         Err(error) => {
@@ -190,7 +213,7 @@ fn text_copy_in_txn(
                 %error,
                 "sync: a marked document's copy is unreadable; it leaves sealed"
             );
-            Ok(Some(TextCopy::sealed(key)))
+            Ok(Some(TextCopy::sealed(key, blob)))
         }
     }
 }
@@ -234,19 +257,33 @@ fn project_text_in_txn(
         key,
         copy,
         places,
+        blob: hash,
         stamp: fingerprint,
     }))
 }
 
-/// The one author of `source`'s copy lineage.
-fn author(source: &EntityId) -> u64 {
-    let mut material = Vec::with_capacity(2 + 16);
+/// The one author of `source`'s copy lineage for this incarnation of its
+/// document (FIX 10758): derived from the source and the incarnation its
+/// document head names, never from the content-derived id alone. A marked
+/// blob erased and ingested again keeps its ASSET id, but its document is
+/// born again under a fresh incarnation, so its rebuilt lineage is written
+/// by a fresh author and never restarts an old author's counters that a
+/// peer still holding the old lineage would dedupe against. A text with no
+/// document head takes the source alone.
+///
+/// # Errors
+/// A store failure reading the document head (L01 05:53).
+fn author(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<u64> {
+    let incarnation =
+        crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?.unwrap_or_default();
+    let mut material = Vec::with_capacity(2 + 16 + incarnation.len());
     material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
+    material.extend_from_slice(incarnation.as_bytes());
     let key = blake3::derive_key(AUTHOR_CONTEXT, &material);
     let mut head = [0u8; 8];
     head.copy_from_slice(&key[..8]);
-    u64::from_be_bytes(head) >> 1
+    Ok(u64::from_be_bytes(head) >> 1)
 }
 
 /// The copy lineage stored under `copy`; an empty one before its first
@@ -274,14 +311,21 @@ fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDo
         .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
 }
 
-/// Bring `lineage`'s text to `copy` as its author; whether it changed.
-fn bring_current(lineage: &LoroDoc, source: &EntityId, copy: &str) -> Result<bool> {
+/// Bring `lineage`'s text to `copy` as `source`'s lineage author, its
+/// head read only when the text changes; whether it changed.
+fn bring_current(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    lineage: &LoroDoc,
+    source: &EntityId,
+    copy: &str,
+) -> Result<bool> {
     let text = lineage.get_text(BODY);
     if text.to_string() == copy {
         return Ok(false);
     }
     lineage
-        .set_peer_id(author(source))
+        .set_peer_id(author(vault, txn, source)?)
         .map_err(|_| Error::InvariantViolation("document copy author"))?;
     text.update(copy, UpdateOptions::default())
         .map_err(|_| Error::InvariantViolation("document copy diff"))?;
@@ -313,7 +357,7 @@ pub(crate) fn document_copy_in_txn(
     };
     let id = copy_id(&source)?;
     let lineage = load_lineage(vault, txn, id)?;
-    if bring_current(&lineage, &source, &copy.copy)? {
+    if bring_current(vault, txn, &lineage, &source, &copy.copy)? {
         save_lineage(vault, txn, id, &lineage)?;
     }
     Ok(Some(DocumentCopy {
@@ -327,23 +371,26 @@ pub(crate) fn document_copy_in_txn(
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
-/// text through the visible diff and the canonical writer. A ruled hold
-/// persists nothing.
+/// text through the visible diff and the canonical writer, carrying the
+/// copy's mark (FIX 10732). A ruled hold lands and applies nothing: its held
+/// record is kept, and it answers the vector to acknowledge the edit with,
+/// the stored lineage's and the held operations', so the peer stops sending
+/// it (FIX 10598). `None` for an edit that landed.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
-/// a store failure, the visible diff's own failure, or the canonical
-/// writer's.
+/// a store failure (the hold's record included), the visible diff's own
+/// failure, or the canonical writer's.
 pub(crate) fn import_document_copy<F>(
     vault: &Vault,
     source: EntityId,
     bytes: &[u8],
     admit: F,
-) -> Result<()>
+) -> Result<Option<Vec<u8>>>
 where
     F: FnOnce(&mut RwTxn<'_>) -> Result<()>,
 {
-    vault.with_write_txn_grouped(|txn| {
+    let held = vault.with_write_txn_grouped(|txn| {
         admit(txn)?;
         let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
         // The source's text as this writer reads it, never an older copy
@@ -363,7 +410,8 @@ where
         }
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
-        bring_current(&lineage, &source, &copy.copy)?;
+        let stored = lineage.oplog_vv();
+        bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
         let result = if submitted == copy.copy {
@@ -383,12 +431,17 @@ where
         };
         let landed = match result {
             RepoProjectionDiffResult::Unchanged => None,
-            RepoProjectionDiffResult::Applied(bytes) => match String::from_utf8(bytes) {
+            RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
                 Ok(text) => Some(text),
-                Err(_) => return held(source, &RepoProjectionDiffResult::ProjectionEditConflict),
+                Err(_) => {
+                    let cause = RepoProjectionDiffResult::ProjectionEditConflict;
+                    return Ok(Some(held(source, cause, bytes, stored)));
+                }
             },
             cause @ (RepoProjectionDiffResult::SealedFileEdited
-            | RepoProjectionDiffResult::ProjectionEditConflict) => return held(source, &cause),
+            | RepoProjectionDiffResult::ProjectionEditConflict) => {
+                return Ok(Some(held(source, cause, bytes, stored)));
+            }
         };
         if let Some(text) = landed {
             // A fresh peer: the landing's operations are no one's but the
@@ -414,19 +467,61 @@ where
                 &update,
                 Some(&submitted),
             )?;
+            // FIX 10732: the landed text carries the copy's mark, in this
+            // writer, so it is never committed unmarked (L04 05:5x).
+            crate::origin::secret_marks::carry_repo_secret_marks_in_txn(
+                vault,
+                txn,
+                &copy.blob,
+                text.as_bytes(),
+                source,
+            )?;
         }
         save_lineage(vault, txn, id, &lineage)?;
-        Ok(())
-    })
+        Ok(None)
+    })?;
+    let Some((edit, vector)) = held else {
+        return Ok(None);
+    };
+    let place = format!("e:{}", copy_id(&source)?.to_hex());
+    super::held::record_held_edits(vault, &place, std::slice::from_ref(&edit))?;
+    Ok(Some(vector))
 }
 
-fn held(source: EntityId, cause: &RepoProjectionDiffResult) -> Result<()> {
+/// The ruled hold of `bytes`, a peer's update of `source`'s copy lineage:
+/// its held edit, and the vector it is acknowledged with, `stored` (the
+/// lineage as stored) with the update's own operations, which nothing here
+/// keeps.
+fn held(
+    source: EntityId,
+    cause: RepoProjectionDiffResult,
+    bytes: &[u8],
+    mut stored: VersionVector,
+) -> (HeldEdit, Vec<u8>) {
     tracing::warn!(
         source = %source.to_hex(),
         ?cause,
-        "sync: a document copy edit is held on its ruled cause; the peer keeps it queued"
+        "sync: a document copy edit is held on its ruled cause; its held record is kept"
     );
-    Ok(())
+    if let Ok(meta) = LoroDoc::decode_import_blob_meta(bytes, true) {
+        stored.merge(&meta.partial_end_vv);
+    }
+    let edit = HeldEdit {
+        source,
+        cause,
+        edit: crate::sync::quarantine::payload_hash(bytes),
+    };
+    (edit, stored.encode())
+}
+
+/// The copy id a peer knows the marked snapshot ASSET `source`'s document
+/// by: the id its copy lineage's frames go under, and the id a peer that
+/// holds only the copy subscribes by (FIX 10730). Reads nothing.
+///
+/// # Errors
+/// The copy id derivation's own failure.
+pub fn repo_document_copy_id(source: EntityId) -> Result<EntityId> {
+    copy_id(&source)
 }
 
 /// The version vector of `source`'s copy lineage: what a peer's update
