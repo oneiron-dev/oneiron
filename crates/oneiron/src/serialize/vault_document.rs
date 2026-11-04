@@ -94,7 +94,7 @@ impl<'v> DocumentWriter<'v> {
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
-            .filter_map(|id| crate::agent_def::birth_source_id(id).ok())
+            .filter_map(|id| crate::store::agent_birth_identity::birth_source_id(id).ok())
             .collect();
         let mut writer = Self {
             vault,
