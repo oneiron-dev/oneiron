@@ -66093,7 +66093,11 @@
       "AgentPackRefusalLevel",
       "AgentPackScope",
       "AgentPackSkill",
+      "AgentPackSkillCall",
+      "AgentPackSkillDependency",
+      "AgentPackSkillFormat",
       "AgentPackSkillRef",
+      "AgentPackSkillRole",
       "AgentPackTravelProjection",
       "AgentPackView",
       "AgentPackWakeCadence"
@@ -66102,9 +66106,9 @@
      "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
      "surface": {
       "const": 1,
-      "enum": 8,
-      "fn": 8,
-      "struct": 11
+      "enum": 10,
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -67480,7 +67484,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
       "re-export": 20
      }
@@ -83587,7 +83591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EraseHeldBytes",
@@ -83602,6 +83606,7 @@
      "path": "src/verbs/record_erase.rs",
      "purpose": "The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 8
      }
@@ -118383,7 +118388,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -118411,6 +118416,16 @@
      "path": "src/handler/residence_socket_tests.rs",
      "purpose": "A real enrol: root + thin index, one opened item, remote search and offline honesty",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/selector_scope.rs",
+     "purpose": "Single-vault selector grant scope shared by handler and livequery (FIX 9251)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -125142,7 +125157,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -125417,7 +125432,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1498,
+   "source_files": 1499,
    "test_files": 182
   },
   "oneiron-spawn": {
