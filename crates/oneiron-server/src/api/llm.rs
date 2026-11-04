@@ -264,7 +264,12 @@ pub(crate) fn record_raw_response(
     run: &RunAdmission,
     request: &LlmRequest,
     response: &LlmResponse,
+    no_record: bool,
 ) {
+    if no_record {
+        tracing::debug!("model-call record skipped: off-record session or room");
+        return;
+    }
     let digests = match model_call_digests(request) {
         Ok(digests) => digests,
         Err(error) => {
@@ -346,19 +351,36 @@ pub(crate) fn record_raw_response(
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
+    let session = super::call_receipt::request_session_ref(&headers).map(str::to_owned);
+    let principal = super::call_receipt::request_principal(&auth);
+    let no_record_at_arrival = server
+        .vault()
+        .model_call_keeps_no_record_for(session.as_deref(), principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
     match ladder
         .generate_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
     {
         Ok(response) => {
-            record_raw_response(server.vault(), &ladder, &run, &request, &response);
+            let no_record = no_record_at_arrival
+                || server
+                    .vault()
+                    .model_call_keeps_no_record_for(session.as_deref(), principal);
+            record_raw_response(
+                server.vault(),
+                &ladder,
+                &run,
+                &request,
+                &response,
+                no_record,
+            );
             Json(response).into_response()
         }
         Err(e) => failure(e),
@@ -379,12 +401,18 @@ async fn send_error(
 async fn stream(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
+    let session = super::call_receipt::request_session_ref(&headers).map(str::to_owned);
+    let principal = super::call_receipt::request_principal(&auth);
+    let no_record_at_arrival = server
+        .vault()
+        .model_call_keeps_no_record_for(session.as_deref(), principal);
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
@@ -433,7 +461,18 @@ async fn stream(
                         reply_assertions: Default::default(),
                         token_scores: None,
                     };
-                    record_raw_response(server.vault(), &ladder, &run, &request, &response);
+                    let no_record = no_record_at_arrival
+                        || server
+                            .vault()
+                            .model_call_keeps_no_record_for(session.as_deref(), principal);
+                    record_raw_response(
+                        server.vault(),
+                        &ladder,
+                        &run,
+                        &request,
+                        &response,
+                        no_record,
+                    );
                 }
                 return;
             }
@@ -478,7 +517,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
                 .await;
             if let Ok(response) = &answered {
-                record_raw_response(server.vault(), &ladder, &run, &request, response);
+                record_raw_response(server.vault(), &ladder, &run, &request, response, false);
             }
             answered
         })
