@@ -239,7 +239,10 @@ impl HostWriteOrigin {
 
     /// This origin with the call's place in its durable run, for a call a
     /// code consent wait may bind.
-    pub(crate) fn with_code_consent(mut self, site: crate::consent::code_wait_state::CodeConsentCallSite) -> Self {
+    pub(crate) fn with_code_consent(
+        mut self,
+        site: crate::consent::code_wait_state::CodeConsentCallSite,
+    ) -> Self {
         self.code_consent = Some(site);
         self
     }

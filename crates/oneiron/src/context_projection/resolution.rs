@@ -13,10 +13,10 @@ use crate::compaction::output::OutputRef;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::GateSystemNoticeRecord;
-use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 
 /// Rows a memory resolution may walk before it stops looking.
 pub const CONTEXT_SPEC_MEMORY_SCAN_LIMIT: usize = 512;

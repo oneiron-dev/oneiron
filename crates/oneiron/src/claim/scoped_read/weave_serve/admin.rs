@@ -27,7 +27,7 @@ use crate::authority::AuthenticatedWeaveAdmin;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::lens::HostedLensRender;
-use crate::memory::{Memory};
+use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The lane an Admin's lens composes under: its person's key that reads no

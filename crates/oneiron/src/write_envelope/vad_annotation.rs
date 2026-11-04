@@ -1,12 +1,12 @@
 //! VAD annotation claim values, stable ids, and cleanup result data.
 
-use rmpv::Value;
-use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::VAD_ANNOTATION_CLAIM;
 use crate::error::{Error, Result};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use rmpv::Value;
 
 pub(crate) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
 const VAD_KEY_VALENCE: &str = "valence";

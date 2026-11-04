@@ -25,7 +25,6 @@ use super::receipt::{
     FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor, receipts_in_txn,
 };
 use super::{CYCLE, FreeTimeKind, POLICY};
-use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::agent_dispatch::budget_doors::RunRungSettlement;
 use crate::attempt_queue::AttemptId;
 use crate::authority::ActAuthority;
@@ -33,6 +32,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::owner_read_page_limit;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::run_budget::LeaseUnit;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One agent's free-time policy.
