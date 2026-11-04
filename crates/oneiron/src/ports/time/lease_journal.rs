@@ -13,17 +13,26 @@
 //! a time a decision already took. A renewal that commits a lease at or past
 //! every bound journaled truncates the journal: the vault holds them all.
 //!
-//! Only the owned open, in its own process, appends, replays or truncates. A
-//! store without the writer lease, or one whose journal fails, renews in its
-//! writer, as before FIX 12023, and reads the journal's bound into the floor
-//! it commits there, so a lease holder's crash leaves no journaled time
-//! above it.
+//! Only the owned open, in its own process, appends, replays or truncates, and
+//! on unix it does so through the descriptor of the directory it opened, so a
+//! late callback of an open a restore replaced never touches its
+//! replacement's journal (review #4484 Astra P1, 11-04 16:2x). Every other
+//! open reads the journal's bound into its clock floor before its first
+//! decision; a store without the writer lease, or one whose journal fails,
+//! renews in its writer, as before FIX 12023, at or past that bound.
+//!
+//! Bounds only rise through the file: one open appends a bound only past the
+//! one before, and the next open's clock starts at or past the bound it
+//! replayed. So a readable record bounds every record before it, and a record
+//! that does not read with no readable record after it bounds nothing: the
+//! journal then fails closed and stays for the owner. The owner's way back:
+//! move the journal aside and open; until the wall passes the last decision
+//! time it covered, a grant that expired before then may judge as live.
 
-use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::AUTHORIZATION_LEASE_SECS;
 use crate::error::{Error, Result};
@@ -37,19 +46,23 @@ const LEASE_JOURNAL_FILE: &str = "clock-lease.journal";
 const RECORD_LEN: usize = 16;
 const RECORD_MAGIC: &[u8; 4] = b"OCL1";
 
-/// The owned open's journal at one canonical root, in this process.
+/// The owned open's journal. Its store's clock holds it, so it lives and
+/// closes with that store (review #4484 P2, 11-04 16:05): no registry, and no
+/// descriptor beyond the directory's between appends.
 pub(crate) struct LeaseJournal {
     path: PathBuf,
+    /// The directory this open opened, which every open of the journal goes
+    /// through on unix.
+    #[cfg(unix)]
+    dir: File,
     pid: u32,
     state: Mutex<JournalState>,
 }
 
-/// Holds no descriptor between appends (review #4484 P2, 11-04 16:05): a
-/// host that opens many vaults keeps only this small state per root.
 #[derive(Default)]
 struct JournalState {
-    /// The root directory was synced after this open first created or
-    /// opened the journal.
+    /// The root directory was synced after this open first opened the
+    /// journal.
     dir_synced: bool,
     /// The highest bound this open synced: a decision at or below it is
     /// durable, in the journal or, once truncated, in a committed lease.
@@ -58,37 +71,16 @@ struct JournalState {
     owed: bool,
 }
 
-/// The journals of this process's owned opens, by canonical root.
-static JOURNALS: LazyLock<Mutex<HashMap<PathBuf, Arc<LeaseJournal>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 impl LeaseJournal {
-    /// The journal `store`'s lapsed decisions append to: `None` unless its
-    /// open took the writer lease in this process.
-    pub(super) fn of(store: &crate::store::Store) -> Option<Arc<Self>> {
-        if !store.opened_with_writer_lease() {
-            return None;
-        }
-        let journals = JOURNALS.lock().unwrap_or_else(PoisonError::into_inner);
-        journals
-            .get(store.canonical_root())
-            .filter(|journal| journal.pid == std::process::id())
-            .cloned()
-    }
-
-    /// A fresh journal for the owned open at `root`, replacing any an
-    /// earlier open in this process left.
-    fn install(root: &Path) -> Arc<Self> {
-        let journal = Arc::new(Self {
+    /// The journal for the owned open at `root`.
+    fn open(root: &Path) -> Result<Self> {
+        Ok(Self {
             path: root.join(LEASE_JOURNAL_FILE),
+            #[cfg(unix)]
+            dir: File::open(root)?,
             pid: std::process::id(),
             state: Mutex::new(JournalState::default()),
-        });
-        JOURNALS
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(root.to_path_buf(), Arc::clone(&journal));
-        journal
+        })
     }
 
     /// Makes a decision at `now` durable before it is returned (condition
@@ -104,11 +96,12 @@ impl LeaseJournal {
         if now <= state.covered {
             return true;
         }
-        let mut file = match open_for_append(&self.path, !state.dir_synced) {
+        let mut file = match self.open_for_append(!state.dir_synced) {
             Ok(file) => file,
             Err(error) => {
                 tracing::warn!(
                     %error,
+                    journal = %self.path.display(),
                     "the clock lease journal did not open; the decision renews the lease in its writer"
                 );
                 return false;
@@ -116,8 +109,7 @@ impl LeaseJournal {
         };
         state.dir_synced = true;
         let bound = now.saturating_add(AUTHORIZATION_LEASE_SECS);
-        let record = record(bound);
-        match file.write_all(&record).and_then(|()| file.sync_data()) {
+        match file.write_all(&record(bound)).and_then(|()| file.sync_data()) {
             Ok(()) => {
                 state.covered = bound;
                 state.owed = true;
@@ -145,7 +137,7 @@ impl LeaseJournal {
         if !state.owed || leased < state.covered {
             return;
         }
-        match truncate(&self.path) {
+        match self.truncate() {
             Ok(()) => state.owed = false,
             Err(error) => tracing::warn!(
                 %error,
@@ -153,40 +145,73 @@ impl LeaseJournal {
             ),
         }
     }
-}
 
-/// Opens the journal for appends, creating it owner-only, without following
-/// a link and leaking no descriptor to a child. The root directory is synced
-/// so a journal a first decision created survives the power loss its
-/// fdatasync guards against, and a torn tail is trimmed so every record
-/// stays aligned. The directory syncs only on `sync_dir`: once per open of
-/// the vault, not per append.
-fn open_for_append(path: &Path, sync_dir: bool) -> std::io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).append(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    /// Opens the journal for appends, creating it owner-only, without
+    /// following a link and leaking no descriptor to a child. The directory
+    /// syncs on `sync_dir` (once per open of the vault), so a journal a first
+    /// decision created survives the power loss its fdatasync guards against,
+    /// and a torn tail is trimmed so every record stays aligned.
+    fn open_for_append(&self, sync_dir: bool) -> std::io::Result<File> {
+        #[cfg(unix)]
+        let file = {
+            use rustix::fs::{Mode, OFlags, openat};
+            let fd = openat(
+                &self.dir,
+                LEASE_JOURNAL_FILE,
+                OFlags::RDWR | OFlags::APPEND | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o600),
+            )?;
+            if sync_dir {
+                self.dir.sync_all()?;
+            }
+            File::from(fd)
+        };
+        #[cfg(not(unix))]
+        let file = {
+            let _ = sync_dir;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(&self.path)?
+        };
+        let len = file.metadata()?.len();
+        let torn = len % (RECORD_LEN as u64);
+        if torn > 0 {
+            file.set_len(len - torn)?;
+        }
+        Ok(file)
     }
-    let file = options.open(path)?;
-    // A directory opens as a file only on unix.
-    #[cfg(unix)]
-    {
-        if sync_dir && let Some(root) = path.parent() {
-            File::open(root)?.sync_all()?;
+
+    /// Empties the journal, through the directory this open opened; an
+    /// absent one is empty already.
+    fn truncate(&self) -> std::io::Result<()> {
+        #[cfg(unix)]
+        let opened = {
+            use rustix::fs::{Mode, OFlags, openat};
+            use rustix::io::Errno;
+            match openat(
+                &self.dir,
+                LEASE_JOURNAL_FILE,
+                OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            ) {
+                Ok(fd) => Some(File::from(fd)),
+                Err(Errno::NOENT) => None,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        #[cfg(not(unix))]
+        let opened = match std::fs::OpenOptions::new().write(true).open(&self.path) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        match opened {
+            Some(file) => file.set_len(0),
+            None => Ok(()),
         }
     }
-    #[cfg(not(unix))]
-    let _ = sync_dir;
-    let len = file.metadata()?.len();
-    let torn = len % (RECORD_LEN as u64);
-    if torn > 0 {
-        file.set_len(len - torn)?;
-    }
-    Ok(file)
 }
 
 fn record(bound: u64) -> [u8; RECORD_LEN] {
@@ -208,96 +233,60 @@ fn parse_record(bytes: &[u8]) -> Option<u64> {
     bytes[0..8].try_into().ok().map(u64::from_le_bytes)
 }
 
-/// The file's last write time in Unix seconds, from its metadata, which
-/// reads even when its records do not.
-fn written_secs(path: &Path) -> Option<u64> {
-    std::fs::metadata(path)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|elapsed| elapsed.as_secs())
-}
-
 /// The highest time a decision the journal at `root` covers may have taken:
-/// 0 for an absent or empty journal. Every readable record names its bound;
-/// a torn tail is an append whose sync never returned, so no decision took
-/// its bound. A damaged record's bound is unknown: the decision it covered
-/// judged at no more than the wall when it was written (the file's last
-/// write time) or the committed floor and lease `committed`, so the bound
-/// rises a lease past both. A journal whose bytes and metadata both fail
-/// to read fails, closed.
-pub(super) fn journaled_bound(root: &Path, committed: u64) -> Result<u64> {
+/// 0 for an absent or empty journal. A torn tail is an append whose sync
+/// never returned, so no decision took its bound. A complete record that does
+/// not read, zeros included, is bounded by a readable record after it (bounds
+/// only rise through the file); with none after it, or when the file does not
+/// read, nothing bounds it and this fails, closed (review #4484 Astra P1,
+/// 11-04 16:2x: a write time is no bound after a wall step back).
+pub(super) fn journaled_bound(root: &Path) -> Result<u64> {
     let path = root.join(LEASE_JOURNAL_FILE);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => {
-            let Some(written) = written_secs(&path) else {
-                return Err(Error::Io(error));
-            };
             tracing::error!(
                 %error,
-                "the clock lease journal did not read; the clock floor rises a lease past its last write"
+                journal = %path.display(),
+                "the clock lease journal did not read; the open fails. To recover: move the journal aside and open"
             );
-            return Ok(written
-                .max(committed)
-                .saturating_add(AUTHORIZATION_LEASE_SECS));
+            return Err(Error::Io(error));
         }
     };
     let mut bound = 0_u64;
-    let mut damaged = false;
+    let mut unbounded = false;
     for chunk in bytes.chunks_exact(RECORD_LEN) {
         match parse_record(chunk) {
-            Some(record) => bound = bound.max(record),
-            None => damaged = true,
+            Some(record) => {
+                bound = bound.max(record);
+                unbounded = false;
+            }
+            None => unbounded = true,
         }
     }
-    if damaged {
-        let Some(written) = written_secs(&path) else {
-            return Err(Error::CorruptedIndex("clock lease journal"));
-        };
-        tracing::warn!("a clock lease journal record is damaged; the clock floor rises a lease past its last write");
-        bound = bound.max(
-            written
-                .max(committed)
-                .saturating_add(AUTHORIZATION_LEASE_SECS),
+    if unbounded {
+        tracing::error!(
+            journal = %path.display(),
+            "the clock lease journal's last complete record does not read and no record bounds it; the open fails. To recover: move the journal aside and open"
         );
+        return Err(Error::CorruptedIndex("clock lease journal"));
     }
     Ok(bound)
 }
 
-/// The owned open's replay (condition 3): installs this open's journal and
-/// returns the bound its records hold, for the caller to commit into the
-/// clock floor before any admission, and the journal to truncate once it
-/// has.
-pub(super) fn replay_at_open(root: &Path, committed: u64) -> Result<(Arc<LeaseJournal>, u64)> {
-    let bound = journaled_bound(root, committed)?;
-    Ok((LeaseJournal::install(root), bound))
+/// The owned open's replay (condition 3): the journal this open appends to,
+/// and the bound its records hold, for the caller to commit into the clock
+/// floor before any admission, and the journal to truncate once it has.
+pub(super) fn replay_at_open(root: &Path) -> Result<(Arc<LeaseJournal>, u64)> {
+    let bound = journaled_bound(root)?;
+    Ok((Arc::new(LeaseJournal::open(root)?), bound))
 }
 
 /// Empties the journal after its bound committed. A failed truncate leaves
 /// records at or below the committed floor, which replay harmlessly.
 pub(super) fn truncate_after_replay(journal: &LeaseJournal) {
-    if let Err(error) = truncate(&journal.path) {
+    if let Err(error) = journal.truncate() {
         tracing::warn!(%error, "the replayed clock lease journal did not truncate");
-    }
-}
-
-/// Empties the journal at `path`, without following a link; an absent one
-/// is empty already.
-fn truncate(path: &Path) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-    match options.open(path) {
-        Ok(file) => file.set_len(0),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
     }
 }

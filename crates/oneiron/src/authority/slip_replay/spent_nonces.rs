@@ -27,7 +27,7 @@
 //! `slip-spend.journal` and fdatasynced (FIX 12023 W0, P1-a=B; L02 10-31),
 //! under this set's lock and before the entry is spent here, so a crash
 //! between the reply and the rows' group commit cannot lose the spend: the
-//! next lease-holder open replays the journal's unexpired records into the
+//! next lease-holder open replays the journal's records into the
 //! committed rows before it reads its opening second, then truncates the
 //! journal. A journal failure spends nothing here and the writer's path
 //! judges the request, as it did before. The journal is truncated while
@@ -49,8 +49,8 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use super::{
-    NonceKey, PROOF_NOT_BEFORE, REPLAY_NONCE, WINDOW_SECS, admission_now_in_txn,
-    put_nonce_row_in_txn,
+    NonceKey, PROOF_CLOCK_FLOOR, PROOF_NOT_BEFORE, REPLAY_NONCE, WINDOW_SECS, admission_now_in_txn,
+    proof_floor_in_txn, put_nonce_row_in_txn,
 };
 use crate::authority::{AUTHORITY_FIRST_SEEN, FoldedSlip, authority_first_seen_sidecar_key};
 use crate::error::{Error, Result};
@@ -81,8 +81,6 @@ const NONCE_JOURNAL_DETECTOR: &str = "authority.nonce_journal_recovery.v1";
 /// Why a journal replay could not prove every journaled spend landed.
 #[derive(Clone, Copy, Debug)]
 enum JournalRecoveryFailure {
-    /// The journal exists and did not read.
-    Read,
     /// Complete records that do not read: each may be an answered spend.
     Unreadable(usize),
     /// The readable records' rows did not commit.
@@ -91,11 +89,11 @@ enum JournalRecoveryFailure {
 
 impl JournalRecoveryFailure {
     /// The records the failure leaves unproven, as its healer item counts
-    /// them: unknown (one) for a read or a landing that failed.
+    /// them: unknown (one) for a landing that failed.
     fn unproven(self) -> u64 {
         match self {
             Self::Unreadable(n) => n as u64,
-            Self::Read | Self::Land => 1,
+            Self::Land => 1,
         }
     }
 }
@@ -677,8 +675,19 @@ impl SpentNonces {
         {
             return false;
         }
+        // The proof was judged on `clock`, read in an earlier snapshot: a
+        // writer since may have moved the proof floor or `not_before` and let
+        // this nonce's row go (review #4484 Astra P1, 11-04 16:2x). Any move
+        // sends the request to the writer's path, which judges it afresh.
         let committed = match vault.store.env.read_txn() {
-            Ok(txn) => REPLAY_NONCE.contains(&vault.store, &txn, &key.row()),
+            Ok(txn) => (|| -> Result<bool> {
+                if proof_floor_in_txn(vault, &txn)? > clock.now
+                    || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0) > clock.not_before
+                {
+                    return Ok(true);
+                }
+                REPLAY_NONCE.contains(&vault.store, &txn, &key.row())
+            })(),
             Err(error) => Err(error.into()),
         };
         if !matches!(committed, Ok(false)) {
@@ -772,7 +781,7 @@ impl SpentNonces {
         Ok(())
     }
 
-    /// Lands every unexpired spend the journal holds, in one writer, then
+    /// Lands every spend the journal holds, in one writer, then
     /// truncates it. The caller holds the environment's writer lease, by its
     /// open or by a spend's guard, so no other process appends beside the
     /// replay. This set's lock is never held across the writer (a writer
@@ -789,16 +798,17 @@ impl SpentNonces {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            // No record bounds its proofs, and the file's last write time
+            // is no bound after a wall step back: fail closed and keep the
+            // journal (review #4484 Astra P1, 11-04 16:2x), as a last record
+            // that does not read does below.
             Err(error) => {
                 tracing::error!(
                     error = %error,
-                    "the slip-spend journal did not read; every proof it may hold is refused"
+                    journal = %path.display(),
+                    "the slip-spend journal did not read; the open fails. To recover: move the journal aside, open, and revoke every capability slip issued before its last write"
                 );
-                // The file's last write time bounds every proof it holds.
-                let Some(written) = journal_written_secs(&path) else {
-                    return Err(Error::Io(error));
-                };
-                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Read, written);
+                return Err(Error::Io(error));
             }
         };
         if bytes.is_empty() {
@@ -815,9 +825,8 @@ impl SpentNonces {
                     records.push(record);
                     unbounded = false;
                 }
-                // Zeros are an append that never reached the disk: its
-                // fdatasync did not return, so it was never answered.
-                None if chunk.iter().all(|byte| *byte == 0) => {}
+                // Zeros too: they do not prove the append's fdatasync never
+                // returned (review #4484 Astra P1, 11-04 16:2x).
                 None => {
                     unreadable += 1;
                     unbounded = true;
@@ -857,11 +866,13 @@ impl SpentNonces {
                 "the slip-spend journal holds records that do not read; they are skipped"
             );
         }
-        // Unexpired only, judged as an entry here leaves: its window ended
-        // before this second. An unreadable clock replays every record,
-        // which loses no spend: the slip itself is expired by then, and the
-        // row's floors cover its proof.
+        // Every record lands, its window ended or not: the authority second
+        // that would judge it ended may not be durable, and a crash that takes
+        // it back makes the slip live again (review #4484 Astra P1, 11-04
+        // 16:2x). The retention rule lets the extra rows go later.
         if let Ok(now) = vault.capability_slip_now() {
+            let ended = records.iter().filter(|record| record.window_end < now).count();
+            tracing::debug!(ended, "slip-spend journal records whose replay window ended land too");
             if records
                 .iter()
                 .any(|record| record.proof_now > now.saturating_add(WINDOW_SECS))
@@ -871,7 +882,6 @@ impl SpentNonces {
                     "a slip-spend journal record stands ahead of the authority clock; the wall stepped back across the crash"
                 );
             }
-            records.retain(|record| record.window_end >= now);
         }
         let read_len = (bytes.len() - torn) as u64;
         if !records.is_empty() {
@@ -1088,6 +1098,7 @@ impl SpendDoor {
         );
         let _entered = span.enter();
         let served = &self.served;
+        let proof_now = clock.now;
         let admitted = served
             .spent_nonces
             .admit(served, key, now, expires_at, clock);
@@ -1099,6 +1110,7 @@ impl SpendDoor {
             vault: Arc::downgrade(served),
             key,
             admitted_at: now,
+            proof_now,
             failures: 0,
         }
         .queue(served);
@@ -1118,7 +1130,24 @@ impl SpendDoor {
 /// judged on, and it never raises again a floor an owner's clock recovery
 /// lowered since the admission. A failure rolls them back, said by the
 /// door in a warn with the write's name.
-fn put_spend_rows_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, key: SpentKey) -> Result<()> {
+fn put_spend_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    key: SpentKey,
+    proof_now: u64,
+) -> Result<()> {
+    // The proof clock its admission judged on rises into the floor first, as
+    // the admission's own writer committed it before FIX 12023: a wall
+    // stepped back between the reply and this landing never lets a later
+    // proof judge below it (review #4484 Astra P1, 11-04 16:2x). A running
+    // landing never meets an owner clock recovery, which needs a stopped
+    // vault; replay still reads the clock fresh (L02 11-03).
+    if PROOF_CLOCK_FLOOR
+        .get(&vault.store, txn, &())?
+        .is_none_or(|floor| floor < proof_now)
+    {
+        PROOF_CLOCK_FLOOR.put(&vault.store, txn, &(), &proof_now)?;
+    }
     let clock = admission_now_in_txn(vault, txn)?;
     put_nonce_row_in_txn(vault, txn, &key.row(), clock)?;
     Ok(())
@@ -1130,6 +1159,8 @@ struct NonceSpend {
     key: SpentKey,
     /// The authority second its admission took.
     admitted_at: u64,
+    /// The proof clock its admission judged on.
+    proof_now: u64,
     /// Its tries whose rows did not land.
     failures: u32,
 }
@@ -1140,9 +1171,9 @@ impl NonceSpend {
     /// its after-commit callback, which tries them again when they did not
     /// land.
     fn queue(self, served: &Arc<Vault>) {
-        let key = self.key;
+        let (key, proof_now) = (self.key, self.proof_now);
         let write = DetachedWrite::of_vault(NONCE_SPEND_WRITE, served, move |vault, txn| {
-            put_spend_rows_in_txn(vault, txn, key)
+            put_spend_rows_in_txn(vault, txn, key, proof_now)
         })
         .replay_only()
         .after_commit(self.after_commit());

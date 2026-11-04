@@ -60,6 +60,9 @@ pub struct StoreClock {
     /// A lapsed lease's renewal is queued and not yet decided (FIX 12023):
     /// one at a time.
     renewal: Arc<AtomicBool>,
+    /// The lease journal of this store's owned open (review #4484 P1-B);
+    /// `None` for any other open. It closes with the store.
+    lease_journal: Arc<Mutex<Option<Arc<LeaseJournal>>>>,
     last_id: Arc<Mutex<u128>>,
 }
 impl std::fmt::Debug for StoreClock {
@@ -90,6 +93,7 @@ impl StoreClock {
             lease: Arc::new(Mutex::new(0)),
             judged: Arc::new(AtomicU64::new(0)),
             renewal: Arc::new(AtomicBool::new(false)),
+            lease_journal: Arc::new(Mutex::new(None)),
             last_id: Arc::new(Mutex::new(0)),
         }
     }
@@ -171,6 +175,13 @@ impl StoreClock {
         (!self.renewal.swap(true, Ordering::AcqRel)).then(|| LeaseRenewal {
             clock: self.clone(),
         })
+    }
+    /// The lease journal this store's owned open replayed, if any.
+    fn lease_journal(&self) -> Option<Arc<LeaseJournal>> {
+        self.lease_journal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
     /// The floor this store has observed; 0 when it has observed none.
     fn observed_floor(&self) -> u64 {
@@ -372,7 +383,12 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
-        let Some(journal) = LeaseJournal::of(self) else {
+        let journal = if self.opened_with_writer_lease() {
+            clock.lease_journal()
+        } else {
+            None
+        };
+        let Some(journal) = journal else {
             return self.renew_authorization_lease_in_writer();
         };
         // One short snapshot reads the committed floor, and ends before the
@@ -417,7 +433,7 @@ impl crate::store::Store {
         // floor of IDs allocated in RAM but not yet used by a mutation.
         let mut txn = self.env.write_txn()?;
         let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
-        let journaled = lease_journal::journaled_bound(self.canonical_root(), persisted.max(lease))?;
+        let journaled = lease_journal::journaled_bound(self.canonical_root())?;
         let now = clock.observe_leased_floor(persisted.max(journaled), lease)?;
         // A lease another handle committed may already cover it.
         let leased = if lease >= now {
@@ -442,18 +458,30 @@ impl crate::store::Store {
         Ok(now)
     }
 
+    /// Every open's look at the lease journal before its first decision
+    /// (review #4484 Astra P1, 11-04 16:2x): the bound a crashed lease holder
+    /// journaled rises into this store's clock floor, so no decision here
+    /// judges, under a lease it read, below a time the holder took. A store
+    /// whose open took no writer lease reads it again at each renewal.
+    pub(crate) fn observe_authorization_lease_journal(&self) -> Result<()> {
+        let bound = lease_journal::journaled_bound(self.canonical_root())?;
+        if bound > 0 {
+            crate::store::ManifestDbs::clock(self).observe_floor(bound)?;
+        }
+        Ok(())
+    }
+
     /// The owned open's replay of the lease journal (review #4484 P1-B,
     /// condition 3), before any admission: the highest bound a crashed open
     /// journaled commits into the clock floor and this store's clock, then
     /// the journal is emptied for this open's own decisions.
     pub(crate) fn replay_authorization_lease_journal(&self) -> Result<()> {
         let clock = crate::store::ManifestDbs::clock(self);
-        let committed = {
-            let txn = self.env.read_txn()?;
-            let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
-            persisted.max(lease)
-        };
-        let (journal, bound) = lease_journal::replay_at_open(self.canonical_root(), committed)?;
+        let (journal, bound) = lease_journal::replay_at_open(self.canonical_root())?;
+        *clock
+            .lease_journal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&journal));
         if bound == 0 {
             return Ok(());
         }
