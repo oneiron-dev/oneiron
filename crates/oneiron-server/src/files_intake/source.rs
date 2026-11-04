@@ -188,25 +188,24 @@ pub(crate) fn rescan(
             vault.dir_identity(),
         )?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
-    // A row a partial scan left pending (a Files source's ledger meta behind
+    // A row a partial scan left pending (its source's ledger meta behind
     // what this scan read, or none) still owes its links: when no unreadable
     // folder could hold an included file, read whole so they reconcile
     // (REVIEW-4381 P1). A folder that still would not open retries it on a
     // later scan.
-    let pending = source.files.is_some()
-        && standings.iter().zip(notes.iter()).any(|(standing, note)| {
-            *standing == ImportedNoteStanding::Unchanged
-                && facts.get(note.path.as_str()).is_some_and(|read| {
-                    ledger
-                        .iter()
-                        .find(|file| file.path == note.path)
-                        .is_some_and(|file| {
-                            file.meta.is_none_or(|meta| {
-                                (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
-                            })
+    let pending = standings.iter().zip(notes.iter()).any(|(standing, note)| {
+        *standing == ImportedNoteStanding::Unchanged
+            && facts.get(note.path.as_str()).is_some_and(|read| {
+                ledger
+                    .iter()
+                    .find(|file| file.path == note.path)
+                    .is_some_and(|file| {
+                        file.meta.is_none_or(|meta| {
+                            (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
                         })
-                })
-        });
+                    })
+            })
+    });
     // A new note's inbound links, and a changed note's outbound ones, come
     // from the whole folder, skipped files included: with a new or changed
     // note the folder is read again, whole, so no live edge reads as dropped
