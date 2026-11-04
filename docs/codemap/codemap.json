@@ -809,15 +809,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WorkflowDefinition"
-     ],
+     "notable": [],
      "path": "src/agent_def/workflow.rs",
      "purpose": "Saved ordered agent compositions",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 1,
+      "fn": 6,
+      "re-export": 1
      }
     },
     {
@@ -6847,6 +6845,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/agent_knowledge_selection.rs",
+     "purpose": "Which claims an agent pack's selected-knowledge facet may carry: the ordinary claims directly about the agent",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/agent_person_import.rs",
      "purpose": "Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after…",
      "surface": {
@@ -7242,7 +7250,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 13
      }
     },
@@ -71890,7 +71898,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 78,
-      "mod": 78,
+      "mod": 79,
       "re-export": 31
      }
     },
@@ -73484,6 +73492,20 @@
      "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
      "surface": {
       "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowDefinition"
+     ],
+     "path": "src/store/workflow_definition.rs",
+     "purpose": "A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -88559,7 +88581,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89812,7 +89834,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 350,
+     "files": 351,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90052,7 +90074,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6239,
+   "source_files": 6241,
    "test_files": 898
   },
   "oneiron-android": {
