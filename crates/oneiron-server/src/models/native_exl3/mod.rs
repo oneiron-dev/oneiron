@@ -39,6 +39,7 @@ pub(super) use session_ops::{export as session_export, import as session_import}
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
@@ -409,6 +410,13 @@ async fn execute(
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
+    // FIX 11961: the child's stop may land while its call runs. The
+    // context's cancellation is retained beside the call: a raised flag
+    // aborts the wait, and the dropped call sends the worker-side cancel
+    // and releases the grant's custody. A trip between the flag check and
+    // the wait below surfaces at the next wire event.
+    let device_cancel = context.cancel.shared();
+    let device_cancel_wake = context.cancel.shared_notify();
     let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
@@ -416,15 +424,38 @@ async fn execute(
     // One physical request, observed from its send (FIX 9297, FIX 9417 pattern).
     let publisher = InferencePublisher::begin(lease);
     let mut last = loop {
-        match sent.call.next().await {
-            Ok(Event::Final(last)) => break last,
-            Ok(Event::Admitted(mark)) => report(&route, &mark),
-            Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
-            Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut(error)) => {
-                refresh_after_cut(&route);
-                return Err(error);
+        // Arm the wait before reading the flag (FIX 11961): a stop landing
+        // between the two still trips the flag read, so no trip waits on
+        // the next wire event to be seen.
+        let wake = device_cancel_wake.notified();
+        tokio::pin!(wake);
+        if device_cancel.load(Ordering::Acquire) {
+            // The pre-grant cancel maps here too (FIX 11961): a stop is a
+            // cut stream for the caller's own retry authority, never a
+            // contradiction of a pin.
+            return Err(OpenAiCompatTransportError::Connection);
+        }
+        tokio::select! {
+            () = &mut wake => {
+                return Err(OpenAiCompatTransportError::Connection);
             }
+            next = sent.call.next() => match next {
+                Ok(Event::Final(last)) => {
+                    // A stop that landed with the last frame aborts the
+                    // answer instead of returning success after stop.
+                    if device_cancel.load(Ordering::Acquire) {
+                        return Err(OpenAiCompatTransportError::Connection);
+                    }
+                    break last;
+                }
+                Ok(Event::Admitted(mark)) => report(&route, &mark),
+                Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
+                Ok(Event::FirstToken | Event::Token { .. }) => {}
+                Err(Cut(error)) => {
+                    refresh_after_cut(&route);
+                    return Err(error);
+                }
+            },
         }
     };
     report(&route, &last);
