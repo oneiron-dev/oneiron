@@ -606,7 +606,7 @@ fn remove_member(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .erase(id, store.env.info().last_txn_id);
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
     report.removed.push(*id);
     Ok(())
 }

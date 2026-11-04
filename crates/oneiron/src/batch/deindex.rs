@@ -7,7 +7,7 @@ use heed::RwTxn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ports::EntityStoreStaging;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
