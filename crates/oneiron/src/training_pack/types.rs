@@ -181,6 +181,9 @@ pub struct TrainingDispatch {
     pub budget: BudgetLine,
     pub permit: Value,
     pub dispatched: bool,
+    /// The completion that first recorded a result claimed the run's one
+    /// Used settlement; a later idempotent completion settles nothing.
+    pub settlement_claimed: bool,
 }
 
 /// The teachers a run declaration names, as the owner authorized them.

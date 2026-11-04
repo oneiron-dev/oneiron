@@ -257,12 +257,18 @@ fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
                 .admit_paid(&binding, fresh.compute.quantity)
                 .map_err(|e| Error::InvalidConfig(e.to_string()))?;
             match server.vault().complete_training_pack(&admission, output) {
-                Ok(_) => {
+                Ok((_, true)) => {
                     // Keep completed work even when the meter reports a
                     // settlement error, as the dispatch does.
                     permit
                         .settle(CallOutcome::Used(service_units))
                         .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+                    Ok(())
+                }
+                Ok((_, false)) => {
+                    // The live waiter completed and settled first: this
+                    // permit settles Failed, never Used.
+                    drop(permit);
                     Ok(())
                 }
                 Err(error) => {

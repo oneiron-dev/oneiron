@@ -702,6 +702,12 @@ pub(super) fn run_training_offers(
         }
     }
     if pending.is_empty() && due.is_empty() {
+        // No offer work, but a scored run may still wait for its swap ask:
+        // the home asks independently of offers (post-score asks are
+        // suppressed off-home, so this fallback must not depend on them).
+        if training_offers_at_home(vault)? {
+            crate::task_verb::issue_training_swap_asks(vault, now);
+        }
         return Ok(());
     }
     let store = DreamerRunnerStore::new(vault);
