@@ -2744,7 +2744,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -2804,7 +2804,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -69440,6 +69440,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/attempt_payload_response.rs",
+     "purpose": "An agent dispatch's attempt row as a row-held response of a checkpoint image (FIX 7115, KS-2B1): whether the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/attempt_payload_retire.rs",
      "purpose": "Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it…",
      "surface": {
@@ -69518,7 +69528,7 @@
      "path": "src/store/attempt_record_codec/mod.rs",
      "purpose": "The attempt record's strict codec (`job_records` rows): the version byte and named MessagePack body, the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -72535,7 +72545,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 144,
+      "crate-vis": 145,
       "mod": 115,
       "re-export": 31
      }
@@ -88400,7 +88410,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 4,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -88425,6 +88435,19 @@
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor; and…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncStart"
+     ],
+     "path": "src/world_keys/owner_work/relay_start.rs",
+     "purpose": "The host's last observed device-sync start outcome, never current health",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -90987,7 +91010,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 471,
+     "files": 472,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91218,7 +91241,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91227,7 +91250,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6352,
+   "source_files": 6354,
    "test_files": 895
   },
   "oneiron-android": {
