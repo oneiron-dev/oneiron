@@ -50,9 +50,34 @@ use super::{
 use crate::error::{Error, Result};
 use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
-/// The bytes all of a file's members may decode to over its whole tree: the
-/// floor of what one walk holds. A rebuilt copy is held to it too.
+/// The least bytes all of a file's members may decode to over its whole
+/// tree: the fixed minimum of what one walk holds, on any machine. A
+/// rebuilt copy is held to the walk's floor too. The floor a walk actually
+/// holds is [`expanded_floor`]: this minimum, raised by the memory the
+/// machine measures free (FIX 7943).
 const MAX_EXPANDED_BYTES: usize = 512 * 1024 * 1024;
+
+/// The free memory a walk leaves untouched: the larger of 256 MiB and a
+/// sixteenth of the machine's memory, as the carrier join leaves it.
+const EXPANDED_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
+
+/// The bytes all of a file's members may decode to over its whole tree on
+/// this machine now (FIX 7943): the fixed minimum, or the memory measured
+/// free past the reserve above when that is more. Raise-only, so a file a
+/// walk serves on the fixed floor is served on every machine; where no
+/// memory reads, the fixed minimum stands. Read at each walk's start, as
+/// the probes are read live.
+fn expanded_floor() -> usize {
+    use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
+    let reserve = machine_memory_bytes().map_or(EXPANDED_RESERVE_FLOOR_BYTES, |total| {
+        (total / 16).max(EXPANDED_RESERVE_FLOOR_BYTES)
+    });
+    let fixed = MAX_EXPANDED_BYTES as u64;
+    let floor =
+        available_memory_bytes().map_or(fixed, |room| room.saturating_sub(reserve).max(fixed));
+    usize::try_from(floor).unwrap_or(usize::MAX)
+}
+
 /// The keys one file may carry; the write door refuses a file with more.
 pub(super) const MAX_FILE_KEYS: usize = 10_000;
 
@@ -266,6 +291,9 @@ enum ContainerReadMode {
 /// spends none of it. Every walk keeps the containers it is inside.
 struct Budget {
     mode: ContainerReadMode,
+    /// The walk's own byte floor ([`expanded_floor`] at its start): what
+    /// `expanded` counts down from, and what a rebuilt copy is held to.
+    floor: usize,
     expanded: usize,
     /// Whether the walk also reads the bytes no reader shows (FIX 2470): a
     /// PDF's superseded revisions and a ZIP's bytes outside its central
@@ -287,9 +315,11 @@ impl Budget {
     }
 
     fn of(mode: ContainerReadMode) -> Self {
+        let floor = expanded_floor();
         Self {
             mode,
-            expanded: MAX_EXPANDED_BYTES,
+            floor,
+            expanded: floor,
             hidden: false,
             ancestors: Vec::new(),
             root_digest: None,
@@ -332,7 +362,7 @@ impl Budget {
 
     /// Whether a rebuilt copy of `len` bytes is past the byte floor.
     fn copy_over(&self, len: usize) -> bool {
-        self.capped() && len > MAX_EXPANDED_BYTES
+        self.capped() && len > self.floor
     }
 
     /// Charges `len` decoded bytes.

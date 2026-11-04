@@ -582,11 +582,36 @@ impl MemoryShared {
     /// bytes, or the machine's whole memory, past every leased byte, where
     /// that cannot be read (FIX 8240).
     fn fits(&self, line: &MemoryLine, bytes: u64) -> bool {
-        let (room, held) = match oneiron_contracts::limit_ask::available_memory_bytes() {
-            Some(available) => (available, line.pending),
-            None => (self.total, line.leased),
-        };
-        room.saturating_sub(self.reserve).saturating_sub(held) >= bytes
+        self.fits_excluding(line, bytes, 0, 0)
+    }
+
+    /// Whether `bytes` more fit past every other holder. Growth excludes
+    /// only its own pending bytes from the live-reading check, or all its
+    /// own bytes when that reading is unavailable; every other lease and
+    /// the reserve still count in full. The fallback compares the lease's
+    /// whole, its own bytes with the growth, against the machine's memory.
+    fn fits_excluding(
+        &self,
+        line: &MemoryLine,
+        bytes: u64,
+        own_pending: u64,
+        own_leased: u64,
+    ) -> bool {
+        let whole = own_leased.saturating_add(bytes);
+        match oneiron_contracts::limit_ask::available_memory_bytes() {
+            Some(available) => {
+                available
+                    .saturating_sub(self.reserve)
+                    .saturating_sub(line.pending.saturating_sub(own_pending))
+                    >= bytes
+            }
+            None => {
+                self.total
+                    .saturating_sub(self.reserve)
+                    .saturating_sub(line.leased.saturating_sub(own_leased))
+                    >= whole
+            }
+        }
     }
 }
 
@@ -596,37 +621,91 @@ impl MemoryLease {
         self.bytes
     }
 
-    /// Grows this lease by `more` bytes, admitted as
-    /// [`MachineMemory::lease_until`] admits them (in line, until `deadline`
-    /// passes or `stopped` says so), so work that allocates in steps holds
-    /// one lease (FIX 7653). Refused at once when the whole lease would not
-    /// fit even with nothing else leased; a refused growth leaves the lease
-    /// as it was.
+    /// Grows this lease by `more` bytes on its original line, behind every
+    /// waiter already there. The fit check excludes this lease's own bytes,
+    /// not any other holder's, so a multi-step allocation cannot wait on its
+    /// own earlier reservation. Refused at once when the whole lease would
+    /// not fit even with nothing else leased; a refused or stopped growth
+    /// leaves this lease and the line's byte counts unchanged.
     pub(crate) fn grow(
         &mut self,
         more: u64,
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), MemoryRefusal> {
+        self.grow_in_line(more, Some(deadline), stopped)
+    }
+
+    /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
+    #[cfg(unix)]
+    pub(crate) fn grow_untimed(
+        &mut self,
+        more: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), MemoryRefusal> {
+        self.grow_in_line(more, None, stopped)
+    }
+
+    fn grow_in_line(
+        &mut self,
+        more: u64,
+        deadline: Option<Instant>,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), MemoryRefusal> {
         let whole = self.bytes.saturating_add(more);
-        let most = self.shared.total.saturating_sub(self.shared.reserve);
+        let shared = Arc::clone(&self.shared);
+        let most = shared.total.saturating_sub(shared.reserve);
         if whole > most {
             return Err(MemoryRefusal::Floor {
                 needed: whole,
                 available: most,
             });
         }
-        let machine = MachineMemory {
-            shared: Arc::clone(&self.shared),
-        };
-        let mut grown = machine.lease_until(more, deadline, stopped)?;
-        // The growth's bytes, pending, move into this lease; the emptied one
-        // gives back nothing as it drops.
-        self.bytes = whole;
-        self.pending = self.pending.saturating_add(grown.pending);
-        grown.bytes = 0;
-        grown.pending = 0;
-        Ok(())
+        let started = Instant::now();
+        let mut line = lock(&shared.line);
+        if line.waiting.is_empty() && shared.fits_excluding(&line, more, self.pending, self.bytes) {
+            self.admit_growth(&mut line, more);
+            return Ok(());
+        }
+        let ticket = line.next_ticket;
+        line.next_ticket = line.next_ticket.wrapping_add(1);
+        line.waiting.push_back(ticket);
+        loop {
+            if line.waiting.front() == Some(&ticket)
+                && shared.fits_excluding(&line, more, self.pending, self.bytes)
+            {
+                line.waiting.pop_front();
+                self.admit_growth(&mut line, more);
+                // The next head may fit beside this growth too.
+                shared.changed.notify_all();
+                return Ok(());
+            }
+            let now = Instant::now();
+            let left = deadline.map(|deadline| deadline.saturating_duration_since(now));
+            if left.is_some_and(|left| left.is_zero()) || stopped() {
+                line.waiting.retain(|waiting| *waiting != ticket);
+                shared.changed.notify_all();
+                return Err(MemoryRefusal::WaitedOut {
+                    needed: more,
+                    waited: now.saturating_duration_since(started),
+                });
+            }
+            line = shared
+                .changed
+                .wait_timeout(
+                    line,
+                    left.map_or(MEMORY_REPOLL, |left| left.min(MEMORY_REPOLL)),
+                )
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    fn admit_growth(&mut self, line: &mut MemoryLine, more: u64) {
+        line.leased = line.leased.saturating_add(more);
+        line.pending = line.pending.saturating_add(more);
+        self.bytes = self.bytes.saturating_add(more);
+        self.pending = self.pending.saturating_add(more);
     }
 
     /// Takes `other`'s bytes into this lease, named allocated (FIX 10589):
@@ -668,47 +747,10 @@ impl Drop for MemoryLease {
     }
 }
 
-/// The machine's memory as the organ host's floor (FIX 7654): an organ's
-/// own buffers lease from the same line as every other lease here, within
-/// their call's deadline, and leave it when their call is revoked. Each
-/// lease is held by the call's room until the call ends. A frame's lease
-/// waits on the same line with no deadline, until it is stopped.
 #[cfg(unix)]
-pub(crate) struct OrganFloor(pub(crate) MachineMemory);
-
+mod organ;
 #[cfg(unix)]
-impl oneiron_organ_host::MachineFloor for OrganFloor {
-    fn lease(
-        &self,
-        bytes: u64,
-        deadline: Instant,
-        stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
-        organ_lease(self.0.lease_until(bytes, deadline, stopped))
-    }
-
-    fn lease_untimed(
-        &self,
-        bytes: u64,
-        stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
-        organ_lease(self.0.lease_untimed(bytes, stopped))
-    }
-}
-
-/// A machine lease as the organ host's floor answers it.
-#[cfg(unix)]
-fn organ_lease(
-    leased: Result<MemoryLease, MemoryRefusal>,
-) -> Result<Box<dyn Send>, oneiron_organ_host::FloorRefusal> {
-    match leased {
-        Ok(lease) => Ok(Box::new(lease)),
-        Err(MemoryRefusal::Floor { needed, available }) => {
-            Err(oneiron_organ_host::FloorRefusal::Floor { needed, available })
-        }
-        Err(MemoryRefusal::WaitedOut { .. }) => Err(oneiron_organ_host::FloorRefusal::Deadline),
-    }
-}
+pub(crate) use organ::OrganFloor;
 
 /// The claim count changes in one step under its lock, so a holder that
 /// panicked left it whole.

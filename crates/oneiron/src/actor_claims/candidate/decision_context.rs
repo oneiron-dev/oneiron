@@ -23,6 +23,11 @@ pub(super) fn craft_review(
         .and_then(|id| AttemptId::from_bytes(id.as_bytes()).ok());
     GateDecisionContext {
         read: GateDecisionReadContext::claim(candidate, body)
+            .map(|read| {
+                let anchors =
+                    crate::conversation::gate_claim_anchors_in(vault, txn, candidate, body);
+                read.with_anchors(anchors)
+            })
             .into_iter()
             .collect(),
         links: attempt
