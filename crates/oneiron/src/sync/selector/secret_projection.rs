@@ -74,6 +74,11 @@ use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
+pub use documents::settlement::RepoCopyEditReview;
+pub(crate) use documents::settlement::{
+    begin_repo_copy_settlement_in_txn, finish_repo_copy_settlement_in_txn,
+    review_repo_copy_edit_in_txn,
+};
 pub(crate) use documents::{
     IndexCopies, document_copy_in_txn, import_document_copy, stored_item_in_txn,
     with_copy_generation_in_txn,

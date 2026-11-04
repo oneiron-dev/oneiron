@@ -9,8 +9,10 @@
 
 mod destination;
 mod entity;
+mod held_copy;
 mod note_requests;
 pub(crate) mod note_state;
+pub use super::selector::secret_projection::RepoCopyEditReview;
 pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
