@@ -38,6 +38,7 @@ use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
+use crate::memory::RecallRequest;
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory,
     MemoryError, MemoryResult,
@@ -46,7 +47,6 @@ use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
 use crate::task_verb::recall_door::RecallDoor;
-use crate::memory::RecallRequest;
 use oneiron_model::llm::BudgetLease;
 
 mod lineage;

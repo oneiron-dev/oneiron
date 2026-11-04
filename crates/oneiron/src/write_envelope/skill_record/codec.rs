@@ -2,9 +2,9 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 use super::identity::SkillContentHash;
 use super::lifecycle::{SkillGovernanceTier, SkillLifecycle};
@@ -197,11 +197,13 @@ fn decode_skill_record_value(value: &Value) -> Result<SkillRecord> {
                     );
             }
             KEY_CONFIDENCE => {
-                confidence = Some(crate::write_envelope::claim_body::unit_interval_f32(value).ok_or(
-                    Error::Artifact(ArtifactError::InvalidSkillBody(
-                        "confidence must be finite in [0, 1]",
-                    )),
-                )?);
+                confidence = Some(
+                    crate::write_envelope::claim_body::unit_interval_f32(value).ok_or(
+                        Error::Artifact(ArtifactError::InvalidSkillBody(
+                            "confidence must be finite in [0, 1]",
+                        )),
+                    )?,
+                );
             }
             KEY_GENERATED => {
                 let Value::Boolean(flag) = value else {
