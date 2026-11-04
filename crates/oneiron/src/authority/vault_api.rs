@@ -385,6 +385,34 @@ impl Vault {
         })
     }
 
+    /// The store-order index's one-shot backfill (FIX 12369), beside the
+    /// first-seen sidecars': sequence every stored row the index does not
+    /// hold yet and mark it complete, so later folds resume by sequence.
+    fn backfill_authority_store_order(&self) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        if super::store_order::complete_next_in_txn(&self.store, &rtxn)?.is_some() {
+            return Ok(());
+        }
+        drop(rtxn);
+        let sequenced = self.with_write_txn_grouped(|wtxn| {
+            let sequenced = super::store_order::backfill_in_txn(&self.store, wtxn)?;
+            if sequenced {
+                advance_authority_cache_generation(&self.store, wtxn)?;
+            }
+            Ok(sequenced)
+        })?;
+        if sequenced {
+            // A continuation cached before the backfill carries no sequence,
+            // or a stale one after a repair resequence. Dropping the cached
+            // fold makes the next fold start whole and leave a continuation
+            // that resumes by sequence.
+            if let Ok(mut cache) = self.store.authority_fold_cache.lock() {
+                *cache = None;
+            }
+        }
+        Ok(())
+    }
+
     /// Advance the persisted authority-observation floor in test fixtures.
     /// The generic sync-state write door remains guarded.
     #[cfg(any(test, feature = "test-hooks"))]
@@ -418,6 +446,7 @@ impl Vault {
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
+        self.backfill_authority_store_order()?;
         // Update the monotonic local observation in a committed writer before
         // the cached read view opens its own snapshot.
         self.with_write_txn_grouped(|wtxn| {
