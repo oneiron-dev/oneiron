@@ -12176,6 +12176,7 @@
       "scope": "Write",
       "admission": {},
       "section": false,
+      "openapi": true,
       "binding": {
         "wire": "json",
         "args": [
