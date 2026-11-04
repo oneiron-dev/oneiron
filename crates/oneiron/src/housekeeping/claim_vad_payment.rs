@@ -24,6 +24,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 
 pub(crate) use crate::store::claim_vad_payment::ClaimVadPayment;
