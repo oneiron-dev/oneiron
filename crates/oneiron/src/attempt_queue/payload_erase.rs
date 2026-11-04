@@ -257,8 +257,18 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    erase_attempt_payload_actors_owned_in_txn(store, txn, actors).map(|_| ())
+}
+
+/// The same payload pass, retaining every task-owned BYOA row for the sealed
+/// erase/restore continuation. Incidental staged-job pinners are not owners.
+pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<AttemptId>> {
     if actors.is_empty() {
-        return Ok(());
+        return Ok(BTreeSet::new());
     }
     let mut owners = BTreeSet::new();
     for actor in actors {
@@ -332,7 +342,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     }
     erase_program_admission_payloads_in_txn(store, txn, actors, &mut rewrites)?;
     model_step::erase_failure_reasons_in_txn(store, txn, actors, &mut rewrites)?;
-    let jobs = byoa.erase_copies(store, txn, &mut rewrites)?;
+    let (jobs, owned) = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
@@ -359,7 +369,8 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         rewritten.push((record.id, before, after));
     }
     // Each rewritten row's run snapshot moves with its mark (FIX 7517).
-    crate::vault_cleanup::erase_attempt_references_in_txn(store, txn, &rewritten)
+    crate::vault_cleanup::erase_attempt_references_in_txn(store, txn, &rewritten)?;
+    Ok(owned)
 }
 
 /// Empties whole every `browser.program.admit` payload captured under one
@@ -457,7 +468,7 @@ impl ByoaRows {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         rewrites: &mut Vec<(Vec<u8>, AttemptRecord)>,
-    ) -> Result<BTreeSet<[u8; 32]>> {
+    ) -> Result<(BTreeSet<[u8; 32]>, BTreeSet<AttemptId>)> {
         let mut owned = self.tasks.clone();
         for id in &self.tasks {
             let source = self
@@ -520,7 +531,7 @@ impl ByoaRows {
                 None => {}
             }
         }
-        Ok(jobs)
+        Ok((jobs, owned))
     }
 }
 
