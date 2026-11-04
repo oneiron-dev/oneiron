@@ -4,7 +4,6 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, RawValue, SideTable};
 use crate::store::GateDecisionId;
 
-use super::bound::{MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS};
 use super::effect::UndoFidelity;
 use crate::error::GateError;
 
@@ -25,8 +24,7 @@ const CONSENT_APPROVE_ONCE_MARKER_LEN: usize = 18;
 pub(super) const APPROVE_ONCE_MARKERS: SideTable<[u8; 32], ApproveOnceMarker, side_table::Raw> =
     SideTable::new(&side_table::CONSENT_APPROVE_ONCE_MARKER);
 
-pub(super) const SUBJECT_KIND_ACTOR: &str = "actor";
-pub(super) const SUBJECT_KIND_AUDIENCE: &str = "audience";
+pub(super) use crate::store::consent_bound::{SUBJECT_KIND_ACTOR, SUBJECT_KIND_AUDIENCE};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,50 +64,9 @@ pub(super) fn decode_approve_once_marker(raw: &[u8]) -> Result<(u8, GateDecision
     Ok((raw[1], decision_id))
 }
 
-pub(super) fn normalized_ref(label: &'static str, value: String) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(Error::Gate(GateError::InvalidConsentBound(label)));
-    }
-    if trimmed.len() > MAX_CONSENT_REF_LEN {
-        return Err(Error::Gate(GateError::InvalidConsentBound(label)));
-    }
-    Ok(trimmed.to_owned())
-}
-
-pub(super) fn normalized_selectors(
-    selectors: impl IntoIterator<Item = String>,
-) -> Result<Vec<String>> {
-    let mut selectors = selectors
-        .into_iter()
-        .map(|selector| normalized_ref("envelope selector", selector))
-        .collect::<Result<Vec<_>>>()?;
-    selectors.sort_unstable();
-    selectors.dedup();
-    if selectors.is_empty() {
-        return Err(invalid_bound(
-            "envelope has no selectors; an empty envelope is not a bound",
-        ));
-    }
-    if selectors.len() > MAX_ENVELOPE_SELECTORS {
-        return Err(invalid_bound("envelope exceeds the selector cap"));
-    }
-    Ok(selectors)
-}
-
-/// Selector containment over two sorted, deduped sets.
-pub(super) fn selectors_contain(bound: &[String], candidate: &[String]) -> bool {
-    candidate
-        .iter()
-        .all(|selector| bound.binary_search(selector).is_ok())
-}
-
-/// Length-prefixed field hashing, so `["ab","c"]` and `["a","bc"]` never
-/// collide into the same digest.
-pub(super) fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
-}
+pub(super) use crate::store::consent_bound::{
+    hash_field, normalized_ref, normalized_selectors, selectors_contain,
+};
 
 pub(super) const fn undo_fidelity_byte(fidelity: UndoFidelity) -> u8 {
     match fidelity {
@@ -157,9 +114,7 @@ pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Re
         .ok_or_else(invalid_row)
 }
 
-pub(super) const fn invalid_bound(message: &'static str) -> Error {
-    Error::Gate(GateError::InvalidConsentBound(message))
-}
+pub(super) use crate::store::consent_bound::invalid_bound;
 
 pub(super) const fn invalid_row() -> Error {
     Error::Gate(GateError::InvalidConsentGrantRow("body failed validation"))

@@ -154,7 +154,7 @@ pub(super) fn validate_witness_message_body(
         // `gate::validate_replicated_witness_message_body`).
         crate::gate::validate_replicated_witness_message_body(data)?;
     } else {
-        crate::gate::validate_canonical_witness_message_body(data)?;
+        crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
 }
