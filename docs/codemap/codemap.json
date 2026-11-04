@@ -82,7 +82,7 @@
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
       "const": 1,
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 2,
       "re-export": 1
      }
@@ -4716,7 +4716,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/policy_setting_choice.rs",
-     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy and…",
+     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy, inference…",
      "surface": {
       "crate-vis": 11
      }
