@@ -115,6 +115,56 @@ impl Memory<'_> {
             .map_err(stream_error)
     }
 
+    /// Reads the current full MESSAGE text while `expected` is its latest
+    /// terminal receipt. Text, completion and receipt share the snapshot
+    /// that admits the row, including its normal body masking.
+    ///
+    /// Missing, hidden, active, changed or differently projected text
+    /// returns `None`; no raw-store text is substituted.
+    pub fn message_stream_committed_text(
+        &self,
+        expected: &MessageStreamReceipt,
+    ) -> MemoryResult<ScopedReadResult<Option<String>>> {
+        let message = expected.message_id;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let result = lane.read_projected(&[PointRead::id(message)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok::<_, MemoryError>(None);
+            };
+            if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.id != message {
+                return Ok(None);
+            }
+            if message_completion_in_txn(self.vault, txn, &message)?.generating
+                || storage::receipt(self.vault, txn, message)?.as_ref() != Some(expected)
+            {
+                return Ok(None);
+            }
+            let Some(view) =
+                self.entity_view_of_in_txn(&lane, txn, row, crate::vault::ReadMode::Live)?
+            else {
+                return Ok(None);
+            };
+            let Some(body) = view.body.as_ref() else {
+                return Ok(None);
+            };
+            if body.get("is_visible").and_then(serde_json::Value::as_bool) != Some(true) {
+                return Ok(None);
+            }
+            let text = body
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if text.len() as u64 != expected.bytes {
+                return Ok(None);
+            }
+            Ok(Some(text.to_owned()))
+        })?;
+        if result.value.is_some() {
+            self.produced_from([message]);
+        }
+        Ok(result)
+    }
+
     /// Reads history and completion in the same snapshot that admits the MESSAGE.
     pub fn messages_durability(
         &self,

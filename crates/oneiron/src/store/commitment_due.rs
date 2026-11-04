@@ -32,7 +32,7 @@
 
 use heed::{RoTxn, RwTxn};
 
-use crate::commitment_schedule::{
+use crate::store::commitment_due_record::{
     CommitmentDueEntry, CommitmentDueIndexSnapshot, CommitmentDuePhase, CommitmentOccurrence,
 };
 use crate::entity_id::EntityId;

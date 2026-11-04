@@ -187,7 +187,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     id: &EntityId,
     data: &[u8],
     posture: crate::HostingPrivacyPosture,
-    beside: crate::authority::RowsBeside<'_>,
+    beside: crate::store::authority_rows::RowsBeside<'_>,
 ) -> Result<()> {
     oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;

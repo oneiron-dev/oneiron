@@ -622,16 +622,18 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl AnswerBreakpoint {
-    /// The captured Retry's log, re-read under its live action proof. Only
-    /// the source rows the breakpoint already names form its old prefix.
-    pub(super) fn retry_chat(
+    /// The captured action's original request and log, re-read under its
+    /// live action proof. Only the source rows the breakpoint already names
+    /// form its old prefix; Continue's saved reply is borrowed separately.
+    pub(super) fn action_chat(
         &self,
         ai: &AiHandle,
         vault: &Vault,
         reader: &Memory<'_>,
         action: &TurnActionAttempt,
-    ) -> Option<(SelfChat, Vec<EntityId>)> {
+    ) -> Option<(SelfChat, Vec<EntityId>, Vec<LlmMessage>)> {
         let seed = self.source.as_ref()?;
+        let request = seed.captured_request()?;
         let mut chat = self_chat(
             ai,
             vault,
@@ -659,6 +661,10 @@ impl AnswerBreakpoint {
             .find(|span| span.turn == action.user_turn)?;
         let mut borrowed = vec![user.turn];
         borrowed.extend_from_slice(&user.messages);
+        if action.action == TurnAction::Continue {
+            borrowed.push(action.assistant_turn);
+            borrowed.push(action.message);
+        }
         let messages: std::collections::BTreeSet<_> = seed
             .sources
             .iter()
@@ -684,7 +690,7 @@ impl AnswerBreakpoint {
         chat.log
             .summaries
             .retain(|summary| seed.summaries.contains(summary));
-        Some((chat, borrowed))
+        Some((chat, borrowed, request.messages))
     }
 
     pub(super) fn agent(&self) -> Option<EntityId> {

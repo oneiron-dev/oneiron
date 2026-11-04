@@ -102,7 +102,7 @@ pub(super) fn apply_claim_candidate(
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.
-    let birth_weight = crate::claim::claim_initial_claim_of_weight(&body)?;
+    let birth_weight = crate::store::claim_lineage::claim_initial_claim_of_weight(&body)?;
     let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(

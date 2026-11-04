@@ -3,7 +3,7 @@ use super::batch_index::put_batch_index;
 use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrder};
 use crate::{
-    contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
+    store::contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
     error::{Error, Result},
     git_wire::lock_repository,
     side_table::{self, Named, SideTable},

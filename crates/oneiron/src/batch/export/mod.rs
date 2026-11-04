@@ -94,3 +94,5 @@ pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
 #[cfg(test)]
 mod receipt_source_tests;
+
+pub(crate) mod secret_supplement_record;

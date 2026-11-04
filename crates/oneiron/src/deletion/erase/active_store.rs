@@ -458,7 +458,7 @@ impl Vault {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
 
-        crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
+        crate::store::claim_projection::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.

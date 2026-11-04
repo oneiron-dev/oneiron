@@ -177,7 +177,7 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
         // Every instance the digest was bound under, so an inline/file
         // switch or a release leaves no older image's copy behind (FIX 6023).
         let instances = digest_instances_in_txn(store, wtxn, digest)?;
-        if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
+        if crate::store::owned_body::digest_is_held_in_txn(store, wtxn, digest)? {
             for instance in &instances {
                 ERASE_PENDING.put(store, wtxn, instance, digest)?;
                 notes.note(store, wtxn, erase_owner, instance)?;

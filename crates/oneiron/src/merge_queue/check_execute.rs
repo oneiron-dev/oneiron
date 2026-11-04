@@ -16,7 +16,7 @@ use super::check_store::{
 use super::plan::RepoCheckPlan;
 use super::{BatchState, CheckPhase, MergeBatch, MergeQueue, SpeculativePath};
 use crate::Vault;
-use crate::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
+use crate::store::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
 

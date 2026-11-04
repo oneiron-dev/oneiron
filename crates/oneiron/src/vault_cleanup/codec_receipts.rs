@@ -15,7 +15,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
+use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 use std::collections::BTreeMap;
@@ -351,7 +351,7 @@ pub fn is_vault_cleanup_receipt(record: &ReceiptRecord) -> bool {
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub(crate) fn cleanup_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = crate::scan_check::ScanCount::start(
+    let mut count = crate::store::scan_count::ScanCount::start(
         &vault.store,
         &rtxn,
         crate::store::EngineScan::ReceiptSourceRows,

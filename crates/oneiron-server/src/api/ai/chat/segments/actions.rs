@@ -1,4 +1,4 @@
-//! A reused Retry's fresh session metadata and post-save successor.
+//! A reused turn action's fresh session metadata and post-save successor.
 use oneiron::conversation::{TurnAction, TurnActionAttempt};
 use oneiron::prompt::PromptLayout;
 
@@ -6,25 +6,25 @@ use super::*;
 use crate::ai_host::AiHandle;
 use crate::api::ai::chat::compaction::ChatReused;
 
-pub(crate) struct RetrySession {
+pub(crate) struct ActionSession {
     reader: Reader,
     segments: TurnSegments,
 }
 
-impl RetrySession {
-    /// Rebuilds only the captured Retry's metadata. The request and its kept
-    /// breakpoint are unchanged; a source or layout that drifted stays cold.
+impl ActionSession {
+    /// Rebuilds the captured request's metadata, then describes Continue's
+    /// request-only suffix. A source or layout that drifted stays cold;
+    /// neither the request nor its kept breakpoint changes.
     pub(crate) fn of(
         ai: &AiHandle,
         vault: &Arc<Vault>,
         action: &TurnActionAttempt,
         reused: &ChatReused,
     ) -> Option<Self> {
-        if action.action != TurnAction::Retry {
-            return None;
-        }
+        let continuing = action.action == TurnAction::Continue;
         let memory = crate::ai_host::action_reader(vault, action)?;
-        let (chat, borrowed) = reused.breakpoint.retry_chat(ai, vault, &memory, action)?;
+        let (chat, borrowed, captured) =
+            reused.breakpoint.action_chat(ai, vault, &memory, action)?;
         let (actor, class) = action.requester().ok()?;
         let reader = Reader {
             vault: Arc::clone(vault),
@@ -43,11 +43,10 @@ impl RetrySession {
         let request = &reused.live.request;
         let prompt = ai.prompt_layout();
         let craft = !reused.craft.is_empty();
-        let system_end = request
-            .messages
+        let system_end = captured
             .len()
             .checked_sub(chat.log().lines.len().checked_add(1 + usize::from(craft))?)?;
-        let instructions = &request.messages[..system_end];
+        let instructions = &captured[..system_end];
         if instructions
             .iter()
             .any(|message| message.role != LlmMessageRole::System)
@@ -57,17 +56,17 @@ impl RetrySession {
         let mut messages = instructions.to_vec();
         chat.push_log(&mut messages);
         let log_end = messages.len();
-        messages.push(request.messages.last()?.clone());
+        messages.push(captured.last()?.clone());
         if craft {
             let early = prompt == PromptLayout::EarlySystem;
             let index = if early {
                 system_end
             } else {
-                request.messages.len().checked_sub(2)?
+                captured.len().checked_sub(2)?
             };
             messages.insert(
                 if early { system_end } else { log_end },
-                request.messages.get(index)?.clone(),
+                captured.get(index)?.clone(),
             );
         }
         let segments = admitted_with_sources(
@@ -86,6 +85,7 @@ impl RetrySession {
             },
             &request.messages,
             &borrowed,
+            (continuing && request.messages.len() != captured.len()).then_some(action.message),
         )?;
         segments.manifest.anchor()?;
         Some(Self { reader, segments })
@@ -95,8 +95,9 @@ impl RetrySession {
         Arc::clone(&self.segments.manifest)
     }
 
-    /// A Retry saves a new whole reply. A Continue's suffix and a fallback's
-    /// answer never publish a successor for this captured request.
+    /// A Retry saves a new whole reply; a Continue appends to its existing
+    /// MESSAGE. Only that generation's full persisted text can advance the
+    /// captured request. A fallback publishes no successor for it.
     pub(crate) fn commit_on_answer(self, answering: Answering) -> Answering {
         let Self { reader, segments } = self;
         let authority = segments
@@ -128,9 +129,21 @@ impl RetrySession {
                 && ended.saved.as_ref().is_some_and(|saved| {
                     saved.message_id == message && saved.finality == StreamFinality::Final
                 });
-            let text = whole.then(|| ended.text.clone());
+            let saved = ended.saved.clone().filter(|_| whole);
             let _ = finished.send(ended);
-            if let (Some(text), Some(authority)) = (text, authority) {
+            if let (Some(saved), Some(authority)) = (saved, authority) {
+                let text = crate::server::blocking(|| {
+                    let TurnCredential::Action { action, .. } = &reader.credential else {
+                        return None;
+                    };
+                    crate::ai_host::action_reader(&reader.vault, action)?
+                        .message_stream_committed_text(&saved)
+                        .ok()?
+                        .value
+                });
+                let Some(text) = text else {
+                    return;
+                };
                 let turn = crate::server::blocking(|| {
                     let turns = reader
                         .vault

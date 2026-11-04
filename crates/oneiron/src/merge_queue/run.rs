@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::batch_index::BatchIndexKind;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue};
 use crate::EntityId;
-use crate::contract_oracle::invalid;
+use crate::store::contract_oracle::invalid;
 use crate::error::Result;
 
 /// A run's accepted queue entry: whose it is, the exact proposals accepted,

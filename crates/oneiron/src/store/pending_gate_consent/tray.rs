@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
 
