@@ -17020,17 +17020,22 @@
      "notable": [
       "ModelCallDigests",
       "ModelCallInputPart",
+      "ModelCallKind",
       "ModelCallPartRef",
       "ModelCallReasoningPart",
-      "ModelCallRecord"
+      "ModelCallRecord",
+      "NativeReadDigests",
+      "NativeReadFailure",
+      "NativeReadOutcome"
      ],
      "path": "src/code_run/model_call.rs",
      "purpose": "Per-model-call evidence and replay records (FIX 12516)",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 9,
-      "struct": 3
+      "enum": 5,
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -45489,7 +45494,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/execute.rs",
@@ -92174,7 +92179,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6357,
    "test_files": 900
@@ -113180,7 +113185,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/llm/decision_read.rs",
