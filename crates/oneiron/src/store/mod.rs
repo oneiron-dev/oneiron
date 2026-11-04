@@ -122,15 +122,19 @@ pub mod ports {
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
+pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
 pub mod attempt_id;
 pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
+pub mod attempt_outcomes;
 pub mod attempt_read_producer;
+pub mod attempt_record;
 pub(crate) mod attempt_retention;
 pub mod attempt_result;
+pub mod attempt_run_signal;
 pub mod attempt_state;
 pub mod canonical_document;
 pub mod checkout_task;
@@ -322,6 +326,7 @@ pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
+pub mod revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
