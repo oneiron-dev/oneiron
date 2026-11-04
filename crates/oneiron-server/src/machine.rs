@@ -708,6 +708,19 @@ impl MemoryLease {
         self.pending = self.pending.saturating_add(more);
     }
 
+    /// Gives back at most `bytes` of this lease and wakes the memory line.
+    pub(crate) fn shrink(&mut self, bytes: u64) {
+        let bytes = bytes.min(self.bytes);
+        let pending = bytes.min(self.pending);
+        let mut line = lock(&self.shared.line);
+        line.leased = line.leased.saturating_sub(bytes);
+        line.pending = line.pending.saturating_sub(pending);
+        self.bytes -= bytes;
+        self.pending -= pending;
+        drop(line);
+        self.shared.changed.notify_all();
+    }
+
     /// Takes `other`'s bytes into this lease, named allocated (FIX 10589):
     /// the line keeps counting them as leased until this lease drops, and
     /// `other` gives back nothing as it drops. Never waits or refuses.

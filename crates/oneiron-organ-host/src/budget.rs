@@ -501,7 +501,6 @@ impl CallRoom {
                 },
             )?);
         }
-        drop(slot);
         let mut state = self.lock();
         let need = state
             .held
@@ -510,8 +509,10 @@ impl CallRoom {
         if need > state.permit.memory {
             let delta = need - state.permit.memory;
             let shared = Arc::clone(&state.permit.shared);
-            // Refused here, the machine's lease drops with it: nothing held.
             let Some(grown) = self.waits.timing(|| shared.grow(delta, &ended)) else {
+                if let Some(held) = slot.0.as_mut() {
+                    held.shrink(bytes);
+                }
                 return Err(NativeRefusal::Deadline);
             };
             state.permit.memory += delta;
@@ -520,6 +521,7 @@ impl CallRoom {
         }
         state.native = state.native.saturating_add(bytes);
         drop(state);
+        drop(slot);
         if let Some(limits) = self.limits.get() {
             limits.grant(bytes);
         }
@@ -531,22 +533,6 @@ impl CallRoom {
     pub(crate) fn release(&self, bytes: u64) {
         let mut state = self.lock();
         state.held = state.held.saturating_sub(bytes);
-    }
-
-    /// Gives back the frames' own bytes of a call or answer already sent:
-    /// the transient half of what reserve_read holds, whose value half stays
-    /// until the call ends (FIX 12437). What it gives back never passes what
-    /// is held, and the kernel's limits come down with it.
-    pub(crate) fn release_native(&self, bytes: u64) {
-        let mut state = self.lock();
-        let back = state.native.min(bytes);
-        state.native -= back;
-        drop(state);
-        if back > 0
-            && let Some(limits) = self.limits.get()
-        {
-            limits.give_back(back);
-        }
     }
 
     /// Moves `bytes` already held to an output that outlives the call.

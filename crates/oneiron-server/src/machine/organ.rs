@@ -15,6 +15,10 @@ impl oneiron_organ_host::FloorLease for MemoryLease {
         MemoryLease::grow(self, more, deadline, stopped).map_err(organ_refusal)
     }
 
+    fn shrink(&mut self, bytes: u64) {
+        MemoryLease::shrink(self, bytes);
+    }
+
     fn grow_untimed(
         &mut self,
         more: u64,
