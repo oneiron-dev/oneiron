@@ -2,12 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitOid;
 use crate::store::code_snapshot::entity_id_from_hash_material;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RepoProposalStatus {

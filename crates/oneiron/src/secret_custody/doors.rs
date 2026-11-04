@@ -156,7 +156,6 @@ pub(crate) fn put_secret_custody_in_txn(
 
 pub(crate) use crate::secret_record::CustodyWrite;
 
-
 /// [`put_secret_custody_in_txn`] through `write`: the value sealed under its
 /// generation's custody key first, minted in this writer (KS-6).
 fn put_custody_body_in_txn(

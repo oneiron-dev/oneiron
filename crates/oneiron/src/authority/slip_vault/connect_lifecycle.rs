@@ -1,7 +1,7 @@
 //! Owner-bound doors over the existing federation lifecycle fold.
 use ed25519_dalek::Signer;
-use serde::{Deserialize, Serialize};
 use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
 
 use super::connect::{ScopeOpeningKey, local_vault_id, offer_for, require_offer_signs};
 use super::{HostSlipIssuer, require_host};
@@ -263,10 +263,7 @@ fn nonce() -> [u8; 16] {
 
 impl HostSlipIssuer {
     /// Signs only the typed, pact-bound foreign-world delivery transcript.
-    pub fn sign_connect_window(
-        &self,
-        body: &ConnectWindow,
-    ) -> Result<String> {
+    pub fn sign_connect_window(&self, body: &ConnectWindow) -> Result<String> {
         Ok(crate::entity_id::bytes_to_hex_lower(
             &self.signing.sign(&body.transcript()?).to_bytes(),
         ))

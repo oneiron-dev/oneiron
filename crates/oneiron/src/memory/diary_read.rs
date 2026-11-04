@@ -21,11 +21,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
-use crate::{
-    inbox::view_values::{AgentInboxDiaryReview, AgentInboxItemKind},
-    agent_inbox_lens::AgentInboxLensItem,
-    inbox::view_values::{AgentInboxParticipant, InboxImpact},
-};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -36,6 +31,11 @@ use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault, WriteActor};
+use crate::{
+    agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::{AgentInboxDiaryReview, AgentInboxItemKind},
+    inbox::view_values::{AgentInboxParticipant, InboxImpact},
+};
 use serde::{Deserialize, Serialize};
 
 mod log;

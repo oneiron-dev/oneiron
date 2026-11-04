@@ -41,12 +41,12 @@ use self::codec::{
 use super::recipient::RepoProjectionRevealBinding;
 
 use crate::Vault;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitObjectKind, GitOid};
 use crate::secret_custody::MASKED_FILE_BAND;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};

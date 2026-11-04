@@ -1,10 +1,10 @@
 //! Voice reference packs, render decisions and target record values.
 
-use serde::{Deserialize, Serialize};
-use crate::{EntityId, Result};
+use super::consent::{VoiceConsentBasis, VoiceConsentState};
 use crate::llm::ModelLocality;
 use crate::memory::voice_actor::{VoiceRefSubjectKind, invalid, valid_id};
-use super::consent::{VoiceConsentBasis, VoiceConsentState};
+use crate::{EntityId, Result};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
