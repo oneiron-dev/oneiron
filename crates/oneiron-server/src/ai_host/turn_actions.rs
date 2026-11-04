@@ -43,7 +43,7 @@ use super::AiHandle;
 use super::payer_funding::room_launch_funding;
 use super::resident_craft::{craft_withdrawn, place_craft, snapshot_craft_scoped};
 use crate::api::ai::chat::{
-    Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, RetrySession, TurnCredential,
+    ActionSession, Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential,
     after_turn, begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
     text_message, turn_generate_pre,
 };
@@ -265,22 +265,23 @@ async fn act(
     // captured craft names a note erased, revised or no longer supported
     // since is never sent again (FIX 8985): the action runs as it always
     // did, on today's craft, stamped before it is sent.
-    let (admitted, today, breakpoint, retry_session) = match reuse {
+    let (admitted, today, breakpoint, action_session) = match reuse {
         ChatReuse::Reused(reused) => {
             let captured = &reused.craft;
             match blocking(|| craft_withdrawn(vault, captured)) {
                 None => {
                     let mut reused = *reused;
                     stamp_craft(vault, attempt, context.agent, &reused.craft);
-                    let retry_session = blocking(|| RetrySession::of(ai, vault, &action, &reused));
-                    if let Some(session) = &retry_session {
+                    let action_session =
+                        blocking(|| ActionSession::of(ai, vault, &action, &reused));
+                    if let Some(session) = &action_session {
                         reused.live.request.host_segments = Some(session.manifest());
                     }
                     (
                         reused.live,
                         Some(admitted),
                         Some(reused.breakpoint),
-                        retry_session,
+                        action_session,
                     )
                 }
                 Some(reason) => {
@@ -367,7 +368,7 @@ async fn act(
         ),
         None => answering,
     };
-    let answering = match retry_session {
+    let answering = match action_session {
         Some(session) => session.commit_on_answer(answering),
         None => answering,
     };

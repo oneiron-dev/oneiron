@@ -51,7 +51,7 @@ export interface BuildManifest {
   readonly assets: Readonly<Record<string, BuildAsset>>;
   readonly capabilities: readonly string[];
   readonly environment: Readonly<Record<string, string>>;
-  /** Linux containment launcher; must exec its argv in this file's CPU/memory/network budget. */
+  /** Pinned exec prefix inside the booked fleet job; resource limits belong to the fleet. */
   readonly launcher: readonly string[];
   readonly realModel?: {
     readonly revision: string;
