@@ -608,6 +608,9 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+            if let Some(admission) = self.decode_admission.as_deref() {
+                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+            }
             xref.merge(prev_xref);
 
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -617,6 +620,9 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+                }
                 xref.merge(prev_xref);
             }
 
@@ -839,6 +845,9 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+            if let Some(admission) = self.decode_admission.as_deref() {
+                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+            }
             xref.merge(prev_xref);
 
             // Read xref stream in hybrid-reference file
@@ -849,6 +858,9 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+                }
                 xref.merge(prev_xref);
             }
 
@@ -969,11 +981,24 @@ impl Reader<'_> {
 
             let mut streams_to_process: std::collections::HashMap<u32, Vec<(u32, u16)>> =
                 std::collections::HashMap::new();
+            if let Some(admission) = self.decode_admission.as_deref() {
+                // entry tuple plus two words of HashMap bucket share per grouped object.
+                admission.admit(
+                    object_streams
+                        .len()
+                        .checked_mul(size_of::<(u32, Vec<(u32, u16)>)>().saturating_add(2 * size_of::<usize>()))
+                        .ok_or(Error::DecodeAdmission(DecodeAdmissionError::MemoryFloor {
+                            needed: u64::MAX,
+                            available: 0,
+                        }))?,
+                )?;
+            }
             for (obj_num, container_id, index) in object_streams {
-                streams_to_process
-                    .entry(container_id)
-                    .or_default()
-                    .push((obj_num, index));
+                let bucket = streams_to_process.entry(container_id).or_default();
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    decode_admission::reserve(admission, &mut *bucket, 1)?;
+                }
+                bucket.push((obj_num, index));
             }
 
             for (container_id, objects_in_stream) in streams_to_process {
@@ -1106,8 +1131,17 @@ impl Reader<'_> {
                         let container_id = object_id.0;
                         let mut object_streams = object_streams.lock().unwrap();
                         if let Some(filter_func) = filter_func {
-                            let objects: BTreeMap<(u32, u16), Object> = obj_stream
-                                .objects
+                            let stream_objects = obj_stream.objects;
+                            if let Some(admission) = self.decode_admission.as_deref() {
+                                if let Err(err) = decode_admission::admit_btree::<(u32, u16), Object>(
+                                    admission,
+                                    stream_objects.len(),
+                                ) {
+                                    refuse(err);
+                                    return None;
+                                }
+                            }
+                            let objects: BTreeMap<(u32, u16), Object> = stream_objects
                                 .into_iter()
                                 .filter(|((obj_num, _), _)| {
                                     compressed_obj_containers
@@ -1116,16 +1150,38 @@ impl Reader<'_> {
                                 })
                                 .filter_map(|(object_id, mut object)| filter_func(object_id, &mut object))
                                 .collect();
-                            object_streams.extend(objects);
+                            for (id, obj) in objects {
+                                if let Some(admission) = self.decode_admission.as_deref() {
+                                    if let Err(err) = decode_admission::reserve(admission, &mut *object_streams, 1) {
+                                        refuse(err);
+                                        return None;
+                                    }
+                                }
+                                object_streams.push((id, obj));
+                            }
                         } else {
-                            object_streams.extend(obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
+                            for (id, obj) in obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
                                 compressed_obj_containers
                                     .get(obj_num)
                                     .is_none_or(|&c| c == container_id)
-                            }));
+                            }) {
+                                if let Some(admission) = self.decode_admission.as_deref() {
+                                    if let Err(err) = decode_admission::reserve(admission, &mut *object_streams, 1) {
+                                        refuse(err);
+                                        return None;
+                                    }
+                                }
+                                object_streams.push((id, obj));
+                            }
                         }
                     } else if stream.content.is_empty() {
                         let mut zero_length_streams = zero_length_streams.lock().unwrap();
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            if let Err(err) = decode_admission::reserve(admission, &mut *zero_length_streams, 1) {
+                                refuse(err);
+                                return None;
+                            }
+                        }
                         zero_length_streams.push(object_id);
                     }
                 }
@@ -1306,13 +1362,17 @@ impl Reader<'_> {
                     admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
                 }
                 self.document.objects.insert(encrypt_ref, encrypt_obj);
-            } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref)
-                && let Ok((_, obj)) = self.parse_raw_object(raw_bytes)
-            {
-                if let Some(admission) = self.decode_admission.as_deref() {
-                    admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+            } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref) {
+                match self.parse_raw_object(raw_bytes) {
+                    Ok((_, obj)) => {
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                        }
+                        self.document.objects.insert(encrypt_ref, obj);
+                    }
+                    Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+                    Err(_) => {}
                 }
-                self.document.objects.insert(encrypt_ref, obj);
             }
         }
         Ok(())

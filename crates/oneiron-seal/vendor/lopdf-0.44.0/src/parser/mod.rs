@@ -557,6 +557,11 @@ fn xref<'a>(
         let (mut input, _) = pair(opt(tag(&b" "[..])), eol).parse(input)?;
         let mut entries: Vec<((u32, u32), bool)> = Vec::new();
         loop {
+            let aborted = refused.take();
+            if aborted.is_some() {
+                refused.set(aborted);
+                return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail)));
+            }
             match xref_entry.parse(input) {
                 Ok((next, entry)) => {
                     if let Some(admission) = admission {
@@ -581,7 +586,17 @@ fn xref<'a>(
             |input| section(input, admission, refused),
             || -> Xref { Xref::new(0, XrefType::CrossReferenceTable) },
             |mut xref, (start, entries)| {
+                let aborted = refused.take();
+                if aborted.is_some() {
+                    refused.set(aborted);
+                    return xref;
+                }
                 for (index, ((offset, generation), is_normal)) in entries.into_iter().enumerate() {
+                    let aborted = refused.take();
+                    if aborted.is_some() {
+                        refused.set(aborted);
+                        return xref;
+                    }
                     if is_normal && let Ok(generation) = generation.try_into() {
                         if let Some(admission) = admission {
                             if let Err(err) =
