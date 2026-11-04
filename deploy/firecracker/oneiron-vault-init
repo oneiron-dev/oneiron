@@ -92,6 +92,12 @@ if [ "$config" = "1" ]; then
   if [ -f /config/seal/tsa-url ]; then
     set -- "$@" --seal-tsa-url "$(head -n 1 /config/seal/tsa-url)"
   fi
+  if [ -f /config/seal/crl-origins ]; then
+    set -- "$@" --seal-crl-origins "$(head -n 1 /config/seal/crl-origins)"
+  fi
+  if [ -f /config/seal/ocsp-origins ]; then
+    set -- "$@" --seal-ocsp-origins "$(head -n 1 /config/seal/ocsp-origins)"
+  fi
   if [ -f /config/seal/signing-url ]; then
     set -- "$@" --seal-signing-url "$(head -n 1 /config/seal/signing-url)"
   fi
