@@ -187,6 +187,19 @@ pub(crate) fn device_local_worlds_for(
     device_only_worlds_in(vault, txn, destination)
 }
 
+/// The worlds whose rows the receiving placement withholds: every world the
+/// world settings withhold from `receiving`, folded once in `txn` (FIX 5588).
+/// `Unknown` is exactly today's [`device_local_worlds_at`]`(OffDevice)`
+/// expansion (same `load_in` arm, same withheld set); a named machine only
+/// withholds fewer worlds, never more.
+pub(crate) fn device_local_worlds_for_machine(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    receiving: crate::machine_destination::Destination,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    crate::authority::WorldPrivacyView::load_in(vault, txn)?.withheld_for(receiving)
+}
+
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in
 /// `txn` for many rows. `store` is the target the row is read from: a room's
 /// overlay ∪ base judges the rows the room stages as well.
