@@ -267,8 +267,10 @@ impl SyncServer {
             } else {
                 tokio::task::spawn_blocking(move || {
                     let _admission = admission;
-                    let report = pass.reconcile_once()?;
+                    let mut report = PendingEmbeddingReconcileReport::default();
+                    let result = pass.reconcile_once_into(&mut report);
                     server.record_embedding_meters(&report);
+                    result?;
                     Ok::<_, oneiron::Error>(report)
                 })
                 .await

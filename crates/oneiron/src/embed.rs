@@ -347,10 +347,27 @@ impl PendingEmbeddingReconciler {
         self.reconcile_once_at(unix_millis_now())
     }
 
+    /// Replaces `report` with this pass's progress, including committed fills
+    /// before a later error. The original error still propagates.
+    pub fn reconcile_once_into(&self, report: &mut PendingEmbeddingReconcileReport) -> Result<()> {
+        self.reconcile_once_into_at(unix_millis_now(), report)
+    }
+
     fn reconcile_once_at(&self, now_ms: u64) -> Result<PendingEmbeddingReconcileReport> {
+        let mut report = PendingEmbeddingReconcileReport::default();
+        self.reconcile_once_into_at(now_ms, &mut report)?;
+        Ok(report)
+    }
+
+    fn reconcile_once_into_at(
+        &self,
+        now_ms: u64,
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<()> {
+        *report = PendingEmbeddingReconcileReport::default();
         self.validate_embedder_for_vault()?;
         let batch = self.lease_due_jobs(now_ms)?;
-        let mut report = PendingEmbeddingReconcileReport {
+        *report = PendingEmbeddingReconcileReport {
             leased: batch.work.len(),
             active_leases: batch.active_leases,
             stale_jobs: batch.stale_jobs,
@@ -360,7 +377,7 @@ impl PendingEmbeddingReconciler {
             ..PendingEmbeddingReconcileReport::default()
         };
         if batch.work.is_empty() {
-            return Ok(report);
+            return Ok(());
         }
 
         let (remote_work, local_work): (Vec<_>, Vec<_>) = batch
@@ -403,26 +420,19 @@ impl PendingEmbeddingReconciler {
                 Ok(vectors) => {
                     report.routed_remote += remote_work.len();
                     report.embedded += vectors.len();
-                    self.fill_batch(
-                        &remote_work,
-                        &vectors,
-                        rung.embedder.locality(),
-                        &mut report,
-                    )?;
+                    self.fill_batch(&remote_work, &vectors, rung.embedder.locality(), report)?;
                 }
                 Err(e) => {
                     tracing::warn!(kind = ?e.kind(), "remote embed failed; falling back to local");
                     report.remote_failed_fallback_local += remote_work.len();
-                    self.embed_and_fill_local(&remote_work, &mut report)?;
+                    self.embed_and_fill_local(&remote_work, report)?;
                 }
             }
         }
 
-        if let Err(error) = self.embed_and_fill_local(&local_work, &mut report) {
-            // The pass still fails (pinned: primary errors propagate), but
-            // remote work that already completed above must not vanish from
-            // observability with the dropped report. Pure-local failures
-            // stay silent, exactly as EMB-1 always propagated them.
+        if let Err(error) = self.embed_and_fill_local(&local_work, report) {
+            // Preserve the original error and keep completed remote work
+            // visible. Pure-local failures stay silent as before.
             if report.routed_remote > 0 || report.remote_failed_fallback_local > 0 {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -431,13 +441,13 @@ impl PendingEmbeddingReconciler {
                     embedded = report.embedded,
                     filled = report.filled,
                     stale_fills = report.stale_fills,
-                    "local batch failed after remote work completed; reconcile report dropped"
+                    "local batch failed after remote work completed"
                 );
             }
             return Err(error);
         }
 
-        Ok(report)
+        Ok(())
     }
 
     fn embed_and_fill_local(
