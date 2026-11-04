@@ -142,6 +142,12 @@ pub enum SweepWork {
         /// Due records whose notices were raised.
         records: u64,
     },
+    AnnotationBodyAnchors {
+        /// Comment heads stamped, moved, landed on an export or detached.
+        moved: u64,
+        /// Artifacts whose comments could not be moved; each is tried again.
+        failed: u64,
+    },
 }
 
 impl SweepWork {
@@ -154,7 +160,9 @@ impl SweepWork {
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
             Self::SecretLift(work) => work.failed,
-            Self::ClaimVadDebt { failed, .. } => failed,
+            Self::ClaimVadDebt { failed, .. } | Self::AnnotationBodyAnchors { failed, .. } => {
+                failed
+            }
             _ => 0,
         }
     }
@@ -190,6 +198,7 @@ impl SweepWork {
             Self::SecretLift(work) => work == SecretLiftWork::default(),
             Self::ClaimVadDebt { settled, failed } => settled == 0 && failed == 0,
             Self::FoundKeyNotices { records } => records == 0,
+            Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
         }
     }
 }

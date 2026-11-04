@@ -53,12 +53,13 @@ pub(in crate::live) struct PlotTarget {
 /// PowerPoint's Change Chart Type lays them out for a whole chart or for one
 /// series. `held` is each held plot's family and series count; `resolved`
 /// is each series' family. A held plot stays while a series is drawn in its
-/// family, and a held plot no series is drawn in goes; one whose own
-/// series all moved to a family no plot draws is converted to it on its own
-/// axes (FIX 10294). A family no held plot draws gets a new plot after
-/// them. When no held plot stays, the
-/// first is converted to the first family. A chart with no series takes
-/// `family`. Each series stays in `own`, the held plot it was drawn in,
+/// family; one whose own series all moved to a family no plot draws is
+/// converted to it on its own axes (FIX 10294). A plot with no assigned
+/// series goes (FIX 12256), but one stays when the chart has no series so
+/// it still reads back. A family no held plot draws gets a new plot after
+/// them. When no held plot stays, the first is converted to the first
+/// family. A chart with no series takes `family`. Each series stays in
+/// `own`, the held plot it was drawn in,
 /// while that plot draws its family; any other goes to the first plot of
 /// its family with room for as many series as it held, else to that
 /// family's last plot.
@@ -146,7 +147,7 @@ pub(in crate::live) fn plot_plan(
         _ => 0,
     };
     let mut taken = vec![0_usize; targets.len()];
-    let assign = resolved
+    let mut assign: Vec<usize> = resolved
         .iter()
         .enumerate()
         .map(|(index, kind)| {
@@ -170,6 +171,24 @@ pub(in crate::live) fn plot_plan(
             at
         })
         .collect();
+    // A plot no series is drawn in goes (FIX 12256): the export would
+    // write it empty, and the reader would count it in each later series'
+    // ordinal while the payload never shows it.
+    let mut gone: Vec<usize> = (0..targets.len())
+        .filter(|&at| !assign.contains(&at))
+        .collect();
+    if gone.len() == targets.len() && !targets.is_empty() {
+        gone.remove(0);
+    }
+    if !gone.is_empty() {
+        for index in assign.iter_mut() {
+            let shift = gone.iter().filter(|&&at| at < *index).count();
+            *index -= shift;
+        }
+        for &at in gone.iter().rev() {
+            targets.remove(at);
+        }
+    }
     (targets, assign)
 }
 
