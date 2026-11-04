@@ -8,11 +8,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Maximum `interlocutors.third_parties` entries per context-pack request.
-/// Each party can trigger vault reads during resolution, so the block is
-/// capped like the crate's other request-controlled collections.
-pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
-
 /// Engine invariant for counterparty keys (`counterparty_contact`'s private
 /// `MAX_COUNTERPARTY_BYTES`): stored keys are trimmed and at most 512 bytes.
 /// Enforced at the DTO boundary so caller input surfaces as a typed 400
@@ -20,8 +15,8 @@ pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
 
 /// Display labels ride stamps, notices, and receipts; bounded to the same
-/// scale as the counterparty key so up to [`MAX_INTERLOCUTOR_THIRD_PARTIES`]
-/// labels stay a bounded echo/work cost.
+/// scale as the counterparty key so each label stays a bounded echo/work
+/// cost.
 pub(crate) const MAX_INTERLOCUTOR_LABEL_BYTES: usize = 512;
 
 /// Edge expansion depth controls for context-pack assembly.
