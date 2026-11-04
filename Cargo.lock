@@ -7948,6 +7948,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
+ "oneiron-store",
  "oneiron-vault-contract",
  "oneiron-xlsx-formula",
  "oxc_allocator",
@@ -8456,6 +8457,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -8484,6 +8486,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-container",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
@@ -8698,6 +8701,21 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "oneiron-store"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "heed",
+ "oneiron-contracts",
+ "oneiron-model",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "zeroize",
 ]
 
 [[package]]

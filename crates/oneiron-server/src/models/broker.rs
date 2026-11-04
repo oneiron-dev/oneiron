@@ -183,11 +183,13 @@ impl BrokerSite {
 }
 
 /// One `key_secret` provider's backend, over the broker at `site` and the
-/// key door `keys`.
+/// key door `keys`. `solo` says the provider's server reads the host's
+/// solo marker, which only EXL3's does (FIX 6976).
 pub(super) fn broker_backend(
     provider: &ProviderConfig,
     catalog: Vec<LlmCatalogEntry>,
     cap: OutputCap,
+    solo: bool,
     site: &BrokerSite,
     keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<BrokerBackend> {
@@ -211,8 +213,6 @@ pub(super) fn broker_backend(
         })
         .collect();
     let rows = catalog.values().cloned();
-    // Only an own server reads the host's solo marker (INF 1).
-    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
     let wire = match provider.kind {
         ProviderKind::AnthropicCompat => {
             Wire::Anthropic(AnthropicMessagesConfig::from_catalog(rows))
@@ -373,6 +373,20 @@ pub(super) async fn call_with_key(
     header: &CallHeader,
     body: &[u8],
 ) -> LlmResult<oneiron_broker::BrokerReply> {
+    call_with_key_released(client, keys, secret, header, body, None, None).await
+}
+
+/// [`call_with_key`] with the caller's release invoked after connection and
+/// key retrieval, immediately before the broker sends the bytes.
+pub(super) async fn call_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerReply> {
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
     let secret = secret.to_owned();
@@ -386,6 +400,12 @@ pub(super) async fn call_with_key(
             );
             LlmError::from(FatalLlmError::Auth)
         })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
     connection
         .call(header, body, key)
         .await

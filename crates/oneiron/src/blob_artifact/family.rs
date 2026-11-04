@@ -151,6 +151,9 @@ fn artifact_version_views_erased(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactView {
     pub artifact_id: EntityId,
+    /// The artifact as a typed record ref (OF-063, FIX 9340), built from its
+    /// id with no read.
+    pub artifact: RecordRef,
     pub kind: ArtifactKind,
     pub name: String,
     pub media_type: String,
@@ -195,6 +198,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         Ok(Some(ArtifactView {
             artifact_id: *id,
+            artifact: RecordRef::from_id(ENTITY_TYPE_BLOB_ARTIFACT, id, None),
             kind: ArtifactKind::of_media_type(&body.media_type),
             name: body.name,
             media_type: body.media_type,
@@ -224,6 +228,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         Ok(Some(ArtifactView {
             artifact_id: *id,
+            artifact: RecordRef::from_id(ENTITY_TYPE_BLOB_ARTIFACT, id, None),
             kind: ArtifactKind::of_media_type(&body.media_type),
             name: body.name,
             media_type: body.media_type,

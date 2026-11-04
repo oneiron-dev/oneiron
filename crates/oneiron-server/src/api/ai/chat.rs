@@ -418,6 +418,7 @@ pub(crate) fn witness_turn(
             author,
             message_type: MESSAGE_TYPE.to_owned(),
             content,
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
@@ -517,7 +518,7 @@ pub(super) async fn chat_turn(
     let read = recall::TurnRead { mark, board };
     let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
         Ok(started) if started.stream => return streamed(started, claim),
-        Ok(started) => whole(started).await,
+        Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,
     };
     match claim {
@@ -550,6 +551,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// The caller's proved connection and known rows for the cached reply.
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: Vec<EntityId>,
     /// Why the call goes without the context board the turn read (FIX
     /// 8136).
     board_omitted: Option<recall::BoardOmission>,

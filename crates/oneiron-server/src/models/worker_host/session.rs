@@ -73,6 +73,8 @@ pub(crate) trait CheckpointAuthority: Send + Sync {
     /// Whether the credential, the read scope and the disclosure ceiling the
     /// path was admitted under hold now, and every source it was read from
     /// (`commit`'s reply among them) still reads. Runs off the runtime.
+    /// The verdict must not depend on [`ReplyCommit::text`]: a park recheck
+    /// names the reply by ids and leaves the text empty (FIX 11285).
     fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict;
 
     /// What a snapshot of the successor `commit` ends is kept under: the
@@ -134,11 +136,22 @@ pub(crate) enum AuthorityVerdict {
 }
 
 /// A reply committed to the conversation: the HEAD it lands at, its
-/// MESSAGE, and its text as it was saved.
+/// MESSAGE, and its text as it was saved. The text may be empty on a park
+/// recheck, where the reply is named by its ids; [`CheckpointAuthority`]
+/// verdicts must not read it.
 pub(crate) struct ReplyCommit {
     pub(crate) head: EntityId,
     pub(crate) message: EntityId,
     pub(crate) text: String,
+}
+
+/// A rung admitted for this manifest supersedes earlier attempts at the
+/// same admitted turn. Called after its permit succeeds and before it sends.
+pub(crate) fn rung_admitted(manifest: &SegmentManifest) {
+    #[cfg(unix)]
+    commit::rung_admitted(manifest.digest());
+    #[cfg(not(unix))]
+    let _ = manifest;
 }
 
 /// Stages and publishes the successor of the turn `manifest` described,

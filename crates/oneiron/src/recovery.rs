@@ -31,6 +31,7 @@ pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
 pub(crate) use validation::trusted_soft_addressing_edge;
 
 pub use canonical::*;
+pub(crate) use document::note_fork_decided;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
 pub(crate) use document::{materialize_window_documents, validate_window_documents};
@@ -359,5 +360,6 @@ pub use privacy_kit::{
     RestoredKitSecret, issue_recovery_root_kit, issue_vault_key_kit, restore_kit,
 };
 pub(crate) use privacy_kit::{
-    KitPiecePair, KitPieceStore, join_kept_piece, vault_key_piece_install,
+    KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_pending_piece_install,
+    recovery_root_piece_install, vault_key_piece_install,
 };
