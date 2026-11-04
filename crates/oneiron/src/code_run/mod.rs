@@ -101,6 +101,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::model_call::erase_model_call_actor_in_txn;
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
