@@ -2892,22 +2892,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RunAsk",
-      "RunAskAnswer",
-      "RunAskAnswerKind",
-      "RunAskQuestion",
       "RunAskState",
-      "RunBranchSignal",
-      "RunSignalInput",
-      "RunSignalKind",
-      "RunSignalState"
+      "RunSignalInput"
      ],
      "path": "src/attempt_queue/run_signal.rs",
      "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
      "surface": {
       "crate-vis": 4,
-      "enum": 4,
-      "struct": 5
+      "enum": 1,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -69520,6 +69514,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunBranchSignal",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/store/attempt_run_signal.rs",
+     "purpose": "The durable branch signal and ask rows an attempt row carries: each branch-addressed control signal and its…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AttemptState"
      ],
      "path": "src/store/attempt_state.rs",
@@ -72184,7 +72198,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 103,
+      "mod": 104,
       "re-export": 31
      }
     },
@@ -90509,7 +90523,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 409,
+     "files": 410,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90749,7 +90763,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6305,
+   "source_files": 6306,
    "test_files": 898
   },
   "oneiron-android": {
