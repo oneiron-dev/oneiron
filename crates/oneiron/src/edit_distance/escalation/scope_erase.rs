@@ -91,6 +91,7 @@ fn erase_policy_scopes_in_txn(
             // row into its superseded history instead of overwriting it, so
             // the erase removes nothing (review round 1).
             if let Some(mut kept) = STANDING_POLICY.get(&vault.store, wtxn, &new)? {
+                kept.superseded.append(&mut row.superseded);
                 kept.superseded.push(row);
                 STANDING_POLICY.put(&vault.store, wtxn, &new, &kept)?;
                 continue;
