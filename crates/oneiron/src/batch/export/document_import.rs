@@ -1210,14 +1210,14 @@ fn imported_body(
             crate::write_envelope::skill_record::encode_skill_record(&body)
         }
         ENTITY_TYPE_AGENT_DEF => {
-            let mut body = crate::agent_def::decode_agent_definition(&bytes)?;
+            let mut body = crate::store::agent_definition_codec::decode_agent_definition(&bytes)?;
             body.source = ClaimSource::Imported;
             body.generated = false;
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
             body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
-            crate::agent_def::encode_agent_definition(&body)
+            crate::store::agent_definition_codec::encode_agent_definition(&body)
         }
         _ => Ok(bytes),
     }
@@ -1249,10 +1249,12 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::decode_agent_definition(bytes)?
-            .forked_from
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::decode_agent_definition(bytes)?
+                .forked_from
+                .into_iter()
+                .collect()
+        }
         ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
