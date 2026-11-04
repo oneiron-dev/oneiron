@@ -42,8 +42,8 @@ except ImportError:
 
 KIND = "asr"
 ROUTE = "/v1/audio/transcriptions"
-# The documented default checkpoint an operator's manifest pins; no house pin
-# exists, so the manifest names its commit and every file.
+# The house-pinned checkpoint (`weights = "whisper-large-v3"`); an
+# operator's manifest may still name its commit and every file instead.
 ASR_MODEL_REPO = "openai/whisper-large-v3"
 ASR_BACKEND = "transformers_whisper"
 ASR_DTYPE = "float16"
