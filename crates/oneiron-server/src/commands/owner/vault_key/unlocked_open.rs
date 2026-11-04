@@ -11,6 +11,7 @@ use oneiron::world_keys::{self, VaultKeyStatus};
 
 use super::super::{base_vault_config, open_stopped_vault, open_stopped_vault_with};
 use super::{HostUnlock, prepare_page_seal, refuse_orphaned_page_seal};
+use super::host_unlock::VaultForUnlock;
 use crate::cli::{
     RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultUnlockArgs,
 };
@@ -207,7 +208,7 @@ pub(in crate::commands::owner) fn open_with_unlock(
                 world_keys::page_seal_vault_id(path)
                     .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
             },
-            None,
+            VaultForUnlock::SealedPreopen { config, path },
         )?;
         let opened = open_sealed(config, &unlock, instead);
         name_released(&unlock);
@@ -217,8 +218,11 @@ pub(in crate::commands::owner) fn open_with_unlock(
     if need != KeyNeed::Held && vault.vault_key_status()? == VaultKeyStatus::NoKey {
         return Ok(vault);
     }
-    let unlock =
-        HostUnlock::read_for_vault(request, || Ok(vault.vault_key_vault_id()), Some(&vault))?;
+    let unlock = HostUnlock::read_for_vault(
+        request,
+        || Ok(vault.vault_key_vault_id()),
+        VaultForUnlock::Open(&vault),
+    )?;
     let unlocked = unlock.unlock_live(&vault).map_err(|error| {
         anyhow::anyhow!(
             "the vault key did not unlock with {}: {error}",

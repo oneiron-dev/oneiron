@@ -36,7 +36,7 @@ use crate::cli::{
     SecretSourceArgs,
 };
 use crate::commands::credential_file;
-use crate::config::resolve_serve_config;
+use crate::config::{ServeConfig, resolve_serve_config};
 use crate::owner::local_owner;
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
@@ -668,10 +668,71 @@ pub(super) fn kit_unlock_with(
     })
 }
 
+/// A kit's unlock for a sealed vault before it opens: this install's kept
+/// piece of the pieces' kit counts toward the passphrase choice, so one
+/// piece plus the kept piece asks for none (FIX 12055, FIX 12396), and a
+/// world kit is carried with that kit named so the engine joins its kept
+/// and pending pieces (FIX 11974). A data-key kit's pieces go to the engine
+/// whole as before. Fresh restore and fresh sealed-bundle paths still
+/// rebuild from the pieces given alone ([`kit_unlock_with`], FIX 11973).
+pub(super) fn kit_unlock_with_sealed(
+    config: &ServeConfig,
+    vault_path: &Path,
+    vault_id: Option<&str>,
+    files: &[PathBuf],
+    secret_file: Option<&Path>,
+) -> anyhow::Result<HostUnlock> {
+    let vault_id = vault_id.ok_or_else(|| {
+        anyhow::anyhow!("--unlock kit names the vault the kit is bound to: --vault-id")
+    })?;
+    let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
+    anyhow::ensure!(
+        !files.is_empty(),
+        "--unlock kit reads the kit's pieces: --piece"
+    );
+    let pieces = read_kit_pieces(files)?;
+    let kind = pieces[0].kind();
+    let kit = pieces[0].kit_id();
+    let keystore = match config.keystore.open(vault_path) {
+        Ok(keystore) => keystore,
+        Err(error) => {
+            tracing::warn!(
+                reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
+                "the keystore did not open; the kit unlocks with the pieces given"
+            );
+            None
+        }
+    };
+    let kept = match keystore.as_ref() {
+        Some(keystore) => {
+            oneiron::world_keys::sealed_keeps_kit_piece(vault_path, keystore, kind, kit)
+                .map_err(|error| {
+                    anyhow::anyhow!("count this install's kept kit piece: {error}")
+                })?
+        }
+        None => false,
+    };
+    let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
+    if kind == KitSecretKind::VaultKey {
+        return Ok(HostUnlock::VaultKeyKit {
+            vault_id: *vault_id,
+            pieces,
+            passphrase,
+        });
+    }
+    Ok(HostUnlock::WorldKit {
+        vault_id: *vault_id,
+        kit,
+        pieces,
+        passphrase,
+    })
+}
+
 /// A kit unlock for a plain vault already open: its own kept piece counts
 /// toward the passphrase choice, and a world kit is carried to that vault so
 /// the engine can join its kept recovery-root piece (FIX 11974, FIX 12055).
-/// Pre-open callers use [`kit_unlock_with`] instead.
+/// Pre-open callers use [`kit_unlock_with`] instead, sealed pre-open callers
+/// use [`kit_unlock_with_sealed`].
 pub(super) fn kit_unlock_with_vault(
     vault_id: Option<&str>,
     files: &[PathBuf],
@@ -699,6 +760,7 @@ pub(super) fn kit_unlock_with_vault(
     }
     Ok(HostUnlock::WorldKit {
         vault_id: *vault_id,
+        kit: pieces[0].kit_id(),
         pieces,
         passphrase,
     })
