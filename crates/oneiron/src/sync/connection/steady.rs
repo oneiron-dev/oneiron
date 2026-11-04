@@ -100,6 +100,7 @@ impl SyncConnection {
                 .await
             {
                 if matches!(exit, LoopExit::Shutdown) {
+                    self.publish_leave_unqueued(debounce_buffer);
                     break exit;
                 }
                 return exit;
@@ -429,6 +430,12 @@ impl SyncConnection {
                         continue;
                     };
                     client.remove_outdated_ephemeral();
+                    let retries = client.retry_document_requests();
+                    if !retries.is_empty() {
+                        document_buffer.extend(retries);
+                        debounce_deadline.get_or_insert_with(||
+                            Instant::now() + Duration::from_millis(debounce_ms));
+                    }
                     if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
                         return LoopExit::Disconnected(e);
                     }
