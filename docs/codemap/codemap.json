@@ -55499,7 +55499,7 @@
      "path": "src/outbound_intent_ledger/store/payload_erase.rs",
      "purpose": "What the owner's erase of an outbound call's request leaves (KS7-4b, FIX 5688): evidence only",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -84282,11 +84282,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RetainedWorkWaitSetRequest"
+     ],
      "path": "src/verbs/federation_burst.rs",
      "purpose": "Typed facade calls over the engine's peer-relative federation burst doors",
      "surface": {
-      "fn": 7
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -84385,7 +84388,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1257
+      "fn": 1260
      }
     },
     {
@@ -84840,7 +84843,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 95,
+      "re-export": 97,
       "struct": 33
      }
     },
@@ -84956,6 +84959,20 @@
       "enum": 1,
       "fn": 4,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundCallRequestEraseRequest",
+      "OutboundCallRequestErased"
+     ],
+     "path": "src/verbs/outbound_call_erase.rs",
+     "purpose": "The owner's per-call erase of an outbound call's frozen request (FIX 11801): evidence only",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -85590,6 +85607,21 @@
      "surface": {
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillFitChoice",
+      "SkillFitSetRequest"
+     ],
+     "path": "src/verbs/skill_fit.rs",
+     "purpose": "The owner's marketplace skill-fit setting (FIX 11089): the rule fit or the owner-asked fit for ordinary…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -91516,7 +91548,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 110,
+     "files": 112,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91581,7 +91613,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6384,
+   "source_files": 6386,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105775,7 +105807,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1225
+      "fn": 1228
      }
     },
     {
@@ -107527,7 +107559,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1226
+      "fn": 1229
      }
     },
     {
@@ -111026,7 +111058,7 @@
      "path": "src/api/context_board/cursor.rs",
      "purpose": "Server-owned MEMORIES cursors and session read sets, keyed by principal and session",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -111176,7 +111208,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 23
      }
     },
     {
@@ -112312,7 +112344,7 @@
      "path": "src/api/facade/federation_burst_doors.rs",
      "purpose": "Signed Connect ingress and owner lifecycle doors over the shared burst engine",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -112552,7 +112584,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 164
+      "crate-vis": 165
      }
     },
     {
@@ -112943,6 +112975,16 @@
      "purpose": "Credential-bound host projections of the exact publish doors (FIX 6866)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/outbound_call_erase_doors.rs",
+     "purpose": "The host door of the owner's per-call outbound request erase (FIX 11801): `vault.outbound_calls.request.erase`",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -113402,7 +113444,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -127006,7 +127048,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 656,
+     "files": 657,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127512,7 +127554,7 @@
    },
    "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1521,
+   "source_files": 1522,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -133035,6 +133077,8 @@
       "OriginRegistered",
       "OriginRepoRequest",
       "OriginResidence",
+      "OutboundCallRequestEraseRequest",
+      "OutboundCallRequestErased",
       "OutboxCardAction",
       "OutboxCardKind",
       "OutboxDivergedAnswer",
@@ -133629,6 +133673,8 @@
       "ResultTaintReference",
       "ResultTaintState",
       "ResultWithheld",
+      "RetainedWorkQueue",
+      "RetainedWorkWaitSetRequest",
       "RetentionDefault",
       "RetiredCard",
       "RetrievalAction",
@@ -134167,6 +134213,8 @@
       "SkillConvertRequest",
       "SkillEditPreflight",
       "SkillEditProposalView",
+      "SkillFitChoice",
+      "SkillFitSetRequest",
       "SkillForkLineage",
       "SkillForkRequest",
       "SkillGovernanceSetRequest",
@@ -134868,8 +134916,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1105,
-      "struct": 3356
+      "enum": 1107,
+      "struct": 3360
      }
     },
     {
