@@ -597,7 +597,7 @@ impl Vault {
         })
     }
 
-    /// Local HEAD; legacy conversations migrate before the first read.
+    /// Local HEAD; a received DAG initializes its local branch before the first read.
     pub fn head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
         Ok(self
             .main_line(
@@ -612,8 +612,8 @@ impl Vault {
 
     /// The local HEAD as it stands, the pointer read alone: no migration,
     /// no write transaction and no canonical-chain walk, where
-    /// [`Self::head`] migrates a legacy conversation first and reads its
-    /// main line. `None` for a conversation that has adopted no HEAD
+    /// [`Self::head`] initializes a received DAG's local branch first and reads
+    /// its main line. `None` for a conversation that has adopted no HEAD
     /// (FIX 10367).
     ///
     /// # Errors

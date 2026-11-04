@@ -186,6 +186,17 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
+    /// The same target guard and retained-denial behavior, with an atomic
+    /// follow-up after this batch's writes. A follow-up error rolls back the
+    /// batch and its allow receipts, as the existing checker terminal does.
+    pub(crate) fn commit_with_target_guard_and_then(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(None, None, guard, after_apply, None)
+    }
+
     /// Promotion's checker-aware terminal owns the transaction so a preflight
     /// refusal commits only its actual receipt through the ordinary batch path.
     /// The checker runs once, before any batch writes. Promotion's `after_apply`

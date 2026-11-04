@@ -105,8 +105,9 @@ impl Vault {
     /// owner ([`Vault::turn_doors_owner`]) writes only into a conversation
     /// its own lane reads, judged in the batch's own writer (FIX 5939); the
     /// owner writes as before. Such a TURN sits in no private thread: its
-    /// thread keys are refused here, and its one edge is to the
-    /// conversation, which no thread holds. Nor does it put over a row its
+    /// thread keys are refused here. A fresh TURN joins the conversation's
+    /// actual local HEAD in this same writer; a re-put keeps its placement.
+    /// Nor does it put over a row its
     /// lane does not read: an id it names that a stored row holds is judged
     /// against that row first, in the same writer, before the put or its
     /// ChildOf lands (FIX 6068).
@@ -217,6 +218,7 @@ impl Vault {
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
         let outside = std::cell::Cell::new(false);
+        let existed = std::cell::Cell::new(false);
         let committed = stage_core_put(
             self.batch(),
             &id,
@@ -227,13 +229,32 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation, &id)? {
-                return Ok(());
-            }
-            outside.set(true);
-            Err(crate::Error::EntityNotFound)
-        });
+        .commit_with_target_guard_and_then(
+            |txn| {
+                if admits(txn, &conversation, &id)? {
+                    existed.set(crate::ports::EntityStoreRead::port_entity_present(
+                        &self.store,
+                        txn,
+                        &id,
+                    )?);
+                    return Ok(());
+                }
+                outside.set(true);
+                Err(crate::Error::EntityNotFound)
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::join_core_turn_in_txn(
+                        self,
+                        txn,
+                        &conversation,
+                        id,
+                        times.learned_at,
+                    )?;
+                }
+                Ok(())
+            },
+        );
         if outside.get() {
             return Ok(None);
         }

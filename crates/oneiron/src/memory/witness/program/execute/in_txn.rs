@@ -75,6 +75,17 @@ impl Memory<'_> {
                 Landed::Overlay { segment, aliases }
             }
         };
+        if matches!(sink, WitnessSink::Base(_))
+            && matches!(admission.turn, AdmittedTurn::Mint { .. })
+        {
+            crate::conversation_dag::join_core_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.conversation_id,
+                plan.turn_id,
+                plan.learned_at,
+            )?;
+        }
         effect(
             wtxn,
             match &landed {
