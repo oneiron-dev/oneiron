@@ -1,7 +1,7 @@
 //! Owned body descriptor vocabulary and its digest wire representation.
 
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// Where a body's bytes live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

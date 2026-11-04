@@ -3,10 +3,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::entity_id::EntityId;
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::EvidenceSource;
 use crate::claim::learning_predicate::LearningPredicate;
+use crate::entity_id::EntityId;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt};
 use crate::{Error, Result, Vault};
 

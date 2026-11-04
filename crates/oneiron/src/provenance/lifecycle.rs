@@ -1,9 +1,8 @@
 //! Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes.
 
 use super::{
-    EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE,
-    decode_edge_provenance_body, encode_edge_provenance_value,
-    resolve_persisted_actor_class,
+    EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, decode_edge_provenance_body,
+    encode_edge_provenance_value, resolve_persisted_actor_class,
 };
 use crate::Vault;
 use crate::batch::BatchOp;
@@ -17,7 +16,9 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::RwTxn;
 
-pub(crate) use crate::write_envelope::provenance::edge_lifecycle::{ProvenancePrecedence, winner_index};
+pub(crate) use crate::write_envelope::provenance::edge_lifecycle::{
+    ProvenancePrecedence, winner_index,
+};
 
 /// The public `short_id:content_hash` ref of the edge's CURRENT provenance
 /// head: the D14 cohort WINNER among the live `edge.provenance` Claims for
@@ -81,7 +82,9 @@ pub(super) fn closed_cohort_head_short_ref_in(
     vault.claim_short_ref_in(txn, &closed[index].id)
 }
 
-pub(super) use crate::write_envelope::provenance::edge_lifecycle::{close_record_for_supersession, retract_record};
+pub(super) use crate::write_envelope::provenance::edge_lifecycle::{
+    close_record_for_supersession, retract_record,
+};
 
 /// The 26-byte stamp primitive (D10): rewrites ONLY the two hot-flag bytes
 /// at offsets 24/25 of the subject edge's value, preserving the first 24

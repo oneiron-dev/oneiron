@@ -1,14 +1,16 @@
 //! Persisted vector-index metadata and admission vocabulary.
 
-use heed::{RoTxn, RwTxn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
 use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, ManifestDbs, VECTOR_VERSION_KEY};
+use heed::{RoTxn, RwTxn};
 
 pub(crate) mod keys;
 pub(crate) use keys::COUNT_KEY;
-use keys::{ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_EMBEDDING_MODEL_EPOCH_BYTES, ERR_VECTOR_VERSION_BYTES};
+use keys::{
+    ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_EMBEDDING_MODEL_EPOCH_BYTES, ERR_VECTOR_VERSION_BYTES,
+};
 
 pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta().get(txn, VECTOR_VERSION_KEY)? else {
@@ -79,4 +81,3 @@ pub(crate) fn increment_embedding_model_epoch(
 /// Whether a read admits one node a walk scored as a match, judged in the
 /// walk's own transaction. A node it refuses still connects the walk.
 pub(crate) type Admission<'a> = dyn Fn(&RoTxn<'_>, &EntityId) -> Result<bool> + 'a;
-
