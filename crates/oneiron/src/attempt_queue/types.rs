@@ -6,15 +6,11 @@
 //! [`super::cancel`].
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
-use crate::error::{Error, Result};
 
 use super::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
     AttemptLanding, AttemptLandingReserve, AttemptResumePoint,
 };
-use crate::error::ArtifactError;
 
 mod cleanup;
 mod exhaust;
@@ -29,153 +25,14 @@ pub(crate) use hold::AttemptPause;
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
 pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
-const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
 pub(super) const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
 pub(super) use crate::store::attempt_cleanup::ATTEMPT_QUEUE_RETRY_REASON_COUNT;
 
-/// Stable identifier for a queued attempt.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-pub struct AttemptId {
-    pub(super) bytes: [u8; 16],
-}
-
-impl AttemptId {
-    /// Creates a new time-sortable v7 UUID-backed attempt id.
-    #[must_use]
-    pub fn now() -> Self {
-        Self {
-            bytes: Uuid::now_v7().into_bytes(),
-        }
-    }
-
-    /// Returns the raw 16-byte storage key.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.bytes
-    }
-
-    /// Parses a raw 16-byte storage key.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: [u8; 16] = bytes.try_into().map_err(|_| {
-            Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(ERR_ATTEMPT_ID_LEN))
-        })?;
-        Ok(Self { bytes })
-    }
-}
-
-/// `AttemptId` is a foreign (same-crate) value type to any side table that
-/// stores a bare attempt reference as its row's raw 16 bytes (as opposed to
-/// keying on it, which `llm::step::types` already binds via `SideKey`).
-impl crate::side_table::RawValue for AttemptId {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
-        Ok(self.as_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
-        Ok(Self::from_bytes(bytes)?)
-    }
-}
+pub use crate::store::attempt_id::AttemptId;
 
 pub use crate::store::attempt_result::AttemptResultRef;
 
-/// Durable lifecycle state persisted on each attempt row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[non_exhaustive]
-pub enum AttemptState {
-    Queued,
-    Leased,
-    Paused,
-    Completed,
-    Failed,
-    Cancelled,
-    // Append-only: persisted unit-enum variants are encoded by index, so a new
-    // variant may only be added AFTER every existing one. Reordering would
-    // silently re-map already-written rows.
-    /// Minted by [`crate::attempt_queue::AttemptQueue::retry`]: a fresh try
-    /// waiting for its `scheduled_at` instant. Claimable only once
-    /// `now >= scheduled_at`.
-    Scheduled,
-    /// ONE-1896: the worker accepted a stop and is finishing. It still HOLDS
-    /// its lease, so it is neither queued work nor terminal work, and it is
-    /// deliberately not [`Self::Completed`] — a landing is an honest,
-    /// resumable stop, not a delivered result.
-    Landing,
-    /// The executor stopped without delivering a result and without anyone
-    /// stopping it. Terminal, and deliberately not [`Self::Failed`]: nothing
-    /// reported a fault, the work simply stopped being carried. Deliberately
-    /// not [`Self::Cancelled`] either: no operator or authority asked for it.
-    ///
-    /// An abandoned row always names the last durable exhaust it produced
-    /// through [`AttemptRecord::result_ref`], so the stop is auditable even
-    /// though nothing completed.
-    Abandoned,
-}
-
-impl AttemptState {
-    /// Returns the stable wire string for this attempt state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Leased => "leased",
-            Self::Paused => "paused",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Scheduled => "scheduled",
-            Self::Landing => "landing",
-            Self::Abandoned => "abandoned",
-        }
-    }
-
-    /// True while the row can still reach a terminal state, so it still owns
-    /// its advisory dedupe entry.
-    ///
-    /// [`Self::Abandoned`] is absent: it IS a terminal state, so an abandoned
-    /// row keeps no dedupe claim and can never re-enter queued or leased work.
-    pub(super) const fn is_pending(self) -> bool {
-        matches!(
-            self,
-            Self::Queued | Self::Leased | Self::Paused | Self::Scheduled | Self::Landing
-        )
-    }
-
-    /// True for the two states a ready-index row may legitimately sit in.
-    ///
-    /// [`Self::Landing`] is deliberately absent: a landing attempt owns a live
-    /// lease and is doing bounded finishing work, so handing it out as ordinary
-    /// queued work would run it twice.
-    pub(super) const fn is_ready_indexed(self) -> bool {
-        matches!(self, Self::Queued | Self::Scheduled)
-    }
-
-    /// True while a worker holds this row's lease and runtime.
-    #[must_use]
-    pub const fn is_running(self) -> bool {
-        matches!(self, Self::Leased | Self::Landing)
-    }
-
-    /// True once the row can never transition again.
-    #[must_use]
-    pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Failed | Self::Cancelled | Self::Abandoned
-        )
-    }
-}
+pub use crate::store::attempt_state::AttemptState;
 
 pub use crate::store::attempt_inputs::{AttemptEvent, AttemptInterventionKind};
 
@@ -399,14 +256,7 @@ pub enum ClaimOutcome {
     Claimed(AttemptRecord),
 }
 
-/// Input for completing a leased attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompleteAttempt {
-    pub id: AttemptId,
-    pub lease_owner: String,
-    pub attempt_count: u32,
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::CompleteAttempt;
 
 /// Typed complete outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,15 +266,7 @@ pub enum CompleteOutcome {
     AlreadyCompleted(AttemptRecord),
 }
 
-/// Input for failing a leased attempt terminally.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FailAttempt {
-    pub id: AttemptId,
-    pub lease_owner: String,
-    pub attempt_count: u32,
-    pub reason: String,
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::FailAttempt;
 
 /// Typed fail outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,20 +276,7 @@ pub enum FailOutcome {
     AlreadyFailed(AttemptRecord),
 }
 
-/// Input for naming the artifact version a live attempt's result lives in.
-///
-/// Attaching a result is deliberately its own verb rather than a field on
-/// [`CompleteAttempt`]: the exhaust an executor produces is durable BEFORE the
-/// row settles, and an executor that then stops without completing must still
-/// point at it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetAttemptResult {
-    pub id: AttemptId,
-    pub lease_owner: String,
-    pub attempt_count: u32,
-    pub result_ref: AttemptResultRef,
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::SetAttemptResult;
 
 /// Input for abandoning a live attempt: it stopped without delivering, and
 /// nobody stopped it.
@@ -473,18 +302,7 @@ pub enum AbandonOutcome {
     AlreadyAbandoned(AttemptRecord),
 }
 
-/// Input for finalizing a leased attempt and scheduling its next try.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RetryAttempt {
-    pub id: AttemptId,
-    pub lease_owner: String,
-    pub attempt_count: u32,
-    /// Field spelling is retained for source compatibility; it becomes the new
-    /// row's `scheduled_at`.
-    pub backoff_until: u64,
-    pub last_error: Option<String>,
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::RetryAttempt;
 
 /// Typed retry outcome, carrying the newly scheduled try (not the finalized
 /// source, which stays point-readable by its own id).
