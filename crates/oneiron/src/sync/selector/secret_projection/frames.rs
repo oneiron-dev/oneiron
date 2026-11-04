@@ -235,7 +235,10 @@ impl SyncSecretProjection {
                 if !held.is_empty() {
                     return Ok(WindowAdmission::Held(held));
                 }
-                Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?), landings))
+                Ok(WindowAdmission::Admit(
+                    Cow::Owned(joined(&parts)?),
+                    landings,
+                ))
             }
             EncodedBlobMode::Updates => {
                 let Some((scratch, cut)) = with_update(context, encoded) else {
