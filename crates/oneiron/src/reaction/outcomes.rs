@@ -378,8 +378,12 @@ impl ScopedRead<'_> {
                     candidate = candidate.with_world(world);
                 }
                 candidate = candidate.with_relationships(source_scope.rel.clone());
-                if let Some(scope) = &source_scope.scope {
-                    candidate = candidate.with_scope(scope.clone());
+                // The reaction's own initial ClaimOf weight is its birth fact,
+                // not the outcome's: the outcome is born at the default.
+                if let Some(scope) =
+                    crate::claim::without_initial_weight(source_scope.scope.clone())
+                {
+                    candidate = candidate.with_scope(scope);
                 }
                 let candidate = candidate
                     .with_private_reader(prepared.principal)?

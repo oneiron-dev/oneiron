@@ -94,6 +94,9 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        // FIX 11000: stays None until #4344 threads births
+                        // through commit.rs/preflight; incomplete anchors.
+                        pending_prompt: None,
                     },
                     &policy,
                     crate::store::GateWriteMode {
@@ -145,6 +148,8 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                     defer_metrics_until_commit: true,
                                     transition: None,
                                     owner_authored: None,
+                                    // FIX 11000: stays None until #4344.
+                                    pending_prompt: None,
                                 },
                                 &policy,
                                 crate::store::GateWriteMode {
@@ -185,6 +190,8 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        // FIX 11000: stays None until #4344.
+                        pending_prompt: None,
                     },
                     &policy,
                     crate::store::GateWriteMode {
