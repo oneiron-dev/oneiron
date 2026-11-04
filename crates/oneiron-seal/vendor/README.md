@@ -101,3 +101,11 @@
     built, 64 KiB admitted at a time; a refused charge fails the parse as
     `Error::DecodeAdmission`. The xref table admits a map node share per
     entry, and `Xref::merge_admitted` per entry a `/Prev` merge adds.
+
+  - Parsed-container growth (FIX 8446 follow-up): `src/parser/parsed_alloc.rs`
+    admits name/string/array buffers before each allocation or growth, using
+    the existing decode growth helper through the current parse scope. Maps
+    reserve a complete estimated replacement before insertion and refund the
+    unused estimate after growth; truncated containers are already charged.
+    Allocator failures remain typed decode-admission refusals. The parser's
+    existing inline test modules remain untouched.

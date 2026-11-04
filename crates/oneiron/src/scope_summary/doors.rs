@@ -274,6 +274,16 @@ pub(crate) fn merge_summary_ref(
     Ok(Some((turn, summary)))
 }
 
+/// Whether TURN `bytes` need a summary-cover read (FIX 11000): true when a
+/// reply summary is present OR the association is malformed. Self-contained
+/// strict wrapper over `codec::reply_summary` so anchor capture needs no
+/// visibility widening: `false` proves no Vault cover is needed, `true`
+/// (present or malformed) means incomplete anchors. Infallible by mapping
+/// malformed to `true`.
+pub(crate) fn turn_needs_summary_cover(bytes: &[u8]) -> bool {
+    !matches!(super::codec::reply_summary(bytes), Ok(None))
+}
+
 /// A scope's resolved membership, and the records a summary of it reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScopeSources {

@@ -48,7 +48,7 @@ mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
-pub(crate) use lmdb_entity::reindex_named_entities;
+pub(crate) use lmdb_entity::{indexes_named_entity, reindex_named_entities};
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
@@ -62,8 +62,8 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_readable_in_txn, raw_readable_apart_from_use_in_txn, raw_readable_in_txn,
-    withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
+    raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
@@ -82,7 +82,8 @@ pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
     record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
     retire_withdrawn_in_txn, source_has_dependents_in_txn, stage_stale_mark_in_txn, stale_in_txn,
-    withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
+    withdraw_from_lost_source_in_session_txn, withdraw_from_lost_source_in_txn,
+    withdrawn_worlds_in,
 };
 pub use records::*;
 pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
@@ -93,5 +94,6 @@ pub(crate) use time::{
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
 pub(crate) use lmdb_visibility::removed_in_txn;
+pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

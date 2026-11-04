@@ -230,6 +230,39 @@ pub(crate) fn parse_refusal() -> Option<DecodeAdmissionError> {
     PARSE.with(|parse| parse.borrow().as_ref().and_then(|state| state.refused.clone()))
 }
 
+/// The parse scope on this thread, used by the admitted buffer helpers.
+pub(crate) struct ParsedAdmission;
+
+impl DecodeAdmission for ParsedAdmission {
+    fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError> {
+        charge_parsed(bytes)
+    }
+
+    fn release(&self, bytes: usize) {
+        release_parsed(bytes);
+    }
+}
+
+/// Give back a parsed buffer's old allocation as unused parse credit.
+pub(crate) fn release_parsed(bytes: usize) {
+    PARSE.with(|parse| {
+        if let Some(state) = parse.borrow_mut().as_mut()
+            && state.refused.is_none()
+        {
+            state.credit = state.credit.saturating_add(bytes);
+        }
+    });
+}
+
+/// Keep allocator failures terminal and typed, just as admission failures are.
+pub(crate) fn note_parsed_refusal(error: DecodeAdmissionError) {
+    PARSE.with(|parse| {
+        if let Some(state) = parse.borrow_mut().as_mut() {
+            state.refused.get_or_insert(error);
+        }
+    });
+}
+
 /// Bytes `len` elements of `T` take, if one allocation can hold them.
 fn layout_bytes<T>(len: usize) -> Option<usize> {
     len.checked_mul(size_of::<T>()).filter(|&bytes| bytes <= isize::MAX as usize)

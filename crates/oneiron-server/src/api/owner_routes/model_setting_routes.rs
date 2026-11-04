@@ -10,7 +10,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -24,6 +24,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/models",
                 summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -33,6 +34,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/models",
                 summary: "Sets the switch; the next Responses turn reads it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    model_settings_schema,
+                    model_settings_schema,
+                )),
             },
             post(put),
         ),

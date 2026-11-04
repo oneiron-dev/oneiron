@@ -18,7 +18,7 @@ use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use oneiron::memory::DreamerDecidedCandidateView;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -36,6 +36,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/candidate-decisions",
                 summary: "Every candidate one Dreamer attempt decided a correction for, with its kept decisions: ids and decisions only.",
                 row: None,
+                shape: None,
             },
             get(candidate_decisions),
         ),
@@ -45,6 +46,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/changes",
                 summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
                 row: None,
+                shape: None,
             },
             get(changes),
         ),
@@ -54,6 +56,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/revert",
                 summary: "The owner's revert of one Dreamer change, with one receipt.",
                 row: None,
+                shape: Some(RestShape::json(
+                    revert_change_body_schema,
+                    change_reverted_schema,
+                )),
             },
             post(revert),
         ),
@@ -63,6 +69,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/excluded-conversations",
                 summary: "Replaces the conversations the Dreamer must never consolidate. Answers the stored row.",
                 row: None,
+                shape: Some(RestShape::json(
+                    excluded_conversations_body_schema,
+                    excluded_conversations_schema,
+                )),
             },
             post(replace_excluded_conversations),
         ),
@@ -72,6 +82,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/pause",
                 summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    dreamer_pause_body_schema,
+                    dreamer_paused_schema,
+                )),
             },
             post(pause_dreamer),
         ),
@@ -81,6 +95,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/resume",
                 summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    dreamer_pause_body_schema,
+                    dreamer_paused_schema,
+                )),
             },
             post(resume_dreamer),
         ),

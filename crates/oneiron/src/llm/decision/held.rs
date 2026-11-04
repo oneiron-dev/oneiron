@@ -79,4 +79,4 @@ impl HumanDecisionQueue for NoPerson {
     }
 }
 
-pub use crate::model_decision::{cut_text, fit_reserve_state, fit_state};
+pub use crate::model_decision::{cut_text, fit_reserve_state, fit_state, fit_state_with_budget};

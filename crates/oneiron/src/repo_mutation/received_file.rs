@@ -131,6 +131,7 @@ impl Vault {
             policy_critiques: Vec::new(),
             queue_review: None,
             status: RepoProposalStatus::Proposed,
+            resolves: None,
             settlement: None,
             operation_seq: None,
             created_at: input.created_at,

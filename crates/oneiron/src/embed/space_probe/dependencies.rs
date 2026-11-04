@@ -21,8 +21,8 @@ use crate::registry::ENTITY_TYPE_TURN;
 
 /// The stored rows a query written from `document` is written from: the rows its words or
 /// bytes are read from, and every record those derive from, walked to the end through
-/// `DerivedFrom` edges, registered source versions, the inputs of row births and a TURN's
-/// messages, each row once.
+/// `DerivedFrom` edges, registered source versions, the inputs of row births and later text
+/// commits, and a TURN's messages, each row once.
 ///
 /// # Errors
 /// A store failure.
@@ -72,6 +72,9 @@ pub(super) fn probe_source_refs_in(
                     .map(|input| input.row),
             );
         }
+        frontier.extend(crate::entity_doc::commit_input_rows_in_txn(
+            vault, txn, &row,
+        )?);
     }
     Ok(sources)
 }

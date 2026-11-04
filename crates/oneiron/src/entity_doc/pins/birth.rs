@@ -51,12 +51,14 @@ pub(crate) fn pin_body_quote_at_birth_in_txn(
         return Ok(false);
     }
     let anchor = super::super::verbs::make_anchor(&born, message, start, end)?;
+    // The pin names the birth's actor, its stamp token resolved (FIX 11964).
+    let actor = doc.birth().actor.token_actor_in(store, txn)?;
     let pin = CitationPin {
         citation: citation.to_hex(),
         entity: message.to_hex(),
         document: head.document,
         anchor,
-        actor: doc.birth().actor,
+        actor,
     };
     ENTITY_DOC_PIN.put(store, txn, &key, &pin)?;
     Ok(true)

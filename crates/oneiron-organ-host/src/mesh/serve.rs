@@ -23,7 +23,7 @@ use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
-use crate::resource_memory::MemoryGrow;
+use crate::resource_memory::{FloorLease, MemoryGrow};
 use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
@@ -217,7 +217,7 @@ impl OrganService {
         // (blind-review P1). Inline bytes lease nothing, as ever.
         let provisional = Instant::now() + STAGED_CALL_PROVISIONAL_WAIT;
         let mut held = Vec::new();
-        if let Some(lease) = self.hold_taken(carried, provisional)? {
+        if let Some(lease) = self.hold_taken_async(carried, provisional).await? {
             held.push(lease);
         }
         let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
@@ -235,7 +235,7 @@ impl OrganService {
                 }),
                 None => None,
             };
-            if let Some(lease) = self.hold_taken(&input.bytes, deadline)? {
+            if let Some(lease) = self.hold_taken_async(&input.bytes, deadline).await? {
                 held.push(lease);
             }
             let bytes = staging.take(&input.bytes)?;
@@ -300,6 +300,23 @@ impl OrganService {
         })
     }
 
+    /// Waits for staged input on a blocking worker, leaving the runtime
+    /// free to deliver the cancel that ends the floor wait.
+    async fn hold_taken_async(
+        &self,
+        carried: &Carried,
+        deadline: Instant,
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
+        let Carried::Staged { .. } = carried else {
+            return Ok(None);
+        };
+        let service = self.clone();
+        let carried = carried.clone();
+        tokio::task::spawn_blocking(move || service.hold_taken(&carried, deadline))
+            .await
+            .map_err(|err| format!("this node's memory floor thread: {err}"))?
+    }
+
     /// A lease of this machine's memory for staged bytes about to be read
     /// back, within the call's deadline; none for bytes that rode inline, or
     /// on a host with no floor.
@@ -307,13 +324,13 @@ impl OrganService {
         &self,
         carried: &Carried,
         deadline: Instant,
-    ) -> Result<Option<Box<dyn Send>>, String> {
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
         let (Carried::Staged { len, .. }, Some(floor)) = (carried, self.host.floor()) else {
             return Ok(None);
         };
         floor
             .0
-            .lease(*len, deadline, &|| false)
+            .lease(*len, deadline, &|| self.cancel.is_cancelled())
             .map(Some)
             .map_err(|refused| format!("this node's memory floor: {refused:?}"))
     }
@@ -394,7 +411,7 @@ struct Forward {
     /// The serving host admits staged answer bytes before they are read.
     service: OrganService,
     /// Answer leases live until the call that made the asks ends.
-    held: std::sync::Mutex<Vec<Box<dyn Send>>>,
+    held: std::sync::Mutex<Vec<Box<dyn FloorLease>>>,
 }
 
 impl Forward {

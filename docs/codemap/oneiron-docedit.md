@@ -13,6 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/emit_revision.rs` | src | s | — | — | Produce one deterministic tracked-change sample for the external Word oracle |
 | `examples/resolve_docx.rs` | src | s | — | — | Resolve a DOCX revision in the pinned fork for an application oracle case |
+| `src/a1.rs` | src | s | 1 struct · 1 fn · 5 crate-vis | A1 | One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full… |
 | `src/bin/deck-gate-cases.rs` | src | s | — | — | `deck-gate-cases`: the engine half of the OF-510 deck gate runner |
 | `src/contract/mod.rs` | src | L | 40 struct · 7 enum · 1 trait · 14 fn · 6 const | AssetMedia, AssetOrigin, Call, ContractError, CreatedSlide, DeckAsset, DeckCreateArgs, DeckCreated +40 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `src/contract/run.rs` | src | m | 1 crate-vis | — | The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals… |
@@ -32,7 +33,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/ladder.rs` | src | m | 4 crate-vis | — | One page through the ladder (ARCH-0077, "Layout selection"): a layout chosen by capability; then a… |
 | `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
-| `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
+| `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const · 1 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
+| `src/docx_body/projection.rs` | src | m | 2 struct · 4 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
 | `src/edit/media.rs` | src | m | 9 crate-vis | — | `set_picture`, `set_notes` and `release_media`: verbs whose write sets reach beyond the slide part |
@@ -50,8 +52,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/structure/tests.rs` | test | m | 1 crate-vis | — | ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete… |
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
 | `src/edit/tests.rs` | test | L | 7 crate-vis | — | ONE-2528 acceptance: per verb, the edit changes only the declared fields and parts (exact part sets), keeps… |
-| `src/edit/text.rs` | src | m | 13 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
+| `src/edit/text.rs` | src | m | 14 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
 | `src/edit/text/build.rs` | src | s | 4 crate-vis | — | The new XML the text mapping writes: a run with new text, a run of the paragraph's end properties, and new… |
+| `src/edit/text/field_cut.rs` | src | s | 1 crate-vis | — | A table cell's field-aware cut (FIX 12227): where the retained text mapping refuses because new text would… |
 | `src/edit/transaction.rs` | src | m | 10 struct · 8 enum · 1 trait · 14 fn · 1 const · 1 re-export | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transaction grammar, reports and runner seam |
 | `src/edit/transaction/run.rs` | src | m | 1 fn · 6 crate-vis | — | Ordered deck transaction execution |
 | `src/edit/wire.rs` | src | m | 4 struct · 5 enum · 2 fn | DeckAnchorCandidate, DeckIdentityAmbiguity, DeckInspection, DeckNativeRefusal, DeckShapeInspection, DeckShapeKind, DeckSlideInspection, DeckStepRefusal +1 | Owned wire forms for the deck edit door (ARCH-0077, "Identities" and "The 23 named refusals"): the native… |
@@ -69,7 +72,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 struct · 1 enum · 15 fn · 16 mod · 5 re-export · 1 crate-vis | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 struct · 1 enum · 15 fn · 16 mod · 5 re-export · 2 crate-vis | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/live/chart_labels.rs` | src | m | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
 | `src/live/conversion.rs` | src | m | 2 enum · 2 fn | Conversion, RebuildReason | What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18) |
 | `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
@@ -106,7 +109,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/oracle_run/variants.rs` | src | s | 18 crate-vis | — | Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated… |
 | `src/live/points.rs` | src | m | 2 struct · 3 enum · 4 crate-vis | Coord, GeomPath, PathCommand, PathFill, PathPoint | A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as… |
 | `src/live/pptx.rs` | src | XL | 23 struct · 7 enum · 27 fn · 3 re-export · 8 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode +22 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
-| `src/live/pptx/chart.rs` | src | m | 2 struct · 4 enum · 2 fn · 3 re-export · 5 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
+| `src/live/pptx/chart.rs` | src | L | 2 struct · 4 enum · 2 fn · 3 re-export · 5 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
 | `src/live/pptx/chart/categories.rs` | src | m | 2 struct · 1 enum · 7 fn · 14 crate-vis | CategoryField, ChartCategories, ChartCategory | A chart's categories (ARCH-0077 :597, "Chart categories and series \| Ordered ids over one canonical dataset |
 | `src/live/pptx/chart/families.rs` | src | m | 2 struct · 4 enum · 3 fn · 9 crate-vis | BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents | A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and… |
 | `src/live/pptx/chart/special.rs` | src | s | 2 struct · 3 enum · 12 crate-vis | OfPieType, SplitType, StockOrder, StockRoles, SurfaceBand | A live chart's stock, surface and of-pie settings (OF-510, FIX 3493 D9c), held on each plot's own… |
@@ -161,7 +164,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/patch.rs` | src | s | 3 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 4 crate-vis | — | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | m | 8 re-export | — | SpreadsheetML workbook read and projection seam |
+| `src/xlsx_body.rs` | src | m | 9 re-export | — | SpreadsheetML workbook read and projection seam |
 | `src/xlsx_body/attachments.rs` | src | m | 5 crate-vis | — | Drawing, note, table and slicer changes after an axis edit |
 | `src/xlsx_body/axis.rs` | src | s | 4 crate-vis | — | Shared-formula expansion and worksheet axis changes |
 | `src/xlsx_body/coordinates.rs` | src | m | 1 crate-vis | — | Coordinate XML rewrites after an axis edit |
