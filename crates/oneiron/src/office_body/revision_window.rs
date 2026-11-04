@@ -685,12 +685,12 @@ impl Vault {
                 effects: Vec::new(),
                 rebind_frontier: None,
             };
-            EXPORTS.put(
-                &self.store,
-                wtxn,
-                &version_key(artifact, version.version),
-                &record,
-            )?;
+            let export_key = version_key(artifact, version.version);
+            EXPORTS.put(&self.store, wtxn, &export_key, &record)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            if let Some(token) = record.token.as_deref() {
+                author_token::index::note_export_put(&self.store, wtxn, &export_key, token)?;
+            }
             for (index, binding) in projection.authors.iter().enumerate() {
                 let key = (*artifact, version.version, index as u64);
                 // Erased-wins at commit time (FIX 595 review): a contributor
@@ -703,6 +703,7 @@ impl Vault {
                     binding.actor = None;
                 }
                 EXPORT_AUTHORS.put(&self.store, wtxn, &key, &binding)?;
+                author_token::index::note_author_put(&self.store, wtxn, &key, &binding.token)?;
             }
             Ok(OfficeBodyExport {
                 frontier: head.frontier.clone(),
