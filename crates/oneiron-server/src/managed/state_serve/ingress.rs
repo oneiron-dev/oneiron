@@ -355,14 +355,9 @@ async fn run_admitted_request(
     // transition so their completion receipt reports what they actually did.
     let lifecycle_observation = match (request.method().as_str(), request.uri().path()) {
         ("GET", "/api/health") => true,
-        ("POST", path) => matches!(
-            path,
-            "/v1/core/facade/vault.slim.policy"
-                | "/v1/core/facade/vault.slim.state"
-                | "/v1/core/facade/vault.slim.resume_step"
-                | "/v1/core/facade/vault.slim.drop_heavy"
-                | "/v1/core/facade/vault.slim.resume"
-        ),
+        ("POST", path) => path
+            .strip_prefix("/v1/core/facade/")
+            .is_some_and(crate::api::is_slim_lifecycle_observation),
         _ => false,
     };
     if !lifecycle_observation && let Err(error) = state.server.vault().resume_from_slim_on_inbound()
