@@ -508,11 +508,16 @@ impl OfferLadder {
 
     /// Bind one traceless turn without retained cooldowns, fallback logs or
     /// receipts. Only the house target keeps the host's configured prompt.
+    /// Carries the selected rung's managed worker, if any (FIX 9199).
     pub(crate) fn anonymous_call(
         &self,
         request: LlmRequest,
         include_prompt: bool,
-    ) -> LlmResult<(LlmRequest, ServedOffer)> {
+    ) -> LlmResult<(
+        LlmRequest,
+        ServedOffer,
+        Option<oneiron_driver::InferenceWorker>,
+    )> {
         self.admits(&request)?;
         let routes = self.rests.world_routes(&request);
         if !self.route_admitted(&routes, 0) {
@@ -530,7 +535,8 @@ impl OfferLadder {
         if !include_prompt {
             rung.prompt = None;
         }
-        Ok((rung.bind(request), rung.offer))
+        let worker = self.managed_worker(0);
+        Ok((rung.bind(request), rung.offer, worker))
     }
 
     /// How many provider calls a call that fails makes on one pass of its
