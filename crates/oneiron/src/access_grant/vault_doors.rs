@@ -8,7 +8,9 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
 
-use super::codec::{decode_access_grant_body, encode_access_grant_body, invalid_grant};
+use super::codec::{decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body,
+    erased_grant, invalid_grant,
+};
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;
 
@@ -56,7 +58,14 @@ impl Vault {
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
             && matches!(
-                decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope,
+                match decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+                    Ok(grant) => grant.scope,
+                    // Inert history keeps its terms: judge them as live
+                    // ones (FIX 4981), never raw-error on erased bodies.
+                    Err(_) => {
+                        decode_erased_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope
+                    }
+                },
                 AccessGrantScope::ChannelIdentity { .. }
                     | AccessGrantScope::DiaryCoreference { .. }
             )
@@ -183,7 +192,13 @@ impl Vault {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
-            } => decode_access_grant_body(&body)?,
+            } => match decode_access_grant_body(&body) {
+                Ok(grant) => grant,
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
+                }
+                Err(error) => return Err(error),
+            },
             LiveEntityRow::Live { entity_type, .. } => {
                 return Err(Error::InvalidEntityType(entity_type));
             }
@@ -218,7 +233,13 @@ impl Vault {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
-            } => Some(decode_access_grant_body(&body)?),
+            } => Some(match decode_access_grant_body(&body) {
+                Ok(grant) => grant,
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
+                }
+                Err(error) => return Err(error),
+            }),
             LiveEntityRow::Live { entity_type, .. } => {
                 return Err(Error::InvalidEntityType(entity_type));
             }
