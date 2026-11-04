@@ -65835,7 +65835,7 @@ pub struct ChannelIdentityReleaseRequest {
     pub request_ref: Option<String>,
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext`.
+/// `oneiron_authority::channel_selection_vocabulary::RelationshipContext`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RelationshipContext {
     #[serde(rename = "work_deal")]
@@ -65881,7 +65881,7 @@ pub enum SelectionRuleScope {
     },
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace`.
+/// `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChannelIdentityFace {
     #[serde(rename = "delegated_owner_account")]
@@ -65898,7 +65898,7 @@ pub enum ChannelIdentityFace {
     NamedGroupParticipant,
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind`.
+/// `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelectionRuleWriterKind {
     #[serde(rename = "system_default")]

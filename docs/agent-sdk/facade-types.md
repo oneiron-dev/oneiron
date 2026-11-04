@@ -8137,13 +8137,13 @@ export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: Entit
 export type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest` */
 export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null }
-/** `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext` */
+/** `oneiron_authority::channel_selection_vocabulary::RelationshipContext` */
 export type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space"
 /** `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope` */
 export type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string }
-/** `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace` */
+/** `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace` */
 export type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant"
-/** `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind` */
+/** `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind` */
 export type SelectionRuleWriterKind = "system_default" | "owner" | "agent"
 /** `oneiron::channel_identity_selection::selection_rules::ChannelIdentitySelectionRule` */
 export type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind }
