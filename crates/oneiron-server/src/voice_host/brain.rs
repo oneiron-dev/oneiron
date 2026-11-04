@@ -158,6 +158,8 @@ struct ModelCallCapture {
     ladder: Arc<OfferLadder>,
     run: RunAdmission,
     request: oneiron::LlmRequest,
+    room: Option<EntityId>,
+    no_record_at_arrival: bool,
 }
 
 /// What opening a turn gives: its stream, whether it heard outside context,
@@ -309,11 +311,15 @@ impl ChatBrain {
             .ladder
             .stream(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
+        let room = self.bindings.room;
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let capture = ModelCallCapture {
             vault: Arc::clone(vault),
             ladder: Arc::clone(&admitted.ladder),
             run,
             request: admitted.request,
+            room,
+            no_record_at_arrival,
         };
         let Some(memories) = memories else {
             return Ok((stream, !self.foreign.is_empty(), heard, said_from, capture));
@@ -697,12 +703,17 @@ impl Turn {
                         reply_assertions: Default::default(),
                         token_scores: None,
                     };
+                    let no_record = self.capture.no_record_at_arrival
+                        || self.capture.room.is_some_and(|room| {
+                            self.capture.vault.room_has_unrecorded_stretch(room)
+                        });
                     crate::api::llm::record_raw_response(
                         self.capture.vault.as_ref(),
                         &self.capture.ladder,
                         &self.capture.run,
                         &self.capture.request,
                         &response,
+                        no_record,
                     );
                     break BrainEvent::Done;
                 }

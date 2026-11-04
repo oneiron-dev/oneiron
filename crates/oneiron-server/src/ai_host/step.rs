@@ -702,6 +702,8 @@ impl StepRunner {
                 });
             }
         };
+        let no_record = no_record_at_arrival
+            || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         record_workflow_response(
             vault,
             &call.ladder,
@@ -712,6 +714,7 @@ impl StepRunner {
             attempt,
             actor,
             tool_rounds,
+            no_record,
         );
         let text: String = response
             .message
