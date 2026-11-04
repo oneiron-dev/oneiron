@@ -288,6 +288,10 @@ impl Vault {
             .map_err(|error| {
                 docx_error(&error, "the body could not be projected onto its package")
             })?;
+        // Existing deletions and move sources stay locked in the body, but
+        // are absent from accept-all order. Read that visibility without
+        // resolving any source revisions in the exported package.
+        let source_visible: HashSet<String> = session.accepted_id_order().into_iter().collect();
         // Native ids stay stable in memory: imported ids address themselves
         // until a move replaces one with its copy's id.
         let mut native: HashMap<String, String> = HashMap::new();
@@ -579,7 +583,9 @@ impl Vault {
                     let mut expected = Vec::with_capacity(state.blocks.len());
                     for block in &state.blocks {
                         let id = block.id.as_str();
-                        if !block.imported && !surviving.contains(id) {
+                        if (block.imported && !source_visible.contains(id))
+                            || (!block.imported && !surviving.contains(id))
+                        {
                             continue;
                         }
                         expected.push(native_id(&native, id)?);
@@ -597,7 +603,9 @@ impl Vault {
                 let mut expected = Vec::with_capacity(state.blocks.len());
                 for block in &state.blocks {
                     let id = block.id.as_str();
-                    if !block.imported && !surviving.contains(id) {
+                    if (block.imported && !source_visible.contains(id))
+                        || (!block.imported && !surviving.contains(id))
+                    {
                         continue;
                     }
                     expected.push(native_id(&native, id)?);
