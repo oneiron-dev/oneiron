@@ -12,10 +12,10 @@
 
 use heed::{RoTxn, RwTxn};
 
-use crate::store::housekeeping_schedule::HousekeepingSweep;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::housekeeping_schedule::HousekeepingSweep;
 use crate::{EntityId, Vault};
 
 type WakeKey = ([u8; 1], u64, EntityId);
