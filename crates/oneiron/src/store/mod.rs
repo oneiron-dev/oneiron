@@ -247,6 +247,7 @@ pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;
 pub(crate) mod secret_name_index;
+pub(crate) mod side_table_erase_scan;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
