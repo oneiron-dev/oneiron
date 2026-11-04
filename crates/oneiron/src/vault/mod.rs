@@ -8,8 +8,8 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_refs;
-pub(crate) mod entity_view;
 pub(crate) mod entity_revision;
+pub(crate) mod entity_view;
 pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
