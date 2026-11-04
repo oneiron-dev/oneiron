@@ -4,7 +4,7 @@ use super::SkillRole;
 use crate::attempt_queue::AttemptRecord;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, run_graph_question_with_proposals,
+    AnswerRecord, GraphAnswerer, run_graph_question_with_current,
 };
 use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};
 use crate::{EntityId, Vault, WriteActor};
@@ -110,6 +110,60 @@ pub fn execute_graph_workflow_skill(
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
+    execute_graph_workflow_skill_inner(
+        vault, leased, skill, reference, executor, principal, actor, answerer, now, None,
+    )
+}
+
+/// The same workflow with the admitted caller's current credential read key.
+/// The host supplies a key built from that caller's `Memory`; source reads
+/// meet it with each saved question's frozen lane in their own transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the host lends the same execution facts and its current reader"
+)]
+pub fn execute_graph_workflow_skill_with_read_key(
+    vault: &Vault,
+    leased: &AttemptRecord,
+    skill: &EntityId,
+    reference: &str,
+    executor: &str,
+    principal: EntityId,
+    actor: WriteActor,
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<crate::claim::ScopedReadActorKey>,
+) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
+    execute_graph_workflow_skill_inner(
+        vault,
+        leased,
+        skill,
+        reference,
+        executor,
+        principal,
+        actor,
+        answerer,
+        now,
+        current.as_ref(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared execution keeps native and credential-backed workflows identical"
+)]
+fn execute_graph_workflow_skill_inner(
+    vault: &Vault,
+    leased: &AttemptRecord,
+    skill: &EntityId,
+    reference: &str,
+    executor: &str,
+    principal: EntityId,
+    actor: WriteActor,
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<&crate::claim::ScopedReadActorKey>,
+) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
     let prepare = || -> Result<GraphSkillProgram> {
         let owner = leased
             .lease_owner
@@ -178,7 +232,7 @@ pub fn execute_graph_workflow_skill(
                 completed.stages[stage].push(None);
                 continue;
             }
-            match run_graph_question_with_proposals(
+            match run_graph_question_with_current(
                 vault,
                 principal,
                 actor,
@@ -187,6 +241,7 @@ pub fn execute_graph_workflow_skill(
                 &proposals,
                 answerer,
                 now,
+                current,
             ) {
                 Ok(result) => completed.stages[stage].push(result.answers.into_iter().next()),
                 Err(failure) => {
