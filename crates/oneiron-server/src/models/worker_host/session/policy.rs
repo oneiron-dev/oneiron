@@ -128,8 +128,9 @@ pub(super) fn describes(manifest: &SegmentManifest, messages: &[JsonValue]) -> b
 
 /// Where the canonical path ends: the manifest's canonical prefix, when it
 /// holds at least one message and everything after it is the ephemeral
-/// tail (the board and the newest user message). A canonical message past
-/// the cut (a log line of unknown provenance) gets the call no session.
+/// tail (the board, newest user message and any continuation suffix). A
+/// canonical message past the cut (a log line of unknown provenance) gets
+/// the call no session.
 pub(super) fn canonical_cut(manifest: &SegmentManifest) -> Option<usize> {
     let cut = manifest.canonical_prefix();
     let tail_ephemeral = manifest
