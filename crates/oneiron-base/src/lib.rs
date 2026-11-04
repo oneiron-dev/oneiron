@@ -15,6 +15,7 @@ pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
 pub mod fusion;
+pub mod human_task_followup;
 pub mod learning_estimate;
 pub mod learning_ranking;
 pub mod limits;
