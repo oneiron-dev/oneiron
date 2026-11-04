@@ -161,18 +161,26 @@ pub(crate) struct ResultRead {
     range: Option<(u64, u64)>,
     state: ArtifactTaintState,
     secret: Option<String>,
+    /// Whether the read is for a caller other than `owner` (a delegated
+    /// source or a finding): refs then stay in the caller's own names and
+    /// handles, which are stable for it, instead of naming the foreign
+    /// occurrence.
+    foreign: bool,
 }
 
 impl ResultRead {
     /// `output` as `name` binds it in run `owner`, narrowed to `range`, the
     /// taint of the run's occurrence of it read now. A range that is not
-    /// inside the body is refused.
+    /// inside the body is refused. `foreign` says the read is for a caller
+    /// other than `owner` (a delegated source or a finding), whose refs stay
+    /// in the caller's own names and handles.
     pub(crate) fn new(
         storage: &ExecutorStorage<'_>,
         owner: EntityId,
         output: CodeRunRawOutput,
         name: Option<String>,
         range: Option<(u64, u64)>,
+        foreign: bool,
     ) -> Result<std::result::Result<Self, Value>> {
         if let Some((start, end)) = range
             && (start >= end || end > output.raw_len)
@@ -189,6 +197,7 @@ impl ResultRead {
             range,
             state,
             secret,
+            foreign,
         }))
     }
 
@@ -212,15 +221,32 @@ impl ResultRead {
         self.state.is_tainted()
     }
 
-    /// The reference a reply names the result by: a range by its parent's
-    /// handle, a whole result by its name, or its handle when it has none.
+    /// The reference a reply names the result by: a range by its owner's
+    /// immutable occurrence, else by the caller's own name or handle when the
+    /// read is foreign; a whole result by its name, or its handle when it has
+    /// none.
     fn reference(&self) -> String {
-        match self.range {
-            Some((start, end)) => format!("{}#{start}-{end}", self.output.handle),
-            None => self
-                .name
+        // A range names the immutable occurrence of its owner at its path,
+        // never a rebindable live name: after `x` is rebound, `x#0-2` reads
+        // the new binding's bytes, but `occurrence:<hex>#0-2` still reads
+        // this occurrence's. A foreign read keeps the caller's own name or
+        // handle instead: a delegation's name and a finding's content handle
+        // are stable for their caller, while the foreign occurrence is not
+        // resolvable there.
+        let legacy = || {
+            self.name
                 .clone()
-                .unwrap_or_else(|| self.output.handle.clone()),
+                .unwrap_or_else(|| self.output.handle.clone())
+        };
+        match self.range {
+            Some((start, end)) if !self.foreign => {
+                match occurrence_ref(self.owner, &self.output.path) {
+                    Some(parent) => format!("{parent}#{start}-{end}"),
+                    None => format!("{}#{start}-{end}", legacy()),
+                }
+            }
+            Some((start, end)) => format!("{}#{start}-{end}", legacy()),
+            None => legacy(),
         }
     }
 
@@ -246,7 +272,7 @@ impl ResultRead {
     /// [`Self::card`] over `body`, the result's bytes where they are held: a
     /// run's storage, or a shadow arm's own store (`arm`).
     fn card_of(&self, body: &dyn ResultBody) -> Result<Value> {
-        let mut card = result_handle_json(&self.output);
+        let mut card = result_handle_json(self.owner, &self.output);
         card["name"] = json!(self.name);
         card["taint"] = json!({"state": taint_word(self.state), "secret": self.secret});
         card["more"] = json!(ResultFacet::ALL.map(ResultFacet::as_str));
@@ -257,6 +283,18 @@ impl ResultRead {
             if let Some(fields) = card.as_object_mut() {
                 fields.remove("lines");
             }
+        }
+        if self.foreign && self.range.is_none() {
+            // A foreign whole-result card stays in the caller's own names:
+            // the parent resolves findings only by content handle, and a
+            // delegation's name is stable for its caller, while the foreign
+            // occurrence is not resolvable there. Foreign ranges already do
+            // this in `reference`.
+            card["ref"] = json!(
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            );
         }
         if self.state.is_tainted() {
             card["preview"] = json!(withheld_preview(self.secret.as_deref()));
@@ -357,15 +395,29 @@ impl ResultRead {
             watch,
         };
         let reference = self.reference();
+        // Chunk and page refs name the same parent the ref above names: the
+        // owner's immutable occurrence, so a page of a renamed result still
+        // reparses to its occurrence, not to the first result with its
+        // bytes. A foreign read keeps the caller's own name or handle, as
+        // its ref does.
+        let parent = if self.foreign {
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.output.handle.clone())
+        } else {
+            occurrence_ref(self.owner, &self.output.path).unwrap_or_else(|| {
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            })
+        };
         let reply = match facet {
             ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
             ResultFacet::Search => search::search(body, &reference, input, &bounds),
             ResultFacet::Query => {
-                query::query(body, &reference, &self.output.handle, input, &bounds, spill)
+                query::query(body, &reference, &parent, input, &bounds, spill)
             }
-            ResultFacet::Chunks => {
-                chunks::chunks(body, &reference, &self.output.handle, input, &bounds)
-            }
+            ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
         }?;
         // A spilled selection is a new body, which its own sink's scan marks.
         Ok(match reply {
@@ -395,7 +447,7 @@ impl ResultRead {
         facet: Option<ResultFacet>,
         input: Value,
     ) -> Result<Value> {
-        let read = match Self::new(storage, owner, output, name, range)? {
+        let read = match Self::new(storage, owner, output, name, range, false)? {
             Ok(read) => read,
             Err(refused) => return Ok(refused),
         };
@@ -422,7 +474,7 @@ impl ResultRead {
 /// (OF-067): a body stored before its scan read every rule may hold a secret
 /// no mark names, so a card or an answer that shows one is withheld as a
 /// marked body's is. The body's row keeps its taint as it was.
-fn unmarked_secret(shown: &Value) -> Option<&'static str> {
+pub(crate) fn unmarked_secret(shown: &Value) -> Option<&'static str> {
     crate::batch::secret_scan::write_payload_hit(shown.to_string().as_bytes())
 }
 
@@ -458,16 +510,30 @@ pub(crate) fn card(
         output.clone(),
         name.map(str::to_owned),
         None,
+        false,
     )? {
         Ok(read) => read.card(storage),
         Err(_) => Err(Error::InvariantViolation("a whole result has no range")),
     }
 }
 
+/// The immutable ref of run `owner`'s occurrence at `path`: `None` when the
+/// derivation fails, which leaves the caller on the legacy name or handle.
+fn occurrence_ref(owner: EntityId, path: &str) -> Option<String> {
+    crate::code_run::ResultOccurrence::owned(owner, path)
+        .ok()
+        .map(|occurrence| format!("occurrence:{}", occurrence.id().to_hex()))
+}
+
 /// The run's result a reference names among `outputs`, and the live name
 /// bound to it. `live` is the run's live names, oldest first. Only the
-/// run's own results resolve: a handle names nothing else.
+/// run's own results resolve: a handle names nothing else. An
+/// `occurrence:<hex>` ref names the run's exact occurrence at `owner`'s
+/// path, never the first occurrence that happens to hold the same bytes:
+/// whole-result cards carry one because the guest prefers `ref` over
+/// `handle`.
 pub(crate) fn resolve<'r>(
+    owner: EntityId,
     mut outputs: impl Iterator<Item = &'r CodeRunRawOutput>,
     live: &[&'r CodeRunResultBinding],
     reference: &JsResultRef,
@@ -475,15 +541,45 @@ pub(crate) fn resolve<'r>(
     match reference {
         JsResultRef::Name(name) => {
             let binding = live.iter().find(|binding| binding.name == *name)?;
-            let output = outputs.find(|output| output.handle == binding.handle)?;
+            let output = outputs.find(|output| {
+                output.handle == binding.handle
+                    && (binding.path.is_empty() || output.path == binding.path)
+            })?;
             Some((output.clone(), Some(binding.name.clone())))
         }
         JsResultRef::Handle(handle) => {
+            if let Some(wanted) = handle.strip_prefix("occurrence:") {
+                let mut selected: Option<CodeRunRawOutput> = None;
+                for output in outputs {
+                    let Ok(occurrence) =
+                        crate::code_run::ResultOccurrence::owned(owner, &output.path)
+                    else {
+                        continue;
+                    };
+                    if occurrence.id().to_hex() == wanted {
+                        selected = Some(output.clone());
+                        break;
+                    }
+                }
+                let output = selected?;
+                let name = live
+                    .iter()
+                    .rev()
+                    .find(|binding| {
+                        binding.handle == output.handle
+                            && (binding.path.is_empty() || binding.path == output.path)
+                    })
+                    .map(|binding| binding.name.clone());
+                return Some((output, name));
+            }
             let output = outputs.find(|output| names_result(output, handle))?;
             let name = live
                 .iter()
                 .rev()
-                .find(|binding| binding.handle == output.handle)
+                .find(|binding| {
+                    binding.handle == output.handle
+                        && (binding.path.is_empty() || binding.path == output.path)
+                })
                 .map(|binding| binding.name.clone());
             Some((output.clone(), name))
         }

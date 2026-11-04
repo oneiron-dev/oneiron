@@ -101,6 +101,22 @@ impl PreparedToolCall {
     pub fn call(&self) -> &ScopedMcpCallContext {
         &self.frozen.call
     }
+    /// The frozen arguments, with header parameters already removed.
+    pub(crate) fn arguments(&self) -> &BTreeMap<String, Value> {
+        &self.frozen.arguments
+    }
+    /// The frozen header values, by canonical header name.
+    pub(crate) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.frozen.headers
+    }
+    /// Whether preparation forced `dry_run` from the mutation intent.
+    pub(crate) fn destructive_hint(&self) -> bool {
+        self.frozen.destructive_hint
+    }
+    /// The mutation intent frozen with the call.
+    pub(crate) fn mutation(&self) -> MutationIntent {
+        self.frozen.mutation
+    }
     /// Whether the approved tool declared itself read-only and not
     /// destructive: retrieval, for its budget class (FIX 8688).
     pub(crate) fn is_read_only(&self) -> bool {
