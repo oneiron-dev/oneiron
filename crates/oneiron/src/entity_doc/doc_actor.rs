@@ -65,8 +65,10 @@ impl DocActor {
         let Self::Actor(token) = self else {
             return Ok(Self::Erased);
         };
-        Ok(crate::provenance::resolve_actor_stamp_in(store, txn, &token)?
-            .map_or(Self::Erased, |actor| Self::Actor(actor.entity_ref())))
+        Ok(
+            crate::provenance::resolve_actor_stamp_in(store, txn, &token)?
+                .map_or(Self::Erased, |actor| Self::Actor(actor.entity_ref())),
+        )
     }
 }
 
