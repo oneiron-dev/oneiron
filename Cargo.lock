@@ -8800,6 +8800,7 @@ dependencies = [
  "arc-swap",
  "blake3",
  "getrandom 0.4.3",
+ "half",
  "heed",
  "oneiron-authority",
  "oneiron-base",

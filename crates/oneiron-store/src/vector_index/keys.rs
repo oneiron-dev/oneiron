@@ -1,8 +1,8 @@
 //! HNSW metadata key/counter literals, error strings, and the one-way prefix.
 
-pub(crate) const ENTRY_POINT_KEY: &[u8] = b"entry_point";
+pub const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 
-pub(crate) const COUNT_KEY: &[u8] = b"count";
+pub const COUNT_KEY: &[u8] = b"count";
 
 /// `hnsw_meta` marker: present (value `[1]`) when the persisted graph
 /// maintains the symmetric-link invariant — every stored link `a → b` has
@@ -13,9 +13,9 @@ pub(crate) const COUNT_KEY: &[u8] = b"count";
 /// `hnsw_neighbors` DB (ONE-325). Vaults without the marker keep the legacy
 /// asymmetric behavior (full-scan delete, full-rebuild refresh) until the
 /// one-time migration runs via `maintain().rebuild_hnsw()`.
-pub(crate) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
+pub const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
 
-pub(crate) const SYMMETRIC_LINKS_ENABLED: u8 = 1;
+pub const SYMMETRIC_LINKS_ENABLED: u8 = 1;
 
 /// `hnsw_meta` marker: present (value `[1]`) when a SLIM shed (ONE-1933
 /// OF-447) dropped the derived graph SHAPE — `hnsw_neighbors`, [`COUNT_KEY`],
@@ -29,74 +29,67 @@ pub(crate) const SYMMETRIC_LINKS_ENABLED: u8 = 1;
 /// surviving vectors under the vault's persisted [`LinkDiscipline`]. A
 /// present-but-malformed marker is the existing fail-closed
 /// [`Error::CorruptedIndex`] direction, never a silent "not dropped".
-pub(crate) const DROPPED_REBUILDABLE_KEY: &[u8] = b"dropped_rebuildable";
+pub const DROPPED_REBUILDABLE_KEY: &[u8] = b"dropped_rebuildable";
 
-pub(crate) const DROPPED_REBUILDABLE_ENABLED: u8 = 1;
+pub const DROPPED_REBUILDABLE_ENABLED: u8 = 1;
 
 /// `hnsw_meta` counter (u64 LE): number of times the localized refresh path
 /// had to fall back to a full symmetric snapshot rebuild. The fallback is an
 /// explicit, measured, rare path (ONE-324 AC10) — this counter is how it is
 /// measured.
-pub(crate) const REFRESH_FALLBACK_REBUILDS_KEY: &[u8] = b"refresh_fallback_rebuilds";
+pub const REFRESH_FALLBACK_REBUILDS_KEY: &[u8] = b"refresh_fallback_rebuilds";
 
 /// `hnsw_meta` counter (u64 LE): number of legacy full-snapshot rebuilds
 /// this vault has run (pre-migration refresh contract). Observability for
 /// the batched-rebuild coalescing guarantee (ONE-324 AC11): one transaction
 /// bumps this at most once no matter how many vector refreshes it carries.
-pub(crate) const LEGACY_REBUILDS_KEY: &[u8] = b"legacy_snapshot_rebuilds";
+pub const LEGACY_REBUILDS_KEY: &[u8] = b"legacy_snapshot_rebuilds";
 
-pub(crate) const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
+pub const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
 
-pub(crate) const ERR_ENTRY_POINT_VECTOR_MISSING: &str =
-    "hnsw count > 0 but entry point vector is missing";
+pub const ERR_ENTRY_POINT_VECTOR_MISSING: &str = "hnsw count > 0 but entry point vector is missing";
 
-pub(crate) const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
+pub const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
 
-pub(crate) const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
+pub const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 
-pub(crate) const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
+pub const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 
-pub(crate) const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
+pub const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
 
-pub(crate) const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
+pub const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
 
-pub(crate) const ERR_VECTOR_ROW_TOO_SHORT: &str = "hnsw vector row shorter than scoring dimensions";
+pub const ERR_VECTOR_ROW_TOO_SHORT: &str = "hnsw vector row shorter than scoring dimensions";
 
-pub(crate) const ERR_VECTOR_ROW_MISSING_AT_RESCORE: &str =
+pub const ERR_VECTOR_ROW_MISSING_AT_RESCORE: &str =
     "hnsw vector row disappeared between beam traversal and rescore in one snapshot";
 
-pub(crate) const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
+pub const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
 
-pub(crate) const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
+pub const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
 
-pub(crate) const ERR_EMBEDDING_MODEL_EPOCH_BYTES: &str =
-    "hnsw embedding model epoch bytes are malformed";
+pub const ERR_EMBEDDING_MODEL_EPOCH_BYTES: &str = "hnsw embedding model epoch bytes are malformed";
 
-pub(crate) const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
+pub const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
 
-pub(crate) const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed";
+pub const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed";
 
-pub(crate) const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
+pub const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
 
-pub(crate) const ERR_EXISTING_NODE_ZERO_COUNT: &str = "hnsw node exists but count is zero";
+pub const ERR_EXISTING_NODE_ZERO_COUNT: &str = "hnsw node exists but count is zero";
 
-pub(crate) const ERR_ZERO_COUNT_GRAPH_NOT_EMPTY: &str =
+pub const ERR_ZERO_COUNT_GRAPH_NOT_EMPTY: &str =
     "hnsw metadata says count is zero but graph rows still exist";
 
-pub(crate) const ERR_SYMMETRIC_MARKER_BYTES: &str =
-    "hnsw symmetric-links marker bytes are malformed";
+pub const ERR_SYMMETRIC_MARKER_BYTES: &str = "hnsw symmetric-links marker bytes are malformed";
 
-pub(crate) const ERR_FALLBACK_COUNTER_BYTES: &str =
-    "hnsw refresh fallback counter bytes are malformed";
+pub const ERR_FALLBACK_COUNTER_BYTES: &str = "hnsw refresh fallback counter bytes are malformed";
 
-pub(crate) const ERR_LEGACY_REBUILDS_BYTES: &str =
-    "hnsw legacy rebuild counter bytes are malformed";
+pub const ERR_LEGACY_REBUILDS_BYTES: &str = "hnsw legacy rebuild counter bytes are malformed";
 
-pub(crate) const ERR_ONE_WAY_EXCEPTION_BYTES: &str =
-    "hnsw one-way exception record bytes are malformed";
+pub const ERR_ONE_WAY_EXCEPTION_BYTES: &str = "hnsw one-way exception record bytes are malformed";
 
-pub(crate) const ERR_DROPPED_MARKER_BYTES: &str =
-    "hnsw dropped-rebuildable marker bytes are malformed";
+pub const ERR_DROPPED_MARKER_BYTES: &str = "hnsw dropped-rebuildable marker bytes are malformed";
 
 /// `hnsw_meta` key prefix for one-way-link exception records (ONE-325). When
 /// orphan protection keeps a node's last remaining link `holder -> target`
@@ -111,4 +104,10 @@ pub(crate) const ERR_DROPPED_MARKER_BYTES: &str =
 /// neighborhood-local. The prefix is distinct from every other (short, ASCII)
 /// `hnsw_meta` key, so rebuilds can clear exactly these rows without touching
 /// unrelated metadata.
-pub(crate) const ONE_WAY_EXCEPTION_PREFIX: &[u8] = b"ow1:";
+pub const ONE_WAY_EXCEPTION_PREFIX: &[u8] = b"ow1:";
+
+/// The `hnsw_meta` key of the vector version counter.
+pub const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
+
+/// The `hnsw_meta` key of the embedding model epoch counter.
+pub const EMBEDDING_MODEL_EPOCH_KEY: &[u8] = b"embedding_model_epoch";

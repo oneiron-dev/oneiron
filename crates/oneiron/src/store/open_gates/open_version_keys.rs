@@ -144,9 +144,7 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
 
 pub(super) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 
-pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
-
-pub(crate) const EMBEDDING_MODEL_EPOCH_KEY: &[u8] = b"embedding_model_epoch";
+pub(crate) use oneiron_store::vector_index::keys::{EMBEDDING_MODEL_EPOCH_KEY, VECTOR_VERSION_KEY};
 
 pub(in crate::store) const HNSW_COMPATIBILITY_VERSION: u8 = 3;
 
