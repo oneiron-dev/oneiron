@@ -35,7 +35,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
-use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::error::{ArtifactError, Error, Result};
 
 const EOCD_SIGNATURE: u32 = 0x0605_4b50;
 const CENTRAL_DIR_SIGNATURE: u32 = 0x0201_4b50;
@@ -62,7 +62,7 @@ const MAX_ENTRY_UNCOMPRESSED: u64 = 256 * 1024 * 1024;
 const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 /// The OPC content-type manifest present in every well-formed package.
-pub(super) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
+pub const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
 
 /// Coarse classification of an OPC part for the fidelity law.
 ///
@@ -71,56 +71,56 @@ pub(super) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
 /// XML, anything unrecognized — must survive an edit byte-for-byte
 /// ([passthrough law](super)); a change to one of them is corruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PartClass {
+pub enum PartClass {
     Supported,
     Unknown,
 }
 
 /// One part of an OPC package: its archive path and decompressed bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct OpcPart {
-    pub(crate) name: String,
-    pub(crate) data: Vec<u8>,
+pub struct OpcPart {
+    pub name: String,
+    pub data: Vec<u8>,
 }
 
 /// A decomposed OPC package. Part order mirrors the source central directory
 /// so a read/write round-trip is stable.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct OpcPackage {
+pub struct OpcPackage {
     parts: Vec<OpcPart>,
 }
 
 impl OpcPackage {
-    pub(crate) fn from_parts(parts: Vec<OpcPart>) -> Self {
+    pub fn from_parts(parts: Vec<OpcPart>) -> Self {
         Self { parts }
     }
 
-    pub(crate) fn parts(&self) -> &[OpcPart] {
+    pub fn parts(&self) -> &[OpcPart] {
         &self.parts
     }
 
     /// Returns the decompressed bytes for `name`, if present.
-    pub(crate) fn part(&self, name: &str) -> Option<&[u8]> {
+    pub fn part(&self, name: &str) -> Option<&[u8]> {
         self.parts
             .iter()
             .find(|part| part.name == name)
             .map(|part| part.data.as_slice())
     }
 
-    pub(crate) fn contains(&self, name: &str) -> bool {
+    pub fn contains(&self, name: &str) -> bool {
         self.parts.iter().any(|part| part.name == name)
     }
 
     /// Iterates part names in package order.
-    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+    pub fn names(&self) -> impl Iterator<Item = &str> {
         self.parts.iter().map(|part| part.name.as_str())
     }
 
     /// Inserts or replaces a part, preserving position for replacements. Used
     /// by the write side (fixture sessions today; a production Rust-side
     /// session that repackages parts will promote it).
-    #[cfg(test)]
-    pub(crate) fn upsert(&mut self, name: impl Into<String>, data: Vec<u8>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn upsert(&mut self, name: impl Into<String>, data: Vec<u8>) {
         let name = name.into();
         if let Some(existing) = self.parts.iter_mut().find(|part| part.name == name) {
             existing.data = data;
@@ -132,11 +132,11 @@ impl OpcPackage {
 
 /// Reads an OPC package from ZIP bytes via the central directory.
 ///
-/// Returns [`ArtifactError::EditRoundtripFailed`](crate::error::ArtifactError::EditRoundtripFailed) for anything that is not a package
+/// Returns [`ArtifactError::EditRoundtripFailed`](oneiron_contracts::error::ArtifactError::EditRoundtripFailed) for anything that is not a package
 /// this pipeline can safely reason about — a missing/blank EOCD, a truncated
 /// entry, or an unsupported compression method. Corruption checks upstream
 /// rely on this failing loudly rather than guessing.
-pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
+pub fn read(bytes: &[u8]) -> Result<OpcPackage> {
     read_bounded(
         bytes,
         MAX_ENTRY_UNCOMPRESSED,
@@ -147,10 +147,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
 
 /// The DOCX door resolves these limits from trusted policy rather than using
 /// the spreadsheet reader's independent, fixed legacy ceiling.
-pub(crate) fn read_with_limits(
-    bytes: &[u8],
-    limits: oneiron_docedit::ArchiveLimits,
-) -> Result<OpcPackage> {
+pub fn read_with_limits(bytes: &[u8], limits: crate::ArchiveLimits) -> Result<OpcPackage> {
     if !limits.is_valid() {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "invalid docx archive limits",
@@ -300,8 +297,8 @@ fn read_bounded(
 /// build the copy handed to a session and to construct test fixtures. Until a
 /// production Rust-side session (e.g. umya-spreadsheet) or copy-materialization
 /// path lands, only the fixture session exercises it.
-#[cfg(test)]
-pub(crate) fn write(package: &OpcPackage) -> Vec<u8> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn write(package: &OpcPackage) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     let mut count: u16 = 0;
@@ -365,7 +362,7 @@ pub(crate) fn write(package: &OpcPackage) -> Vec<u8> {
 /// Classifies a part for the fidelity law. Unknown-forcing families (macros,
 /// pivots, charts, custom XML) are checked before the generic `xl/` editable
 /// surface so a pivot part never counts as supported.
-pub(crate) fn classify(name: &str) -> PartClass {
+pub fn classify(name: &str) -> PartClass {
     if is_unknown_forced(name) {
         return PartClass::Unknown;
     }
