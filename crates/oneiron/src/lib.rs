@@ -75,7 +75,7 @@ mod vault;
 pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
-pub mod write_envelope;
+pub use oneiron_store::write_envelope;
 pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
