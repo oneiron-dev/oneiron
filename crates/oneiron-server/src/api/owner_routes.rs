@@ -462,7 +462,7 @@ struct OwnerStatus {
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
-    /// Every sync link since this process started, summed per inner frame
+    /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
     /// The browser readiness a managed `Ping` carries, read from the same
