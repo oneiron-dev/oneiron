@@ -24,6 +24,7 @@ mod consent_wait;
 mod contribution;
 mod coordination_codec;
 mod dispatcher;
+pub mod model_call;
 mod payload;
 mod read_set;
 mod reader;
@@ -100,6 +101,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::model_call::erase_model_call_actor_in_txn;
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -119,10 +121,12 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
+pub use self::storage::ReadWorldUnknown;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -149,13 +153,12 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
-    read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
-    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,

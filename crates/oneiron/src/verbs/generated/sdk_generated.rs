@@ -53,11 +53,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "fetch",
-                crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::WebFetchRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
             ),
             (
                 "crawl",
-                crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::WebCrawlRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebCrawlRequest>(),
             ),
             (
                 "report",
@@ -924,79 +924,79 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.campaign.compliance.install",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceAmendRequest,
+                    crate::campaign::compliance::ComplianceAmendRequest,
                 >(),
             ),
             (
                 "vault.campaign.compliance.amend",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceAmendRequest,
+                    crate::campaign::compliance::ComplianceAmendRequest,
                 >(),
             ),
             (
                 "vault.campaign.compliance.approve",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceApprovalRequest,
+                    crate::campaign::compliance::ComplianceApprovalRequest,
                 >(),
             ),
             (
                 "vault.campaign.compliance.reject",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceApprovalRequest,
+                    crate::campaign::compliance::ComplianceApprovalRequest,
                 >(),
             ),
             (
                 "vault.campaign.compliance.verify",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceVerifyRequest,
+                    crate::campaign::compliance::ComplianceVerifyRequest,
                 >(),
             ),
             (
                 "vault.campaign.compliance.result",
                 crate::code_run::vault_read::request_schema::<
-                    crate::gate::dispatch_compliance::ComplianceResultRequest,
+                    crate::campaign::compliance::ComplianceResultRequest,
                 >(),
             ),
             (
                 "vault.campaign.enroll",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::CampaignEnrollRequest,
+                    crate::campaign::surface::CampaignEnrollRequest,
                 >(),
             ),
             (
                 "vault.campaign.stage.evidence",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::CampaignStageEvidenceRequest,
+                    crate::campaign::surface::CampaignStageEvidenceRequest,
                 >(),
             ),
             (
                 "vault.campaign.unsubscribe",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::CampaignUnsubscribeRequest,
+                    crate::campaign::surface::CampaignUnsubscribeRequest,
                 >(),
             ),
             (
                 "vault.campaign.program.create",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::program::CreateCampaignProgramRequest,
+                    crate::campaign::surface::CreateCampaignProgramRequest,
                 >(),
             ),
             (
                 "vault.campaign.program.read",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::program::CampaignProgramReadRequest,
+                    crate::campaign::surface::CampaignProgramReadRequest,
                 >(),
             ),
             (
                 "vault.campaign.program.update",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::program::UpdateCampaignProgramRequest,
+                    crate::campaign::surface::UpdateCampaignProgramRequest,
                 >(),
             ),
             (
                 "vault.campaign.program.archive",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::campaign_records::program::ArchiveCampaignProgramRequest,
+                    crate::campaign::surface::ArchiveCampaignProgramRequest,
                 >(),
             ),
             (
@@ -1019,37 +1019,37 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.saved_query.create",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryCreateRequest,
+                    crate::campaign::surface::SavedQueryCreateRequest,
                 >(),
             ),
             (
                 "self.saved_query.read",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryReadRequest,
+                    crate::campaign::surface::SavedQueryReadRequest,
                 >(),
             ),
             (
                 "self.saved_query.update",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryUpdateRequest,
+                    crate::campaign::surface::SavedQueryUpdateRequest,
                 >(),
             ),
             (
                 "self.saved_query.archive",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryArchiveRequest,
+                    crate::campaign::surface::SavedQueryArchiveRequest,
                 >(),
             ),
             (
                 "self.saved_query.members",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryMembersRequest,
+                    crate::campaign::surface::SavedQueryMembersRequest,
                 >(),
             ),
             (
                 "self.saved_query.evaluate",
                 crate::code_run::vault_read::request_schema::<
-                    crate::memory::query_records::surface::SavedQueryEvaluateRequest,
+                    crate::campaign::surface::SavedQueryEvaluateRequest,
                 >(),
             ),
             (
@@ -1158,6 +1158,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.inbox.lens",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_inbox_lens::InboxLensRequest,
+                >(),
+            ),
+            (
+                "self.inbox.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemRequest,
+                >(),
+            ),
+            (
+                "self.inbox.done",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemRequest,
+                >(),
+            ),
+            (
+                "self.inbox.later",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxItemLaterRequest,
                 >(),
             ),
             (
@@ -2671,6 +2689,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.legal_holds.lift_and_erase",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
+                "vault.legal_holds.withdraw_erase",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
                 >(),
             ),
             (
@@ -4761,6 +4785,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.skills.callable.amend",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill::helper::CallableAmendRequest,
+                >(),
+            ),
+            (
                 "vault.skills.pack_receipt",
                 crate::code_run::vault_read::request_schema::<SkillPackReceiptRequest>(),
             ),
@@ -4791,13 +4821,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.settings.web_connector.replace",
                 crate::code_run::vault_read::request_schema::<
-                    crate::settings::web_connector::WebConnectorSetting,
+                    crate::web_connector::WebConnectorSetting,
                 >(),
             ),
             (
                 "vault.connectors.web.usage",
                 crate::code_run::vault_read::request_schema::<
-                    crate::settings::web_connector::WebConnectorUsageRead,
+                    crate::web_connector::WebConnectorUsageRead,
                 >(),
             ),
             (
@@ -7384,6 +7414,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.legal_holds.list",
     "vault.legal_holds.log",
     "vault.legal_holds.lift_and_erase",
+    "vault.legal_holds.withdraw_erase",
     "vault.embedding_spaces.list",
     "vault.embedding_spaces.declare",
     "vault.embedding_spaces.bind",
@@ -7599,6 +7630,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.review_slides",
     "vault.artifacts.admit",
     "vault.artifacts.propose_outline",
     "vault.artifacts.outline",
@@ -7886,8 +7918,8 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
         >(),
-        "fetch" => crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::FetchResult>(),
-        "crawl" => crate::code_run::vault_read::request_schema::<crate::memory::web_acquisition::CrawlResult>(),
+        "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
+        "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FeedbackSubjectPreview,
         >(),
@@ -8209,50 +8241,50 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Vec<crate::receipt::admission::AdmissionReceipt>,
         >(),
         "vault.campaign.compliance.install" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceReceipt,
+            crate::campaign::compliance::ComplianceReceipt,
         >(),
         "vault.campaign.compliance.amend" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceReceipt,
+            crate::campaign::compliance::ComplianceReceipt,
         >(),
         "vault.campaign.compliance.approve" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceReceipt,
+            crate::campaign::compliance::ComplianceReceipt,
         >(),
         "vault.campaign.compliance.reject" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceReceipt,
+            crate::campaign::compliance::ComplianceReceipt,
         >(),
         "vault.campaign.compliance.verify" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceReceipt,
+            crate::campaign::compliance::ComplianceReceipt,
         >(),
         "vault.campaign.compliance.result" => crate::code_run::vault_read::request_schema::<
-            crate::gate::dispatch_compliance::ComplianceResult,
+            crate::campaign::compliance::ComplianceResult,
         >(),
         "vault.campaign.enroll" => crate::code_run::vault_read::request_schema::<
-            crate::memory::campaign_records::CampaignEnrollmentReceipt,
+            crate::campaign::surface::CampaignEnrollmentReceipt,
         >(),
         "vault.campaign.stage.evidence" => crate::code_run::vault_read::request_schema::<
-            crate::memory::campaign_records::CampaignStageEvidenceReceipt,
+            crate::campaign::surface::CampaignStageEvidenceReceipt,
         >(),
         "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
-            crate::memory::campaign_records::CampaignUnsubscribeReceipt,
+            crate::campaign::surface::CampaignUnsubscribeReceipt,
         >(),
         "vault.turn_programs.arm" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::TurnProgramRegistration,
         >(),
         "vault.turn_programs.disarm" => crate::code_run::vault_read::request_schema::<bool>(),
         "self.saved_query.create" => crate::code_run::vault_read::request_schema::<
-            crate::memory::query_records::surface::SavedQueryRecordView,
+            crate::campaign::surface::SavedQueryRecordView,
         >(),
         "self.saved_query.read" => crate::code_run::vault_read::request_schema::<
-            crate::memory::query_records::surface::SavedQueryReadResult,
+            crate::campaign::surface::SavedQueryReadResult,
         >(),
         "self.saved_query.update" => crate::code_run::vault_read::request_schema::<
-            crate::memory::query_records::surface::SavedQueryRecordView,
+            crate::campaign::surface::SavedQueryRecordView,
         >(),
         "self.saved_query.archive" => crate::code_run::vault_read::request_schema::<
-            crate::memory::query_records::surface::SavedQueryRecordView,
+            crate::campaign::surface::SavedQueryRecordView,
         >(),
         "self.saved_query.members" => crate::code_run::vault_read::request_schema::<
-            crate::memory::query_records::surface::SavedQueryMembershipPageView,
+            crate::campaign::surface::SavedQueryMembershipPageView,
         >(),
         "self.saved_query.evaluate" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::SavedQueryEvaluationReceipt,
@@ -8982,6 +9014,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.legal_holds.lift_and_erase" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LegalHoldLiftAndErased,
         >(),
+        "vault.legal_holds.withdraw_erase" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LegalHoldErasesWithdrawn,
+        >(),
         "vault.embedding_spaces.list" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::EmbeddingSpacesView,
         >(),
@@ -9637,6 +9672,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
         >(),
+        "vault.artifacts.review_slides" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>,
+        >(),
         "vault.artifacts.admit" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::ArtifactAskOutcome,
         >(),
@@ -9671,13 +9709,13 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
         "vault.settings.web_connector" => crate::code_run::vault_read::request_schema::<
-            crate::settings::web_connector::WebConnectorSetting,
+            crate::web_connector::WebConnectorSetting,
         >(),
         "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
-            crate::settings::web_connector::WebConnectorSetting,
+            crate::web_connector::WebConnectorSetting,
         >(),
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
-            crate::settings::web_connector::WebConnectorUsagePage,
+            crate::web_connector::WebConnectorUsagePage,
         >(),
         "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
@@ -12083,6 +12121,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.inbox.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.done" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.later" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.bootstrap" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14009,6 +14068,13 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.withdraw_erase" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16529,6 +16595,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "vault.skills.callable.amend" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.pack_receipt" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19066,11 +19139,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 decode(value.clone())?;
         }
         "fetch" => {
-            let _input: crate::memory::web_acquisition::WebFetchRequest = decode(value.clone())?;
+            let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
         }
         "crawl" => {
-            let input: crate::memory::web_acquisition::WebCrawlRequest = decode(value.clone())?;
-            crate::memory::web_acquisition::CrawlPageBudget::new(input.page_budget)
+            let input: crate::web_fetch::WebCrawlRequest = decode(value.clone())?;
+            crate::web_fetch::CrawlPageBudget::new(input.page_budget)
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         }
         "report" => {
@@ -19644,54 +19717,54 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
         "vault.campaign.compliance.install" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceAmendRequest =
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.compliance.amend" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceAmendRequest =
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.compliance.approve" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceApprovalRequest =
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.compliance.reject" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceApprovalRequest =
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.compliance.verify" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceVerifyRequest =
+            let _input: crate::campaign::compliance::ComplianceVerifyRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.compliance.result" => {
-            let _input: crate::gate::dispatch_compliance::ComplianceResultRequest =
+            let _input: crate::campaign::compliance::ComplianceResultRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.enroll" => {
-            let _input: crate::memory::campaign_records::CampaignEnrollRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::CampaignEnrollRequest = decode(value.clone())?;
         }
         "vault.campaign.stage.evidence" => {
-            let _input: crate::memory::campaign_records::CampaignStageEvidenceRequest =
+            let _input: crate::campaign::surface::CampaignStageEvidenceRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.unsubscribe" => {
-            let _input: crate::memory::campaign_records::CampaignUnsubscribeRequest =
+            let _input: crate::campaign::surface::CampaignUnsubscribeRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.program.create" => {
-            let _input: crate::memory::campaign_records::program::CreateCampaignProgramRequest =
+            let _input: crate::campaign::surface::CreateCampaignProgramRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.program.read" => {
-            let _input: crate::memory::campaign_records::program::CampaignProgramReadRequest =
+            let _input: crate::campaign::surface::CampaignProgramReadRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.program.update" => {
-            let _input: crate::memory::campaign_records::program::UpdateCampaignProgramRequest =
+            let _input: crate::campaign::surface::UpdateCampaignProgramRequest =
                 decode(value.clone())?;
         }
         "vault.campaign.program.archive" => {
-            let _input: crate::memory::campaign_records::program::ArchiveCampaignProgramRequest =
+            let _input: crate::campaign::surface::ArchiveCampaignProgramRequest =
                 decode(value.clone())?;
         }
         "vault.turn_programs.arm" => {
@@ -19704,22 +19777,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_runner::TurnProgramRebindRequest = decode(value.clone())?;
         }
         "self.saved_query.create" => {
-            let _input: crate::memory::query_records::surface::SavedQueryCreateRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::SavedQueryCreateRequest = decode(value.clone())?;
         }
         "self.saved_query.read" => {
-            let _input: crate::memory::query_records::surface::SavedQueryReadRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::SavedQueryReadRequest = decode(value.clone())?;
         }
         "self.saved_query.update" => {
-            let _input: crate::memory::query_records::surface::SavedQueryUpdateRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::SavedQueryUpdateRequest = decode(value.clone())?;
         }
         "self.saved_query.archive" => {
-            let _input: crate::memory::query_records::surface::SavedQueryArchiveRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::SavedQueryArchiveRequest = decode(value.clone())?;
         }
         "self.saved_query.members" => {
-            let _input: crate::memory::query_records::surface::SavedQueryMembersRequest = decode(value.clone())?;
+            let _input: crate::campaign::surface::SavedQueryMembersRequest = decode(value.clone())?;
         }
         "self.saved_query.evaluate" => {
-            let _input: crate::memory::query_records::surface::SavedQueryEvaluateRequest =
+            let _input: crate::campaign::surface::SavedQueryEvaluateRequest =
                 decode(value.clone())?;
         }
         "vault.weave.report" => {
@@ -19790,6 +19863,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.inbox.lens" => {
             let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
+        }
+        "self.inbox.get" => {
+            let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
+        }
+        "self.inbox.done" => {
+            let _input: crate::agent_inbox_lens::InboxItemRequest = decode(value.clone())?;
+        }
+        "self.inbox.later" => {
+            let _input: crate::agent_inbox_lens::InboxItemLaterRequest = decode(value.clone())?;
         }
         "vault.skills.bootstrap" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -20680,6 +20762,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.legal_holds.lift_and_erase" => {
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
+                decode(value.clone())?;
+        }
+        "vault.legal_holds.withdraw_erase" => {
+            let _input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest =
                 decode(value.clone())?;
         }
         "vault.courtesy_delete.send" => {
@@ -21917,6 +22003,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.skills.callable.amend" => {
+            let _input: crate::skill::helper::CallableAmendRequest = decode(value.clone())?;
+        }
         "vault.skills.pack_receipt" => {
             let _input: SkillPackReceiptRequest = decode(value.clone())?;
         }
@@ -21936,10 +22025,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
         "vault.settings.web_connector.replace" => {
-            let _input: crate::settings::web_connector::WebConnectorSetting = decode(value.clone())?;
+            let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
         }
         "vault.connectors.web.usage" => {
-            let _input: crate::settings::web_connector::WebConnectorUsageRead = decode(value.clone())?;
+            let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
         }
         "vault.models.oneironer.bind" => {
             let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
@@ -23684,6 +23773,9 @@ pub fn invoke(
             encode(vault_weave_link_corrections(memory, decode(value)?)?)
         }
         "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
+        "self.inbox.get" => encode(self_inbox_get(memory, decode(value)?)?),
+        "self.inbox.done" => encode(self_inbox_done(memory, decode(value)?)?),
+        "self.inbox.later" => encode(self_inbox_later(memory, decode(value)?)?),
         "vault.skills.bootstrap" => encode(vault_skills_bootstrap(memory, decode(value)?)?),
         "vault.skill_hubs.default.get" => {
             encode(vault_skill_hubs_default_get(memory, decode(value)?)?)
@@ -24294,6 +24386,9 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.legal_holds.withdraw_erase" => {
+            encode(vault_legal_holds_withdraw_erase(memory, decode(value)?)?)
         }
         "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
         "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
@@ -24960,6 +25055,9 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "vault.skills.callable.amend" => {
+            encode(vault_skills_callable_amend(memory, decode(value)?)?)
+        }
         "vault.skills.pack_receipt" => encode(vault_skills_pack_receipt(memory, decode(value)?)?),
         "vault.skills.outcomes.project" => {
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
@@ -25975,15 +26073,15 @@ pub fn vault_commitments_supersede(
 }
 pub fn fetch(
     memory: &Memory<'_>,
-    input: crate::memory::web_acquisition::WebFetchRequest,
-) -> MemoryResult<crate::memory::web_acquisition::FetchResult> {
+    input: crate::web_fetch::WebFetchRequest,
+) -> MemoryResult<crate::web_fetch::FetchResult> {
     crate::task_verb::sdk::host_only(memory, "fetch", &input)
 }
 pub fn crawl(
     memory: &Memory<'_>,
-    input: crate::memory::web_acquisition::WebCrawlRequest,
-) -> MemoryResult<crate::memory::web_acquisition::CrawlResult> {
-    crate::memory::web_acquisition::CrawlPageBudget::new(input.page_budget)
+    input: crate::web_fetch::WebCrawlRequest,
+) -> MemoryResult<crate::web_fetch::CrawlResult> {
+    crate::web_fetch::CrawlPageBudget::new(input.page_budget)
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     crate::task_verb::sdk::host_only(memory, "crawl", &input)
 }
@@ -27349,8 +27447,8 @@ pub fn vault_kv_namespaces(
 }
 pub fn vault_campaign_compliance_install(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceAmendRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceReceipt> {
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
     memory.compliance_install_as(
         &memory.embedded_owner("vault.campaign.compliance.install")?,
         &input,
@@ -27358,14 +27456,14 @@ pub fn vault_campaign_compliance_install(
 }
 pub fn vault_campaign_compliance_amend(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceAmendRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceReceipt> {
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
     memory.compliance_amend(&input)
 }
 pub fn vault_campaign_compliance_approve(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceApprovalRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceReceipt> {
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
     memory.compliance_approve_as(
         &memory.embedded_owner("vault.campaign.compliance.approve")?,
         &input,
@@ -27373,8 +27471,8 @@ pub fn vault_campaign_compliance_approve(
 }
 pub fn vault_campaign_compliance_reject(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceApprovalRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceReceipt> {
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
     memory.compliance_reject_as(
         &memory.embedded_owner("vault.campaign.compliance.reject")?,
         &input,
@@ -27382,8 +27480,8 @@ pub fn vault_campaign_compliance_reject(
 }
 pub fn vault_campaign_compliance_verify(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceVerifyRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceReceipt> {
+    input: crate::campaign::compliance::ComplianceVerifyRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
     memory.compliance_verify_as(
         &memory.embedded_owner("vault.campaign.compliance.verify")?,
         &input,
@@ -27391,50 +27489,50 @@ pub fn vault_campaign_compliance_verify(
 }
 pub fn vault_campaign_compliance_result(
     memory: &Memory<'_>,
-    input: crate::gate::dispatch_compliance::ComplianceResultRequest,
-) -> MemoryResult<crate::gate::dispatch_compliance::ComplianceResult> {
+    input: crate::campaign::compliance::ComplianceResultRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
     memory.compliance_result(&input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::CampaignEnrollRequest,
-) -> MemoryResult<crate::memory::campaign_records::CampaignEnrollmentReceipt> {
+    input: crate::campaign::surface::CampaignEnrollRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignEnrollmentReceipt> {
     memory.campaign_enroll(&input)
 }
 pub fn vault_campaign_stage_evidence(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::CampaignStageEvidenceRequest,
-) -> MemoryResult<crate::memory::campaign_records::CampaignStageEvidenceReceipt> {
+    input: crate::campaign::surface::CampaignStageEvidenceRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignStageEvidenceReceipt> {
     memory.campaign_stage_evidence(&input)
 }
 pub fn vault_campaign_unsubscribe(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::CampaignUnsubscribeRequest,
-) -> MemoryResult<crate::memory::campaign_records::CampaignUnsubscribeReceipt> {
+    input: crate::campaign::surface::CampaignUnsubscribeRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignUnsubscribeReceipt> {
     memory.campaign_unsubscribe(&input)
 }
 pub fn vault_campaign_program_create(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::program::CreateCampaignProgramRequest,
-) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
+    input: crate::campaign::surface::CreateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
     memory.campaign_program_create(&input)
 }
 pub fn vault_campaign_program_read(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::program::CampaignProgramReadRequest,
-) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramReadResult> {
+    input: crate::campaign::surface::CampaignProgramReadRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramReadResult> {
     memory.campaign_program_read(&input)
 }
 pub fn vault_campaign_program_update(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::program::UpdateCampaignProgramRequest,
-) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
+    input: crate::campaign::surface::UpdateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
     memory.campaign_program_update(&input)
 }
 pub fn vault_campaign_program_archive(
     memory: &Memory<'_>,
-    input: crate::memory::campaign_records::program::ArchiveCampaignProgramRequest,
-) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
+    input: crate::campaign::surface::ArchiveCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
     memory.campaign_program_archive(&input)
 }
 pub fn vault_turn_programs_arm(
@@ -27457,37 +27555,37 @@ pub fn vault_turn_programs_rebind(
 }
 pub fn self_saved_query_create(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryCreateRequest,
-) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
+    input: crate::campaign::surface::SavedQueryCreateRequest,
+) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
     memory.create_saved_query(&input)
 }
 pub fn self_saved_query_read(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryReadRequest,
-) -> MemoryResult<crate::memory::query_records::surface::SavedQueryReadResult> {
+    input: crate::campaign::surface::SavedQueryReadRequest,
+) -> MemoryResult<crate::campaign::surface::SavedQueryReadResult> {
     memory.read_saved_query(&input)
 }
 pub fn self_saved_query_update(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryUpdateRequest,
-) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
+    input: crate::campaign::surface::SavedQueryUpdateRequest,
+) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
     memory.update_saved_query(&input)
 }
 pub fn self_saved_query_archive(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryArchiveRequest,
-) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
+    input: crate::campaign::surface::SavedQueryArchiveRequest,
+) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
     memory.archive_saved_query(&input)
 }
 pub fn self_saved_query_members(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryMembersRequest,
-) -> MemoryResult<crate::memory::query_records::surface::SavedQueryMembershipPageView> {
+    input: crate::campaign::surface::SavedQueryMembersRequest,
+) -> MemoryResult<crate::campaign::surface::SavedQueryMembershipPageView> {
     memory.saved_query_members_page(&input)
 }
 pub fn self_saved_query_evaluate(
     memory: &Memory<'_>,
-    input: crate::memory::query_records::surface::SavedQueryEvaluateRequest,
+    input: crate::campaign::surface::SavedQueryEvaluateRequest,
 ) -> MemoryResult<crate::campaign::surface::SavedQueryEvaluationReceipt> {
     crate::task_verb::sdk::host_only(memory, "self.saved_query.evaluate", &input)
 }
@@ -27681,6 +27779,24 @@ pub fn self_inbox_lens(
     input: crate::agent_inbox_lens::InboxLensRequest,
 ) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
     memory.inbox_lens(&input)
+}
+pub fn self_inbox_get(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemView> {
+    memory.inbox_item_get(&input)
+}
+pub fn self_inbox_done(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemMarked> {
+    memory.inbox_item_done(&input)
+}
+pub fn self_inbox_later(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxItemLaterRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxItemMarked> {
+    memory.inbox_item_later(&input)
 }
 pub fn vault_skills_bootstrap(
     memory: &Memory<'_>,
@@ -30013,6 +30129,16 @@ pub fn vault_legal_holds_lift_and_erase(
         input,
     )
 }
+pub fn vault_legal_holds_withdraw_erase(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldWithdrawEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::LegalHoldErasesWithdrawn> {
+    crate::task_verb::sdk::withdraw_legal_hold_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.withdraw_erase")?,
+        input,
+    )
+}
 pub fn vault_courtesy_delete_send(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::CourtesyDeleteSendRequest,
@@ -31984,6 +32110,7 @@ pub fn vault_connectors_read_grants_grant(
     crate::task_verb::sdk::grant_connector_witness_read_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.connectors.read_grants.grant")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }
@@ -31994,6 +32121,7 @@ pub fn vault_connectors_read_grants_revoke(
     crate::task_verb::sdk::revoke_connector_witness_read_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.connectors.read_grants.revoke")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }
@@ -32969,6 +33097,17 @@ pub fn self_skills_callables(
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
 }
+pub fn vault_skills_callable_amend(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::CallableAmendRequest,
+) -> MemoryResult<crate::skill::helper::CallableAmendReceipt> {
+    crate::skill::helper::amend_callable_case(
+        memory.vault(),
+        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_skills_pack_receipt(
     memory: &Memory<'_>,
     input: SkillPackReceiptRequest,
@@ -33014,19 +33153,19 @@ pub fn vault_models_manifest_replace(
 pub fn vault_settings_web_connector(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
-) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::read_web_connector_setting(memory)
 }
 pub fn vault_settings_web_connector_replace(
     memory: &Memory<'_>,
-    input: crate::settings::web_connector::WebConnectorSetting,
-) -> MemoryResult<crate::settings::web_connector::WebConnectorSetting> {
+    input: crate::web_connector::WebConnectorSetting,
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::replace_web_connector_setting(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,
-    input: crate::settings::web_connector::WebConnectorUsageRead,
-) -> MemoryResult<crate::settings::web_connector::WebConnectorUsagePage> {
+    input: crate::web_connector::WebConnectorUsageRead,
+) -> MemoryResult<crate::web_connector::WebConnectorUsagePage> {
     crate::task_verb::sdk::read_web_connector_usage(memory, input)
 }
 pub fn vault_models_oneironer_bind(

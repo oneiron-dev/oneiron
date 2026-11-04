@@ -1,5 +1,7 @@
 //! Diff-to-claim admission path and its test module.
 
+mod continuation;
+mod import_claim;
 mod preflight;
 mod recurrence;
 use super::ingest;
@@ -19,16 +21,20 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
-use crate::ingest::{
-    ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    ImportedEvidenceScreen,
-};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
+use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use continuation::OwedProperties;
+pub use continuation::{
+    ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
+    run_ics_property_continuation,
+};
+pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
+pub(crate) use import_claim::ensure_ics_import_actor;
+pub use import_claim::ics_import_actor_id;
+use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -45,6 +51,12 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
     pub(crate) verdict_fold: VerdictFold,
+    /// The events whose property admissions passed one pass's count, each
+    /// queued a continuation once the feed is applied (FIX 11997, FIX
+    /// 12163) that reads an archived version of its source again. `None`
+    /// admits every property in one pass: a connector source no archived
+    /// version holds.
+    pub(crate) continuations: Option<Vec<OwedProperties>>,
 }
 
 impl PollAdmission<'_> {
@@ -61,7 +73,7 @@ impl PollAdmission<'_> {
         for event in &feed.events {
             self.apply_event(event)?;
         }
-        Ok(())
+        self.queue_property_continuations()
     }
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
@@ -265,6 +277,9 @@ impl PollAdmission<'_> {
 
     /// Reconciles this source's properties, including removing its time kind
     /// when DTSTART disappears. Claims owned by other sources are untouched.
+    /// While the admission keeps continuations, one pass admits at most
+    /// [`super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS`] new
+    /// ones and a queued continuation admits the rest (FIX 11997).
     fn admit_properties(
         &mut self,
         event_ref: EntityId,
@@ -273,16 +288,23 @@ impl PollAdmission<'_> {
         let body = screen_body(event);
         let source_prefix = super::property_claims::source_prefix(self.system);
         let source_record_id = format!("{source_prefix}{}", self.source_record_id(event));
-        super::property_claims::reconcile(
+        let budget = self
+            .continuations
+            .is_some()
+            .then_some(super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS);
+        let owed = super::property_claims::reconcile(
             self.vault,
             event_ref,
             event,
             &source_prefix,
             self.now,
+            budget,
             |predicate, value| {
                 self.admit_screened(event_ref, &body, &source_record_id, predicate, value)
             },
-        )
+        )?;
+        self.signal_property_continuation(event_ref, event, owed);
+        Ok(())
     }
 
     /// Screens and admits the next passport head for `(system × UID)` —
@@ -560,6 +582,7 @@ fn connector_admission<'a>(
         now,
         blob_ref: source,
         verdict_fold: VerdictFold::default(),
+        continuations: None,
     }
 }
 pub(in crate::calendar) fn preflight_connector_feed(
@@ -575,14 +598,43 @@ pub(in crate::calendar) fn preflight_connector_feed(
     }
     Ok(())
 }
-pub(in crate::calendar) fn admit_connector_event(
-    vault: &Vault,
-    system: &str,
-    source: &str,
+/// What a connector admission admits from: the pull record its claims cite,
+/// and the archived resource version a property continuation reads again.
+#[derive(Clone, Copy)]
+pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
+    pub(in crate::calendar) record: &'a str,
+    pub(in crate::calendar) source_version: Option<&'a str>,
+}
+
+impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
+    /// A pull record with no archived version: every property is admitted
+    /// in one pass.
+    fn from(record: &'a str) -> Self {
+        Self {
+            record,
+            source_version: None,
+        }
+    }
+}
+
+/// Admits one connector event as an ICS admission admits it: one pass's
+/// count of new property claims, and a queued continuation reading the
+/// archived resource version again for the rest (FIX 12163).
+pub(in crate::calendar) fn admit_connector_event<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: impl Into<ConnectorAdmissionSource<'a>>,
     event: &ParsedVEvent,
     now: u64,
 ) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).apply_event(event)
+    let source = source.into();
+    let mut admission = connector_admission(vault, system, source.record, now);
+    let Some(source_version) = source.source_version else {
+        return admission.apply_event(event);
+    };
+    admission.continuations = Some(Vec::new());
+    admission.apply_event(event)?;
+    admission.queue_property_continuations_reading(source_version)
 }
 pub(in crate::calendar) fn sweep_connector_resource(
     vault: &Vault,
@@ -663,23 +715,6 @@ fn attachment_text(raw_component: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The evidence entry of a screen that ran; `None` when the dial was off.
-fn imported_screen(
-    verdict: &super::safeguard::CalendarScreenVerdict,
-) -> Option<ImportedEvidenceScreen> {
-    use super::safeguard::CalendarScreenVerdict;
-    let reason_codes = match verdict {
-        CalendarScreenVerdict::Skipped => return None,
-        CalendarScreenVerdict::Clear => Vec::new(),
-        CalendarScreenVerdict::Flagged { reason_codes } => reason_codes.clone(),
-        CalendarScreenVerdict::Indeterminate { reason_code } => vec![reason_code.clone()],
-    };
-    Some(ImportedEvidenceScreen {
-        verdict: verdict_token(verdict).to_owned(),
-        reason_codes,
-    })
-}
-
 /// The EVENT's display name: SUMMARY, with a UID fallback.
 fn event_name(event: &ParsedVEvent) -> &str {
     event
@@ -687,97 +722,6 @@ fn event_name(event: &ParsedVEvent) -> &str {
         .as_deref()
         .filter(|summary| !summary.is_empty())
         .unwrap_or(event.uid.as_str())
-}
-
-/// Admits one typed-value claim through the Gate-backed imported-evidence
-/// door and returns the new claim id. The write actor is the adapter's own
-/// MACHINE entity, ensured on first use.
-pub(in crate::calendar) fn admit_calendar_import_claim(
-    vault: &Vault,
-    event_ref: &EntityId,
-    predicate: &str,
-    value: rmpv::Value,
-    source_record_id: &str,
-    recorded_at: u64,
-) -> crate::Result<EntityId> {
-    admit_calendar_import_claim_screened(
-        vault,
-        event_ref,
-        predicate,
-        value,
-        source_record_id,
-        recorded_at,
-        None,
-    )
-}
-
-/// [`admit_calendar_import_claim`] with the screen the admission ran under,
-/// kept on the claim's evidence.
-fn admit_calendar_import_claim_screened(
-    vault: &Vault,
-    event_ref: &EntityId,
-    predicate: &str,
-    value: rmpv::Value,
-    source_record_id: &str,
-    recorded_at: u64,
-    screen: Option<ImportedEvidenceScreen>,
-) -> crate::Result<EntityId> {
-    let actor = ensure_ics_import_actor(vault, recorded_at)?;
-    let claim_id = vault.store.clock.entity_id()?;
-    let mut admission = ImportedEvidenceAdmission::proposed(
-        ICS_FEED_SOURCE_ID,
-        claim_id,
-        ImportedEvidenceEntityResolution::subject(*event_ref),
-        WriteActor::new(actor, crate::edge::EdgeActorClass::System),
-        TimeRange {
-            start: recorded_at,
-            end: recorded_at,
-        },
-        recorded_at,
-    );
-    if let Some(screen) = screen {
-        admission = admission.with_screen(screen);
-    }
-    crate::ingest::admit_imported_evidence_claim_typed_for_machine(
-        vault,
-        predicate,
-        value,
-        source_record_id,
-        &admission,
-    )?;
-    Ok(claim_id)
-}
-
-/// The adapter's write actor: one deterministic MACHINE entity, minted on
-/// first use. Imported claims attribute to it as `EdgeActorClass::System`.
-pub fn ics_import_actor_id() -> crate::Result<EntityId> {
-    EntityId::derive(CALENDAR_ICS_IMPORT_ACTOR, &[])
-}
-
-pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
-    let id = ics_import_actor_id()?;
-    if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("name"),
-                rmpv::Value::from("calendar ICS feed importer"),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("actor body did not encode"))?;
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_MACHINE,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-            &body,
-        )?;
-    }
-    Ok(id)
 }
 
 fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {

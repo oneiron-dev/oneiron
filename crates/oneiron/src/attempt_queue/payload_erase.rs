@@ -35,6 +35,7 @@
 //! owner's erase leaves the fixed marker there (`model_step`, FIX 10460).
 
 mod asker;
+mod connector_reply;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -275,6 +276,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
+    let mut reply_body_events = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -283,6 +285,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if let Some(event_id) =
+            connector_reply::frozen_connector_event_id_for_erase(&record, actors)
+        {
+            reply_body_events.insert(event_id);
+        }
         if record.kind == TURN_ACTION_ATTEMPT_KIND {
             // A turn action keeps the slip its requester's request was
             // admitted on; the requester's erase takes it out, in every
@@ -331,6 +338,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
     crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
+        store,
+        txn,
+        &reply_body_events,
+    )?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
@@ -716,6 +728,43 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
                     "attempt payload fence: the requester's hard-delete marker could not be read"
                 );
             }
+        }
+        return;
+    }
+    if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+        // A reply job whose agent, actor, receiving identity or known
+        // counterparty bears the marker writes back no event payload
+        // (FIX 10901), as the pass leaves it.
+        let Ok(job) = serde_json::from_slice::<crate::outbound::ConnectorReplyJob>(&record.payload)
+        else {
+            return;
+        };
+        if job.event.payload.is_null() {
+            return;
+        }
+        let mut erased = BTreeSet::new();
+        for id in job.named_ids() {
+            match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id) {
+                Ok(true) => {
+                    erased.insert(id);
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                        "attempt payload fence: a reply job's hard-delete marker could not be read"
+                    );
+                    return;
+                }
+            }
+        }
+        if !erased.is_empty()
+            && crate::outbound::erase_connector_reply_job_payload(record, &erased).is_err()
+        {
+            tracing::warn!(
+                attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                "attempt payload fence: an erased reply job's event payload could not be removed"
+            );
         }
         return;
     }

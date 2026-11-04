@@ -82,10 +82,12 @@ pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };
-pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
+pub use resource_memory::{FloorLease, FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
+#[cfg(unix)]
+pub use sandbox::filesystem_confined;
 pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};

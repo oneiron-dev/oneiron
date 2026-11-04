@@ -498,6 +498,7 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Fatal(FatalLlmError::EmptyResponse) => {
             (StatusCode::BAD_GATEWAY, "empty_response")
         }
+        LlmError::Fatal(FatalLlmError::JobLost) => (StatusCode::BAD_GATEWAY, "job_lost"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
@@ -699,6 +700,11 @@ pub(super) async fn video_job(
             "answer": AiAnswer::new(response),
         }))
         .into_response(),
+        // A lost job reads as its typed loss (FIX 11464): the 502/job_lost
+        // mapping, never the generic 200 failed body.
+        Ok(MediaJobState::Failed {
+            error: error @ LlmError::Fatal(FatalLlmError::JobLost),
+        }) => failure(&error),
         Ok(MediaJobState::Failed { error }) => Json(serde_json::json!({
             "state": "failed",
             "error": {"llm": error},

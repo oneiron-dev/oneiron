@@ -18,7 +18,7 @@ use oneiron::connector_key::{
 use oneiron::outbound_consent::DataClass;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -34,6 +34,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/connectors/consent",
                 summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -43,6 +44,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/connectors/consent",
                 summary: "Grants the named tool rows to one actor (a held call's, a named one, else the owner's) at the installed endpoint.",
                 row: None,
+                shape: Some(RestShape::json(
+                    consent_request_body_schema,
+                    consented_schema,
+                )),
             },
             post(consent),
         ),

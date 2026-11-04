@@ -22,7 +22,10 @@
 //! validator does. Every claim write and sync replay checks a claim against a
 //! descriptor that declares a subject kind or a schema
 //! ([`check_claim_against_descriptor_in_txn`]); the family validators run
-//! unchanged beside it. The seeds declare neither.
+//! unchanged beside it. The seeds are `builtin` of any subject, except the
+//! classes the build compiles as `generic` (`comm.do_not_contact`), whose
+//! check also runs without a store
+//! ([`check_claim_against_compiled_descriptor`]).
 
 use super::claims::claim_class_descriptors;
 use crate::Vault;
@@ -42,8 +45,8 @@ pub use crate::store::claim_descriptors::ClaimValidatorKind;
 pub use crate::store::claim_descriptors::ClaimWriteClass;
 pub use crate::store::claim_descriptors::EnforcementStamp;
 use crate::store::claim_descriptors::{
-    DESCRIPTOR_PUT_OPERATION, compile_schema, compiled_descriptor, compiled_row, hash_hex, invalid,
-    json_value,
+    DESCRIPTOR_PUT_OPERATION, compiled_descriptor, compiled_row, generic_class_seed, hash_hex,
+    invalid, json_value, value_meets_schema,
 };
 
 /// Checks `body` against its class's descriptor where the descriptor
@@ -73,13 +76,47 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
     {
         let value = json_value(&body.value)
             .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
-        if !compile_schema(schema)?.is_valid(&value) {
+        if !value_meets_schema(&body.predicate, schema, &value)? {
             return Err(invalid(
                 "the claim's value does not meet its class's schema",
             ));
         }
     }
     Ok(())
+}
+
+/// Checks `body` against the class the build compiles as `generic` for its
+/// predicate, reading no store: the subject it names, and its value against
+/// the class's schema, compiled once. This is the descriptor check for a
+/// caller without a transaction (the stateless claim validator). A predicate
+/// the build does not compile as `generic` passes here.
+///
+/// # Errors
+/// A subject the class does not admit, a value JSON cannot hold, or one the
+/// schema refuses.
+pub(crate) fn check_claim_against_compiled_descriptor(
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let Some(seed) = generic_class_seed(&body.predicate) else {
+        return Ok(());
+    };
+    if !seed.subject_kind.admits_without_store(&body.subject) {
+        return Err(invalid("the claim's subject is not one its class admits"));
+    }
+    let value = json_value(&body.value)
+        .ok_or_else(|| invalid("the claim's value is not JSON for its class's schema"))?;
+    if !seed.admits_value(&value)? {
+        return Err(invalid(
+            "the claim's value does not meet its class's schema",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the build compiles `predicate`'s class as `generic`: a class
+/// [`check_claim_against_compiled_descriptor`] checks.
+pub(crate) fn is_compiled_generic_claim_predicate(predicate: &str) -> bool {
+    generic_class_seed(predicate).is_some()
 }
 
 pub use crate::store::claim_descriptors::claim_class_descriptor_id;

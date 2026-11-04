@@ -105,8 +105,26 @@ impl Vault {
     /// ([`super::origin_publication_intent_claim`]); `repo.*` is engine-owned,
     /// so this is the one door that writes it.
     pub fn put_origin_publication_intent(&self, request: &OriginPublicationRequest) -> Result<()> {
+        match self.put_origin_publication_intent_checked(request, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(()) => Ok(()),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::put_origin_publication_intent`] whose writer judges `check`
+    /// first (FIX 7179): a refusal writes no intent, so nothing publishes.
+    pub(crate) fn put_origin_publication_intent_checked<R>(
+        &self,
+        request: &OriginPublicationRequest,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<(), R>> {
         let body = super::origin_publication_intent_claim(request)?;
         self.with_write_txn_grouped(|wtxn| {
+            if let Err(refused) = check(wtxn)? {
+                return Ok(Err(refused));
+            }
             // An erased intent is never named again (FIX 3877).
             let id = &request.provenance_claim_id;
             crate::origin::actor_erase::refuse_renaming_in_txn(self, wtxn, id, &body)?;
@@ -116,7 +134,8 @@ impl Vault {
                 &body,
                 request.occurred,
                 request.learned_at,
-            )
+            )?;
+            Ok(Ok(()))
         })
     }
 

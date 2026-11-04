@@ -24,6 +24,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/exports",
             summary: "The vault's export audit (FIX 6427), oldest first: one row per Owner copy of the whole vault or of an off-record room's talk, with its id, what it copied, whose copy it is, when and in what shape. Every live co-Owner reads every row; no row names a thread, a title, a member or a word of what left.",
             row: None,
+            shape: None,
         },
         get(list),
     )]

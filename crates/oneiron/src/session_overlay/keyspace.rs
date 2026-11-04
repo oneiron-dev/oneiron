@@ -291,9 +291,9 @@ impl OverlayState {
 pub(super) fn unbudgeted_row(keyspace: OverlayKeyspace, key: &[u8]) -> bool {
     match keyspace {
         OverlayKeyspace::VaultMeta => [
-            crate::side_table::SCOPE_RECORD.prefix,
-            crate::side_table::PROVENANCE_ROW_BIRTH.prefix,
-            crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER.prefix,
+            oneiron_store::overlay_bookkeeping::SCOPE_RECORD_PREFIX,
+            oneiron_store::overlay_bookkeeping::PROVENANCE_ROW_BIRTH_PREFIX,
+            oneiron_store::overlay_bookkeeping::PROVENANCE_BIRTH_BY_TRIGGER_PREFIX,
             super::short_id::SESSION_SHORT_ID_ORDINAL_KEY,
         ]
         .into_iter()

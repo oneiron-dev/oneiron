@@ -22,8 +22,10 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_NOTE, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
-use crate::secret_custody::{KeptValues, KnownValues, masked_file_in_txn};
+use crate::secret_custody::KeptValues;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::known_value_index::KnownValues;
 use crate::{TimeRange, Vault};
 
 /// The text each record was indexed with, by field.

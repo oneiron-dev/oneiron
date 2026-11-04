@@ -34,6 +34,16 @@ pub struct SelectionConfig {
     pub extraction_parallelism: usize,
     /// Maximum TURNs in one neighbourhood child.
     pub extraction_turns_per_child: usize,
+    /// Maximum Micro partitions extracting side by side in one wake pass;
+    /// their resolves and commits stay serial in admission order.
+    #[serde(default = "default_partition_extraction_parallelism")]
+    pub partition_extraction_parallelism: usize,
+}
+
+/// The shipped partition width, for a stored selection row written before
+/// the field existed.
+fn default_partition_extraction_parallelism() -> usize {
+    8
 }
 impl Default for SelectionConfig {
     fn default() -> Self {
@@ -50,6 +60,7 @@ impl SelectionConfig {
             || self.recency_window_ms == 0
             || self.extraction_parallelism == 0
             || self.extraction_turns_per_child == 0
+            || self.partition_extraction_parallelism == 0
             || !unit(self.cosine_threshold)
             || !unit(self.default_type_prior)
             || self.type_priors.values().any(|n| !unit(*n))
