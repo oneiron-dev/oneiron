@@ -51,11 +51,63 @@ impl WindowsDpapiKeystore {
                 "the key directory is not a directory",
             ));
         }
-        Ok(Self { dir })
+        let store = Self { dir };
+        store.recover_temps();
+        Ok(store)
     }
 
     fn path(&self, slot: &KeystoreSlot) -> PathBuf {
         self.dir.join(format!("{}.dpapi", slot.name()))
+    }
+
+    // Lock files contain no key and stay in place: unlinking one could let two
+    // publishers lock different files for the same slot.
+    fn slot_lock_file(&self, name: &str) -> Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.dir.join(format!(".{name}.lock")))
+            .map_err(io)
+    }
+
+    fn lock_slot(&self, name: &str) -> Result<File> {
+        let lock = self.slot_lock_file(name)?;
+        lock.lock().map_err(io)?;
+        Ok(lock)
+    }
+
+    fn remove_slot_temps(&self, name: &str) -> Result<()> {
+        for entry in fs::read_dir(&self.dir).map_err(io)? {
+            let entry = entry.map_err(io)?;
+            let file_name = entry.file_name();
+            if file_name.to_str().and_then(temp_slot) == Some(name) {
+                remove_if_present(&entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
+    // Opening a readable store must not wait on a publisher or fail because
+    // maintenance could not run. Deletion retries under its lock and reports
+    // every cleanup failure before it can report the slot gone.
+    fn recover_temps(&self) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str().and_then(temp_slot) else {
+                continue;
+            };
+            let Ok(lock) = self.slot_lock_file(name) else {
+                continue;
+            };
+            if lock.try_lock().is_ok() {
+                let _ = self.remove_slot_temps(name);
+            }
+        }
     }
 
     /// Seals and syncs one temporary slot file, removing it if any step fails.
@@ -82,7 +134,7 @@ impl WindowsDpapiKeystore {
         match written {
             Ok(()) => Ok(tmp),
             Err(error) => {
-                let _ = fs::remove_file(&tmp);
+                remove_if_present(&tmp)?;
                 Err(error)
             }
         }
@@ -112,10 +164,12 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// Writes a temporary file, then links it into place. A crash leaves either
     /// no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
+        let _publication = self.lock_slot(slot.name())?;
+        self.remove_slot_temps(slot.name())?;
         let path = self.path(slot);
         let tmp = self.write_temp(slot, secret)?;
         let linked = fs::hard_link(&tmp, &path);
-        let _ = fs::remove_file(&tmp);
+        remove_if_present(&tmp)?;
         match linked {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Err(KeystoreError::AlreadyExists),
@@ -124,16 +178,16 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     }
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
-        match fs::remove_file(self.path(slot)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io(e)),
-        }
+        let _publication = self.lock_slot(slot.name())?;
+        self.remove_slot_temps(slot.name())?;
+        remove_if_present(&self.path(slot))
     }
 
     /// Writes a sealed temporary file, then renames it over the filled slot:
     /// one rename, so a reader opens the old slot or the new one, never none.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let _publication = self.lock_slot(slot.name())?;
+        self.remove_slot_temps(slot.name())?;
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
             Ok(meta) if meta.is_file() => {}
@@ -144,7 +198,7 @@ impl DeviceKeystore for WindowsDpapiKeystore {
         let tmp = self.write_temp(slot, secret)?;
         let renamed = fs::rename(&tmp, &path);
         if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
+            remove_if_present(&tmp)?;
         }
         renamed.map_err(io)?;
         Ok(true)
@@ -156,6 +210,25 @@ impl DeviceKeystore for WindowsDpapiKeystore {
 
     fn assurance(&self) -> KeystoreAssurance {
         KeystoreAssurance::Platform
+    }
+}
+
+// Parse from the right so a slot containing dots cannot match another slot's
+// prefix. Only the temporary names this backend writes are removed.
+fn temp_slot(name: &str) -> Option<&str> {
+    let name = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let (name, nanos) = name.rsplit_once('.')?;
+    nanos.parse::<u128>().ok()?;
+    let (slot, pid) = name.rsplit_once('.')?;
+    pid.parse::<u32>().ok()?;
+    (!slot.is_empty()).then_some(slot)
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io(error)),
     }
 }
 
