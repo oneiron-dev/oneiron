@@ -14,6 +14,7 @@
 pub mod batch;
 pub use oneiron_store::config;
 pub mod deletion;
+pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
@@ -47,6 +48,7 @@ pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
+pub(crate) mod room_codec;
 pub mod registry {
     //! Entity-type registry: defined in `oneiron-contracts` and named through
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
