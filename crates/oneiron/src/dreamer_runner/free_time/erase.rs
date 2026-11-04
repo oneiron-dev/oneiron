@@ -48,6 +48,12 @@ pub(crate) fn erase_free_time_actor_in_txn(
     }
     POLICY.delete(&vault.store, txn, actor)?;
     CLOCK.delete(&vault.store, txn, actor)?;
+    for key in CYCLE.scan_keys(&vault.store, &*txn, actor.as_bytes())? {
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", CYCLE.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &CYCLE.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, txn, &origin, None)?;
+    }
     CYCLE.delete_from(&vault.store, txn, actor.as_bytes())?;
     RECEIPT.delete_from(&vault.store, txn, actor.as_bytes())?;
     scrub_other_rows_in_txn(vault, txn, actor)

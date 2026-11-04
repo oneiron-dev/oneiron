@@ -120,7 +120,8 @@ pub(super) fn dispatch_put_type(
                     &fixed.id,
                     crate::gate::ClaimGateWrite::plain(&body, fixed.write_envelope)
                         .with_transition(fixed.transition)
-                        .with_owner_authored(fixed.owner_authored),
+                        .with_owner_authored(fixed.owner_authored)
+                        .with_pending_prompt(fixed.pending_prompt),
                     policy,
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,

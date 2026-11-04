@@ -3,8 +3,8 @@
 
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
-    PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus, PackKind,
-    PackQualifier, PackSource, SetupCheckQualifier, admission,
+    BuiltinProbeQualifier, PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus,
+    PackKind, PackQualifier, PackSource, SetupCheckQualifier, admission,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -240,7 +240,8 @@ impl Vault {
     /// Bootstrap never trusts an engine-built connector merely because it is
     /// first-party. The exact embedded source must pass a qualifier before
     /// the receipt enters the Active installation catalog: its checked setup
-    /// connection ([`SetupCheckQualifier`]) or a probe suite.
+    /// connection ([`SetupCheckQualifier`]), the host's isolated probes of
+    /// it ([`BuiltinProbeQualifier`]) or a probe suite.
     pub fn qualify_builtin_connector_pack(
         &self,
         channel: &str,
@@ -328,12 +329,15 @@ impl Vault {
     /// same flow (Engine ruling 10-17). Only the engine-seeded receipt of the
     /// exact embedded source moves, and only while the runtime gate would
     /// refuse it: a Candidate, or a receipt an older engine qualified. A pack
-    /// with several connections waits until every one is checked. Returns
-    /// whether the pack is now Active.
+    /// with several connections waits until every one is checked. With the
+    /// host's `verifier`, its isolated probes qualify the pack
+    /// ([`BuiltinProbeQualifier`]), and the checked setup still does when
+    /// they cannot. Returns whether the pack is now Active.
     pub(crate) fn qualify_builtin_on_checked_setup(
         &self,
         pack: &str,
         content_hash: &str,
+        verifier: Option<&dyn crate::connector_key::PackConnectionVerifier>,
     ) -> Result<bool> {
         let Some(channel) = pack.strip_prefix("oneiron.") else {
             return Ok(false);
@@ -376,7 +380,18 @@ impl Vault {
                 return Ok(false);
             }
         }
-        self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?;
+        match verifier {
+            Some(verifier) => self.qualify_builtin_connector_pack(
+                channel,
+                &BuiltinProbeQualifier {
+                    vault: self,
+                    verifier,
+                },
+            )?,
+            None => {
+                self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?
+            }
+        };
         Ok(true)
     }
 

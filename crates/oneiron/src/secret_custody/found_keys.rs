@@ -6,7 +6,7 @@
 //! that found it), its `sc` handle and where it sat. Nothing here holds a
 //! value.
 //!
-//! The owner answers each key with one of four doors, each owner-only and
+//! The owner answers each key with one of five doors, each owner-only and
 //! each with its receipt ([`actions`]):
 //!
 //! - **rotate**: the existing rotate door for the key's custody record
@@ -20,6 +20,9 @@
 //!   record's body or text field gets its value back, a file's mark drops
 //!   the key, and the custody record is revoked. The value stays a kept value of that record
 //!   ([`KeptValues`]): the write door no longer reads it as a hit there.
+//! - **kept as text**: the owner accepts the risk and keeps the marked span as
+//!   text by choice, with the same restore, revoke and kept-value screen but a
+//!   distinct action and receipt reason.
 //!
 //! A batch that masks many keys in one record raises one notice for it. The
 //! mask writes inside the batch's own transaction, where no vault is at
@@ -46,8 +49,10 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
-pub use self::actions::FOUND_KEY_REASON_NOT_A_SECRET;
-pub(crate) use self::actions::{ruled_no_secret_in_txn, settle_found_key_in_txn};
+pub use self::actions::{FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET};
+pub(crate) use self::actions::{
+    kept_as_text_in_txn, ruled_no_secret_in_txn, settle_found_key_in_txn,
+};
 pub use self::page::{FoundKeyCursor, FoundKeyNoticePage};
 
 /// Producer name of a found-key notice.
@@ -87,6 +92,10 @@ pub struct FoundKeyCard {
     pub handle: String,
     /// The custody record's name; the rotate door takes it.
     pub name: String,
+    /// The owner's display-label override, when one is set.
+    pub label: Option<String>,
+    /// The value-free suggestion derived from the scan kind.
+    pub suggested_label: Option<String>,
     /// The scan rule's word for the key, such as `openai_key`.
     pub kind: String,
     /// Where it sat: `body`, `claim`, `text:<field>`, `file`, or a row
@@ -127,6 +136,16 @@ impl FoundKey {
         self.settled
             .as_ref()
             .is_some_and(|settled| settled.action == FoundKeyAction::NotASecret)
+    }
+
+    fn kept_as_text(&self) -> bool {
+        self.settled
+            .as_ref()
+            .is_some_and(|settled| settled.action == FoundKeyAction::KeptAsText)
+    }
+
+    fn kept_by_owner(&self) -> bool {
+        self.ruled_no_secret() || self.kept_as_text()
     }
 }
 
@@ -310,10 +329,10 @@ pub(super) fn found_key_custody_in_txn(
         }))
 }
 
-/// The values the owner ruled no secret, by record: the write door reads
-/// none of them as a hit in its record, and the mask leaves each as
-/// written. Each value is read from its revoked custody record and wiped
-/// when dropped; no digest of it is kept anywhere.
+/// The values the owner ruled no secret or kept as text by choice, by record:
+/// the write door reads none of them as a hit in that record, and the mask
+/// leaves each as written. Each value is read from its revoked custody record
+/// and wiped when dropped; no digest of it is kept anywhere.
 #[derive(Clone, Default)]
 pub(crate) struct KeptValues(HashMap<EntityId, Vec<Zeroizing<Vec<u8>>>>);
 
@@ -341,7 +360,7 @@ impl KeptValues {
                 continue;
             };
             let mut values = Vec::new();
-            for key in found.keys.iter().filter(|key| key.ruled_no_secret()) {
+            for key in found.keys.iter().filter(|key| key.kept_by_owner()) {
                 if let Some(mut rec) = super::read_secret_custody_in_txn(store, txn, &key.custody)?
                 {
                     values.push(Zeroizing::new(std::mem::take(&mut rec.value_bytes)));
@@ -358,9 +377,9 @@ impl KeptValues {
         self.0.is_empty()
     }
 
-    /// Whether the owner ruled `value` no secret in `record`, as it is or as
-    /// one of its spellings decodes (base64, percent or JSON escapes): the
-    /// ruling covers the value however it is written (FIX 2725).
+    /// Whether the owner ruled `value` no secret or kept it as text in `record`,
+    /// as it is or as one of its spellings decodes (base64, percent or JSON
+    /// escapes): the choice covers the value however it is written (FIX 2725).
     pub(crate) fn holds(&self, record: &EntityId, value: &[u8]) -> bool {
         let Some(values) = self.0.get(record) else {
             return false;
@@ -372,25 +391,15 @@ impl KeptValues {
                 .any(|decoded| ruled(decoded.as_slice()))
     }
 
-    /// `bytes` of `record` with each kept value in them overwritten by the
-    /// mask's filler, for the door's scan; `None` when none sits there.
+    /// `bytes` of `record` with each kept value's raw or encoded spelling
+    /// overwritten by the mask's filler, for the door's scan; `None` when none
+    /// sits there.
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
         let values = self.0.get(record)?;
         let mut copy = None::<Vec<u8>>;
         for value in values.iter().filter(|value| !value.is_empty()) {
-            let mut at = 0;
-            loop {
-                let haystack = copy.as_deref().unwrap_or(bytes);
-                let Some(found) = haystack.get(at..).and_then(|rest| {
-                    rest.windows(value.len())
-                        .position(|window| window == value.as_slice())
-                }) else {
-                    break;
-                };
-                let start = at + found;
-                let end = start + value.len();
-                copy.get_or_insert_with(|| bytes.to_vec())[start..end].fill(b'*');
-                at = end;
+            for span in super::known_values::occurrences(bytes, value) {
+                copy.get_or_insert_with(|| bytes.to_vec())[span].fill(b'*');
             }
         }
         copy

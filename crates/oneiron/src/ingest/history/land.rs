@@ -5,17 +5,20 @@
 //! from the source's own, so a re-run, a crash retry or an appended session
 //! lands the same rows at the same ids. A new message takes the next order its
 //! turn has free, so a later export that regroups a run never collides with
-//! what landed before. Each turn lands through the witness program's import
-//! door, which runs the same ceiling door and write-door secret scan as any
-//! witnessed turn, with the ledger rows of its new messages in the same
-//! transaction. The ledger is read again inside that transaction: when another
-//! import landed one of the turn's messages since the first read, the turn is
-//! read and built again, so no import overwrites what another landed. A
-//! refused turn is counted and the import goes on; the next import tries it
-//! again.
+//! what landed before. A turn whose order space is full continues in the next
+//! turn of its chain, each derived from the run's turn and its place, so every
+//! import of the run walks the same chain. Each turn lands through the witness
+//! program's import door, which runs the same ceiling door and write-door
+//! secret scan as any witnessed turn, with the ledger rows of its new messages
+//! in the same transaction. The ledger is read again inside that transaction:
+//! when another import landed one of the turn's messages since the first
+//! read, the turn is read and built again, until [`LEDGER_RACE_WINDOW`] has
+//! passed, so no import overwrites what another landed. A refused turn is
+//! counted and the import goes on; the next import tries it again.
 
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
+use std::time::{Duration, Instant};
 
 use rmpv::Value as Msgpack;
 use serde::Serialize;
@@ -47,9 +50,6 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// unattended stretch) continues in the next turn.
 const TURN_MESSAGE_CAP: usize = 256;
 
-/// The reason a turn with no free order left is refused.
-const TURN_FULL: &str = "import.turn_full";
-
 /// Tool names one message's metadata lists; the rest are counted.
 const MAX_TOOL_LABELS: usize = 64;
 
@@ -59,10 +59,10 @@ const MAX_LABEL_BYTES: usize = 512;
 /// The imported CONVERSATION body key naming the folder the session ran in.
 const IMPORT_CWD_KEY: &str = "import_cwd";
 
-/// How many times a turn is read and built again when other imports keep
-/// landing its messages first. Past that it is counted as refused, and the
-/// next import tries it again.
-const LEDGER_ATTEMPTS: usize = 4;
+/// How long a turn is read and built again while other imports keep landing
+/// its messages first. Past that its messages are counted as pending: nothing
+/// of them is written, and the next import lands them.
+const LEDGER_RACE_WINDOW: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 thread_local! {
@@ -89,6 +89,10 @@ pub struct HistoryImportReport {
     /// Refused at the write door; nothing written, and the next import tries
     /// again.
     pub refused: u32,
+    /// Not landed because other imports kept landing the same messages until
+    /// [`LEDGER_RACE_WINDOW`] passed; nothing written, and the next import
+    /// lands them.
+    pub pending: u32,
     /// Why, as reason codes.
     pub refusal_reasons: BTreeSet<String>,
     /// What the reader did not keep.
@@ -105,6 +109,7 @@ impl HistoryImportReport {
             skipped: 0,
             changed: 0,
             refused: 0,
+            pending: 0,
             refusal_reasons: BTreeSet::new(),
             not_kept: conversation.skipped,
         }
@@ -149,7 +154,8 @@ pub(super) fn standing(
 ) -> Result<Standing> {
     Ok(match ledger::find(dbs, txn, source, message)? {
         None => Standing::New,
-        Some(row) if row.holds(message) => Standing::Same,
+        // A text erased since it landed is not landed again.
+        Some(row) if row.holds(message) || row.held_erased(source, message)? => Standing::Same,
         Some(row) => Standing::Changed(row),
     })
 }
@@ -276,7 +282,10 @@ fn provenance(
     }
     if let Some(previous) = revises {
         fields.insert("revision".into(), Value::from(previous.next_revision()));
-        fields.insert("revises".into(), Value::from(previous.message.to_hex()));
+        // The latest text still in the vault; an erased one is never named.
+        if let Some(latest) = previous.messages.last() {
+            fields.insert("revises".into(), Value::from(latest.to_hex()));
+        }
     }
     let mut metadata = Map::new();
     metadata.insert("import".into(), Value::Object(fields));
@@ -341,17 +350,11 @@ impl Vault {
             imported_at,
         };
         for run in runs(conversation, &mut report) {
-            let turn_id = derive(
-                derived_domains::HISTORY_TURN,
-                &[
-                    source.source_id(),
-                    &conversation.native_id,
-                    &run[0].native_id,
-                ],
-            )?;
-            let mut attempt = 1;
-            while !import.turn(&run, turn_id, attempt == LEDGER_ATTEMPTS, &mut report)? {
-                attempt += 1;
+            let deadline = Instant::now() + LEDGER_RACE_WINDOW;
+            while !import.turn(&run, Instant::now() >= deadline, &mut report)? {
+                // The import that landed first may hold more of the run: it
+                // goes first, and this one reads what it left.
+                std::thread::yield_now();
             }
         }
         import.settle(&mut report)?;
@@ -471,21 +474,57 @@ impl Import<'_> {
         }
     }
 
+    /// The id of `run`'s own turn (`place` 0), or of the turn at `place` in
+    /// its chain of continuations.
+    fn chain_turn(&self, run: &[&HistoryMessage], place: u32) -> Result<EntityId> {
+        let source = self.source.source_id();
+        let conversation = self.conversation.native_id.as_str();
+        if place == 0 {
+            return derive(
+                derived_domains::HISTORY_TURN,
+                &[source, conversation, &run[0].native_id],
+            );
+        }
+        derive(
+            derived_domains::HISTORY_TURN,
+            &[source, conversation, &run[0].native_id, &place.to_string()],
+        )
+    }
+
+    /// The turn `count` new messages of `run` land in, and the first order
+    /// free there: the first turn of the run's chain whose order space holds
+    /// them all. A turn not stored yet holds a whole run, so the walk ends.
+    fn turn_with_room(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run: &[&HistoryMessage],
+        count: u32,
+    ) -> MemoryResult<(EntityId, u32)> {
+        let mut place = 0;
+        loop {
+            let turn_id = self.chain_turn(run, place)?;
+            let next_order = next_witness_message_order(&self.vault.store, txn, &turn_id)?;
+            if next_order.saturating_add(count) <= MAX_WITNESS_MESSAGE_ORDER.saturating_add(1) {
+                return Ok((turn_id, next_order));
+            }
+            place += 1;
+        }
+    }
+
     /// Lands one run as a turn and counts it. `false`, with nothing counted,
     /// when another import landed one of its messages between this read of
     /// the ledger and the write; the caller reads the run again. On the
-    /// `last` attempt that is counted as a refusal instead.
+    /// `last` attempt its messages are counted as pending instead.
     fn turn(
         &self,
         run: &[&HistoryMessage],
-        turn_id: EntityId,
         last: bool,
         report: &mut HistoryImportReport,
     ) -> MemoryResult<bool> {
         let (source, conversation) = (self.source, self.conversation);
         let mut skipped = 0;
         let mut pending = Vec::new();
-        let mut next_order = {
+        let (turn_id, mut next_order, count) = {
             let txn = self
                 .vault
                 .store
@@ -499,7 +538,9 @@ impl Import<'_> {
                     Standing::Changed(row) => pending.push((*message, Some(row))),
                 }
             }
-            next_witness_message_order(&self.vault.store, &txn, &turn_id)?
+            let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
+            let (turn_id, next_order) = self.turn_with_room(&txn, run, count)?;
+            (turn_id, next_order, count)
         };
         #[cfg(test)]
         if let Some(between) = BETWEEN_READ_AND_WRITE.with_borrow_mut(Option::take) {
@@ -507,13 +548,6 @@ impl Import<'_> {
         }
         if pending.is_empty() {
             report.skipped += skipped;
-            return Ok(true);
-        }
-        let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
-        if next_order.saturating_add(count) > MAX_WITNESS_MESSAGE_ORDER.saturating_add(1) {
-            report.skipped += skipped;
-            report.refused += count;
-            report.refusal_reasons.insert(TURN_FULL.to_owned());
             return Ok(true);
         }
         let mut messages = Vec::with_capacity(pending.len());
@@ -547,6 +581,16 @@ impl Import<'_> {
                         .into_iter()
                         .chain(std::iter::once(hash))
                         .collect(),
+                    messages: previous
+                        .as_ref()
+                        .map_or_else(Vec::new, |row| row.messages.clone())
+                        .into_iter()
+                        .chain(std::iter::once(id))
+                        .collect(),
+                    erased: previous
+                        .as_ref()
+                        .map_or_else(Vec::new, |row| row.erased.clone()),
+                    successor: previous.as_ref().and_then(|row| row.successor.clone()),
                 },
             ));
         }
@@ -579,6 +623,15 @@ impl Import<'_> {
                     ));
                 }
             }
+            for (message, previous) in &pending {
+                ledger::mark_successor(
+                    &self.vault.store,
+                    wtxn,
+                    source,
+                    message,
+                    previous.as_ref(),
+                )?;
+            }
             for (native_id, row) in &rows {
                 ledger::put(&self.vault.store, wtxn, source, native_id, row)?;
             }
@@ -588,6 +641,10 @@ impl Import<'_> {
             return Ok(false);
         }
         report.skipped += skipped;
+        if moved.get() {
+            report.pending += count;
+            return Ok(true);
+        }
         match landed {
             Ok(_) => {
                 for (_, previous) in &pending {

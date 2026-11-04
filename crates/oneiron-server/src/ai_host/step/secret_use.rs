@@ -37,13 +37,13 @@ use oneiron::task_verb::sdk::{self, AgentVerb, SecretUseRequest};
 use oneiron::task_verb::{HostBinding, verb_hook_boundary};
 use oneiron::{
     ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
-    LlmToolSpec, ModelId, Vault, WriteActor,
+    LlmToolSpec, Vault, WriteActor,
 };
 use serde_json::{Value, json};
 
 use super::StepHost;
 use super::live_lease::LiveLease;
-use crate::models::OfferLadder;
+use crate::models::{ModelCallBinding, OfferLadder};
 
 /// The `self.use` verb as the step's tool: providers take letters, digits,
 /// `_` and `-` in a tool's name, so the dot becomes `_`.
@@ -128,8 +128,9 @@ impl<'a> StepSecretUse<'a> {
     }
 
     /// Asks `ladder` on `run` until an answer calls no tool, answering each
-    /// tool call in between; that answer, the rung that gave it and whether
-    /// any tool round ran. Each round is the step's model call again: its
+    /// tool call in between; that answer, the binding of the rung that gave
+    /// the final answer (FIX 12743) and whether any tool round ran. Each
+    /// round is the step's model call again: its
     /// permit, its gate, its meter bounded by `lease`'s live room, and the
     /// same errors end it. The returned request is the final round's: craft
     /// refreshed and tool calls and results appended, the bytes the last
@@ -141,7 +142,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-    ) -> LlmResult<(LlmResponse, ModelId, bool, LlmRequest)> {
+    ) -> LlmResult<(LlmResponse, ModelCallBinding, bool, LlmRequest)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
         let may_send = || {
@@ -155,7 +156,7 @@ impl<'a> StepSecretUse<'a> {
             // (FIX 11395): a note erased between rounds is not sent again.
             // The planner craft stays as built at the start.
             self.refresh_requester_craft(&mut request);
-            let (response, served) = runtime.block_on(ladder.generate_served_while(
+            let (response, binding) = runtime.block_on(ladder.generate_recorded_while(
                 run,
                 request.clone(),
                 None,
@@ -175,7 +176,7 @@ impl<'a> StepSecretUse<'a> {
                 })
                 .collect();
             if calls.is_empty() {
-                return Ok((response, served, rounds, request));
+                return Ok((response, binding, rounds, request));
             }
             rounds = true;
             // The round's spend goes on the lease before its tools run, so
