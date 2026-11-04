@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use super::CheckPhase;
 use crate::EntityId;
-use crate::store::contract_oracle::invalid;
-use crate::store::attempt_id::AttemptId;
 use crate::error::Result;
 use crate::memory::code_view_doors::CodeBuildSpec;
+use crate::store::attempt_id::AttemptId;
+use crate::store::contract_oracle::invalid;
 
 /// The candidate-key prefix of a verdict a bound queue check recorded. An
 /// older verdict, recorded by the low-level callback path, has none.

@@ -82,6 +82,7 @@ impl Store {
             &registered_path,
             is_new_vault,
             seed_mode,
+            hooks.gate_hooks,
             &mut torn_creation_cleanup,
         )?;
         super::create_preflight::create_preflight(
