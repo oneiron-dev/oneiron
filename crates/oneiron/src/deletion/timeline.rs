@@ -93,7 +93,7 @@ fn row_window(
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     let world = if pad {
-        crate::world_keys::pad_body_world(raw).and_then(Result::ok)
+        crate::store::world_pad_rows::pad_body_world(raw).and_then(Result::ok)
     } else {
         crate::write_envelope::claim_body::decode_claim_body(
             &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -439,7 +439,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_values_for_id;
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let window_label = WindowAddress::new(&pending_key.window);
             let Some(doc) =
                 self.store
@@ -495,7 +495,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_values_for_id;
+            use crate::store::loro_tombstones::tombstone_values_for_id;
             let label = WindowAddress::new(&pending_key.window);
             let Some(doc) = self
                 .store
@@ -627,7 +627,7 @@ impl Store {
         #[cfg(feature = "sync")]
         {
             use crate::store::loro_document::{doc_from_snapshot, import_doc};
-            use crate::sync::loro_support::tombstone_map_contains_id;
+            use crate::store::loro_tombstones::tombstone_map_contains_id;
             let window_label = WindowAddress::new(&pending_key.window);
 
             // The window doc is rebuilt from the rows THIS transaction sees

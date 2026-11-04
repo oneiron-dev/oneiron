@@ -30,7 +30,7 @@ impl Vault {
     ) -> Result<bool> {
         if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
             && !crate::registry::is_delete_protected_engine_record(entity_type)
-            && !crate::workspace_roster::is_project_revision_type(&self.store, entity_type)
+            && !crate::store::project_kind::is_project_revision_type(&self.store, entity_type)
         {
             return Err(Error::InvariantViolation(
                 "dt: poison neutralization requires a delete-protected engine record",
@@ -189,7 +189,7 @@ impl Vault {
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
             || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
             || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
-            || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::store::agent_birth_custody::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || crate::blob_artifact::claimed_hash_rows_exist(&self.store, txn, id)?
             || crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, id)?
