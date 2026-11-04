@@ -28,6 +28,7 @@ pub mod hex_digest;
 pub mod live;
 pub mod native_patch;
 pub mod ooxml;
+pub mod opc_package;
 pub mod pptx_comments;
 pub mod resource;
 pub mod retained_opc;

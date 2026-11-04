@@ -82,7 +82,7 @@ mod judgment;
 pub(crate) mod judgment_cells;
 mod manifest;
 mod native_recalc;
-mod opc;
+use oneiron_docedit::opc_package as opc;
 mod ops;
 pub mod paragraph_review;
 mod pipeline;

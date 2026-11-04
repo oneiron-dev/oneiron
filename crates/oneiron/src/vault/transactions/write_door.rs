@@ -247,7 +247,7 @@ impl Vault {
                 .federation_stale_sweep_owed
                 .load(std::sync::atomic::Ordering::Acquire),
             // raise_found_key_notices_in_txn
-            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?,
+            crate::store::found_key_notice_queue::found_key_notices_due_in_txn(self, &txn)?,
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,
