@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{CleanupCandidate, CleanupPosture, CleanupRunReport};
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Result, Vault};
 

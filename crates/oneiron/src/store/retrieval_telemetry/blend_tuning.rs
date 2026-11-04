@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 use oneiron_contracts::retrieval_telemetry::validate_retrieval_blend_weights;
 
 use crate::error::{Error, Result};
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
 use crate::store::{Store, active_write_txn_depth};
