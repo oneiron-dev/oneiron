@@ -163,7 +163,7 @@ impl GmailSendWire for HttpGmailSendWire {
 }
 
 /// The sensitive `Authorization: Bearer` value for one injected credential.
-fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
+pub(super) fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
     let invalid =
         || Error::InvalidConfig("gmail credential is not a usable access token".to_owned());
     let text = std::str::from_utf8(token).map_err(|_| invalid())?.trim();
@@ -187,7 +187,7 @@ fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
     Ok(value)
 }
 
-fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
+pub(super) fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
     let mut bytes = Vec::new();
     response
         .take(MAX_RESPONSE_BYTES + 1)

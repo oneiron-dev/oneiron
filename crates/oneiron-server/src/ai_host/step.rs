@@ -22,21 +22,30 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
-use oneiron::compaction::output::restore_output;
+use oneiron::code_run::ReadWorldUnknown;
+use oneiron::code_run::model_call::{
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
+};
+use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
+use oneiron::llm::{
+    WorkClass,
+    run_admission::{RunAdmission, WorkPhysical},
+};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
-    WriteActor,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
-use crate::models::ModelRuntime;
+use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
 mod secret_use;
@@ -275,7 +284,7 @@ impl StepRunner {
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
-            let bytes = restore_output(vault, output.source)?;
+            let bytes = restore_output_window(vault, output.source, OUTPUT_WINDOW_BYTES)?;
             earlier.push(message(
                 LlmMessageRole::User,
                 String::from_utf8_lossy(&bytes).into_owned(),
@@ -344,6 +353,7 @@ impl StepRunner {
             },
             payer_required,
             true,
+            step.input.room.map(|room| room.room),
         )?;
         // The step's inputs as one read set (FIX 6934): the caller's part
         // above with its planner craft, or unknown when it ran tool rounds,
@@ -374,7 +384,7 @@ impl StepRunner {
         vault: &Vault,
         input: ModelStep<'_>,
     ) -> Result<GeneratedStep, StepFault> {
-        self.generate_in(runtime, vault, input, false, false)
+        self.generate_in(runtime, vault, input, false, false, None)
     }
 
     /// [`Self::generate`] for a step that knows whether it must read its
@@ -389,7 +399,12 @@ impl StepRunner {
         input: ModelStep<'_>,
         payer_required: bool,
         offers_use: bool,
+        room: Option<oneiron::EntityId>,
     ) -> Result<GeneratedStep, StepFault> {
+        // FIX 12516: a step in a room with a live off-record stretch keeps
+        // no model-call evidence. Arrival is checked here, Done rechecks
+        // before the write: a stretch may open mid-call.
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let ModelStep {
             definition,
             attempt,
@@ -628,6 +643,16 @@ impl StepRunner {
             .models
             .funded_run(run_id, guard, payer)
             .sourced(sources.clone());
+        let run = run.with_work_context({
+            let mut context = run.work_context();
+            context.class = WorkClass::Foreground;
+            context.physical = if request.envelope.host_keyless {
+                WorkPhysical::KeylessOwnServer
+            } else {
+                WorkPhysical::Paid
+            };
+            context
+        });
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
@@ -646,34 +671,39 @@ impl StepRunner {
         let generated = match &uses {
             Some(uses) => uses
                 .converse(runtime, &call.ladder, &run, &live, request)
-                .map(|(response, served, rounds)| ((response, served), rounds)),
-            None => runtime
-                .block_on(
-                    call.ladder
-                        .generate_served_while(&run, request, None, &may_send),
-                )
-                .map(|answered| (answered, false)),
+                .map(|(response, binding, rounds, final_request)| {
+                    ((response, binding, final_request), rounds)
+                }),
+            None => {
+                let final_request = request.clone();
+                runtime
+                    .block_on(
+                        call.ladder
+                            .generate_recorded_while(&run, request, None, &may_send),
+                    )
+                    .map(|(response, binding)| ((response, binding, final_request), false))
+            }
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let (response, tool_rounds) = match generated {
+        let (response, binding, final_request, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok(((response, served), rounds)) => {
+            Ok(((response, binding, final_request), rounds)) => {
                 if let Some(owner) = attempt.lease_owner.as_deref()
                     && let Err(error) = AttemptQueue::new(vault).set_executor_model(
                         attempt.id,
                         owner,
                         attempt.attempt_count,
-                        served.as_str(),
+                        binding.rung.model.as_str(),
                     )
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                (response, rounds)
+                (response, binding, final_request, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -695,6 +725,19 @@ impl StepRunner {
                 });
             }
         };
+        let no_record = no_record_at_arrival
+            || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
+        record_workflow_response(
+            vault,
+            &run,
+            &final_request,
+            &response,
+            &binding,
+            attempt,
+            actor,
+            tool_rounds,
+            no_record,
+        );
         let text: String = response
             .message
             .content
@@ -709,5 +752,110 @@ impl StepRunner {
             tool_rounds,
             planner_craft_rows,
         })
+    }
+}
+
+/// Best-effort final-answer capture for FIX 12516. Intermediate self.use
+/// rounds are explicitly marked truncated and get their own later slice.
+#[allow(clippy::too_many_arguments)]
+fn record_workflow_response(
+    vault: &Vault,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    binding: &ModelCallBinding,
+    attempt: &AttemptRecord,
+    actor: WriteActor,
+    tool_rounds: bool,
+    no_record: bool,
+) {
+    if no_record {
+        tracing::debug!("workflow model-call record skipped: off-record room");
+        return;
+    }
+    let digests = match model_call_digests(request) {
+        Ok(digests) => digests,
+        Err(error) => {
+            tracing::warn!(%error, "workflow model-call digests failed");
+            return;
+        }
+    };
+    let Ok(attempt_entity) = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()) else {
+        tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
+        return;
+    };
+    // The record stamps the exact rung that answered, threaded with the
+    // final answer (FIX 12743), not the one requested.
+    let rung = binding.rung.clone();
+    let route = binding.route.clone();
+    // The parent try's own fence, read from its row and never guessed: a
+    // retry's attempt_count does not count logical retries.
+    let replay_of = attempt.retry_of.and_then(|parent| {
+        let parent_row = AttemptQueue::new(vault).get(parent).ok()??;
+        let parent_entity = oneiron::EntityId::from_bytes(*parent.as_bytes()).ok()?;
+        Some((parent_entity, u64::from(parent_row.attempt_count)))
+    });
+    let source_rows = run.source_rows();
+    let input_parts = if source_rows.is_none() {
+        vec![ModelCallInputPart::Unknown {
+            reason: "workflow-step sources are unknown".to_owned(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let record = ModelCallRecord {
+        schema: MODEL_CALL_SCHEMA,
+        attempt: attempt_entity,
+        lease_generation: u64::from(attempt.attempt_count),
+        // Index 1 is the try's first call; a tool-rounds step's final answer
+        // follows its truncated rounds and takes index 2.
+        call_index: u64::from(tool_rounds) + 1,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
+        route,
+        rung,
+        issuing_login: None,
+        organization: None,
+        project: None,
+        credential_id: None,
+        response_id: None,
+        thread_id: None,
+        previous_response_id: None,
+        store: None,
+        captured_at: vault.now_recorded_at(),
+        receipt_ref: None,
+        actor: Some(actor.entity_ref()),
+        produced_pending: response.reply_assertions.created.is_empty(),
+        tool_rounds,
+        rounds_truncated: tool_rounds,
+        replay_of,
+        source_rows: source_rows.unwrap_or_default(),
+        produced_rows: response
+            .reply_assertions
+            .created
+            .iter()
+            .map(|record| record.id)
+            .collect(),
+        input_parts,
+        reasoning: response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| ModelCallReasoningPart::from_terminal(part, None, None))
+            .collect(),
+        read_world_epoch: None,
+        read_worlds: None,
+        read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        tools_present: !request.tools.is_empty(),
+        summary_requested: false,
+        erased: false,
+    };
+    if let Err(error) =
+        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
+    {
+        tracing::warn!(%error, "workflow model-call record failed");
     }
 }

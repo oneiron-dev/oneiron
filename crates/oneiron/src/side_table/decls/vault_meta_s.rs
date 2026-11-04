@@ -121,6 +121,9 @@ side_tables! {
     /// A record whose found keys still owe the owner their needs-you notice: raised at the next
     /// write's commit boundary, then removed. Key: id16 (the record).
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
+    /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
+    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -332,13 +335,15 @@ side_tables! {
     /// One holder's delivery of one export-first removal archive: the delivery version it was
     /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
     /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
-    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// The record ids an export-first removal's export counted, beside its
     /// receipt (FIX 11886). Key: hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT_RECORDS: VaultMeta b"shared-act:removal-export-records:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
-    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// One delivery of a removal archive a removed person's device took in: its digest, what
     /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
     /// id) ":" decimal (delivery version).

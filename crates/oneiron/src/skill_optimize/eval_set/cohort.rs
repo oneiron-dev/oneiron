@@ -383,6 +383,23 @@ impl Vault {
         })
     }
 
+    /// Whether [`Self::open_eval_cohort_in_txn`] would serve `cohort` now:
+    /// present and unretired. A swap preflights this before any write, so a
+    /// retired cohort refuses before the manifest moves.
+    /// # Errors
+    /// A missing or retired cohort, or storage errors.
+    pub(crate) fn eval_cohort_serves_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        cohort: &EntityId,
+    ) -> Result<()> {
+        let row = cohort_in_txn(self, txn, cohort)?;
+        if row.retired_at.is_some() {
+            return Err(invalid("a retired eval cohort serves nothing"));
+        }
+        Ok(())
+    }
+
     /// [`Self::open_eval_cohort`] under the caller's writer: the serving
     /// counts only when the caller's act commits with it.
     /// # Errors

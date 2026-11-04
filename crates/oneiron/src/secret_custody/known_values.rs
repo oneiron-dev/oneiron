@@ -56,7 +56,7 @@ use crate::ports::ShortIdStoreRead;
 use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
-pub(super) use self::forms::decodings;
+pub(super) use self::forms::{decodings, occurrences};
 pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
@@ -319,6 +319,45 @@ impl KnownValues {
         })
     }
 
+    /// The matcher over one custody record's entries written at
+    /// `generations`, as the writer `wtxn` reads them, or `None` when it
+    /// knows no value there (FIX 10550): what a resumed connector round
+    /// clears its replies of, the value its original send presented
+    /// included after a rotation replaced it. Only that record's slots are
+    /// read; the entries are keyed fingerprints, so no value is loaded and
+    /// a superseded value matches without its bytes. A record no handle
+    /// names, or one with no entry at a named generation, knows no value
+    /// here, as [`Self::load_in_writer`] reads it. The writer contract is
+    /// `load_in_writer`'s.
+    pub(crate) fn load_for_in_writer(
+        store: &Store,
+        wtxn: &RwTxn<'_>,
+        custody: &EntityId,
+        generations: &[u32],
+    ) -> Result<Option<Self>> {
+        let Some((master, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
+            return Ok(None);
+        };
+        let entries: Vec<KnownEntry> = entries
+            .into_iter()
+            .filter(|(generation, _)| generations.contains(generation))
+            .map(|(_, entry)| entry)
+            .collect();
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let history = KnownHistory {
+            master,
+            holders: vec![(*custody, entries)],
+        };
+        let txn: &RoTxn<'_> = wtxn;
+        Self::of(&history, |custody| {
+            Ok(store
+                .port_short_id_reference(txn, custody)?
+                .map(|(handle, _)| handle))
+        })
+    }
+
     /// The most bytes a known value takes in incoming bytes, spelled the
     /// longest way a spelling reaches (CALLS KNOWN_FORM_REACH_FACTOR): what
     /// a stream holds back so a value still arriving is never let through
@@ -334,13 +373,30 @@ impl KnownValues {
     /// base64 run, over folds, or with `+` for a space is found there too
     /// (FIX 6671).
     pub(crate) fn spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
-        let mut spans = self.raw_spans(data);
+        self.spans_except(data, |_| false)
+    }
+
+    /// Known values other than those `keep` exempts. The predicate reads the
+    /// exact matched bytes, before an encoded hit widens to its source span.
+    pub(crate) fn spans_except(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+    ) -> Vec<KnownSpan<'_>> {
+        let mut spans: Vec<_> = self
+            .raw_spans(data)
+            .into_iter()
+            .filter(|hit| !keep(&data[hit.span.clone()]))
+            .collect();
         let mut spelled = Vec::new();
         for view in [forms::percent_view(data), forms::json_view(data)]
             .into_iter()
             .flatten()
         {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
@@ -350,25 +406,36 @@ impl KnownValues {
         // maps back, since `+` reads as one byte from one.
         if let Some(view) = forms::form_view(data) {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source_mapped(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
             }
         }
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
-        for (run, decoded) in forms::base64_runs(data, self.reach(), fits) {
-            if let Some(known) = self.whole(&decoded) {
-                spelled.push(KnownSpan {
-                    span: run,
-                    custody: known.custody,
-                    handle: &known.handle,
-                });
+        // One decode: base64_runs is base64_views + fits filter, so reuse
+        // the same views for the whole-run and in-run passes (identical output).
+        let b64_views = forms::base64_views(data, self.reach());
+        for (run, view) in &b64_views {
+            if fits(view.bytes.len()) && !keep(&view.bytes) {
+                if let Some(known) = self.whole(&view.bytes) {
+                    spelled.push(KnownSpan {
+                        span: run.clone(),
+                        custody: known.custody,
+                        handle: &known.handle,
+                    });
+                }
             }
         }
         // FIX 6671: a value spelled inside a longer run, at any offset, over
         // folds, maps back through the run's own source map.
-        for (_, view) in forms::base64_views(data, self.reach()) {
+        for (_, view) in &b64_views {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
