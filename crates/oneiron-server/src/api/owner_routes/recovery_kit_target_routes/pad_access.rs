@@ -221,6 +221,15 @@ enum Observed<T> {
     },
 }
 
+/// What the world capsules a take opened imported, as the relay's take
+/// reports it (`SealedBundleTake.authority`, FIX 4495 and 12416).
+#[derive(Debug, Serialize)]
+struct CapsuleImportView {
+    opened: usize,
+    imported: usize,
+    refused: usize,
+}
+
 /// What a take of the home's newest generation moved here.
 #[derive(Debug, Serialize)]
 struct TakenView {
@@ -230,6 +239,7 @@ struct TakenView {
     mirrored: usize,
     unchanged: usize,
     skipped: usize,
+    authority: CapsuleImportView,
 }
 
 /// What one relay that reached the home moved (`SealedBundleRelay`).
@@ -303,6 +313,11 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
                     mirrored: take.mirrored,
                     unchanged: take.unchanged,
                     skipped: take.skipped,
+                    authority: CapsuleImportView {
+                        opened: take.authority.opened,
+                        imported: take.authority.imported,
+                        refused: take.authority.refused,
+                    },
                 }),
                 published: relay.published.as_ref().map(sealed_generation_hex),
                 erased: relay.erased,
