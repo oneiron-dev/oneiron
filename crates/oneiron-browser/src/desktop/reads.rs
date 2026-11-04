@@ -33,17 +33,14 @@ impl DesktopSession {
         let read = match self.walk(key, shot, on, until) {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => {
-                // A read past its deadline reports the timeout, never a
-                // fresh recovery RPC past it (FIX 3782).
-                if until.is_some_and(|until| Instant::now() >= until)
-                    && matches!(
-                        error,
-                        BrowserError::CallTimeout(_) | BrowserError::Timeout(_)
-                    )
-                {
+                // A read past its deadline reports its error, never a
+                // fresh recovery RPC past it: a slow list_windows kept a
+                // settle poll blocked past its cap (FIX 3782, REVIEW-4454
+                // P1).
+                if until.is_some_and(|until| Instant::now() >= until) {
                     return Err(error);
                 }
-                let listed = self.listed()?;
+                let listed = self.listed_until(until)?;
                 if listed.iter().any(|window| window.key == key) {
                     return Err(error);
                 }
