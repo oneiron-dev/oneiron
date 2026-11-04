@@ -461,6 +461,7 @@ impl<'a> NativeReadCapture<'a> {
             thread_id: None,
             previous_response_id: None,
             store: None,
+            endpoint: None,
             captured_at: self.vault.now_recorded_at(),
             receipt_ref: None,
             actor: evidence.principal(),

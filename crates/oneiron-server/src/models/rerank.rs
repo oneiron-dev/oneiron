@@ -221,6 +221,7 @@ impl LlmBackend for RerankBackend {
                     },
                     output: Default::default(),
                     raw_provider: usage,
+                    call_metadata: None,
                 },
                 finish_reason: oneiron::llm::FinishReason::Stop,
                 // A reranker's scores assert no record (FIX 3416).
