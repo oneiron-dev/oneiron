@@ -31730,7 +31730,7 @@ pub struct EmbeddingSpaceProbeDeleted {
     pub ok: bool,
 }
 
-/// `oneiron::policy_model::contract::PolicyOutputContract`.
+/// `oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PolicyOutputContract {
     #[serde(rename = "binary")]
@@ -31741,7 +31741,7 @@ pub enum PolicyOutputContract {
     RationaleJson,
 }
 
-/// `oneiron::policy_model::pattern::PolicyPatternRole`.
+/// `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PolicyPatternRole {
     #[serde(rename = "escalate")]
@@ -31752,7 +31752,7 @@ pub enum PolicyPatternRole {
     Log,
 }
 
-/// `oneiron::policy_model::pattern::PolicyPatternRule`.
+/// `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRule`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyPatternRule {

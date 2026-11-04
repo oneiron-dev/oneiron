@@ -7946,6 +7946,7 @@ dependencies = [
  "oneiron-keystore",
  "oneiron-lens-wire",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
@@ -8531,6 +8532,20 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
