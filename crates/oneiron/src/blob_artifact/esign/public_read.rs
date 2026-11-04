@@ -17,7 +17,34 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<Vec<u8>> {
-        self.esign_pdf_for_capability_within(token, item, ip, user_agent, &|_, _| Ok(true))
+        self.esign_pdf_for_capability_as(
+            token,
+            item,
+            super::SigningCaller::Bearer,
+            None,
+            ip,
+            user_agent,
+        )
+    }
+    /// [`Self::esign_pdf_for_capability`] with the verified caller's receipt evidence.
+    pub fn esign_pdf_for_capability_as(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<Vec<u8>> {
+        self.esign_pdf_for_capability_within(
+            token,
+            item,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+            &|_, _| Ok(true),
+        )
     }
     /// [`Self::esign_pdf_for_capability`] under a narrowed caller's
     /// credential ceiling (FIX 6403): the ceremony Load and the read judge
@@ -27,6 +54,8 @@ impl Vault {
         &self,
         token: &EsignCapability,
         item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
         ip: Option<String>,
         user_agent: Option<String>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
@@ -34,7 +63,8 @@ impl Vault {
         self.execute_signing_action_within(
             token,
             &SigningAction::Load,
-            super::SigningCaller::Bearer,
+            caller,
+            verified_actor,
             ip,
             user_agent,
             ceiling,
@@ -49,8 +79,33 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<(super::SigningPage, Vec<u8>)> {
-        let super::SigningOutcome::Page(page) =
-            self.execute_signing_action(token, &SigningAction::Load, ip, user_agent)?
+        self.esign_preview_for_capability_as(
+            token,
+            item,
+            super::SigningCaller::Bearer,
+            None,
+            ip,
+            user_agent,
+        )
+    }
+    /// [`Self::esign_preview_for_capability`] with the verified caller's receipt evidence.
+    pub fn esign_preview_for_capability_as(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<(super::SigningPage, Vec<u8>)> {
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_as(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+        )?
         else {
             return Err(invalid("preview is unavailable"));
         };

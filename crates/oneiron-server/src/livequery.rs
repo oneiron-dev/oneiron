@@ -20,7 +20,7 @@ mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::ResidenceIndexCache;
+pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;
@@ -385,8 +385,17 @@ pub(crate) fn residence_rpc(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<RpcReply, ProtocolError> {
-    residence::run(server, auth, peer, request, index_cache, append_stage)
+    residence::run(
+        server,
+        auth,
+        peer,
+        request,
+        index_cache,
+        append_stage,
+        touch_stage,
+    )
 }
 
 /// FIX 6458: whether `method` is one of the home handoff's own calls, the
