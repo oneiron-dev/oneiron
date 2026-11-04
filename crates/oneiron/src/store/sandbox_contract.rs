@@ -189,6 +189,12 @@ const OUTPUT_TEXT_IMPORT: SandboxLinkedImport =
 const OUTPUT_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.output.bytes", SandboxImportClass::Output);
 
+// The byte twin of the streamed "store" text target (FIX 829): frames land
+// in the step's store sink and take effect only when the `store` verb row
+// binds them, so the class is Output as the text target's is.
+const STORE_BYTES_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.store.bytes", SandboxImportClass::Output);
+
 const VAULT_AGENTS_PUT_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("vault.agents.put", SandboxImportClass::AgentAuthoring);
 
@@ -230,6 +236,7 @@ const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     RANDOM_BYTES_IMPORT,
     OUTPUT_TEXT_IMPORT,
     OUTPUT_BYTES_IMPORT,
+    STORE_BYTES_IMPORT,
     PROPOSAL_OPEN_IMPORT,
     PROPOSAL_CHUNK_IMPORT,
     PROPOSAL_CLOSE_IMPORT,
@@ -242,6 +249,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     RANDOM_BYTES_IMPORT,
     OUTPUT_TEXT_IMPORT,
     OUTPUT_BYTES_IMPORT,
+    STORE_BYTES_IMPORT,
     VAULT_AGENTS_PUT_IMPORT,
     SELF_JSON_VALIDATE_IMPORT,
     SELF_VERBS_NAMES_IMPORT,

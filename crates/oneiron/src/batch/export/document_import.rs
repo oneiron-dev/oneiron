@@ -151,6 +151,15 @@ impl Vault {
         // The custody values a result body's sweep replaces, and the body
         // instances it spills into, read and minted before the writer opens.
         let known = super::result_reserve::staged_result_sinks(self, &archive)?;
+        // FIX 588: the digests this import stages are tracked for post-error
+        // cleanup. Declared before the pin-all guard, so on every pre-commit
+        // return `_bodies` drops first, releasing its pins, and this drops
+        // second, once the aborted writer is gone too.
+        let mut cleanup = ImportBodyCleanup {
+            vault: self,
+            staged: Vec::new(),
+            committed: false,
+        };
         // FIX 3677: every body file stays pinned until the import commits or
         // aborts, so the collector takes none a row here is compared with or
         // staged into. The File ASSETs' instances are minted now, as the
@@ -354,7 +363,7 @@ impl Vault {
             self, &mut wtxn, &archive,
         )?;
         let (imported_results, withheld_results) =
-            put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
+            put_run_results_in_txn(self, &mut wtxn, &mut archive, known, &mut cleanup.staged)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
@@ -376,6 +385,7 @@ impl Vault {
             super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        cleanup.committed = true;
         self.embedding_setup_committed(setup_rows);
         let mut remapped_entities = BTreeMap::new();
         for entry in archive.index.entries(Tag::Model)? {
@@ -572,18 +582,45 @@ fn imported_row<R: Read + Seek>(
     Ok(row)
 }
 
+/// The result-body digests this import staged (FIX 588), for post-error
+/// cleanup. A pre-commit failure drops the writer and pin guard first,
+/// then runs this cleanup with the import's pins released; setting
+/// `committed` disarms it, so success and post-commit
+/// receipt errors do no cleanup. Best-effort and warning-only: the
+/// hourly collector stays the backstop for anything left.
+struct ImportBodyCleanup<'a> {
+    vault: &'a Vault,
+    staged: Vec<[u8; 32]>,
+    committed: bool,
+}
+
+impl Drop for ImportBodyCleanup<'_> {
+    fn drop(&mut self) {
+        if self.committed || self.staged.is_empty() {
+            return;
+        }
+        if let Err(error) = self.vault.cleanup_import_staged_bodies(&self.staged) {
+            tracing::warn!(error = %error, "import staged-body cleanup failed");
+        }
+    }
+}
+
 /// Writes each run's results whose bodies came back as that run's
 /// occurrences; a result the export withheld stays a manifest in the
 /// archive. Returns the counts of both. Each body is staged from the archive
 /// as its occurrence goes in, checked against its digest and length, so the
 /// manifests and line indexes are rebuilt from the bytes; the secret scan
 /// reads them again as they go in. No body is held between two occurrences
-/// (FIX 3678): a later occurrence of the same bytes stages them again.
+/// (FIX 3678): a later occurrence of the same bytes stages them again. Each
+/// newly staged archive digest is pushed before the staging calls can fail;
+/// each final digest is retained immediately after staging, before occurrence
+/// validation, for the import's post-error cleanup (FIX 588).
 fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
     known: crate::store::result_manifest::StagedSinks,
+    staged: &mut Vec<[u8; 32]>,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
     // The values custody knows, read in this writer and kept no longer
@@ -608,9 +645,26 @@ fn put_run_results_in_txn<R: Read + Seek>(
                 continue;
             }
             // Only a body's first occurrence is held to its manifest's length.
-            if archive.index.insert(Tag::Staged, &digest, &[])? && listed != output.bytes {
+            // A newly staged digest is tracked before the length check and
+            // the read/admit/stage calls below, so even a partial stage or
+            // the digest-length error is covered; later occurrences of the
+            // same bytes push nothing again.
+            let fresh = archive.index.insert(Tag::Staged, &digest, &[])?;
+            if fresh {
+                staged.push(digest);
+            }
+            if fresh && listed != output.bytes {
                 return Err(invalid("run result body does not match its digest"));
             }
+            // The manifest path is validated with from_facts' own
+            // predicate before staging publishes the spill: from_facts
+            // rejects an empty/overlong path only after publication, when
+            // cleanup would know just the archive digest (FIX 588).
+            crate::store::result_manifest::validate_text(
+                &output.path,
+                crate::store::result_manifest::CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
+                "raw output path",
+            )?;
             // Masked at write as a run's reply body is (FIX 5718 part 3).
             let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
             let body = archive.files.read_file(blake3)?;
@@ -627,6 +681,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
                 vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
                 std::io::Cursor::new(body),
             )?;
+            staged.push(finished.output.raw_blake3);
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
             imported += 1;
