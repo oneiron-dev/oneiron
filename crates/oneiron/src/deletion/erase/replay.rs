@@ -332,7 +332,7 @@ impl Vault {
         if let Some(corrupt) = captured.corrupt() {
             changed_documents.extend(self.scrub_corrupt_capture_in_txn(wtxn, corrupt, false)?);
         }
-        if let Some((request_id, tombstone_reason)) =
+        let recovered_authority_act = if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
         {
             let completed_local_authority =
@@ -348,7 +348,10 @@ impl Vault {
                     "remote replay completed a staged local deletion authority record"
                 );
             }
-        }
+            completed_local_authority.and_then(|(_, act)| act)
+        } else {
+            None
+        };
         let applied_at = mutation_recorded_at;
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
@@ -375,13 +378,20 @@ impl Vault {
             sweep_extras(&captured),
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
-            // A local shared act claimed this request before its purge was
-            // interrupted: this recovery's receipt is that act's receipt.
-            self.bind_recovered_act_receipt_in_txn(
-                wtxn,
-                &uuid::Uuid::from_bytes(*request).to_string(),
-                receipt_id.to_hex(),
-            )?;
+            let request_text = uuid::Uuid::from_bytes(*request).to_string();
+            if let Some(act) = recovered_authority_act {
+                // Publication may have rolled back its claim after mutating
+                // the live document. Only the redeemed local sidecar supplies
+                // its original act; claim it with this purge and its receipt.
+                self.claim_completed_authority_act_in_txn(
+                    wtxn,
+                    &EntityId::from_bytes(act).to_hex(),
+                    request_text,
+                    Some(receipt_id.to_hex()),
+                )?;
+            } else {
+                self.bind_recovered_act_receipt_in_txn(wtxn, &request_text, receipt_id.to_hex())?;
+            }
             clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
         }
         Ok((
