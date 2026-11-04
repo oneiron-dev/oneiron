@@ -124,53 +124,6 @@ enum PendingBody {
     },
 }
 
-/// One JSON value as its encoded text (FIX 12431): the bytes travel
-/// verbatim, never parsed into a recursive `Value`, so an arbitrarily deep
-/// report costs no thread stack. Text in is text out; `PartialEq` compares
-/// the bytes, and the schema is any JSON value.
-#[derive(Debug, Clone)]
-pub struct RawJson(pub Box<serde_json::value::RawValue>);
-
-impl PartialEq for RawJson {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.get() == other.0.get()
-    }
-}
-
-impl Default for RawJson {
-    fn default() -> Self {
-        Self(serde_json::value::RawValue::NULL.to_owned())
-    }
-}
-
-impl serde::Serialize for RawJson {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for RawJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Box::<serde_json::value::RawValue>::deserialize(deserializer).map(Self)
-    }
-}
-
-impl schemars::JsonSchema for RawJson {
-    fn schema_name() -> String {
-        "RawJson".to_owned()
-    }
-
-    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::Schema::Bool(true)
-    }
-}
-
 /// One native organ result offered to an artifact as its next version: the
 /// export file the organ produced, its report, and who made it from what.
 #[derive(Debug, Clone, PartialEq)]

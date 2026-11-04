@@ -112,7 +112,7 @@ pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub(crate) use pending::DeckExportHold;
 pub use pending::{
     MadeByReader, NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind,
-    PendingProposalView, RawJson,
+    PendingProposalView,
 };
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
