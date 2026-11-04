@@ -5,7 +5,7 @@
 //! this row references them. Only a call that writes no message owns its
 //! Reasoning bytes here, until the agent is erased.
 
-use oneiron_model::llm::ReasoningPartKind;
+use oneiron_model::llm::{LlmEndpointFlavor, ReasoningPartKind};
 use serde::{Deserialize, Serialize};
 
 use super::replay_capsule::{CapsuleRungBinding, ReplayRoutePin};
@@ -358,6 +358,8 @@ pub struct ModelCallRecord {
     pub previous_response_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<LlmEndpointFlavor>,
     pub captured_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
@@ -462,6 +464,8 @@ impl ErasedForm for ModelCallRecord {
         self.response_id = None;
         self.thread_id = None;
         self.previous_response_id = None;
+        self.store = None;
+        self.endpoint = None;
         self.rung.prompt = None;
         self.actor = None;
         self.produced_pending = false;
@@ -482,6 +486,7 @@ impl ErasedForm for ModelCallRecord {
                 // members and finish text through; an erased row keeps neither, only
                 // the typed counters and a known reason shape.
                 usage.raw_provider = Default::default();
+                usage.call_metadata = None;
                 if matches!(&*finish_reason, crate::FinishReason::Other { .. }) {
                     *finish_reason = crate::FinishReason::Other {
                         name: String::new(),
@@ -494,11 +499,13 @@ impl ErasedForm for ModelCallRecord {
             | ModelCallKind::SeatDecision { outcome, .. } => match outcome {
                 NativeReadOutcome::Completed { usage } => {
                     usage.raw_provider = Default::default();
+                    usage.call_metadata = None;
                 }
                 NativeReadOutcome::Failed {
                     usage: Some(usage), ..
                 } => {
                     usage.raw_provider = Default::default();
+                    usage.call_metadata = None;
                 }
                 NativeReadOutcome::Failed { usage: None, .. } => {}
             },
