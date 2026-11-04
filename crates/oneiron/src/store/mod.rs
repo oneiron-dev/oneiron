@@ -122,6 +122,7 @@ pub mod ports {
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
+pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
 pub mod attempt_id;
