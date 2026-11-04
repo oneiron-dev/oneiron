@@ -13,6 +13,7 @@ mod dispatch_attempt_id;
 mod dispatch_pipeline;
 mod dispatch_types;
 mod executor;
+mod fair_line;
 mod intent;
 pub mod linkedin_policy;
 mod manifests;
@@ -25,6 +26,7 @@ mod retry_audit;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod served_sink;
+mod weave_digest_send;
 mod window_door;
 
 #[cfg(test)]
@@ -32,7 +34,11 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
-pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
+pub(crate) use self::fair_line::fair_line_order;
+
+pub use self::ambient_alternative::{
+    OutboundAmbientAlternative, OutboundScheduleContinuation, OutboundSendSelection,
+};
 pub(crate) use self::capability::OutboundReplaySafety;
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
@@ -92,6 +98,8 @@ pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::reply_job::{
     erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
 };
+pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
+pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

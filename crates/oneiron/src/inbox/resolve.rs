@@ -551,6 +551,11 @@ fn accept_member_with_amendment_in_txn(
     let landed = amended.as_ref().unwrap_or(&reviewed);
     let context = crate::store::GateDecisionContext {
         read: crate::store::GateDecisionReadContext::claim(id, landed)
+            .map(|read| {
+                let anchors =
+                    crate::conversation::gate_claim_anchors_in(vault, &*wtxn, id, landed);
+                read.with_anchors(anchors)
+            })
             .into_iter()
             .collect(),
         ..crate::store::GateDecisionContext::answering(&original)
