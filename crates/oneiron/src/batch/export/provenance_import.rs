@@ -340,16 +340,21 @@ fn restore_cohort(
                 })
                 .transpose()?
                 .unwrap_or(false);
-            // Blind-review P1 round 5 (REVIEW-4378.md + REVIEW-4378-kimi.md):
+            // Blind-review P1 rounds 5-6 (REVIEW-4378.md + REVIEW-4378-kimi.md):
             // the archived closer itself is already present, so no later
             // missing row will close the newly restored tied prior. Close it
-            // through the owner door now, then break the chain as round 3
-            // did; anything else keeps round-4 behavior.
+            // through the owner door now (edge restamped from the surviving
+            // cohort inside), then break the chain as round 3 did; anything
+            // else keeps round-4 behavior. A tied Retracted row closes the
+            // prior the same way: retraction never reopens it.
             let closer_present = match previous {
                 Some((_, prior_learned_at, lifecycle))
                     if prior_learned_at == row.learned_at
                         && lifecycle == ClaimLifecycleStatus::Superseded
-                        && body.lifecycle == ClaimLifecycleStatus::Active =>
+                        && matches!(
+                            body.lifecycle,
+                            ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
+                        ) =>
                 {
                     true
                 }
@@ -357,7 +362,7 @@ fn restore_cohort(
             };
             if closer_present && prior_live {
                 if let Some((prior, _, _)) = previous {
-                    vault.close_restored_tied_prior_in_txn(txn, &prior, row.learned_at)?;
+                    vault.close_restored_tied_prior_in_txn(txn, &prior, id, row.learned_at)?;
                 }
                 previous = None;
             } else if !prior_live {
