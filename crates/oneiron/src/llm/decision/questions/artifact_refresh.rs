@@ -391,9 +391,14 @@ impl Asking<'_> {
                 remaining.intersect(rows.start.row, rows.end.row);
                 only = Some(Changed::Rows(remaining));
             } else {
+                let answered = if matches!(&selection, Selection::SheetRows { .. }) {
+                    &stamp.versions
+                } else {
+                    &baseline
+                };
                 let refresh = &self.record.definition.refresh;
                 let arrived = refresh.on_arrival
-                    && (baseline != observed || stamp.live != observed_live)
+                    && (*answered != observed || stamp.live != observed_live)
                     && self.now >= changed_at.saturating_add(self.quiet);
                 let scheduled = refresh
                     .every_seconds
@@ -402,13 +407,8 @@ impl Asking<'_> {
                     return Ok(None);
                 }
                 if !scheduled {
-                    only = self.changed_units(
-                        artifact,
-                        &selection,
-                        &baseline,
-                        &observed,
-                        &stamp.live,
-                    )?;
+                    only =
+                        self.changed_units(artifact, &selection, answered, &observed, &stamp.live)?;
                     // An edit to a live body never exported moves no version (FIX 2115).
                     if let Some(only) = only.as_mut()
                         && let Some(live) =
