@@ -218,12 +218,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/enqueue_claim/claim_scan.rs` | src | s | 1 crate-vis | — | The read-only half of the generic claim scan (FIX 11664): what a claim would lease, repair and hold, read… |
 | `src/attempt_queue/engine/enqueue_record.rs` | src | s | 1 crate-vis | — | The one storage write every enqueue door ends in: a fresh row, its readiness, run and dedupe entries, in the… |
 | `src/attempt_queue/engine/leased_payload.rs` | src | s | 1 crate-vis | — | A running row's payload rewritten in place by the worker holding its lease (FIX 9792): the one door through… |
-| `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 1 re-export · 5 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
+| `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 1 re-export · 4 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 3 fn · 7 crate-vis | — | Retry/intervene/manifest append mutation doors |
 | `src/attempt_queue/engine/owner_retained_payload.rs` | src | s | 1 crate-vis | — | An owner-retained row's payload rewritten in place (FIX 6755): the one door through which an owner-retained… |
 | `src/attempt_queue/engine/place.rs` | src | s | 1 crate-vis | — | Placement inside a caller-owned writer: a row enqueued in the same transaction takes its worker and parent… |
 | `src/attempt_queue/engine/prune.rs` | src | s | 2 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
-| `src/attempt_queue/engine/reads.rs` | src | m | 6 fn · 33 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
+| `src/attempt_queue/engine/reads.rs` | src | m | 6 fn · 32 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/reclaim.rs` | src | s | 3 fn | — | Lease cleanup: an expired lease goes back to the ready index under the same try, and an expired landing… |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
 | `src/attempt_queue/engine/requeue.rs` | src | s | 1 struct · 1 fn · 1 re-export · 2 crate-vis | RequeueAttempt | Same-intent requeue (FIX 5240): a leased try its worker answered failed goes back to the queue as the SAME… |
@@ -235,7 +235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/index.rs` | src | s | 12 crate-vis | — | FIX 11318: the attempt ledger's side indexes, so a reader that wants a kind's rows, a task's rows, a try's… |
 | `src/attempt_queue/kind_payload_erase.rs` | src | s | 1 crate-vis | — | One kind's payloads, emptied for an erase (FIX 9775): the attempts of a kind whose payload names an erased… |
 | `src/attempt_queue/maintenance_predicate.rs` | src | s | 4 const · 2 crate-vis | — | Claim predicates used by queued maintenance proposals |
-| `src/attempt_queue/mod.rs` | src | s | 9 mod · 10 re-export · 15 crate-vis | — | Generic LMDB-backed background attempt queue |
+| `src/attempt_queue/mod.rs` | src | s | 9 mod · 10 re-export · 14 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/payload_erase.rs` | src | L | 6 crate-vis | — | An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076) |
 | `src/attempt_queue/payload_erase/asker.rs` | src | s | 2 crate-vis | — | Which agent dispatch rows carry an erased asker's ask (FIX 9181) |
@@ -5599,13 +5599,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/attempt_payload_retire.rs` | src | s | 1 crate-vis | — | Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it… |
 | `src/store/attempt_payload_route.rs` | src | s | 1 crate-vis | — | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
 | `src/store/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 14 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
-| `src/store/attempt_record.rs` | src | s | 6 struct · 1 enum · 2 crate-vis | AttemptPlacement, AttemptReadSet, AttemptRecord, AttemptTerminalExhaust, PlannedBinding, PlannedExactness, RequeuedFailure | The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a… |
+| `src/store/attempt_record.rs` | src | s | 6 struct · 1 enum · 3 crate-vis | AttemptPlacement, AttemptReadSet, AttemptRecord, AttemptTerminalExhaust, PlannedBinding, PlannedExactness, RequeuedFailure | The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a… |
 | `src/store/attempt_record_codec/cancel_validators.rs` | src | s | 2 crate-vis | — | The cancel-receipt shape table and the landing and cancel-state validators the strict reader runs on a… |
 | `src/store/attempt_record_codec/field_validators.rs` | src | m | 1 const · 65 crate-vis | — | The attempt record's field validators and their length caps and error literals: every check the strict… |
 | `src/store/attempt_record_codec/mod.rs` | src | m | 9 crate-vis | — | The attempt record's strict codec (`job_records` rows): the version byte and named MessagePack body, the… |
 | `src/store/attempt_record_codec/signal_validators.rs` | src | s | 4 crate-vis | — | The persisted-row validation of an attempt row's branch signals and asks: each field's shape, signal-key and… |
 | `src/store/attempt_result.rs` | src | s | 1 struct · 3 fn · 6 crate-vis | AttemptResultRef | Validated durable result references for queued work |
 | `src/store/attempt_retention.rs` | src | s | 4 crate-vis | — | Owner-retained queue kind and identifier range classification |
+| `src/store/attempt_run_root.rs` | src | s | 1 crate-vis | — | The Dreamer run-root lookup: the OF-193 root attempt of one stamped run, read through the durable run index… |
 | `src/store/attempt_run_signal.rs` | src | s | 4 struct · 3 enum · 1 crate-vis | RunAsk, RunAskAnswer, RunAskAnswerKind, RunAskQuestion, RunBranchSignal, RunSignalKind, RunSignalState | The durable branch signal and ask rows an attempt row carries: each branch-addressed control signal and its… |
 | `src/store/attempt_state.rs` | src | s | 1 enum · 3 fn · 2 crate-vis | AttemptState | Persisted queued-attempt lifecycle states and their pure predicates |
 | `src/store/authority_rows.rs` | src | s | 1 crate-vis | — | Authority-log rows carried beside a row being imported |
@@ -5832,7 +5833,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 116 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 108 mod · 31 re-export · 117 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | DescriptionPolicy, MeasuredDescription, ModelDescription, ModelWireFormat, OwnerModelLine | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
