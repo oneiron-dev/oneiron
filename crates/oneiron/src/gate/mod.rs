@@ -17,7 +17,6 @@ pub(crate) mod task_assignee;
 pub(crate) mod training_ask_kind;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
-pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
 mod coach_offer_reach;
 mod confirm;

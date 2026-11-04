@@ -122,6 +122,7 @@ pub mod ports {
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
+pub(crate) mod attempt_archive_mark;
 pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
@@ -157,6 +158,8 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
 #[cfg(feature = "sync")]
