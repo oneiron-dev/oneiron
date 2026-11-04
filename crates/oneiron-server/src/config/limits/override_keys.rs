@@ -19,6 +19,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) lfs_quota_bytes: Option<u64>,
     pub(in crate::config) transfer_idle_timeout_ms: Option<u64>,
     pub(in crate::config) retrieval_query_bytes: Option<usize>,
+    pub(in crate::config) semantic_query_bytes: Option<usize>,
     pub(in crate::config) projection_body_bytes: Option<usize>,
     pub(in crate::config) git_scan_blob_bytes: Option<u64>,
     pub(in crate::config) git_scan_disk_floor_bytes: Option<u64>,
