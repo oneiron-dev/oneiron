@@ -594,7 +594,12 @@ impl ResponseFamily {
                 Ok(())
             }
             Self::AttemptPayload => {
-                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
+                crate::store::attempt_payload_retire::retire_attempt_payload_in_txn(
+                    store,
+                    wtxn,
+                    key,
+                    &kept()?,
+                )
             }
             Self::Http | Self::InvocationClaim | Self::MediaJob => {
                 store
