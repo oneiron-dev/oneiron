@@ -2413,28 +2413,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AttemptCancelPressure",
-      "AttemptCancelReceipt",
-      "AttemptCancelReceiptKind",
-      "AttemptCancelState",
-      "AttemptCancellation",
-      "AttemptLanding",
-      "AttemptLandingReserve",
-      "AttemptResumePoint",
-      "CancelMode",
-      "CancelStanding",
-      "ForceCancelAuthority",
-      "ForceCancelGrounds",
-      "LandingTrigger"
+      "ForceCancelAuthority"
      ],
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
       "const": 5,
       "crate-vis": 3,
-      "enum": 5,
       "fn": 20,
-      "struct": 8
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -2665,15 +2653,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RequeueAttempt",
-      "RequeuedFailure"
+      "RequeueAttempt"
      ],
      "path": "src/attempt_queue/engine/requeue.rs",
      "purpose": "Same-intent requeue (FIX 5240): a leased try its worker answered failed goes back to the queue as the SAME…",
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "struct": 2
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -2877,16 +2865,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptReadSet"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
       "crate-vis": 1,
       "fn": 4,
-      "re-export": 1,
-      "struct": 1
+      "re-export": 2
      }
     },
     {
@@ -2904,22 +2889,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RunAsk",
-      "RunAskAnswer",
-      "RunAskAnswerKind",
-      "RunAskQuestion",
       "RunAskState",
-      "RunBranchSignal",
-      "RunSignalInput",
-      "RunSignalKind",
-      "RunSignalState"
+      "RunSignalInput"
      ],
      "path": "src/attempt_queue/run_signal.rs",
      "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
      "surface": {
       "crate-vis": 4,
-      "enum": 4,
-      "struct": 5
+      "enum": 1,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -3123,31 +3102,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AbandonAttempt",
-      "AbandonOutcome",
-      "AttemptPlacement",
-      "AttemptRecord",
-      "ClaimOutcome",
-      "CompleteOutcome",
-      "EnqueueOutcome",
-      "FailOutcome",
-      "InterveneAttempt",
-      "InterveneOutcome",
-      "PlannedBinding",
-      "PlannedExactness",
-      "RetryOutcome"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 6,
-      "enum": 7,
       "fn": 10,
-      "re-export": 14,
-      "struct": 6
+      "re-export": 16
      }
     },
     {
@@ -3163,13 +3126,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptTerminalExhaust"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types/exhaust.rs",
      "purpose": "What a terminal attempt left behind (FIX 9578): its durable outputs and the checkpoint frontier it recorded…",
      "surface": {
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -66425,15 +66386,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "RunWriteToken"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/run_writes.rs",
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 11,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69380,6 +69339,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptCancelPressure",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
+      "AttemptCancelState",
+      "AttemptCancellation",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
+      "CancelMode",
+      "CancelStanding",
+      "ForceCancelGrounds",
+      "LandingTrigger"
+     ],
+     "path": "src/store/attempt_cancel.rs",
+     "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
+     "surface": {
+      "enum": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AttemptQueueCleanupMetricsSnapshot",
       "AttemptQueueCleanupReport",
       "AttemptQueueRetryReason",
@@ -69408,14 +69391,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptId"
-     ],
+     "notable": [],
      "path": "src/store/attempt_id.rs",
-     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "purpose": "Stable queued-attempt identifiers: defined in `oneiron-store`, with the side-table raw codec the engine…",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69470,6 +69450,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AbandonAttempt",
+      "AbandonOutcome",
+      "ClaimOutcome",
+      "CompleteOutcome",
+      "EnqueueOutcome",
+      "FailOutcome",
+      "InterveneAttempt",
+      "InterveneOutcome",
+      "RetryOutcome"
+     ],
+     "path": "src/store/attempt_outcomes.rs",
+     "purpose": "What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim…",
+     "surface": {
+      "enum": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReadSetProducer"
      ],
      "path": "src/store/attempt_read_producer.rs",
@@ -69478,6 +69479,26 @@
       "const": 14,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptPlacement",
+      "AttemptReadSet",
+      "AttemptRecord",
+      "AttemptTerminalExhaust",
+      "PlannedBinding",
+      "PlannedExactness",
+      "RequeuedFailure"
+     ],
+     "path": "src/store/attempt_record.rs",
+     "purpose": "The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 6
      }
     },
     {
@@ -69502,6 +69523,26 @@
      "purpose": "Owner-retained queue kind and identifier range classification",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
+      "RunBranchSignal",
+      "RunSignalKind",
+      "RunSignalState"
+     ],
+     "path": "src/store/attempt_run_signal.rs",
+     "purpose": "The durable branch signal and ask rows an attempt row carries: each branch-addressed control signal and its…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "struct": 4
      }
     },
     {
@@ -72172,7 +72213,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 101,
+      "mod": 106,
       "re-export": 31
      }
     },
@@ -73373,6 +73414,18 @@
      "surface": {
       "crate-vis": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionRef"
+     ],
+     "path": "src/store/revision_ref.rs",
+     "purpose": "A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a…",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -81938,15 +81991,15 @@
       "IndexedRevisionInput",
       "PinnedCitation",
       "ReadMode",
-      "ResolvedCitation",
-      "RevisionRef"
+      "ResolvedCitation"
      ],
      "path": "src/vault/entity_revision/types.rs",
      "purpose": "Exact read frontiers and idle refresh contracts for editable entity text",
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -90485,7 +90538,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 407,
+     "files": 412,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90725,7 +90778,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6303,
+   "source_files": 6308,
    "test_files": 898
   },
   "oneiron-android": {
@@ -106124,7 +106177,18 @@
      "surface": {
       "const": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/borrowed.rs",
+     "purpose": "Borrowed decoding for the two fixed-size memory control types",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -106329,10 +106393,10 @@
      "purpose": "Framing (protocol 2.0): a message is one or more frames back to back, each `len: u32 LE | more: u8 | len…"
     },
     "memory": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…"
     },
     "region": {
@@ -106380,7 +106444,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 2
   },
   "oneiron-policy-vocabulary": {
@@ -126713,6 +126777,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptId"
+     ],
+     "path": "src/attempt_id.rs",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BatchOp"
      ],
      "path": "src/batch_op.rs",
@@ -127098,7 +127175,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 25
+      "mod": 27
      }
     },
     {
@@ -127384,6 +127461,19 @@
      "purpose": "Host-owned retained-memory accounting for in-memory storage",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunWriteToken"
+     ],
+     "path": "src/run_write_token.rs",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -128527,6 +128617,13 @@
     }
    ],
    "modules": {
+    "attempt_id": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation"
+    },
     "batch_op": {
      "files": 1,
      "impl_vault": false,
@@ -128653,6 +128750,13 @@
      "layout": "file",
      "purpose": "Host-owned retained-memory accounting for in-memory storage"
     },
+    "run_write_token": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write"
+    },
     "secret_manifest": {
      "files": 1,
      "impl_vault": false,
@@ -128705,7 +128809,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 123,
+   "source_files": 125,
    "test_files": 1
   },
   "oneiron-uniffi": {
