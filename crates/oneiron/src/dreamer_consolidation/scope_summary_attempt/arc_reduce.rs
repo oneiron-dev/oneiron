@@ -18,7 +18,7 @@ use super::arc_children::ArcRun;
 use super::arc_output::{ArcLines, arc_wire};
 use super::arc_part_merge::{PartLine, merge_part};
 use super::arc_review::{Observation, store_exit};
-use super::arc_synopsis::{ARC_SYNOPSIS, Synopsis};
+use super::arc_synopsis::Synopsis;
 use super::output::reply_text;
 use super::{ScopeSummaryExecutor, compose_again};
 use crate::attempt_queue::AttemptId;
@@ -223,7 +223,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             Err(error) => return Ok(Landing::Exit(run.charges.park_on_error(&error))),
         };
-        let lines = if ARC_SYNOPSIS {
+        let synopsis = match ctx.vault.dreamer_recipe_policy() {
+            Ok(policy) => policy.arc_synopsis_enabled,
+            Err(error) => return Ok(Landing::Exit(run.charges.park_on_error(&error))),
+        };
+        let lines = if synopsis {
             match self.lead_with_synopsis(run, ctx, step_ctx, lines).await? {
                 Synopsis::Lines(lines) => lines,
                 Synopsis::Exit(exit) => return Ok(Landing::Exit(exit)),

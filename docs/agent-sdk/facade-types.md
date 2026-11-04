@@ -5431,11 +5431,11 @@ export type AgentMcpInput = { key: string; min_version?: string | null }
 export type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentCeilingInput` */
 export type AgentCeilingInput = "auto" | "proposed"
-/** `oneiron::agent_def::refusal::RefusalLevel` */
+/** `oneiron::store::agent_refusal::RefusalLevel` */
 export type RefusalLevel = "none" | "voice" | "veto" | "full"
-/** `oneiron::agent_def::refusal::RefusalDial` */
+/** `oneiron::store::agent_refusal::RefusalDial` */
 export type RefusalDial = { bond?: RefusalLevel | null; logistics?: RefusalLevel | null }
-/** `oneiron::agent_def::models::AgentModel` */
+/** `oneiron::store::agent_model::AgentModel` */
 export type AgentModel = { model_ref: ModelId; when: string }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentDefinitionSpec` */
 export type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; refusal?: RefusalDial | null; models?: AgentModel[]; compaction_model?: ModelId | null }
@@ -8046,7 +8046,7 @@ export type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: numbe
 /** `oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest` */
 export type SievePolicySetRequest = { policy: SievePolicy }
 /** `oneiron::dreamer_wake::recipes::WakeRecipePolicy` */
-export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number; thing_child_code_mode: boolean; thing_child_instruction: string; thing_child_input_window_divisor: number; thing_child_fallback_window_tokens: number }
+export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; arc_synopsis_enabled: boolean; audit_window_instruction: string; follower_enabled: boolean; follower_instruction: string; follower_keyframe_instruction: string; follower_sizing_bytes_per_token: number; thing_child_code_mode: boolean; thing_child_instruction: string; thing_child_input_window_divisor: number; thing_child_fallback_window_tokens: number }
 /** `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest` */
 export type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy }
 /** `oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest` */

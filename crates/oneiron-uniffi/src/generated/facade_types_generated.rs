@@ -42831,7 +42831,7 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
-/// `oneiron::agent_def::refusal::RefusalLevel`.
+/// `oneiron::store::agent_refusal::RefusalLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RefusalLevel {
     #[serde(rename = "none")]
@@ -42844,7 +42844,7 @@ pub enum RefusalLevel {
     Full,
 }
 
-/// `oneiron::agent_def::refusal::RefusalDial`.
+/// `oneiron::store::agent_refusal::RefusalDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefusalDial {
@@ -42854,7 +42854,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
@@ -65099,6 +65099,8 @@ pub struct WakeRecipePolicy {
     pub arc_min_new_statements: u32,
     #[serde(rename = "arc_child_calls_per_wake")]
     pub arc_child_calls_per_wake: u32,
+    #[serde(rename = "arc_synopsis_enabled")]
+    pub arc_synopsis_enabled: bool,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
     #[serde(rename = "follower_enabled")]
