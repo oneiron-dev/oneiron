@@ -222,16 +222,25 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
     txn: &heed::RoTxn<'_>,
     ops: &mut Vec<BatchOp>,
 ) -> Result<Option<RoutedBatchPuts>> {
-    take_projector_only_batch_puts_preserving_births_in_txn(vault, txn, ops, &[])
+    take_batch_puts_in_txn(vault, txn, ops, None)
 }
 
-/// Bound inputs with an explicit birth keep the ordinary row write: their
-/// birth still names that row, not a deterministic projected head.
+/// Bound inputs keep the ordinary row write when they carry a birth or
+/// scope that the source event and its deterministic heads cannot preserve.
 pub(crate) fn take_projector_only_batch_puts_preserving_births_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     ops: &mut Vec<BatchOp>,
     births: &[(EntityId, crate::provenance::birth::RowBirth)],
+) -> Result<Option<RoutedBatchPuts>> {
+    take_batch_puts_in_txn(vault, txn, ops, Some(births))
+}
+
+fn take_batch_puts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ops: &mut Vec<BatchOp>,
+    bound_births: Option<&[(EntityId, crate::provenance::birth::RowBirth)]>,
 ) -> Result<Option<RoutedBatchPuts>> {
     let candidates: Vec<(usize, String)> = ops
         .iter()
@@ -268,21 +277,36 @@ pub(crate) fn take_projector_only_batch_puts_preserving_births_in_txn(
         let BatchOp::Put { id, data, .. } = &ops[index] else {
             continue;
         };
-        if births.iter().any(|(row, _)| row == id) || mentions.get(id) != Some(&1) {
+        if bound_births.is_some_and(|births| births.iter().any(|(row, _)| row == id))
+            || mentions.get(id) != Some(&1)
+        {
             continue;
         }
         if let CommPutRoute::Projector(event) =
             comm_put_route_in_txn(vault, txn, id, &predicate, data)?
         {
-            inputs.push((
-                *id,
-                crate::claim::validate_claim_body_and_decode_in_txn(
-                    &vault.store,
-                    txn,
-                    data,
-                    false,
-                )?,
-            ));
+            let body = crate::claim::validate_claim_body_and_decode_in_txn(
+                &vault.store,
+                txn,
+                data,
+                false,
+            )?;
+            if bound_births.is_some() {
+                let projected = CommClaim::from_claim_body(&body)?.value.claim_body()?;
+                if body.world.unwrap_or_else(crate::claim::base_world_id)
+                    != projected.world.unwrap_or_else(crate::claim::base_world_id)
+                    || body.rel != projected.rel
+                    || body.scope_facet != projected.scope_facet
+                    || body.scope_project != projected.scope_project
+                    || body.scope != projected.scope
+                    || crate::claim::claim_sensitivity_band(&body)
+                        != crate::claim::claim_sensitivity_band(&projected)
+                    || body.session_tag != projected.session_tag
+                {
+                    continue;
+                }
+            }
+            inputs.push((*id, body));
             events.extend(event);
             routed.insert(*id);
         }
