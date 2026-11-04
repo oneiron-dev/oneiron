@@ -1,5 +1,6 @@
 //! Revision values and their unchanged pure constructors.
 
+use crate::blob_artifact::OutputProductionStamp;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::store::code_document_values::CodeDocumentFrontier;
@@ -40,6 +41,8 @@ pub struct CodeRevision {
     pub parent_revision_id: Option<EntityId>,
     pub reverted_to_revision_id: Option<EntityId>,
     pub provenance_claim_id: Option<EntityId>,
+    /// Mutable host-production receipt, outside the immutable artifact fold.
+    pub production: OutputProductionStamp,
     pub finalized_at: u64,
     /// Tested per-file states, distinct from the per-session revision frontier.
     pub file_frontiers: BTreeMap<[u8; 32], CodeDocumentFrontier>,
@@ -70,6 +73,7 @@ impl CodeRevision {
             parent_revision_id: None,
             reverted_to_revision_id: None,
             provenance_claim_id: None,
+            production: OutputProductionStamp::Unknown,
             finalized_at,
             file_frontiers: BTreeMap::new(),
             commit_metadata: None,
@@ -107,6 +111,7 @@ impl CodeRevision {
             parent_revision_id: Some(parent_revision_id),
             reverted_to_revision_id: Some(reverted_to_revision_id),
             provenance_claim_id: None,
+            production: OutputProductionStamp::Unknown,
             finalized_at,
             file_frontiers: BTreeMap::new(),
             commit_metadata: None,

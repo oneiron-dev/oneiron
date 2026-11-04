@@ -9,6 +9,8 @@
 use heed::RoTxn;
 use rmpv::Value;
 
+use crate::attempt_queue::AttemptId;
+use crate::blob_artifact::OutputProductionStamp;
 use crate::code_revision::CodeRevisionKind;
 use crate::code_run::team_submit::OutputRevision;
 use crate::error::{Error, Result};
@@ -116,6 +118,36 @@ pub(super) fn output_descriptor_in_txn(
         facet: body.scope_facet,
         project: body.scope_project,
     }))
+}
+
+/// The historical host-producer attempt of the exact submitted output.
+/// Missing or erased production metadata proves no attempt membership.
+pub(super) fn producer_attempt_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    output: OutputRevision,
+) -> Result<Option<AttemptId>> {
+    let production = match output {
+        OutputRevision::Blob { artifact, version } => {
+            let Some(mut record) =
+                vault.blob_artifact_version_metadata_in_txn(txn, &artifact, version)?
+            else {
+                return Ok(None);
+            };
+            record.production.project_erased_in_txn(vault, txn)?;
+            record.production
+        }
+        OutputRevision::Code { revision } => {
+            let Some(record) = vault.get_code_revision_in_txn(txn, &revision)? else {
+                return Ok(None);
+            };
+            record.production
+        }
+    };
+    Ok(match production {
+        OutputProductionStamp::Host(host) => Some(host.attempt()),
+        OutputProductionStamp::Unknown | OutputProductionStamp::Erased => None,
+    })
 }
 
 /// The exact version's `blob.version` claim, once the artifact, the
