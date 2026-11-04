@@ -148,7 +148,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;

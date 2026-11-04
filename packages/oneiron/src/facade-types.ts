@@ -8100,7 +8100,7 @@ export type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query
 export type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] }
 /** `oneiron::memory::signal_extraction::SignalExtractionResult` */
 export type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] }
-/** `oneiron::channel_identity::shape::SelfHeldShape` */
+/** `oneiron_authority::channel_identity_shape::SelfHeldShape` */
 export type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence"
 /** `oneiron::channel_identity::binding::ChannelIdentityBinding` */
 export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number }
@@ -8108,7 +8108,7 @@ export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet
 export type ChannelIdentityFulfillment = "api" | "manual" | "review"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityProvisionRequest` */
 export type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null }
-/** `oneiron::channel_identity::shape::ChannelIdentityShape` */
+/** `oneiron_authority::channel_identity_shape::ChannelIdentityShape` */
 export type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityCustody` */
 export type ChannelIdentityCustody = "self_held" | "delegated"
@@ -8168,7 +8168,7 @@ export type ThreadPassportsRequest = { thread_ref: string }
 export type ThreadPassportsView = { canonical_thread_ref: string; passports: ThreadPassportView[]; pinned_mask?: ThreadMaskView | null }
 /** `oneiron::delivery_window::window::DeliveryWindowTimeWindow` */
 export type DeliveryWindowTimeWindow = { start_minute: number; end_minute: number }
-/** `oneiron::delivery_window::types::DeliveryWindowContextCondition` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowContextCondition` */
 export type DeliveryWindowContextCondition = "calendar_busy" | "focus_on" | "driving" | "asleep"
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowRule` */
 export type DeliveryWindowRule = { kind: "quiet"; window: DeliveryWindowTimeWindow } | { kind: "context"; when: DeliveryWindowContextCondition } | { kind: "channel"; channel: string; window?: DeliveryWindowTimeWindow | null }
@@ -8182,19 +8182,19 @@ export type DeliveryWindowPolicyRow = { claim_ref: EntityId; subject_ref: Entity
 export type DeliveryWindowPolicies = { rows: DeliveryWindowPolicyRow[] }
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowPolicyRetractRequest` */
 export type DeliveryWindowPolicyRetractRequest = { claim_ref: EntityId }
-/** `oneiron::delivery_window::types::DeliveryWindowVerbClass` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowVerbClass` */
 export type DeliveryWindowVerbClass = "ambient" | "interrupt"
-/** `oneiron::delivery_window::types::DeliveryWindowApnsInterruptionLevel` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowApnsInterruptionLevel` */
 export type DeliveryWindowApnsInterruptionLevel = "Passive" | "Active" | "TimeSensitive" | "Critical"
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowEvaluateRequest` */
 export type DeliveryWindowEvaluateRequest = { subject_refs: EntityId[]; delivery_epoch_secs: number; local_minute_of_day: number; verb_class: DeliveryWindowVerbClass; channel: string; active_contexts?: DeliveryWindowContextCondition[]; interrupt_surface?: string | null; degrade_to?: string | null; apns_interruption_level?: DeliveryWindowApnsInterruptionLevel | null }
-/** `oneiron::delivery_window::types::DeliveryWindowDecision` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision` */
 export type DeliveryWindowDecision = "DeliverNow" | { DeliverNowWithApnsCap: { reason: string; from: string; to: string } } | { Hold: { reason: string; retry_at?: number | null } } | { Degrade: { reason: string; from: string; to: string } } | { LetGo: { reason: string } }
-/** `oneiron::delivery_window::types::DeliveryWindowMatch` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowMatch` */
 export type DeliveryWindowMatch = { predicate: string; reason: string; retry_at?: number | null }
-/** `oneiron::delivery_window::types::DeliveryWindowLadderRung` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowLadderRung` */
 export type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute"
-/** `oneiron::delivery_window::types::DeliveryWindowResolution` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowResolution` */
 export type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung }
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowPreview` */
 export type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution }

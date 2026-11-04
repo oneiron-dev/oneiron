@@ -32,6 +32,8 @@ CRATES = {
     'oneiron_lens_wire': 'crates/oneiron-lens-wire/src',
     'oneiron_policy_vocabulary': 'crates/oneiron-policy-vocabulary/src',
     'oneiron_run_budget': 'crates/oneiron-run-budget/src',
+    'oneiron_code_source': 'crates/oneiron-code-source/src',
+    'oneiron_delivery_vocabulary': 'crates/oneiron-delivery-vocabulary/src',
     'oneiron_contracts': 'crates/oneiron-contracts/src',
     'oneiron_authority': 'crates/oneiron-authority/src',
     'oneiron_crypto': 'crates/oneiron-crypto/src',

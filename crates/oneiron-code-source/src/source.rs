@@ -150,7 +150,7 @@ pub struct TranspiledSource {
 
 /// Where a guest's exception was thrown in the program it ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GuestPosition {
+pub struct GuestPosition {
     line: u32,
     column: u32,
 }
@@ -256,7 +256,7 @@ impl<'a> PreparedSource<'a> {
     /// the suffix its error carries. `None` for a JavaScript program, whose
     /// error stays exactly as it was, and for a throw outside the authored
     /// source (the guest envelope, a helper or a prelude line).
-    pub(crate) fn failure_position(&self, at: Option<GuestPosition>) -> Option<String> {
+    pub fn failure_position(&self, at: Option<GuestPosition>) -> Option<String> {
         let (line, column) = self
             .transpiled
             .as_ref()?
@@ -380,7 +380,7 @@ impl TranspiledSource {
 /// Splits the guest's error into its text and the position its header
 /// names. A message with no header (a fixed guest failure, or a component
 /// that writes none) is all text, as it always was.
-pub(crate) fn split_guest_error(message: &str) -> (&str, Option<GuestPosition>) {
+pub fn split_guest_error(message: &str) -> (&str, Option<GuestPosition>) {
     let Some((head, text)) = message
         .strip_prefix(GUEST_ERROR_HEADER)
         .and_then(|rest| rest.split_once('\n'))
