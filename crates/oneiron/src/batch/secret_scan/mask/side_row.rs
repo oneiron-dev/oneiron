@@ -479,7 +479,8 @@ fn admitted(
         traced: pass.tracked.then(TextReplacements::default),
         ..Masker::default()
     };
-    for part in parts.iter_mut() {
+    for (part, (record, place)) in parts.iter_mut().zip(origins) {
+        minted.at = Some((*record, (*place).to_owned()));
         part.mask(&mut minted, pass.refs)?;
     }
     if !accepts(parts) {

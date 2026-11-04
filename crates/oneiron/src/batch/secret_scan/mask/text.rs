@@ -29,8 +29,8 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let spans = self.text_spans(text);
-        // A value the owner ruled no secret in the record the pass reads
-        // stays as written: that ruling wins over the known-value sweep.
+        // A value the owner ruled no secret or kept as text in the record the pass
+        // reads stays as written: that ruling wins over the known-value sweep.
         let known: Vec<(Range<usize>, String)> = spans
             .known
             .into_iter()

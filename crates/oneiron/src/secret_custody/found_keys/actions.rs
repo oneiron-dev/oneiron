@@ -59,7 +59,7 @@ impl Vault {
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`SecretError::SecretCustodyNotActive`](crate::error::SecretError::SecretCustodyNotActive)
     /// for a key no longer active. [`GateError::InvalidConsentBound`] for a
-    /// key the owner ruled no secret.
+    /// key the owner ruled no secret or kept as text.
     pub fn grant_found_key(
         &self,
         owner: &AuthenticatedOwner,
@@ -99,7 +99,7 @@ impl Vault {
     /// What the delete door returns; [`GateError::ConsentOwnerNotAuthenticated`]
     /// when the proof is not the live owner's; [`Error::EntityNotFound`] for a
     /// handle no notice names; [`GateError::InvalidConsentBound`] for a key
-    /// found outside any record (a side row), or one ruled no secret.
+    /// found outside any record (a side row), or one ruled no secret or kept as text.
     pub fn delete_found_key_record(
         &self,
         owner: &AuthenticatedOwner,
@@ -280,8 +280,8 @@ impl Vault {
         Ok(settled)
     }
 
-    /// Re-enters the kept value of a found key the owner ruled no secret,
-    /// the way out of `credential_leaf_unreadable` for it (FIX 7404): while
+    /// Re-enters the kept value of a found key the owner ruled no secret or
+    /// kept as text, the way out of `credential_leaf_unreadable` for it (FIX 7404): while
     /// its custody key does not open the value, every batch write to the
     /// record it was found in answers that, and no other door reaches a
     /// revoked record's value. `value` is sealed again at the record's
@@ -296,7 +296,7 @@ impl Vault {
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`GateError::InvalidConsentBound`] for an empty value, or a key the
-    /// owner has not ruled no secret. `credential_custody_unavailable` when
+    /// owner has not ruled no secret or kept as text. `credential_custody_unavailable` when
     /// custody cannot take the value's key. What the custody write returns.
     pub fn reenter_found_key_value(
         &self,
