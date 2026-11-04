@@ -4,31 +4,10 @@
 //! (FIX 10384): whole items, `pub(super)` visibility, no behaviour change.
 //! The root re-exports every name so existing `super::X` paths resolve.
 use super::{
-    BTreeSet,
-    BUNDLE_LABEL,
-    CHUNK,
-    Cursor,
-    EntityId,
-    GENERATION_LEN,
-    KEY_ID_LEN,
-    Kek,
-    OpenedBundleSection,
-    OpenedVaultBundle,
-    PADS_LABEL,
-    REQUEST_TAG,
-    Result,
-    SECTION_KEY_CONTEXT,
-    SECTION_LABEL,
-    SECTION_PAD_FLOOR,
-    SIGNATURE_CONTEXT,
-    SealPlan,
-    SealedBundleGeneration,
-    SealedBundleSection,
-    SealedWorldAuthority,
-    WorldKey,
-    WorldKeyId,
-    Zeroizing,
-    refused,
+    BTreeSet, BUNDLE_LABEL, CHUNK, Cursor, EntityId, GENERATION_LEN, KEY_ID_LEN, Kek,
+    OpenedBundleSection, OpenedVaultBundle, PADS_LABEL, REQUEST_TAG, Result, SECTION_KEY_CONTEXT,
+    SECTION_LABEL, SECTION_PAD_FLOOR, SIGNATURE_CONTEXT, SealPlan, SealedBundleGeneration,
+    SealedBundleSection, SealedWorldAuthority, Signer, WorldKey, WorldKeyId, Zeroizing, refused,
 };
 /// label ‖ vault (32) ‖ generation (24) ‖ publisher (16) ‖ signature (64) ‖ base
 /// length (8) ‖ base ‖ section count (4) ‖ sections ‖ capsule count (4) ‖
