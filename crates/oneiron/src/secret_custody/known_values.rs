@@ -373,13 +373,30 @@ impl KnownValues {
     /// base64 run, over folds, or with `+` for a space is found there too
     /// (FIX 6671).
     pub(crate) fn spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
-        let mut spans = self.raw_spans(data);
+        self.spans_except(data, |_| false)
+    }
+
+    /// Known values other than those `keep` exempts. The predicate reads the
+    /// exact matched bytes, before an encoded hit widens to its source span.
+    pub(crate) fn spans_except(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+    ) -> Vec<KnownSpan<'_>> {
+        let mut spans: Vec<_> = self
+            .raw_spans(data)
+            .into_iter()
+            .filter(|hit| !keep(&data[hit.span.clone()]))
+            .collect();
         let mut spelled = Vec::new();
         for view in [forms::percent_view(data), forms::json_view(data)]
             .into_iter()
             .flatten()
         {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
@@ -389,6 +406,9 @@ impl KnownValues {
         // maps back, since `+` reads as one byte from one.
         if let Some(view) = forms::form_view(data) {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source_mapped(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
@@ -399,7 +419,7 @@ impl KnownValues {
         // the same views for the whole-run and in-run passes (identical output).
         let b64_views = forms::base64_views(data, self.reach());
         for (run, view) in &b64_views {
-            if fits(view.bytes.len()) {
+            if fits(view.bytes.len()) && !keep(&view.bytes) {
                 if let Some(known) = self.whole(&view.bytes) {
                     spelled.push(KnownSpan {
                         span: run.clone(),
@@ -413,6 +433,9 @@ impl KnownValues {
         // folds, maps back through the run's own source map.
         for (_, view) in &b64_views {
             for hit in self.raw_spans(&view.bytes) {
+                if keep(&view.bytes[hit.span.clone()]) {
+                    continue;
+                }
                 if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
