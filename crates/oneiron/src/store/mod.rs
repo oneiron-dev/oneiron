@@ -476,3 +476,9 @@ pub(crate) mod live_speaker_calls;
 pub mod record_ref;
 
 pub(crate) mod identity_redirect_rows;
+
+pub mod healer_oversight;
+pub(crate) mod skill_resident;
+pub mod channel_class;
+pub(crate) mod pending_comm_stop;
+pub(crate) mod conversation_summary;

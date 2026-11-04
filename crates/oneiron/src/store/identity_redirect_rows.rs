@@ -6,14 +6,13 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::EdgeStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 /// Only accepted row-version byte. A row is `[version][head_id(16)]*`, so
 /// the zero-head split is exactly the one-byte row — distinguishable from
 /// an absent row (live entity) by presence alone.
-const REDIRECT_ROW_VERSION: u8 = 1;
+pub(crate) const REDIRECT_ROW_VERSION: u8 = 1;
 
 /// The materialized redirect projection. Key: shell [`EntityId`].
 pub(crate) const REDIRECT: SideTable<EntityId, RedirectRow, Raw> =
@@ -34,7 +33,7 @@ impl RawValue for RedirectRow {
     }
 }
 
-const SHELL_EDGE_KINDS: [EdgeKind; 2] = [EdgeKind::MergedInto, EdgeKind::SplitInto];
+pub(crate) const SHELL_EDGE_KINDS: [EdgeKind; 2] = [EdgeKind::MergedInto, EdgeKind::SplitInto];
 
 /// Encodes a head set as a redirect row. The heads are written in the
 /// caller's order, which every derivation normalizes to ascending id order,
@@ -138,112 +137,4 @@ pub(crate) fn table_inbound_shells_in_txn(
         }
     }
     Ok(inbound)
-}
-
-/// Shells that point DIRECTLY at `head`, read through the CID-7 witnesses
-/// and UNIONED.
-///
-/// - The canonical `merged_into` / `split_into` edges are engine-authored
-///   truth, and the only witness left once the table has been dropped —
-///   `edges_in` is keyed `[target | kind | source]`, so a reversed row for
-///   `head` names the shell in its source slot.
-/// - The materialized table additionally covers a row whose edge is already
-///   gone, which is the shape a projector output can hold and the edges
-///   cannot.
-/// - `ledger_inbound` covers the shape NEITHER can hold: an erase that took
-///   the edge AND the row with it. It is empty for every caller that reads
-///   before a purge, where the two structural witnesses are already exact.
-///
-/// Either structural witness alone answers the ordinary case; the union is
-/// what makes an ERASE walk fail-closed, because a shell missed here keeps a
-/// readable payload of precisely what the erasure hid.
-///
-/// Every inbound edge is read, however many there are (FIX 8691): the count
-/// only feeds the advisory [`EngineScan::EdgePeerRows`] check for this head,
-/// kind and direction, which never refuses, caps or drops a shell.
-pub(crate) fn direct_inbound_shells_in_txn(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    head: &EntityId,
-    table_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
-    ledger_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
-    shells: &mut BTreeSet<EntityId>,
-) -> Result<()> {
-    let direction = crate::ports::EdgeDirection::In;
-    for kind in SHELL_EDGE_KINDS {
-        let scope = [&[direction as u8][..], head.as_bytes(), &[kind as u8][..]].concat();
-        let mut count = ScanCount::start(store, rtxn, EngineScan::EdgePeerRows, &scope)?;
-        for entry in store.port_edges(rtxn, head, direction, Some(kind), None)? {
-            count.row();
-            shells.insert(entry?.target);
-        }
-        count.defer(store);
-    }
-    for witness in [table_inbound, ledger_inbound] {
-        if let Some(witnessed) = witness.get(head) {
-            shells.extend(witnessed.iter().copied());
-        }
-    }
-    Ok(())
-}
-
-/// Every shell that resolves — directly or through a chain — to one of
-/// `heads`. The inverse of [`resolve_into_in_txn`], and the walk ARCH-0055 §9
-/// means by "HardErase walks redirects".
-///
-/// The frontier is walked to exhaustion, with no depth bound (FIX 8690): a
-/// shell left past a cutoff would keep a readable payload of what the erase
-/// hid. It still terminates and is cycle-safe for a stronger reason than a
-/// path guard: a shell is expanded at most ONCE, so a forged cycle costs one
-/// frontier step and ends rather than erroring — an erase walk must not be
-/// stoppable by planting a cycle in the data it is about to erase.
-///
-/// `heads` themselves are never returned; the answer is the shells around
-/// them.
-pub(crate) fn inbound_redirect_shells_in_txn(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    heads: &BTreeSet<EntityId>,
-) -> Result<BTreeSet<EntityId>> {
-    inbound_redirect_shells_with_ledger_in_txn(store, rtxn, heads, &BTreeMap::new())
-}
-
-/// [`inbound_redirect_shells_in_txn`] with the ledger witness of
-/// [`ledger_inbound_shells_in_txn`] unioned into every frontier step.
-///
-/// Separate door rather than a widened one: the erase walk reads BEFORE the
-/// purge, where the structural witnesses are exact and the ledger adds
-/// nothing, so it keeps paying for neither the fold nor a cascade set derived
-/// from anything but the edges it is about to tear.
-pub(crate) fn inbound_redirect_shells_with_ledger_in_txn(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    heads: &BTreeSet<EntityId>,
-    ledger_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
-) -> Result<BTreeSet<EntityId>> {
-    let table_inbound = table_inbound_shells_in_txn(store, rtxn)?;
-    let mut reached = heads.clone();
-    let mut shells = BTreeSet::new();
-    let mut frontier: Vec<EntityId> = heads.iter().copied().collect();
-    while !frontier.is_empty() {
-        let mut found = BTreeSet::new();
-        for head in &frontier {
-            direct_inbound_shells_in_txn(
-                store,
-                rtxn,
-                head,
-                &table_inbound,
-                ledger_inbound,
-                &mut found,
-            )?;
-        }
-        frontier = Vec::new();
-        for shell in found {
-            if reached.insert(shell) {
-                shells.insert(shell);
-                frontier.push(shell);
-            }
-        }
-    }
-    Ok(shells)
 }
