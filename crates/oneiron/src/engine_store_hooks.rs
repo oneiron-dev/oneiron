@@ -674,6 +674,42 @@ impl StoreActorScrubs for EngineActorScrubs {
     ) -> Result<()> {
         crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn erase_mirror_control_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_mirror_control_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_mirror_event_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_mirror_event_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_effect_approval_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_effect_approval_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_effect_authorized_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::linear_sync::erase_effect_authorized_actor_in_txn(vault, wtxn, actor)
+    }
 }
 
 impl StoreGateHooks for EngineGateHooks {
@@ -742,6 +778,34 @@ impl StoreGateHooks for EngineGateHooks {
         body: &ClaimBody,
     ) -> Result<()> {
         crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, claim_id, body)
+    }
+
+    fn manifest_is_trusted(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, id, body)
+    }
+
+    fn manifest_is_quarantined(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, id, body)
+    }
+
+    fn esign_rate_thresholds_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+    ) -> oneiron_store::esign_rate_thresholds::EsignRateThresholds {
+        crate::gate::esign_rate_policy::esign_rate_thresholds_in_txn(store, txn)
     }
 
     fn stamp_manifest_origin(
@@ -834,6 +898,25 @@ impl StoreGateHooks for EngineGateHooks {
         credential: Option<&oneiron_authority::federation::Scope>,
     ) -> bool {
         crate::gate::scoped_read_grant_reads_world(grant, world, credential)
+    }
+
+    fn observe_submission_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actor: EntityId,
+        proposal_ref: &str,
+        policy_source: oneiron_store::proposal_observation_record::ProposalPolicySource,
+        revision_changed: bool,
+    ) -> Result<()> {
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            txn,
+            actor,
+            proposal_ref,
+            policy_source,
+            revision_changed,
+        )
     }
 
     fn erase_count_actor_in_txn(
