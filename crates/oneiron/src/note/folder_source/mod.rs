@@ -213,8 +213,9 @@ pub struct FolderRescan {
     pub facts: HashMap<String, FileFacts>,
     /// The host read the folder whole: every present file carries its
     /// links, and the new notes' out-links resolved against every file. A
-    /// partial read lands no meta, so a later whole read reconciles the
-    /// links it left alone (REVIEW-4381 P1).
+    /// partial read keeps a new row's prior meta behind the read, so the row
+    /// stays pending until a later whole read reconciles the links it left
+    /// alone (REVIEW-4381 P1).
     pub whole: bool,
 }
 

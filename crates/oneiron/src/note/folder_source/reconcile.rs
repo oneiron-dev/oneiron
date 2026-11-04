@@ -254,14 +254,16 @@ impl Vault {
                     landed_links: Vec::new(),
                     raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
-                    // A partial read lands no meta: the row stays pending,
-                    // so the mtime shortcut re-reads it and a later whole
-                    // read reconciles the links this scan left alone
-                    // (REVIEW-4381 P1).
+                    // A partial read keeps the row's prior meta: its facts
+                    // are behind what this read saw (the mtime shortcut only
+                    // passes over a file whose meta matches), so the row
+                    // stays pending until a whole read reconciles the links
+                    // this scan left alone — and the file keeps when it was
+                    // first seen (REVIEW-4381 P1).
                     meta: if whole {
                         next_meta(old, facts.get(&note.path).copied(), at, Some(at))
                     } else {
-                        None
+                        old
                     },
                     original: None,
                 };
@@ -401,7 +403,14 @@ impl Vault {
         });
         row.note = Some(id);
         row.raw_hash = raw_hash;
-        if current == file.markdown {
+        // The file's bytes are what the ledger last took: only its links may
+        // be behind. Reaching the content-edit path here — on a touch, or on
+        // a partial scan without links — would fork an owner-edited note
+        // through Rewrite over an unchanged file (REVIEW-4381 P1). Keep such
+        // files on the unchanged path and reconcile pending links separately.
+        // (An empty recorded hash is a missing row, never a match.)
+        let content_unchanged = !row.file_hash.is_empty() && row.file_hash == hash;
+        if current == file.markdown || content_unchanged {
             // The note already holds the file's text; only its links may be
             // behind (their landing failed, or their target landed since).
             // A file the host could not resolve whole leaves them alone.

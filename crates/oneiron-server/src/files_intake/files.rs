@@ -105,11 +105,30 @@ pub(super) fn read_files(
         .iter()
         .any(|dir| folder_root == *dir || folder_root.starts_with(dir));
     read.vault_covers_folder = covers;
+    // The root itself may be a link the person gave (theirs to follow):
+    // entries then spell the given root while their bytes live under the
+    // bound one, so a vault under the bound root would pass over uncompared
+    // (a root swapped for the vault's parent reads the vault under the given
+    // spelling). Compare through the bound root too (REVIEW-4381 P1). Links
+    // below the root are never followed, so no deeper spelling can mismatch.
+    let bound_under_vault = |shown: &Path| {
+        if folder_root.as_path() == folder {
+            return false;
+        }
+        let Ok(rel) = shown.strip_prefix(folder) else {
+            return false;
+        };
+        let bound = folder_root.join(rel);
+        vault_dirs
+            .iter()
+            .any(|dir| bound == *dir || bound.starts_with(dir))
+    };
     let excluded = |shown: &Path| {
         covers
             || vault_dirs
                 .iter()
                 .any(|dir| shown == dir || shown.starts_with(dir))
+            || bound_under_vault(shown)
             || relative(folder, shown).is_some_and(|path| excludes(exclude, &path))
     };
     let mut unopened = Vec::new();
