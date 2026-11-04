@@ -120,6 +120,7 @@ pub mod ports {
 }
 
 pub mod agent_record;
+pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
 pub mod attempt_id;
