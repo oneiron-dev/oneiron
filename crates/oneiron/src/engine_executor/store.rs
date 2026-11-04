@@ -153,14 +153,14 @@ pub(super) fn result_read_path(source: OutputRef) -> String {
 /// read under different paths and select their own taint and secrets.
 /// Paths without the occurrence segment keep the legacy meaning (the
 /// first occurrence with those bytes).
-pub(super) fn result_read_path_for(source: OutputRef, occurrence: &ResultOccurrence) -> String {
+pub(crate) fn result_read_path_for(source: OutputRef, occurrence: &ResultOccurrence) -> String {
     format!("{}/{}", result_read_path(source), occurrence.id().to_hex())
 }
 
 /// Splits a stored-result read path into its body ref, its occurrence when
 /// present, and its chunk offset: `{ROOT}{hash}/{len}[/{occ}]/chunk/{off}`.
 /// `None` when the shape is wrong.
-pub(super) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<EntityId>, u64)> {
+pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<EntityId>, u64)> {
     let rest = path.strip_prefix(RESULT_READ_ROOT)?;
     let (base, offset) = rest.rsplit_once("/chunk/")?;
     let mut parts = base.split('/');
