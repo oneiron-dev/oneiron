@@ -87,6 +87,42 @@ pub trait StoreActorScrubs: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `linear_sync::erase_mirror_control_actor_in_txn`
+    /// (side table `LINEAR_MIRROR_CONTROL`).
+    fn erase_mirror_control_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `linear_sync::erase_mirror_event_actor_in_txn`
+    /// (side table `LINEAR_MIRROR_EVENT`).
+    fn erase_mirror_event_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `linear_sync::erase_effect_approval_actor_in_txn`
+    /// (side table `LINEAR_EFFECT_APPROVAL`).
+    fn erase_effect_approval_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `linear_sync::erase_effect_authorized_actor_in_txn`
+    /// (side table `LINEAR_EFFECT_AUTHORIZED`).
+    fn erase_effect_authorized_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()>;
 }
 
 /// The actor scrub `PROJECT_PROPOSAL_CARD` declares:
@@ -202,4 +238,56 @@ pub(crate) fn erase_member_intent_actor_in_txn(
         .store
         .actor_scrubs
         .erase_member_intent_actor_in_txn(vault, wtxn, actor)
+}
+
+/// The actor scrub `LINEAR_MIRROR_CONTROL` declares:
+/// the engine's `linear_sync::erase_mirror_control_actor_in_txn`.
+pub(crate) fn erase_mirror_control_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .actor_scrubs
+        .erase_mirror_control_actor_in_txn(vault, wtxn, actor)
+}
+
+/// The actor scrub `LINEAR_MIRROR_EVENT` declares:
+/// the engine's `linear_sync::erase_mirror_event_actor_in_txn`.
+pub(crate) fn erase_mirror_event_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .actor_scrubs
+        .erase_mirror_event_actor_in_txn(vault, wtxn, actor)
+}
+
+/// The actor scrub `LINEAR_EFFECT_APPROVAL` declares:
+/// the engine's `linear_sync::erase_effect_approval_actor_in_txn`.
+pub(crate) fn erase_effect_approval_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .actor_scrubs
+        .erase_effect_approval_actor_in_txn(vault, wtxn, actor)
+}
+
+/// The actor scrub `LINEAR_EFFECT_AUTHORIZED` declares:
+/// the engine's `linear_sync::erase_effect_authorized_actor_in_txn`.
+pub(crate) fn erase_effect_authorized_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .actor_scrubs
+        .erase_effect_authorized_actor_in_txn(vault, wtxn, actor)
 }
