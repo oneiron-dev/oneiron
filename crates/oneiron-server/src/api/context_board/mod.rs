@@ -299,7 +299,7 @@ pub(crate) async fn context_board_hydrate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
-    if let Some(retrieval) = &mut req.retrieval {
+    if let Some(retrieval) = &req.retrieval {
         // Past its row the query asks and runs whole (Rule 5, FIX 6923): a
         // long chat turn still reads its board, cut only by the embedder.
         retrieval.ask_query_bytes(
@@ -308,8 +308,6 @@ pub(crate) async fn context_board_hydrate(
             crate::server::QueryDoor::ContextBoard,
             "retrieval.query",
         );
-        // The MEMORIES slot defaults derive from the served limit.
-        retrieval.clamp_limits();
     }
     let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
     let targets = board::board_targets(
