@@ -73,7 +73,7 @@ impl Vault {
         loop {
             let mint = self.store.body_mint()?.reserve(reserved)?;
             let mut wtxn = self.store.env.write_txn()?;
-            let known = KnownValues::load_in_writer(&self.store, &wtxn)?.map(Arc::new);
+            let known = KnownValues::shared_in_writer(&self.store, &wtxn)?;
             let admitted = admit_spool_in_txn(self, &mut wtxn, at, &spool, (known.as_ref(), true))?;
             if let SpoolAdmission::Unplaceable(reason) = admitted {
                 return Ok(ReplyBody::Unplaceable {

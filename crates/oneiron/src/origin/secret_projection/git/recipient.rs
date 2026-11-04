@@ -30,8 +30,8 @@ use super::super::claims::{
 use super::super::graph_objects::{RepoProjectionRelease, copy_repo_projection_objects};
 use super::super::recipient::RepoProjectionRevealBinding;
 use super::{
-    RepoGitProjection, RepoGitProjectionRoots, building_dir, closure_marks_stand_in_txn, land_copy,
-    require_store_not_erased, standing_projection,
+    RepoGitProjection, RepoGitProjectionRoots, building_dir, building_lock,
+    closure_marks_stand_in_txn, land_copy, require_store_not_erased, standing_projection,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -255,6 +255,7 @@ pub(crate) fn materialize_recipient_git_graph(
         .map(|(name, original)| Ok((GitRefName::parse_full(name.clone())?, original.clone())))
         .collect::<Result<Vec<_>>>()?;
     let roots = RepoGitProjectionRoots::new(published, private_root.clone())?;
+    let _building_lock = building_lock(vault, store_id, graph.graph)?;
     if let Some(standing) = standing_projection(vault, wire, &graph, store_id, &roots)? {
         return Ok(Some(standing));
     }

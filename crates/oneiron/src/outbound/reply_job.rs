@@ -527,6 +527,16 @@ fn erase_connector_reply_result_artifact_in_txn(
     {
         return Ok(false);
     }
+    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+        if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+            return Err(error);
+        }
+        tracing::warn!(
+            artifact = %artifact.to_hex(),
+            "connector reply erase: a legal hold keeps the job's result"
+        );
+        return Ok(false);
+    }
     // A hold on any version's ASSET keeps the whole artifact (FIX 12532):
     // the tear below would otherwise refuse on the held ASSET and fail the
     // erase, rolling back the source hard erase with it (REVIEW-4385 P1).
@@ -559,9 +569,11 @@ fn erase_connector_reply_result_artifact_in_txn(
             if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(&row.body).as_bytes() != &head.content_hash
             {
-                return Err(Error::CorruptedIndex("blob content hash"));
-            }
-            if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&row.body)
+                tracing::warn!(
+                    artifact = %artifact.to_hex(),
+                    "connector reply erase: unreadable result bytes name no body"
+                );
+            } else if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&row.body)
                 && let Some(body_ref) = result.body_ref.as_deref()
                 && let Some(rest) =
                     body_ref.strip_prefix(crate::outbound::CONNECTOR_REPLY_BODY_PREFIX)
@@ -572,16 +584,6 @@ fn erase_connector_reply_result_artifact_in_txn(
                 body_artifact = Some(body);
             }
         }
-    }
-    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
-        if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
-            return Err(error);
-        }
-        tracing::warn!(
-            artifact = %artifact.to_hex(),
-            "connector reply erase: a legal hold keeps the job's result"
-        );
-        return Ok(false);
     }
     crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
         store, txn, artifact, true,

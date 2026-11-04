@@ -4,6 +4,7 @@
 use heed::{RoTxn, RwTxn};
 use oneiron_authority::federation::Sensitivity;
 
+use crate::batch::row_put::RowPut;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -12,7 +13,18 @@ use crate::store::Store;
 /// from the moment it is assembled (see [`crate::store::StoreHooks`]). The
 /// store layer calls each method at the point where it called the engine
 /// function of the same name, with the same arguments, and keeps its result.
-pub trait StoreScopeStamps: Send + Sync {
+pub(crate) trait StoreScopeStamps: Send + Sync {
+    /// The engine's `federation::record_scope::stamp_put`.
+    fn stamp_put(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        data: &[u8],
+        put: RowPut,
+    ) -> Result<()>;
+
     /// The engine's `federation::record_scope::retire_stamp`.
     fn retire_stamp(&self, store: &Store, txn: &mut RwTxn<'_>, id: EntityId) -> Result<()>;
 
