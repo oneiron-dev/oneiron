@@ -360,6 +360,10 @@ pub struct ApiError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// The original held room join, when the engine supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<room_join_hold_schema::RoomJoinHoldSchema>)]
+    room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
 }
 
 /// The guidance a managed vault's attested holder gets at an owner door
@@ -381,6 +385,7 @@ impl ApiError {
             details: Box::new(details),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
             legal_hold: None,
+            room_join_hold: None,
         }
     }
 
@@ -657,6 +662,8 @@ impl<'de> Deserialize<'de> for ApiError {
             suggestions: Vec<String>,
             #[serde(default)]
             legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+            #[serde(default)]
+            room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -674,6 +681,7 @@ impl<'de> Deserialize<'de> for ApiError {
             details: Box::new(wire.details),
             suggestions: wire.suggestions,
             legal_hold: wire.legal_hold,
+            room_join_hold: wire.room_join_hold,
         })
     }
 }
@@ -709,6 +717,13 @@ pub struct ApiErrorEnvelopeBody {
     )]
     #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    #[serde(
+        default,
+        rename = "room_join_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<room_join_hold_schema::RoomJoinHoldSchema>)]
+    room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
 }
 
 impl ApiErrorEnvelope {
@@ -722,6 +737,7 @@ impl ApiErrorEnvelope {
                 details: error.details,
                 suggestions: error.suggestions,
                 legal_hold: error.legal_hold,
+                room_join_hold: error.room_join_hold,
             },
         }
     }
@@ -760,6 +776,7 @@ fn next_request_id() -> String {
     format!("req-{id:016x}")
 }
 
+pub(crate) mod room_join_hold_schema;
 mod schema;
 mod typed_refusal;
 
