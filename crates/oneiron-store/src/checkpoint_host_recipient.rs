@@ -1,6 +1,6 @@
 //! Host recipient and sealing policy for checkpoint legal-hold members.
 
-use crate::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::backup::host_holds_recipient_id;
 use std::num::NonZeroU64;
@@ -12,9 +12,9 @@ use std::num::NonZeroU64;
 /// and its nonzero epoch. Never read from the owner's settings.
 #[derive(Clone, PartialEq)]
 pub struct HostHoldsRecipient {
-    pub(crate) public: HybridPublicKey,
-    pub(crate) id: [u8; 32],
-    pub(crate) epoch: NonZeroU64,
+    pub public: HybridPublicKey,
+    pub id: [u8; 32],
+    pub epoch: NonZeroU64,
 }
 
 impl std::fmt::Debug for HostHoldsRecipient {
