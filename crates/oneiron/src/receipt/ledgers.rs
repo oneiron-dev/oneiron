@@ -218,6 +218,30 @@ pub(crate) fn attempt_calling_principal_in_txn(
     None
 }
 
+/// Scrubs caller identity while preserving the receipt's project rescoping.
+pub(crate) fn erase_attempt_receipt_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    crate::learning::erase_receipt_scope_in_txn(vault, wtxn, entity)?;
+    const RECEIPTS: SideTable<Vec<u8>, ReceiptRecord, Named> =
+        SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
+    let erased = entity.to_hex();
+    let rows = RECEIPTS
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in rows {
+        if let Ok(mut receipt) = RECEIPTS.decode_value(&value)
+            && receipt.fields.get(FIELD_ATTEMPT_CALLER) == Some(&erased)
+        {
+            receipt.fields.remove(FIELD_ATTEMPT_CALLER);
+            RECEIPTS.put(&vault.store, wtxn, &key, &receipt)?;
+        }
+    }
+    Ok(())
+}
+
 /// Point-reads the attempt pack receipt named by `receipt_id`.
 ///
 /// `Ok(None)` means "no such receipt on the ledger" — the answer attribution
