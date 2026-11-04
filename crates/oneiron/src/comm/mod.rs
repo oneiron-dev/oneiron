@@ -66,6 +66,7 @@ pub(crate) use self::descriptor::{
 pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
 pub(crate) use self::generic_put_routing::{
     RoutedBatchPuts, route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+    take_projector_only_batch_puts_preserving_births_in_txn,
 };
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;

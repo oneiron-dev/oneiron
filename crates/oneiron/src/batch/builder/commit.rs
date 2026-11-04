@@ -290,16 +290,16 @@ impl BatchBuilder<'_> {
                 Ok(Some(None)) => return Rows::Discard(Err(Error::EntityNotFound.into())),
                 Err(err) => return Rows::Discard(Err(err.into())),
             };
-            // Capture original bodies and targets above, before routing removes them.
-            let routed =
+            // Trusted routing keeps its existing path. A bound input stays
+            // through its original caller policy/source preflight first.
+            let routed = if reader.is_none() {
                 match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
                     Ok(routed) => routed,
                     Err(err) => return Rows::Discard(Err(err.into())),
-                };
-            #[cfg(feature = "sync")]
-            {
-                rows = super::super::vad_postcommit::ops_written_rows(&ops);
-            }
+                }
+            } else {
+                None
+            };
             let mut staged_gate_decisions = Vec::new();
             let mut preflight_gate_decision_ids = HashMap::new();
             if let Err(err) = preflight_gate_decisions_in_txn(
@@ -324,8 +324,23 @@ impl BatchBuilder<'_> {
                     Err(err) => Rows::Discard(Err(err.into())),
                 };
             }
+            let routed = if reader.is_some() {
+                match crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
+                    vault, &*wtxn, &mut ops, &births,
+                ) {
+                    Ok(routed) => routed,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                }
+            } else {
+                routed
+            };
+            #[cfg(feature = "sync")]
+            {
+                rows = super::super::vad_postcommit::ops_written_rows(&ops);
+            }
             let batch = AdmittedBatch {
                 routed,
+                bound_inputs: reader.is_some(),
                 ops,
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
@@ -442,6 +457,7 @@ impl BatchBuilder<'_> {
 /// A batch past its gate preflight, ready to apply in the writer.
 struct AdmittedBatch<'a> {
     routed: Option<crate::comm::RoutedBatchPuts>,
+    bound_inputs: bool,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
@@ -455,12 +471,22 @@ struct AdmittedBatch<'a> {
 fn apply_admitted(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
-    batch: AdmittedBatch<'_>,
+    mut batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
     let routed_rows = match batch.routed {
-        Some(routed) => routed.record_with_admission_in_txn(vault, wtxn, admission)?,
+        Some(routed) => {
+            if batch.bound_inputs {
+                super::comm_input::admit_routed_inputs(
+                    vault,
+                    wtxn,
+                    routed.inputs(),
+                    &mut batch.gate_mode,
+                )?;
+            }
+            routed.record_with_admission_in_txn(vault, wtxn, admission)?
+        }
         None => BTreeSet::new(),
     };
     let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);

@@ -138,19 +138,41 @@ impl BatchBuilder<'_> {
             })
             .transpose()?
             .flatten();
+        let mut gate_mode = gate_mode
+            .with_birth_mask(self.birth_mask)
+            .with_text_births(std::mem::take(&mut self.text_births))
+            .with_births(std::mem::take(&mut self.births))
+            .with_asset_files(std::mem::take(&mut self.asset_files))
+            .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
+            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
         let mut original_bodies = Vec::new();
-        let routed =
-            match crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)? {
-                Some(routed) => match actor {
-                    Some(actor) => {
-                        original_bodies.extend_from_slice(routed.inputs());
-                        let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
-                        routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
-                    }
-                    None => routed.record_in_txn(vault, wtxn)?,
-                },
-                None => std::collections::BTreeSet::new(),
-            };
+        let taken = if actor.is_some() {
+            crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
+                vault,
+                wtxn,
+                &mut self.ops,
+                &gate_mode.births,
+            )?
+        } else {
+            crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
+        };
+        let routed = match taken {
+            Some(routed) => match actor {
+                Some(actor) => {
+                    original_bodies.extend_from_slice(routed.inputs());
+                    super::comm_input::admit_routed_inputs(
+                        vault,
+                        wtxn,
+                        routed.inputs(),
+                        &mut gate_mode,
+                    )?;
+                    let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
+                    routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+                }
+                None => routed.record_in_txn(vault, wtxn)?,
+            },
+            None => std::collections::BTreeSet::new(),
+        };
         let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
             true
@@ -174,12 +196,6 @@ impl BatchBuilder<'_> {
         rows.extend(routed);
         #[cfg(feature = "sync")]
         let removed_edges = super::vad_postcommit::ops_removed_edges(&self.ops);
-        let gate_mode = gate_mode
-            .with_birth_mask(self.birth_mask)
-            .with_text_births(std::mem::take(&mut self.text_births))
-            .with_births(std::mem::take(&mut self.births))
-            .with_asset_files(std::mem::take(&mut self.asset_files))
-            .with_replicated_puts(std::mem::take(&mut self.replicated_puts));
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);

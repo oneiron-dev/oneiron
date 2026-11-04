@@ -130,9 +130,9 @@ impl ContentWriteSet {
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         actor: &WriteActor,
-        bodies: &[crate::claim::ClaimBody],
+        bodies: &[(EntityId, crate::claim::ClaimBody)],
     ) -> Result<()> {
-        for body in bodies {
+        for (_, body) in bodies {
             vault.authorize_shared_vault_write_in_txn(
                 txn,
                 self.vault_id,

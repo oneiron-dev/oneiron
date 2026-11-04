@@ -141,12 +141,12 @@ pub fn route_projector_only_comm_put_in_txn(
 /// of its ops for the projector: the source events they record, in op order.
 pub(crate) struct RoutedBatchPuts {
     events: Vec<CommSourceEvent>,
-    inputs: Vec<ClaimBody>,
+    inputs: Vec<(EntityId, ClaimBody)>,
 }
 
 impl RoutedBatchPuts {
     /// Original validated CLAIM bodies, including source-only routed acts.
-    pub(crate) fn inputs(&self) -> &[ClaimBody] {
+    pub(crate) fn inputs(&self) -> &[(EntityId, ClaimBody)] {
         &self.inputs
     }
 
@@ -222,6 +222,17 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
     txn: &heed::RoTxn<'_>,
     ops: &mut Vec<BatchOp>,
 ) -> Result<Option<RoutedBatchPuts>> {
+    take_projector_only_batch_puts_preserving_births_in_txn(vault, txn, ops, &[])
+}
+
+/// Bound inputs with an explicit birth keep the ordinary row write: their
+/// birth still names that row, not a deterministic projected head.
+pub(crate) fn take_projector_only_batch_puts_preserving_births_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ops: &mut Vec<BatchOp>,
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+) -> Result<Option<RoutedBatchPuts>> {
     let candidates: Vec<(usize, String)> = ops
         .iter()
         .enumerate()
@@ -257,18 +268,21 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
         let BatchOp::Put { id, data, .. } = &ops[index] else {
             continue;
         };
-        if mentions.get(id) != Some(&1) {
+        if births.iter().any(|(row, _)| row == id) || mentions.get(id) != Some(&1) {
             continue;
         }
         if let CommPutRoute::Projector(event) =
             comm_put_route_in_txn(vault, txn, id, &predicate, data)?
         {
-            inputs.push(crate::claim::validate_claim_body_and_decode_in_txn(
-                &vault.store,
-                txn,
-                data,
-                false,
-            )?);
+            inputs.push((
+                *id,
+                crate::claim::validate_claim_body_and_decode_in_txn(
+                    &vault.store,
+                    txn,
+                    data,
+                    false,
+                )?,
+            ));
             events.extend(event);
             routed.insert(*id);
         }
