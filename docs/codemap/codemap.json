@@ -66264,7 +66264,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -66515,7 +66515,7 @@
      "path": "src/skill_attribution/skill_erase.rs",
      "purpose": "An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the rows that name an erased skill or…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -71961,7 +71961,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 90,
+      "mod": 91,
       "re-export": 31
      }
     },
@@ -72806,9 +72806,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/result_body_rows.rs",
-     "purpose": "The tag byte of a raw result body row: where its body is (in the row or in a body file) and whether the row…",
+     "purpose": "The raw result body rows (`CODE_RUN_RAW_OUTPUT`): each row keyed by its body's content handle, where its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -73325,6 +73325,16 @@
      "notable": [],
      "path": "src/store/skill_attribution_causes.rs",
      "purpose": "The ledger of the labels the attribution judge settled on each attempt's terminal outcome…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_attribution_evidence.rs",
+     "purpose": "The skill-attribution outcome-evidence rows (`SKILL_ATTRIBUTION_EVIDENCE`, FIX 8265), keyed by sequence, and…",
      "surface": {
       "crate-vis": 3
      }
@@ -90127,7 +90137,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 373,
+     "files": 374,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90367,7 +90377,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6269,
+   "source_files": 6270,
    "test_files": 898
   },
   "oneiron-android": {
