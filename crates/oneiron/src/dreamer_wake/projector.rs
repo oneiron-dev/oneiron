@@ -874,6 +874,28 @@ pub(crate) fn take_chunk_words_in_txn(
     dedupe_key: &str,
     turns: &[EntityId],
 ) -> Result<()> {
+    // A member erased since the retry resolved makes the chunk
+    // stillborn: its payload still names the gone turn, so preparation
+    // refuses the whole one-part chunk and nothing stamped here is
+    // ever extracted. Stamp nothing, register no round, leave the
+    // erased member exactly as its erasure left it, and put the live
+    // members back: the batch-mate reread the erasure owed the round
+    // it could not see yet.
+    let mut live = Vec::with_capacity(turns.len());
+    let mut whole = true;
+    for turn in turns {
+        if turn_key_in_txn(&vault.store, txn, turn)?.is_none() {
+            whole = false;
+        } else {
+            live.push(*turn);
+        }
+    }
+    if !whole {
+        for turn in &live {
+            reread_in_txn(&vault.store, txn, turn)?;
+        }
+        return Ok(());
+    }
     let id = round_id(kind, dedupe_key);
     let mut round = ROUND
         .get(&vault.store, txn, &id)?

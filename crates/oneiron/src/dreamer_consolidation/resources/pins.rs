@@ -181,6 +181,23 @@ impl BranchResources<'_> {
         ))
     }
 
+    /// The partition `id` was read under when this branch froze it: its
+    /// declared part's key under the branch axes. A same-text republish
+    /// that moves the turn's partition must not be stamped as taken (its
+    /// words were extracted under the old axes); the stamp filter compares
+    /// this frozen hash against the live one.
+    pub(in crate::dreamer_consolidation) fn taken_partition(
+        &self,
+        id: &EntityId,
+    ) -> Result<[u8; 32]> {
+        let conversation = self
+            .turns
+            .get(id)
+            .copied()
+            .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?;
+        Ok(self.branch.part_key(conversation).partition_hash())
+    }
+
     /// The text a TURN citation of `id` is verified against: its frozen
     /// text, readable under the branch's scope.
     pub(super) fn cited_text(&self, id: &EntityId) -> Result<Option<&str>> {
