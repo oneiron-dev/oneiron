@@ -134,7 +134,11 @@ fn thread_walk_kept(
     id: EntityId,
     raw: &[u8],
 ) -> Result<Option<ThreadWalk>> {
-    let Some(key) = crate::ports::recall_memo_key(dbs, txn) else {
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_walk_memo walks every time, as before.
+    let key = (!crate::stage_timing::try_on("no_walk_memo"))
+        .then(|| crate::ports::recall_memo_key(dbs, txn))
+        .flatten();
+    let Some(key) = key else {
         return thread_walk_in(vault, dbs, txn, id, raw);
     };
     let row = (id, *blake3::hash(raw).as_bytes());
