@@ -33,6 +33,14 @@ const ENTITIES_MAP: &str = "entities";
 
 /// Other carriers and header-only shells can depend on a held entity.
 pub(super) fn needs_whole_hold(json: &JsonSchema) -> bool {
+    needs_whole_hold_except_shells(json, |_| false)
+}
+
+/// Keeps every whole-hold condition except the named independent entity shells.
+pub(super) fn needs_whole_hold_except_shells(
+    json: &JsonSchema,
+    independent_shell: impl Fn(&str) -> bool,
+) -> bool {
     json.changes
         .iter()
         .flat_map(|change| &change.ops)
@@ -50,11 +58,11 @@ pub(super) fn needs_whole_hold(json: &JsonSchema) -> bool {
                     container_type: ContainerType::Map,
                 },
                 JsonOpContent::Map(MapOp::Insert {
+                    key,
                     value: LoroValue::Binary(row),
-                    ..
                 }),
             ) if name.as_str() == ENTITIES_MAP => {
-                row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN && !independent_shell(key)
             }
             _ => true,
         })
