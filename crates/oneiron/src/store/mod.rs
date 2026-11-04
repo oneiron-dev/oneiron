@@ -143,6 +143,10 @@ pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 #[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub use sync_hooks::StoreSyncHooks;
+#[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
