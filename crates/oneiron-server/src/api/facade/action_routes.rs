@@ -138,16 +138,7 @@ pub(crate) async fn invoke_action(
     let (dispatch, stamp) =
         invoke_action_stamped(server, auth, headers, extensions, None, verb, request).await;
     let answer = dispatch.and_then(|mut dispatch| {
-        let rows = match &mut dispatch.outcome {
-            SelfDispatchOutcome::AgentVerb(answer) => {
-                let rows = answer.released_rows();
-                // The record keeps these rows; the public outcome does not
-                // publish the producer's private dependencies.
-                answer.rows = None;
-                rows
-            }
-            _ => None,
-        };
+        let rows = take_action_rows(&mut dispatch);
         Ok(FacadeCallOutput {
             value: serde_json::json!({
                 "outcome": dispatch.outcome_value().map_err(engine)?,
@@ -157,6 +148,20 @@ pub(crate) async fn invoke_action(
         })
     });
     (answer, stamp)
+}
+
+/// Separates the producer's new private carry from an already-recorded
+/// dispatch's public copy. The value, observations and durable record stay
+/// unchanged.
+pub(super) fn take_action_rows(dispatch: &mut ActionDispatch) -> Option<Vec<EntityId>> {
+    match &mut dispatch.outcome {
+        SelfDispatchOutcome::AgentVerb(answer) => {
+            let rows = answer.released_rows();
+            answer.rows = None;
+            rows
+        }
+        _ => None,
+    }
 }
 
 /// The same action admission and execution, retaining the typed outcome for
