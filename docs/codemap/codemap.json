@@ -55297,7 +55297,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_consent.rs",
@@ -55603,7 +55603,7 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 17,
       "re-export": 2,
