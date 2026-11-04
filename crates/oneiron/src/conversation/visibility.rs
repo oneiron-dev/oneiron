@@ -69,6 +69,10 @@ impl AudienceCache {
     /// transaction on this one fails while `txn` lives. A poisoned lock
     /// keeps nothing.
     fn own_windows_keep(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
+        // bench-only (L15-LEAD, never merge): L15_TRY=no_own_windows keeps nothing, as before.
+        if crate::stage_timing::try_on("no_own_windows") {
+            return false;
+        }
         if crate::store::active_write_txn_depth() > 0 {
             return false;
         }
@@ -171,7 +175,9 @@ impl AudienceCache {
         let keep = self.own_windows_keep(vault, txn);
         // A whole answer is kept over base rows only: a session's composed
         // view moves no snapshot id under its overlay rows.
-        let key = (keep && !dbs.is_union()).then(|| (id, reader, *blake3::hash(raw).as_bytes()));
+        // bench-only (L15-LEAD, never merge): L15_TRY=no_own_entry_answers keeps no whole answer.
+        let keep_answers = keep && !crate::stage_timing::try_on("no_own_entry_answers");
+        let key = (keep_answers && !dbs.is_union()).then(|| (id, reader, *blake3::hash(raw).as_bytes()));
         if let Some(key) = &key
             && let Some(kept) = self
                 .own_entry
