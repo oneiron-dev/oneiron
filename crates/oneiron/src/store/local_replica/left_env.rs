@@ -19,7 +19,7 @@ use heed::{RoTxn, RwTxn};
 use super::KeepReason;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::embed::EmbeddingProvenance;
+use crate::store::embedding::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
@@ -62,6 +62,8 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHLOG_OBSERVATION_POLICY,
     &side_table::AUTHLOG_SEQ_HWM,
     &side_table::AUTHLOG_SEQ_OBSERVATION,
+    &side_table::AUTHLOG_STORE_ORDER,
+    &side_table::AUTHLOG_STORE_ORDER_STATE,
     &side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE,
     &side_table::AUTHORITY_MESH_MACHINE,
     &side_table::AUTHORITY_OWNER_PROJECT_SLIP_CACHE,

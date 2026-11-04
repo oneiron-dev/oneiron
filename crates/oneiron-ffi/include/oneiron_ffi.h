@@ -84,6 +84,16 @@ typedef enum OneironStatus {
    * Retry without it, or on a server that serves that rung.
    */
   OneironStatus_ModelUnavailable = 8,
+  /**
+   * The owner's world recipient choice keeps the row from this answer
+   * (`WORLD_RECIPIENT_LIMIT`, FIX 7463a).
+   */
+  OneironStatus_WorldRecipientLimit = 9,
+  /**
+   * The row's world placement cannot be verified, so nothing is released
+   * (`WORLD_PLACEMENT_UNVERIFIABLE`, FIX 7463a).
+   */
+  OneironStatus_WorldPlacementUnverifiable = 10,
 } OneironStatus;
 
 /**

@@ -5,15 +5,10 @@
 //! or applied for it. Every other refusal stays what it was.
 
 use super::step_charge::StepChargeTally;
-use super::turn_text::residency_deferred;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
 
-/// Whether `error` is that wait, [`super::turn_text`]'s exact
-/// not-resident refusal, and nothing else.
-pub(crate) fn waits_on_residency(error: &Error) -> bool {
-    matches!(error, Error::InvalidClaimBody(reason) if residency_deferred(reason))
-}
+pub(crate) use crate::store::conversation_residency::waits_on_residency;
 
 /// The deferral an attempt that met the wait takes: queued again after
 /// [`super::RESIDENCY_RETRY_SECS`], settling what it already spent.
