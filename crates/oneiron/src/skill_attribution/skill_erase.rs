@@ -1,7 +1,7 @@
 //! An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the
 //! rows that name an erased skill or actor drop it in the erase's own write,
 //! as a cause row does
-//! ([`super::causes::erase_attribution_cause_entity_in_txn`]).
+//! ([`crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn`]).
 //!
 //! An evidence row keeps its receipt and outcome with its skill or actor
 //! slot nil, so a projection that reads it again routes it with no one to

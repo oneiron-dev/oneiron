@@ -1,9 +1,12 @@
 //! The rows a fold of the stored log holds, past the continuation it resumes
 //! from (FIX 12331). The type index keys an authority row by its content
-//! hash, not by when it was stored, so no key range holds only the rows
-//! stored past the continuation and the scan reads every id. It counts the
-//! continuation's rows it meets instead of inserting them: a resume inserts
-//! only the tail's rows, and compares one count for the rest.
+//! hash, not by when it was stored, so no key range of it holds only the
+//! rows stored past the continuation: the type-index scan reads every id,
+//! counting the continuation's rows it meets instead of inserting them (a
+//! resume inserts only the tail's rows, and compares one count for the
+//! rest). The store-order index (FIX 12369) holds that range by the
+//! sequence each row took when first stored, and the scan takes it where
+//! the continuation carries the sequence it folded to.
 
 use super::*;
 
@@ -21,13 +24,16 @@ pub(super) struct HeldRows<'a> {
 
 impl<'a> HeldRows<'a> {
     /// The stored rows, each one `baseline` did not fold decoded into
-    /// `tail` in id order.
+    /// `tail`.
     pub(super) fn scan_in_txn(
         store: &Store,
         txn: &heed::RoTxn<'_>,
         baseline: Option<&'a AuthorityContinuation>,
         tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
     ) -> Result<Self> {
+        if let Some(held) = Self::scan_indexed_in_txn(store, txn, baseline, tail)? {
+            return Ok(held);
+        }
         let mut rest = BTreeSet::new();
         let mut folded = 0;
         for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
@@ -55,6 +61,64 @@ impl<'a> HeldRows<'a> {
             whole,
             rest,
         })
+    }
+
+    /// The scan by store-order sequence (FIX 12369): where the baseline
+    /// folded exactly the rows sequenced up to its `max_seq` under a
+    /// complete index, the tail is the sequences past it and every
+    /// baseline row is held, authority rows being append-only in a
+    /// Store's lifetime (an adopted image's continuation carries no
+    /// `max_seq` and never takes this path). Any doubt - no sequence on
+    /// the baseline, a count that does not add up, a sequenced row that
+    /// does not read back - answers None and the type-index scan runs.
+    fn scan_indexed_in_txn(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        baseline: Option<&'a AuthorityContinuation>,
+        tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
+    ) -> Result<Option<Self>> {
+        let Some(baseline) = baseline else {
+            return Ok(None);
+        };
+        let Some(after) = baseline.max_seq else {
+            return Ok(None);
+        };
+        if after.checked_add(1) != Some(baseline.ids.len() as u64) {
+            return Ok(None);
+        }
+        let Some(next) = crate::authority::store_order::complete_next_in_txn(store, txn)? else {
+            return Ok(None);
+        };
+        let Some(ids) = crate::authority::store_order::tail_ids_in_txn(store, txn, after, next)?
+        else {
+            return Ok(None);
+        };
+        let mut rest = BTreeSet::new();
+        let mut fresh = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let Ok(body) = authority_log_body_in_txn(store, txn, id) else {
+                return Ok(None);
+            };
+            let Ok(entry) = decode_authority_log_entry_body(&body) else {
+                return Ok(None);
+            };
+            let Ok(hash) = authority_entry_hash(&entry) else {
+                return Ok(None);
+            };
+            // A repeated tail row, or one already in the baseline, means
+            // the index cannot prove the tail is complete. Fall back to the
+            // type-index scan rather than silently dropping a displaced row.
+            if baseline.ids.contains_key(id) || !rest.insert(hash) {
+                return Ok(None);
+            }
+            fresh.push((hash, entry));
+        }
+        tail.extend(fresh);
+        Ok(Some(Self {
+            baseline: Some(baseline),
+            whole: true,
+            rest,
+        }))
     }
 
     /// Whether `hash` is a row the baseline folded and the store holds,
