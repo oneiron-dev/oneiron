@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
-use xmltree::{Element, ParserConfig, XMLNode};
+use xmltree::{Element, XMLNode};
 use zip::ZipArchive;
 
 // =============================================================================
@@ -559,16 +559,13 @@ fn parse_xml(
     part_name: &str,
     findings: &mut Vec<ValidationFinding>,
 ) -> Option<Element> {
-    let config = ParserConfig::new()
-        .ignore_comments(true)
-        .whitespace_to_characters(true);
-    match Element::parse_with_config(Cursor::new(bytes), config) {
+    match crate::word_xml::parse_document_xml(bytes) {
         Ok(el) => Some(el),
         Err(e) => {
             findings.push(ValidationFinding {
                 rule_id: "I-XML-001",
                 severity: ValidationSeverity::Error,
-                message: format!("part is not well-formed XML: {e}"),
+                message: format!("part is not well-formed XML: {e:?}"),
                 location: part_name.to_string(),
             });
             None
@@ -967,7 +964,7 @@ pub(crate) fn check_story_rel_references(
     // every reference is dangling -- never silently "ok" because the .rels could
     // not be parsed. An absent .rels part stays `None` (the "no .rels file" arm).
     let parsed = rels_bytes.map(|bytes| {
-        Element::parse(bytes)
+        crate::word_xml::parse_document_xml(bytes)
             .map(|r| parse_relationships(&r))
             .unwrap_or_default()
     });
