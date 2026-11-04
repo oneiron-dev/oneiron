@@ -12,7 +12,6 @@ use crate::error::{Error, Result};
 use super::types::RepoForkHash;
 use crate::error::CodeError;
 
-
 pub(super) use crate::git_wire::mutation_commands::truncate_failure;
 
 pub(super) use crate::git_wire::mutation_commands::path_arg;

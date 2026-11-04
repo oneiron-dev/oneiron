@@ -150,6 +150,29 @@ pub(super) fn latest_direct_in_txn(
         ))
 }
 
+/// Every subject the credit stands with now: the latest adjustment's direct
+/// subjects and shares, else the sealed receipt's own (REVIEW-4322 P1). A
+/// subject a later adjustment adds still governs the person rows that fold
+/// this credit.
+pub(crate) fn effective_credit_subjects_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Vec<EntityId>> {
+    let (direct, shares) = match chain_in_txn(store, txn, &credit.receipt_id)?.pop() {
+        Some((_, last)) => (last.direct_subjects, last.shares),
+        None => (credit.direct_subjects.clone(), credit.shares.clone()),
+    };
+    let mut subjects: Vec<EntityId> = direct
+        .into_iter()
+        .flatten()
+        .chain(shares.into_iter().filter_map(|share| share.subject))
+        .collect();
+    subjects.sort();
+    subjects.dedup();
+    Ok(subjects)
+}
+
 /// The decay `credit` was projected under: the frozen one, or, for a
 /// receipt that froze none, the scoped read now.
 fn frozen_decay_in_txn(
