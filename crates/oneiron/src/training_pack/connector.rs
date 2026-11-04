@@ -293,9 +293,12 @@ impl Vault {
                 Ok(result)
             }
             Ok((result, false)) => {
-                // A racing recovery completed and settled first: this permit
-                // drops unsettled and settles Failed, never Used.
-                drop(permit);
+                // A racing recovery completed and settled first: this
+                // permit settles Kept, charging nothing, so the one GPU
+                // job is never charged twice (a Failed drop would charge
+                // this permit's started reservation beside Used).
+                let settlement = permit.settle(CallOutcome::Kept);
+                settlement.map_err(|e| invalid(&e.to_string()))?;
                 Ok(result)
             }
             Err(error) => {
@@ -325,7 +328,8 @@ impl Vault {
     /// original waiter was lost. No second dispatch or role write happens here.
     /// Returns whether this call recorded the first result: only the winner
     /// settles the run's Used reservation, in the same commit that claims it,
-    /// so a live waiter racing a recovery never charges the same GPU job twice.
+    /// and the loser settles Kept (zero charge), so a live waiter racing a
+    /// recovery never charges the same GPU job twice.
     pub fn complete_training_pack(
         &self,
         admission: &RunAdmission,

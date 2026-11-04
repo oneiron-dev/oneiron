@@ -267,8 +267,11 @@ fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
                 }
                 Ok((_, false)) => {
                     // The live waiter completed and settled first: this
-                    // permit settles Failed, never Used.
-                    drop(permit);
+                    // permit settles Kept, charging nothing, so the one
+                    // GPU job is never charged twice.
+                    permit
+                        .settle(CallOutcome::Kept)
+                        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
                     Ok(())
                 }
                 Err(error) => {
