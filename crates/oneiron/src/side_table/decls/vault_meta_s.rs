@@ -217,7 +217,7 @@ side_tables! {
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored [accepts: crate::store::send_receipt_attempt_audit_accepts_masked];
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason) and its
