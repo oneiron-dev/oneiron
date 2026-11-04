@@ -148,6 +148,9 @@ pub struct ConfirmedWorldKit {
     /// The vault key's `world-kit` escrow wrap, sealed to this kit's root;
     /// `None` when the vault has no data key yet.
     pub escrow: Option<VaultKeyWrapInfo>,
+    /// The root committed but the sealed vault's page-seal mirror rewrite
+    /// failed after the commit: the confirm stands, the mirror is pending.
+    pub mirror_pending: bool,
 }
 
 /// What a world kit restore did.
@@ -474,12 +477,22 @@ impl Vault {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         self.settle_pending_kit_pieces(Some(row.kit));
-        transition.finish()?;
+        let mirror_pending = match transition.finish() {
+            Ok(()) => false,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a kit confirm committed; its page-seal mirror is pending"
+                );
+                true
+            }
+        };
         Ok(ConfirmedWorldKit {
             kit: row.kit,
             activated,
             replaced,
             escrow,
+            mirror_pending,
         })
     }
 
