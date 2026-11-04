@@ -1,11 +1,13 @@
 //! The store layer of the oneiron engine.
 
+pub mod batch_op;
 pub mod bundle_generations;
 pub mod checkpoint_host_recipient;
 pub mod config;
 pub mod connector_key_status;
 pub mod conversation_record;
 pub mod core_write;
+pub mod embedding_vocabulary;
 pub mod file_secret_marks;
 pub mod identity_hints;
 pub mod index_keys;

@@ -20,15 +20,6 @@ use super::types::{
     OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
 
-/// One recorded outcome-evidence row, keyed by sequence. The sequence is
-/// stored redundantly inside the MessagePack map as well as in the key
-/// (`encode_evidence` takes it as a separate argument), so the value type
-/// carries it too — that IS the row's existing byte layout.
-pub(super) struct EvidenceRow {
-    pub(super) sequence: u64,
-    pub(super) evidence: OutcomeEvidence,
-}
-
 impl RawValue for EvidenceRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         Ok(encode_value(&encode_evidence(
@@ -100,14 +91,11 @@ impl RawValue for AuditRow {
     }
 }
 
-/// One recorded outcome-evidence row awaiting attribution routing. Key: u64be sequence.
-pub(super) const EVIDENCE: SideTable<u64, EvidenceRow, Raw> =
-    SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE);
-
 /// The next evidence sequence to mint. Key: ().
 const EVIDENCE_SEQUENCE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE);
 
+pub(super) use crate::store::skill_attribution_evidence::{EVIDENCE, EvidenceRow};
 pub(super) use crate::store::skill_attribution_judgments::{EDIT_PROPOSAL, JUDGMENT};
 
 /// Persisted audit run of a judge (its report and batch), keyed by run time then

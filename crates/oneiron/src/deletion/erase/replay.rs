@@ -140,7 +140,11 @@ impl Vault {
 
         if !decoded.is_hard() {
             let had_refinement =
-                crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
             let had_merge_receipt =
                 crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
                     &self.store,

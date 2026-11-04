@@ -179,8 +179,11 @@ impl Vault {
             // custody they lifted, under this erase's act.
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
         }
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
@@ -371,8 +374,11 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(

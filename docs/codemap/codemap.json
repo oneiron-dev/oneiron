@@ -42901,7 +42901,6 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Vault-local durable RSI budget ledger and resident share ledger (FIX 7767)",
      "surface": {
-      "crate-vis": 1,
       "mod": 1,
       "re-export": 2
      }
@@ -42916,7 +42915,6 @@
      "path": "src/llm/budget/resident.rs",
      "purpose": "The vault's durable resident ledger (FIX 7767): each resident's share of the host-paid allocation, as the…",
      "surface": {
-      "crate-vis": 1,
       "fn": 3,
       "struct": 2
      }
@@ -43020,7 +43018,7 @@
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -43843,17 +43841,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HostRule",
       "HostRuleProvider"
      ],
      "path": "src/llm/decision/rules.rs",
      "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
-      "fn": 6,
-      "re-export": 1,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 5,
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
@@ -44073,7 +44070,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 12,
       "mod": 11,
       "re-export": 27
      }
@@ -44182,7 +44179,6 @@
      "notable": [
       "CatalogSeed",
       "ModelRegistryRow",
-      "ModelWireFormat",
       "ScoreObservation",
       "ScoreSnapshot",
       "SkippedRegistryRow"
@@ -44191,9 +44187,8 @@
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
       "crate-vis": 7,
-      "enum": 1,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -44293,13 +44288,10 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "DescriptionPolicy",
       "DescriptionReask",
-      "ModelDescription",
-      "OwnerModelLine",
       "ReaskTrigger",
       "RoutedSeat",
       "RoutedVerdict",
@@ -44311,11 +44303,11 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 13,
       "re-export": 3,
-      "struct": 9
+      "struct": 6
      }
     },
     {
@@ -44451,7 +44443,6 @@
       "AccountStatus",
       "Allocation",
       "AllocationGrantError",
-      "AllocationRef",
       "AllocationRefusal",
       "HostAccount",
       "KeyCustody",
@@ -44470,7 +44461,8 @@
       "crate-vis": 8,
       "enum": 6,
       "fn": 12,
-      "struct": 9
+      "re-export": 1,
+      "struct": 8
      }
     },
     {
@@ -44578,14 +44570,14 @@
      "kind": "src",
      "notable": [
       "ResidentLedger",
-      "ResidentShare",
       "ResidentStanding"
      ],
      "path": "src/llm/run_admission/resident.rs",
      "purpose": "Each resident's share of the vault's host-paid allocation (ARCH-0011 `#budget-lease`, FIX 7767)",
      "surface": {
       "crate-vis": 6,
-      "struct": 2,
+      "re-export": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -44712,7 +44704,6 @@
      "notable": [
       "DescriptionLine",
       "DescriptionSource",
-      "ModelDescription",
       "ModelSeat",
       "PurposeEffort",
       "SeatCandidate",
@@ -44724,11 +44715,10 @@
      "path": "src/llm/seat.rs",
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 1,
       "enum": 3,
       "fn": 16,
-      "re-export": 3,
-      "struct": 7
+      "re-export": 4,
+      "struct": 6
      }
     },
     {
@@ -44843,7 +44833,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 6
      }
@@ -44866,22 +44856,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ModelStepFailure",
-      "ModelStepFailureClass",
       "ModelStepReceipt",
-      "ModelStepReceiptRequest",
-      "ModelStepResult",
-      "ModelStepRetryPolicy",
-      "ModelStepSubmit"
+      "ModelStepReceiptRequest"
      ],
      "path": "src/llm/step/public.rs",
      "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
      "surface": {
       "crate-vis": 4,
-      "enum": 2,
       "fn": 3,
-      "re-export": 3,
-      "struct": 5
+      "re-export": 4,
+      "struct": 2
      }
     },
     {
@@ -45002,7 +44986,7 @@
      "path": "src/llm/step/submission_custody.rs",
      "purpose": "A public model-step submission's kept copies under body custody (FIX 9929)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -66807,7 +66791,6 @@
      "path": "src/skill_hub/claim_refinement.rs",
      "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
      "surface": {
-      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 3
@@ -67029,7 +67012,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 21
      }
@@ -67200,19 +67183,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HookOutcomeKind",
-      "HookPhase",
-      "HookRenderClass",
-      "HookSelector",
       "PackHook"
      ],
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 3,
-      "re-export": 4,
-      "struct": 2
+      "crate-vis": 7,
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
@@ -67254,20 +67232,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HookWidening",
-      "PackHookProposal",
-      "PackHookProposalStatus"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/hooks/proposal.rs",
      "purpose": "An agent's hook that asks wider than its own ceiling (ARCH-0080 §10): Skip, Ask or Rewrite on another…",
      "surface": {
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 5,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -67757,7 +67730,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 8
      }
     },
     {
@@ -67781,17 +67754,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SharedSkillDelta",
-      "SharedSkillLane"
-     ],
+     "notable": [],
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69985,6 +69954,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedSkillDelta",
+      "SharedSkillLane"
+     ],
+     "path": "src/store/claim_refinement_control.rs",
+     "purpose": "A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/claim_vad_owed.rs",
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
@@ -70454,6 +70438,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostRule"
+     ],
+     "path": "src/store/decision_rule_rows.rs",
+     "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): every revision of every rule row the authenticated…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/default_skill_hub.rs",
      "purpose": "The first-party library skill hub every vault opens with: its stable id and the offline seed of its pinned…",
@@ -70648,12 +70646,9 @@
       "EgressPredicate",
       "Embedder",
       "EmbedderLocality",
-      "EmbeddingDevice",
       "EmbeddingMatchEvidence",
-      "EmbeddingProvenance",
       "EmbeddingProvenanceCount",
       "EmbeddingSpace",
-      "InputKind",
       "KindSlotBindings",
       "MediaEmbedReport",
       "MediaEmbedder",
@@ -70665,11 +70660,12 @@
      "path": "src/store/embedding.rs",
      "purpose": "Embedding space, input, provenance and host-provider vocabulary",
      "surface": {
-      "const": 10,
-      "crate-vis": 9,
-      "enum": 5,
-      "fn": 11,
-      "struct": 9,
+      "const": 9,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 7,
+      "re-export": 2,
+      "struct": 8,
       "trait": 3,
       "type": 1
      }
@@ -71965,7 +71961,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 84,
+      "mod": 90,
       "re-export": 31
      }
     },
@@ -71973,13 +71969,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "MeasuredDescription"
+      "DescriptionPolicy",
+      "MeasuredDescription",
+      "ModelDescription",
+      "ModelWireFormat",
+      "OwnerModelLine"
      ],
      "path": "src/store/model_description_rows.rs",
-     "purpose": "The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`)",
+     "purpose": "The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its…",
      "surface": {
-      "crate-vis": 1,
-      "struct": 1
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -72003,6 +72004,24 @@
      "purpose": "How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelStepFailure",
+      "ModelStepFailureClass",
+      "ModelStepResult",
+      "ModelStepRetryPolicy",
+      "ModelStepSubmit"
+     ],
+     "path": "src/store/model_step_submission.rs",
+     "purpose": "A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -72248,6 +72267,26 @@
      "purpose": "The actor classes a pack hook's selector may name",
      "surface": {
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookOutcomeKind",
+      "HookPhase",
+      "HookRenderClass",
+      "HookSelector",
+      "HookWidening",
+      "PackHookProposal",
+      "PackHookProposalStatus"
+     ],
+     "path": "src/store/pack_hook_proposal.rs",
+     "purpose": "The pack hook selector types and the agent hook proposal rows (ARCH-0080 §3, §10): when a hook fires, how it…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 2
      }
     },
     {
@@ -72714,6 +72753,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AllocationRef",
+      "ResidentShare"
+     ],
+     "path": "src/store/resident_budget_rows.rs",
+     "purpose": "The vault's durable resident budget rows (FIX 7767): each resident's share of the host-paid allocation and…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "RestoreAdmissionError",
       "RestoreAdmissionReason",
       "RestoreDestinationState",
@@ -73157,6 +73210,19 @@
      "purpose": "The record-scope stamp hooks the store layer's write and erase paths run, supplied by the engine when a…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelDescription"
+     ],
+     "path": "src/store/seat_model_description.rs",
+     "purpose": "The seat-birth model description row routing keeps (`LLM_MODEL_DESCRIPTION`), keyed by the fully revisioned…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -90061,7 +90127,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 367,
+     "files": 373,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90299,9 +90365,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 141,
+   "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6263,
+   "source_files": 6269,
    "test_files": 898
   },
   "oneiron-android": {
@@ -126268,6 +126334,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BatchOp"
+     ],
+     "path": "src/batch_op.rs",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SealedBundleGeneration"
      ],
      "path": "src/bundle_generations.rs",
@@ -126568,6 +126646,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EmbeddingDevice",
+      "EmbeddingProvenance",
+      "InputKind"
+     ],
+     "path": "src/embedding_vocabulary.rs",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -126624,7 +126719,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 23
+      "mod": 25
      }
     },
     {
@@ -128053,6 +128148,13 @@
     }
    ],
    "modules": {
+    "batch_op": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it"
+    },
     "bundle_generations": {
      "files": 1,
      "impl_vault": false,
@@ -128094,6 +128196,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
+    },
+    "embedding_vocabulary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
     "file_secret_marks": {
      "files": 1,
@@ -128217,7 +128326,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 121,
+   "source_files": 123,
    "test_files": 1
   },
   "oneiron-uniffi": {

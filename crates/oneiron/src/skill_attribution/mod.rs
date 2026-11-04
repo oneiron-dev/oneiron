@@ -96,10 +96,7 @@ pub(crate) use oneiron_skill_attribution::row_ids::{
     attribution_judgment_row_ids, edit_proposal_row_ids,
 };
 mod skill_erase;
-pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn,
-    erase_scan_in_txn,
-};
+pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;
 pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,

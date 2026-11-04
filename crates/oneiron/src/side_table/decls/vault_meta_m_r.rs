@@ -50,7 +50,7 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
     MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
@@ -388,7 +388,7 @@ side_tables! {
     /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
     /// (ARCH-0080 §10). Key: id16(binding claim).
     SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
-        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
+        => crate::store::pack_hook_proposal::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:

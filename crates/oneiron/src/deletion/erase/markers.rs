@@ -191,7 +191,11 @@ impl Vault {
                 txn,
                 id,
             )?
-            || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
                 &self.store,
                 txn,
