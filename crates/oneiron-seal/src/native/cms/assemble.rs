@@ -116,7 +116,10 @@ pub(crate) fn attr_ts_token(
     // Two token-sized copies are live at once (`attribute`'s body plus the
     // returned TLV); the slack covers the OID/SET wrappers and headers.
     admit(
-        token_content_info_der.len().saturating_mul(2).saturating_add(128),
+        token_content_info_der
+            .len()
+            .saturating_mul(2)
+            .saturating_add(128),
         memory,
     )?;
     Ok(attribute(&OID_ATTR_TS_TOKEN, token_content_info_der))
