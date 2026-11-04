@@ -29,7 +29,7 @@ pub(super) fn ensure_imported_agent_persons_in_txn<R: Read + Seek>(
         if visibility.deleted || visibility.stale {
             continue;
         }
-        let definition = crate::agent_def::decode_agent_definition(&row.body)?;
+        let definition = crate::store::agent_definition_codec::decode_agent_definition(&row.body)?;
         let name = definition
             .display_name
             .as_deref()
