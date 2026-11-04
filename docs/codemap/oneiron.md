@@ -3470,7 +3470,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/asks/queue.rs` | src | s | 2 crate-vis | — | One ask queued in the caller's own write (FIX 10789): an engine record that owes the owner a question keeps… |
 | `src/llm/decision/asks/signal.rs` | src | s | 2 crate-vis | — | The vault's one decision-answer signal (FIX 4706) |
 | `src/llm/decision/catalogue.rs` | src | s | 1 re-export | — | Defined below the model invocation layer |
-| `src/llm/decision/codec.rs` | src | s | 4 crate-vis | — | Canonical entity references for typed-decision wire records |
+| `src/llm/decision/codec.rs` | src | s | 2 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 2 fn · 1 const · 1 re-export | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
 | `src/llm/decision/generated/score.rs` | src | s | 3 crate-vis | — | A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure… |
 | `src/llm/decision/generated/wire.rs` | src | s | 1 trait · 3 crate-vis | DecisionWireLabels | A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each… |
@@ -3478,7 +3478,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/ladder/ask_consent.rs` | src | s | 3 struct · 1 enum · 5 fn | AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue | An ask about one consent effect (DEC-0006 "the confirm card carries an optional reason", FIX 2975) |
 | `src/llm/decision/ladder/mod.rs` | src | m | 1 struct · 3 re-export · 10 crate-vis | DecisionLadder | Host-injected, one-step decision ladder |
 | `src/llm/decision/ladder/providers.rs` | src | s | 4 struct · 2 trait · 5 fn · 1 re-export | DecisionCall, DecisionModel, DecisionPack, DecisionProvider, ModelDecisionProvider, RuleDecisionProvider | Decision ladder providers and the calls they answer |
-| `src/llm/decision/ladder/roles.rs` | src | s | 4 struct · 1 enum · 2 trait · 4 fn · 1 re-export | AskRole, AskRoleResolver, AskTo, HumanDecisionQueue, HumanDecisionRequest, ResolvedRole, RoleHolder | Decision ladder person asks and the roles they go to |
+| `src/llm/decision/ladder/roles.rs` | src | s | 4 struct · 2 trait · 3 fn · 2 re-export | AskRoleResolver, AskTo, HumanDecisionQueue, HumanDecisionRequest, ResolvedRole, RoleHolder | Decision ladder person asks and the roles they go to |
 | `src/llm/decision/ladder/runner.rs` | src | L | 8 fn · 3 crate-vis | — | Decision ladder runner |
 | `src/llm/decision/ladder/slots.rs` | src | s | 5 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
 | `src/llm/decision/ladder/tournament.rs` | src | s | 3 crate-vis | — | A choice wider than a provider's option bound, read as a tournament (FIX 11235) |
@@ -5430,7 +5430,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/bundled_skills.rs` | src | m | 7 crate-vis | — | Bundled skills traverse the same pinned hub import, scanner and provenance doors |
 | `src/skill_hub/pack_catalog/codec.rs` | src | s | 4 crate-vis | — | Canonical source-bearing ASSET envelopes: immutable content, not authority |
 | `src/skill_hub/pack_catalog/doors.rs` | src | s | 3 fn · 3 crate-vis | — | Source staging/readback |
-| `src/skill_hub/pack_catalog/hooks.rs` | src | m | 2 struct · 4 enum · 3 re-export · 8 crate-vis | HookActorClass, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook | The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A) |
+| `src/skill_hub/pack_catalog/hooks.rs` | src | m | 2 struct · 3 enum · 4 re-export · 8 crate-vis | HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook | The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A) |
 | `src/skill_hub/pack_catalog/hooks/author.rs` | src | s | 1 enum · 1 const · 2 crate-vis | HookAuthor | Who a pack hook's outcomes run as: the owner, a resident agent, or a foreign skill publisher |
 | `src/skill_hub/pack_catalog/hooks/bindings.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | PackHookBinding | Pack hook bindings: the stored row, its read doors and the owner's bind and enable switches |
 | `src/skill_hub/pack_catalog/hooks/install.rs` | src | m | 5 crate-vis | — | Pack hook binding writes: the owner's bind of an installed pack's hooks, the update rule's rebind and the… |
@@ -5673,6 +5673,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/critic_lens.rs` | src | s | 2 struct · 4 fn · 2 const · 10 crate-vis | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
 | `src/store/custody_retirement_status.rs` | src | s | 1 const | — | Completion marker for acknowledged custody retirement |
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
+| `src/store/decision_ask_role.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | AskRole | The role a human decision ask goes to, and the serde form of an answer's actor |
 | `src/store/delete_guards.rs` | src | s | 1 trait | StoreDeleteGuards | The delete guards the store layer's delete paths run, supplied by the engine when a store opens |
 | `src/store/derivation.rs` | src | s | 5 struct · 2 enum · 13 fn · 2 crate-vis | DerivationBindError, DerivationKey, DerivationKind, DerivationOwner, DerivationScope, HostedDerivationCache, SealedOutput | Account-sealed hosted derivations |
 | `src/store/diagnostic_record/address.rs` | src | s | 1 fn | — | Content-derived diagnostic event addresses |
@@ -5792,13 +5793,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/legal_hold/notice.rs` | src | s | 5 crate-vis | — | What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03) |
 | `src/store/legal_hold/pending.rs` | src | s | 12 crate-vis | — | An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's… |
 | `src/store/legal_hold/settlement.rs` | src | s | 11 crate-vis | — | A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435) |
+| `src/store/linear_pull_cursor.rs` | src | s | 1 crate-vis | — | The lift sweep's typed acceptance for the tracker pull-page cursor row (`LINEAR_PULL_CURSOR`) |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | L | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 74 mod · 29 re-export · 74 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 76 mod · 29 re-export · 75 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/notification_updates.rs` | src | s | 1 fn · 2 crate-vis | — | The vault's one committed-notification signal (FIX 3084) |
 | `src/store/open_gates/create_commit.rs` | src | s | 1 crate-vis | — | Create-door commit phase: build handles, re-key, seed and commit |
 | `src/store/open_gates/create_dbs.rs` | src | s | 2 crate-vis | — | Create-door database phase: open the manifest databases and gate versions |
@@ -5819,6 +5821,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/outbound_send_receipt.rs` | src | s | 13 crate-vis | — | Outbound gate bindings, durable send receipts, and the delivered-send idempotency index |
 | `src/store/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 8 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/store/own_rate_record.rs` | src | s | 1 struct · 1 enum · 1 const · 2 crate-vis | OwnRateCheck, OwnRateKind | Own-rate advisory thresholds and first-crossing check records |
+| `src/store/pack_hook_actor_class.rs` | src | s | 1 enum | HookActorClass | The actor classes a pack hook's selector may name |
 | `src/store/pad_object_membership.rs` | src | s | 1 crate-vis | — | Generation membership policy named by a pad-object install |
 | `src/store/page_bound.rs` | src | s | 6 crate-vis | — | The pages LMDB lays rows out in, bounded before an environment exists (FIX 5613): what a restore's copy… |
 | `src/store/pending_custody_revoke.rs` | src | s | 3 crate-vis | — | The custody revokes this install still owes the owner's other machines (CALLS CUSTODY_REVOKE_PENDING_CARRY)… |
@@ -6421,9 +6424,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/highway_types.rs` | src | m | 12 struct · 8 enum · 3 fn · 11 crate-vis | AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle, TaskLifecycleRecord +12 | The task highway's typed calls, durable handles, outcomes and status view (OF-220) |
 | `src/task_verb/lifecycle_facade.rs` | src | m | 7 fn · 6 crate-vis | — | — |
 | `src/task_verb/lifecycle_receipt.rs` | src | m | 15 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
-| `src/task_verb/linear_store.rs` | src | m | 1 struct · 6 fn · 11 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
+| `src/task_verb/linear_store.rs` | src | m | 1 struct · 6 fn · 10 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
 | `src/task_verb/mirror_edit.rs` | src | s | 2 crate-vis | — | The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping… |
-| `src/task_verb/mod.rs` | src | m | 3 struct · 1 enum · 2 fn · 5 mod · 30 re-export · 62 crate-vis | TaskAskRequest, TaskAskShort, TaskUpdateRequest, TaskWaitRequest | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 3 struct · 1 enum · 2 fn · 5 mod · 30 re-export · 61 crate-vis | TaskAskRequest, TaskAskShort, TaskUpdateRequest, TaskWaitRequest | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/office_origin.rs` | src | s | 1 crate-vis | — | The try an office fork originates from (FIX 3551, OF-505): the exact running attempt a host sealed into this… |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 3 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
