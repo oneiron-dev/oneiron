@@ -311,15 +311,15 @@ impl Replay<'_> {
                     }
                     None => next,
                 };
-                if let Some(before) = &before {
-                    // A narrowed hook's saved host.compact window holds
-                    // placeholders, not text, where its grant withheld content
-                    // (an object where the text stood): the immutable fields
-                    // and the append-only keep list still apply, but pin
-                    // membership in the window cannot run on placeholders and
-                    // is skipped — the live chain admits against the restored
-                    // window, which replay cannot rebuild.
-                    let withheld = saved.verb == "host.compact"
+                // Whether the saved host.compact window holds placeholders,
+                // not text, where the hook's grant withheld content (an
+                // object where the text stood): the live chain admitted
+                // against the restored window, which replay cannot rebuild,
+                // so the typed content validation below cannot run on those
+                // markers — the immutable fields and the append-only keep
+                // list still apply, through the unverified-window check.
+                let withheld = before.as_ref().is_some_and(|before| {
+                    saved.verb == "host.compact"
                         && before
                             .get("window")
                             .and_then(serde_json::Value::as_array)
@@ -330,7 +330,9 @@ impl Replay<'_> {
                                         .and_then(serde_json::Value::as_str)
                                         .is_some()
                                 })
-                            });
+                            })
+                });
+                if let Some(before) = &before {
                     if withheld {
                         crate::compaction::check_host_compact_rewrite_unverified_window(
                             before, next,
@@ -339,19 +341,60 @@ impl Replay<'_> {
                         crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
                     }
                 }
+                if withheld {
+                    return Ok(());
+                }
+                // Automatic host-hook runs never wore the facade shape (FIX
+                // 2393): a compaction pass runs its pre chain on
+                // {window, keep_list, token_ceiling} with no session_ref, a
+                // wake pass on {kind, scope, queue_head{queued, head}} —
+                // neither decodes as its facade row, whose live validator was
+                // the door's own check, not the table shape. Recognize these
+                // two shapes before the facade fallback below claims them.
+                // (An invalid SDK call mimicking a hook shape stays admitted;
+                // pathological, and the door refuses the call itself.)
+                let hook_flavor = before
+                    .as_ref()
+                    .is_some_and(|before| match saved.verb.as_str() {
+                        "host.compact" => {
+                            before.get("session_ref").is_none()
+                                && before
+                                    .get("window")
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some()
+                                && before
+                                    .get("keep_list")
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some()
+                                && before.get("token_ceiling").is_some()
+                        }
+                        "host.wake" => {
+                            before
+                                .get("kind")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some()
+                                && before
+                                    .get("scope")
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_some()
+                                && before
+                                    .get("queue_head")
+                                    .and_then(serde_json::Value::as_object)
+                                    .is_some()
+                        }
+                        _ => false,
+                    });
                 // The SDK table knows every SDK verb's facade shape, and the
-                // browser table its browser shape — but a host hook can save a
-                // hook flavor of a host verb that matches neither
-                // (pre_compact_hooks without session_ref, pre_wake_hooks
-                // kind/scope plus queue_head). Each shape governs the flavor
-                // the call ran: the facade shape when the saved args validate
-                // under it, else the browser shape when they validate under
-                // that — or, when the caller's own args were already invalid,
-                // the verb's own tables (facade rows via input_schema, the
-                // browser/desktop surfaces), since sdk::invoke runs hooks
-                // before decoding and still refused the rewrite. Only an
-                // actual host-hook flavor, in neither table, runs on the
-                // host-door rules above alone.
+                // browser table its browser shape. Each shape governs the
+                // flavor the call ran: the facade shape when the saved args
+                // validate under it, else the browser shape when they validate
+                // under that — or, when the caller's own args were already
+                // invalid, the verb's own tables (facade rows via
+                // input_schema, the browser/desktop surfaces), since
+                // sdk::invoke runs hooks before decoding and still refused
+                // the rewrite. Only an actual host-hook flavor, recognized
+                // above or in neither table, runs on the host-door rules
+                // alone.
                 let probe_facade = before.as_ref().is_some_and(|before| {
                     crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
                 });
@@ -363,8 +406,9 @@ impl Replay<'_> {
                 let facade_known = crate::task_verb::sdk::input_schema(&saved.verb).is_some();
                 let browser_known = saved.verb.starts_with("self.browser.")
                     || saved.verb.starts_with("self.desktop.");
-                let facade = probe_facade || (unprobed && facade_known);
-                let browser = !facade && (probe_browser || (unprobed && browser_known));
+                let facade = !hook_flavor && (probe_facade || (unprobed && facade_known));
+                let browser =
+                    !hook_flavor && !facade && (probe_browser || (unprobed && browser_known));
                 if facade
                     && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
                 {
