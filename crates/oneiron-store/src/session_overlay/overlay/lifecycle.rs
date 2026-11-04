@@ -4,14 +4,14 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayState, OverlayValue};
 use super::ACTIVE_SEGMENT;
 use super::held::Held;
 use super::retained::Retained;
 use super::segment::{NEXT_OVERLAY_GENERATION, TxnSegment};
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 /// Write-transaction entry points that a session write path must wrap.
 ///
@@ -83,7 +83,7 @@ impl Drop for Lease {
 }
 
 /// Persistent-COW in-memory overlay shared by one live session.
-pub(crate) struct SessionOverlay {
+pub struct SessionOverlay {
     pub(in crate::session_overlay) state: ArcSwap<OverlayState>,
     pub(in crate::session_overlay) lifecycle: Mutex<Lifecycle>,
     lease_drained: Condvar,
@@ -101,14 +101,14 @@ pub(crate) struct SessionOverlay {
 
 /// The host's charge beside the bytes its stretch holds before any row.
 struct OverlayCharge {
-    charge: Box<dyn crate::store::retained_memory::RetainedCharge>,
+    charge: Box<dyn crate::retained_memory::RetainedCharge>,
     entered: usize,
 }
 
 impl SessionOverlay {
     // Budget failures belong exclusively to preflight, before the base commit.
     // This apply helper deliberately has no budget input or budget-error branch.
-    pub(crate) fn new(budget_bytes: usize) -> Arc<Self> {
+    pub fn new(budget_bytes: usize) -> Arc<Self> {
         Arc::new(Self {
             state: ArcSwap::from_pointee(OverlayState::empty()),
             lifecycle: Mutex::new(Lifecycle {
@@ -128,16 +128,16 @@ impl SessionOverlay {
 
     /// The bytes an overlay holds before any row: itself and its empty
     /// state.
-    pub(crate) fn empty_bytes() -> usize {
+    pub fn empty_bytes() -> usize {
         std::mem::size_of::<Self>().saturating_add(std::mem::size_of::<OverlayState>())
     }
 
     /// Binds a room stretch's charge, reserved for the `entered` bytes it
     /// holds before any row, and moves it to what the overlay holds now
     /// (FIX 5991). A second charge is dropped unbound.
-    pub(crate) fn bind_charge(
+    pub fn bind_charge(
         &self,
-        charge: Box<dyn crate::store::retained_memory::RetainedCharge>,
+        charge: Box<dyn crate::retained_memory::RetainedCharge>,
         entered: usize,
     ) {
         let bound = match self.charge.lock() {
@@ -200,7 +200,7 @@ impl SessionOverlay {
     /// goes, and the host's charge is taken and dropped, so a stale handle
     /// still bound to it holds no transcript, journal or charge. An overlay
     /// that is not closed is left as it is.
-    pub(crate) fn release_closed_state(&self) -> Result<()> {
+    pub fn release_closed_state(&self) -> Result<()> {
         let lifecycle = self
             .lifecycle
             .lock()
@@ -236,7 +236,7 @@ impl SessionOverlay {
     /// The seal is permanent EXCEPT for the K10 flip-back: [`Self::rearm`]
     /// transitions `Sealed` -> `Live` when a session flips back to
     /// `OffRecord`. Every other state stays terminal.
-    pub(crate) fn seal_writes(self: &Arc<Self>) -> Result<()> {
+    pub fn seal_writes(self: &Arc<Self>) -> Result<()> {
         let holds_active_segment = ACTIVE_SEGMENT.with(|slot| {
             slot.borrow()
                 .as_ref()
@@ -290,7 +290,7 @@ impl SessionOverlay {
     /// before it can stage. The room's earlier turns stay visible in-session
     /// and unextractable through base: rearm reopens the write door only, and
     /// touches no row.
-    pub(crate) fn rearm(self: &Arc<Self>) -> Result<()> {
+    pub fn rearm(self: &Arc<Self>) -> Result<()> {
         let mut lifecycle = self
             .lifecycle
             .lock()
@@ -307,7 +307,7 @@ impl SessionOverlay {
         Ok(())
     }
 
-    pub(crate) fn close(self: &Arc<Self>) -> Result<()> {
+    pub fn close(self: &Arc<Self>) -> Result<()> {
         // A close nested inside this thread's own active segment would wait on a lease
         // that only this stack can release (the guard drops when it unwinds past here).
         // Fail fast — in the single-writer model close is a session-lifecycle op, never

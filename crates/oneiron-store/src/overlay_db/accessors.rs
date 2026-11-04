@@ -7,8 +7,8 @@ use std::sync::Arc;
 use heed::types::{Bytes, Str};
 use heed::{Database, RoTxn, RwTxn};
 
-use crate::error::{Error, Result};
 use crate::session_overlay::{OverlayKeyspace, OverlaySnapshot, SessionOverlay, SnapshotLookup};
+use oneiron_contracts::error::{Error, Result};
 
 use super::iters::{
     OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter,
@@ -29,20 +29,20 @@ struct ComposedOverlay {
     keyspace: OverlayKeyspace,
 }
 
-pub(crate) struct OverlayDb {
+pub struct OverlayDb {
     base: Database<Bytes, Bytes>,
     overlay: Option<ComposedOverlay>,
 }
 
 impl OverlayDb {
-    pub(crate) fn canonical(base: Database<Bytes, Bytes>) -> Self {
+    pub fn canonical(base: Database<Bytes, Bytes>) -> Self {
         Self {
             base,
             overlay: None,
         }
     }
 
-    pub(crate) fn composed(
+    pub fn composed(
         base: Database<Bytes, Bytes>,
         overlay: Arc<SessionOverlay>,
         snapshot: Arc<OverlaySnapshot>,
@@ -62,7 +62,7 @@ impl OverlayDb {
         dead_code,
         reason = "ONE-1726 single-accessor oracle helper; production sessions use Store::session_view"
     )]
-    pub(crate) fn with_overlay(
+    pub fn with_overlay(
         &self,
         overlay: Arc<SessionOverlay>,
         keyspace: OverlayKeyspace,
@@ -73,7 +73,7 @@ impl OverlayDb {
 
     /// What this accessor's room stages over base, from the snapshot its
     /// reads compose; `None` for the vault's own accessor.
-    pub(crate) fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {
+    pub fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {
         let overlay = self.overlay.as_ref()?;
         Some(overlay.snapshot.staged_rows(overlay.keyspace))
     }
@@ -81,7 +81,7 @@ impl OverlayDb {
     /// Whether this accessor's room stages a row of its own at `key` (not a
     /// deletion), in the snapshot its reads compose: an active segment's
     /// writes included.
-    pub(crate) fn stages_row(&self, key: &[u8]) -> bool {
+    pub fn stages_row(&self, key: &[u8]) -> bool {
         self.overlay.as_ref().is_some_and(|overlay| {
             matches!(
                 overlay.snapshot.lookup_single(overlay.keyspace, key),
@@ -92,7 +92,7 @@ impl OverlayDb {
 
     /// Whether this accessor's room hides base's row at `key` (see
     /// [`Self::hide_base_row`]), in the snapshot its reads compose.
-    pub(crate) fn hides(&self, key: &[u8]) -> bool {
+    pub fn hides(&self, key: &[u8]) -> bool {
         self.overlay.as_ref().is_some_and(|overlay| {
             matches!(
                 overlay.snapshot.lookup_single(overlay.keyspace, key),
@@ -103,7 +103,7 @@ impl OverlayDb {
 
     /// The keys of base's rows this accessor's room hides; none for the
     /// vault's own accessor, or for a room that cleared base.
-    pub(crate) fn hidden_keys(&self, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
+    pub fn hidden_keys(&self, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
         let Some(staged) = self.staged_rows().filter(|staged| !staged.clear_base) else {
             return Ok(Vec::new());
         };
@@ -120,7 +120,7 @@ impl OverlayDb {
     /// walk over a graph the room inherits from base reads this way: a row
     /// the room hides is still a node of that graph, and the walk passes
     /// through it, but it is never a result.
-    pub(crate) fn get_unhidden<'txn>(
+    pub fn get_unhidden<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
         key: &[u8],
@@ -131,11 +131,7 @@ impl OverlayDb {
         self.get(txn, key)
     }
 
-    pub(crate) fn get<'txn>(
-        &self,
-        txn: &'txn RoTxn<'_>,
-        key: &[u8],
-    ) -> Result<Option<Cow<'txn, [u8]>>> {
+    pub fn get<'txn>(&self, txn: &'txn RoTxn<'_>, key: &[u8]) -> Result<Option<Cow<'txn, [u8]>>> {
         let Some(overlay) = &self.overlay else {
             return Ok(self.base.get(txn, key)?.map(Cow::Borrowed));
         };
@@ -155,14 +151,14 @@ impl OverlayDb {
         }
     }
 
-    pub(crate) fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {
+    pub fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key, data),
             None => Ok(self.base.put(txn, key, data)?),
         }
     }
 
-    pub(crate) fn delete(&self, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
+    pub fn delete(&self, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
             return Ok(self.base.delete(txn, key)?);
         };
@@ -180,7 +176,7 @@ impl OverlayDb {
     /// holds now and any it writes there later, before the room's segment
     /// commits included. Base itself is not written. The vault's own
     /// accessor has no room to hide a row from.
-    pub(crate) fn hide_base_row(&self, key: &[u8]) -> Result<()> {
+    pub fn hide_base_row(&self, key: &[u8]) -> Result<()> {
         let overlay = self.overlay.as_ref().ok_or(Error::InvariantViolation(
             "only a room's accessor hides a base row",
         ))?;
@@ -189,7 +185,7 @@ impl OverlayDb {
             .delete_with_base_backing(overlay.keyspace, key, true)
     }
 
-    pub(crate) fn delete_one_duplicate(
+    pub fn delete_one_duplicate(
         &self,
         txn: &mut RwTxn<'_>,
         key: &[u8],
@@ -225,14 +221,14 @@ impl OverlayDb {
         Ok(exact_count != 0)
     }
 
-    pub(crate) fn clear(&self, txn: &mut RwTxn<'_>) -> Result<()> {
+    pub fn clear(&self, txn: &mut RwTxn<'_>) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.clear(overlay.keyspace),
             None => Ok(self.base.clear(txn)?),
         }
     }
 
-    pub(crate) fn len(&self, txn: &RoTxn<'_>) -> Result<u64> {
+    pub fn len(&self, txn: &RoTxn<'_>) -> Result<u64> {
         if self.overlay.is_none() {
             return Ok(self.base.len(txn)?);
         }
@@ -248,21 +244,21 @@ impl OverlayDb {
         dead_code,
         reason = "completed composed accessor; first session caller lands with ONE-1728 retrieval"
     )]
-    pub(crate) fn is_empty(&self, txn: &RoTxn<'_>) -> Result<bool> {
+    pub fn is_empty(&self, txn: &RoTxn<'_>) -> Result<bool> {
         if self.overlay.is_none() {
             return Ok(self.base.is_empty(txn)?);
         }
         Ok(self.iter(txn)?.next().transpose()?.is_none())
     }
 
-    pub(crate) fn first<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<Option<KvPair<'txn>>> {
+    pub fn first<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<Option<KvPair<'txn>>> {
         if self.overlay.is_none() {
             return Ok(self.base.first(txn)?.map(borrow_pair));
         }
         self.iter(txn)?.next().transpose()
     }
 
-    pub(crate) fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayIter<'txn>> {
+    pub fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayIter<'txn>> {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayIter::Base(self.base.iter(txn)?));
         };
@@ -275,7 +271,7 @@ impl OverlayDb {
         ))))
     }
 
-    pub(crate) fn prefix_iter<'txn>(
+    pub fn prefix_iter<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
         prefix: &[u8],
@@ -296,11 +292,7 @@ impl OverlayDb {
         ))))
     }
 
-    pub(crate) fn range<'txn, R>(
-        &self,
-        txn: &'txn RoTxn<'_>,
-        range: &R,
-    ) -> Result<OverlayRange<'txn>>
+    pub fn range<'txn, R>(&self, txn: &'txn RoTxn<'_>, range: &R) -> Result<OverlayRange<'txn>>
     where
         R: RangeBounds<[u8]>,
     {
@@ -318,7 +310,7 @@ impl OverlayDb {
         ))))
     }
 
-    pub(crate) fn rev_range<'txn, R>(
+    pub fn rev_range<'txn, R>(
         &self,
         txn: &'txn RoTxn<'_>,
         range: &R,
@@ -340,7 +332,7 @@ impl OverlayDb {
         ))))
     }
 
-    pub(crate) fn get_duplicates<'txn>(
+    pub fn get_duplicates<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
         key: &[u8],
@@ -374,13 +366,13 @@ impl OverlayDb {
     }
 }
 
-pub(crate) struct OverlayStrDb {
+pub struct OverlayStrDb {
     base: Database<Str, Bytes>,
     overlay: Option<ComposedOverlay>,
 }
 
 impl OverlayStrDb {
-    pub(crate) fn canonical(base: Database<Str, Bytes>) -> Self {
+    pub fn canonical(base: Database<Str, Bytes>) -> Self {
         Self {
             base,
             overlay: None,
@@ -391,7 +383,7 @@ impl OverlayStrDb {
         dead_code,
         reason = "constructed by the complete 28-accessor session view; first sync-state caller lands after ONE-1727"
     )]
-    pub(crate) fn composed(
+    pub fn composed(
         base: Database<Str, Bytes>,
         overlay: Arc<SessionOverlay>,
         snapshot: Arc<OverlaySnapshot>,
@@ -407,11 +399,7 @@ impl OverlayStrDb {
         }
     }
 
-    pub(crate) fn get<'txn>(
-        &self,
-        txn: &'txn RoTxn<'_>,
-        key: &str,
-    ) -> Result<Option<Cow<'txn, [u8]>>> {
+    pub fn get<'txn>(&self, txn: &'txn RoTxn<'_>, key: &str) -> Result<Option<Cow<'txn, [u8]>>> {
         let Some(overlay) = &self.overlay else {
             return Ok(self.base.get(txn, key)?.map(Cow::Borrowed));
         };
@@ -425,14 +413,14 @@ impl OverlayStrDb {
         }
     }
 
-    pub(crate) fn put(&self, txn: &mut RwTxn<'_>, key: &str, data: &[u8]) -> Result<()> {
+    pub fn put(&self, txn: &mut RwTxn<'_>, key: &str, data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key.as_bytes(), data),
             None => Ok(self.base.put(txn, key, data)?),
         }
     }
 
-    pub(crate) fn delete(&self, txn: &mut RwTxn<'_>, key: &str) -> Result<bool> {
+    pub fn delete(&self, txn: &mut RwTxn<'_>, key: &str) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
             return Ok(self.base.delete(txn, key)?);
         };
@@ -450,7 +438,7 @@ impl OverlayStrDb {
         dead_code,
         reason = "completed composed accessor; first session sync-state scan lands after ONE-1727"
     )]
-    pub(crate) fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayStrIter<'txn>> {
+    pub fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayStrIter<'txn>> {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayStrIter::Base(self.base.iter(txn)?));
         };
@@ -463,7 +451,7 @@ impl OverlayStrDb {
         ))))
     }
 
-    pub(crate) fn prefix_iter<'txn>(
+    pub fn prefix_iter<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
         prefix: &str,
@@ -485,7 +473,7 @@ impl OverlayStrDb {
     /// The rows whose keys, compared as bytes, fall in `range`, in key
     /// order: the seek past a cursor a prefix scan cannot make (FIX 5951).
     #[cfg(feature = "sync")]
-    pub(crate) fn range_bytes<'txn, R>(
+    pub fn range_bytes<'txn, R>(
         &self,
         txn: &'txn RoTxn<'_>,
         range: &R,

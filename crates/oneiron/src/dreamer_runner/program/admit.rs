@@ -113,7 +113,7 @@ pub(super) fn admit_in_txn(
     );
     if refused == Some(AUTHORITY_LAPSED)
         && now < expires_at
-        && slip_lapsed_in_txn(vault, &*txn, &wake)
+        && slip_lapsed_in_txn(vault, &*txn, &wake)?
     {
         // The lapse is the owed row's status: no decision is recorded, and
         // the drain passes the row by until its rebind or its expiry.
@@ -152,10 +152,19 @@ pub(super) fn admit_in_txn(
 /// (FIX 12058): it keeps its signed instrument, and that no longer verifies,
 /// as the rebind proof asks of the slip it replaces. A wake an erase
 /// scrubbed keeps none.
-fn slip_lapsed_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> bool {
-    wake.authority
-        .slip_instrument()
-        .is_some_and(|instrument| vault.invocation_slip_in_txn(txn, instrument).is_err())
+fn slip_lapsed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<bool> {
+    let Some(instrument) = wake.authority.slip_instrument() else {
+        return Ok(false);
+    };
+    match vault.invocation_slip_in_txn(txn, instrument) {
+        Ok(_) => Ok(false),
+        Err(Error::Record(_) | Error::Claim(_) | Error::InvalidClaimBody(_)) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// `wake` as an erase of its waking actor leaves it (FIX 10668): without
