@@ -5,15 +5,7 @@
 // Section 5 — pull read: ScopedRead clamp plus provenance-labelled DATA
 // ---------------------------------------------------------------------------
 
-/// Provenance-labelled DATA returned by an L2 pull.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodeMemoryPullResult {
-    pub notes: Vec<ProvenanceLabelled<CodeMemorySlotValue>>,
-    pub always_on_contracts: Vec<ProvenanceLabelled<AlwaysOnCodeMemoryContract>>,
-    /// The actor's read, resolved in the pull's own snapshot: stored payloads
-    /// the actor may not see are counted here, never silently dropped.
-    pub read_receipt: crate::claim::ScopedReadReceipt,
-}
+pub use crate::store::code_memory_values::CodeMemoryPullResult;
 
 /// Payload admission for one pull candidate, decided ON THE CALLER'S SNAPSHOT.
 ///

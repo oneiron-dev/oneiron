@@ -3,10 +3,10 @@
 
 use sha2::{Digest, Sha256};
 
-use oneiron_authority::authority::CRITICAL_WRITE_CONFIRM_DOMAIN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{GateDecisionId, PendingGateConsentRecord};
+use oneiron_authority::authority::CRITICAL_WRITE_CONFIRM_DOMAIN;
 
 /// How long a critical write's confirm waits before a timeout demotes it.
 pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;

@@ -1,10 +1,10 @@
 //! Claim adapter preserves the history door; current-state queries exclude stale claims.
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::source_ranking::{SourceRankingPolicy, question_key, source_outranks};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::EngineScan;
+use crate::store::claim_source_ranking::{SourceRankingPolicy, question_key, source_outranks};
 use crate::store::scan_count::ScanCount;
 use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
