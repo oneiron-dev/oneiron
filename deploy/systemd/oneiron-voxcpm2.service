@@ -11,6 +11,9 @@ Group=oneiron-voice
 WorkingDirectory=/opt/oneiron
 EnvironmentFile=/etc/oneiron-voxcpm2.env
 Environment=HF_HOME=/var/cache/oneiron-voxcpm2
+# A hand-run checkout's weights directory (FIX 11376); empty keeps today's
+# pinned-revision download. The supervisor always passes --weights-dir.
+Environment=VOXCPM_WEIGHTS_DIR=
 RuntimeDirectory=oneiron-voxcpm2
 RuntimeDirectoryMode=0700
 CacheDirectory=oneiron-voxcpm2
