@@ -3,16 +3,14 @@
 //! `git_wire` owns the process bridge; this module forwards no definitions.
 
 use std::ffi::OsStr;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
 use crate::git_wire::run_bridged_git_argv;
 
-use super::support::path_arg;
-#[cfg(test)]
-use super::support::utf8_trimmed;
+use super::support::{path_arg, utf8_trimmed};
 use crate::error::CodeError;
 
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4096;
@@ -274,7 +272,3 @@ pub(super) fn git_commit_object_available(
         .split(|byte| *byte == b'\n')
         .any(|line| line.first() == Some(&b'?')))
 }
-
-/// Repo-mutation failures are durable: the queue stores them on the oplog row.
-/// They therefore carry only what GitWire's redaction allows — a classified
-/// cause, the exit code, and a digest of the diagnostics.
