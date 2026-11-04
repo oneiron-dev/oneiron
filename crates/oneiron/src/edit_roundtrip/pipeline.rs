@@ -7,9 +7,9 @@ use super::native_recalc::NativeFirst;
 use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
-    OfficeDoc, OfficeFormat, RecalcPolicy, SheetAnswerBundle, StructureSummary, ValidationReport,
-    WarningCode,
+    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, EditWarning,
+    MutationMode, OfficeDoc, OfficeFormat, RecalcPolicy, SheetAnswerBundle, StructureSummary,
+    ValidationReport, WarningCode,
 };
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
