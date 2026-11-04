@@ -432,7 +432,7 @@ fn agent_omissions(
         let available = document_import::parse_id(entity_id)
             .ok()
             .is_some_and(|child| {
-                crate::agent_def::birth_source_id(&child)
+                crate::store::agent_birth_identity::birth_source_id(&child)
                     .ok()
                     .and_then(|carrier| birth(&carrier))
                     .is_some_and(|bytes| {
