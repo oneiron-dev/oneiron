@@ -8,7 +8,7 @@ use crate::secret_custody::KeptValues;
 use crate::store::known_value_index::KnownValues;
 use crate::store::witness_message_body::StoredMessagePart;
 use crate::{EntityId, Vault};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Considers only fresh inline signed parts. Stored prefixes are not passed
 /// here; their references and raw bytes stay unchanged.
@@ -62,6 +62,17 @@ pub(crate) fn seal_message_parts_in_txn(
             reason,
             at,
         )?;
+        if let StoredMessagePart::Inline(crate::ContentPart::Reasoning {
+            text,
+            signature,
+            data,
+            ..
+        }) = stored
+        {
+            text.zeroize();
+            signature.zeroize();
+            data.zeroize();
+        }
         *stored = StoredMessagePart::Custody { custody };
     }
     Ok(())

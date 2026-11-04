@@ -95,11 +95,19 @@ This identity proof opens no value and gives no reveal or replay permission.
 The on-record room copy keeps the exact admitted stored bodies, not the
 unsealed draft bodies, so its body digests describe what was committed.
 
+Off-record staging keeps inline parts and never mints durable custody. An
+explicit promote or later room copy applies the same whole-part policy to
+fresh MESSAGE rows in the promotion's existing base transaction. An id base
+already holds keeps the offered bytes for the ordinary replay's equality
+check, and a durable retry receipt returns before sealing. Custody, replay
+and the save receipt therefore commit or roll back together. A room's kept
+message digests come from the actual stored MESSAGE bodies in that writer
+and are published only after commit, not from the unsealed journal copies.
+
 This is a storage path, not reasoning delivery. No production caller currently
-supplies parts to the model-stream finalize door. Off-record overlay and
-promotion still keep inline parts. Scan-off preserves the MESSAGE writer's
-existing inline behavior; it does not implement the generic batch door's
-known-only placement policy. Inline parts must not be assumed public or
-secret-free. Chat wiring, scan-off whole-part marks, authorized part serving,
-actual issuing-login replay and whole MESSAGE privacy remain separate work.
-A custody handle is not a reveal grant or provider replay permission.
+supplies parts to the model-stream finalize door. Scan-off preserves the
+MESSAGE writer's existing inline behavior; it does not implement the generic
+batch door's known-only placement policy. Inline parts must not be assumed
+public or secret-free. Chat wiring, scan-off whole-part marks, authorized part
+serving, actual issuing-login replay and whole MESSAGE privacy remain separate
+work. A custody handle is not a reveal grant or provider replay permission.

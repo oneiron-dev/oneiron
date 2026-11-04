@@ -401,6 +401,8 @@ impl FloorWrites<'_> {
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
@@ -642,6 +644,8 @@ impl FloorWrites<'_> {
             .collect();
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
