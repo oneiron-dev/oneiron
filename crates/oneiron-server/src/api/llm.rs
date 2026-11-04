@@ -264,6 +264,7 @@ pub(crate) fn record_raw_response(
     run: &RunAdmission,
     request: &LlmRequest,
     response: &LlmResponse,
+    served: Option<&oneiron::ModelId>,
     no_record: bool,
 ) {
     if no_record {
@@ -277,7 +278,7 @@ pub(crate) fn record_raw_response(
             return;
         }
     };
-    let (rung, route) = ladder.model_call_binding();
+    let (rung, route) = ladder.model_call_binding(served);
     let mut source_rows = run.source_rows().unwrap_or_default();
     source_rows.extend(
         response
@@ -368,13 +369,13 @@ async fn generate(
     // actor its erase can find. Owner-grade callers bind none, as before.
     let run = run.initiated_by(principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
-    // generate_by takes the request by value; the record keeps its own copy.
+    // generate_served_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
     match ladder
-        .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+        .generate_served_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
     {
-        Ok(response) => {
+        Ok((response, served)) => {
             let no_record = no_record_at_arrival
                 || server
                     .vault()
@@ -385,6 +386,7 @@ async fn generate(
                 &run,
                 &record_request,
                 &response,
+                Some(&served),
                 no_record,
             );
             Json(response).into_response()
@@ -452,6 +454,7 @@ async fn stream(
                     message,
                     usage,
                     finish_reason,
+                    reply_assertions,
                     ..
                 } = &event
             {
@@ -459,19 +462,22 @@ async fn stream(
                     message: message.clone(),
                     usage: usage.clone(),
                     finish_reason: finish_reason.clone(),
-                    reply_assertions: Default::default(),
+                    reply_assertions: reply_assertions.clone(),
                     token_scores: None,
                 };
                 let no_record = no_record_at_arrival
                     || server
                         .vault()
                         .model_call_keeps_no_record_for(session.as_deref(), principal);
+                // Streams cannot name the served model without a protocol
+                // change, so the route pin is withheld here (FIX 12743).
                 record_raw_response(
                     server.vault(),
                     &ladder,
                     &run,
                     &record_request,
                     &response,
+                    None,
                     no_record,
                 );
             }
@@ -520,39 +526,23 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
 
     fn generate(
         &self,
-        _peer: oneiron::EntityId,
+        peer: oneiron::EntityId,
         mut request: LlmRequest,
     ) -> oneiron::LlmGenerateFuture<'static> {
         let server = Arc::clone(&self.0);
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
-            // The mesh peer is this call's authenticated principal: its
-            // off-record stretches gate the record at arrival and at Done.
-            // A mesh call binds no session or room, so only the session
-            // rule can fire, and only when the peer holds a live stretch.
-            let no_record_at_arrival = server
-                .vault()
-                .model_call_keeps_no_record_for(None, Some(peer));
-            let record_request = request.clone();
-            let answered = ladder
+            // The mesh peer is this call's authenticated principal, named
+            // as the run's initiator for attribution. A mesh call binds no
+            // session, so the vault's session no-record rule can never fire
+            // for it and would silently leak off-record peer work into the
+            // record: mesh calls record nothing until a verified no-record
+            // context crosses the mesh with the call.
+            let run = run.initiated_by(Some(peer));
+            ladder
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
-                .await;
-            if let Ok(response) = &answered {
-                let no_record = no_record_at_arrival
-                    || server
-                        .vault()
-                        .model_call_keeps_no_record_for(None, Some(peer));
-                record_raw_response(
-                    server.vault(),
-                    &ladder,
-                    &run,
-                    &record_request,
-                    response,
-                    no_record,
-                );
-            }
-            answered
+                .await
         })
     }
 
