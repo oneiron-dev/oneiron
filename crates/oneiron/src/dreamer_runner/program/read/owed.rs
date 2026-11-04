@@ -41,18 +41,24 @@ pub(super) fn owed_wakes_in_txn(
 }
 
 /// One owed wake as the caller reads it: its hold's expiry derives from the
-/// turn's landing, so it is withheld unless the turn reads on the caller's
-/// lane (`turn_reads`).
-pub(super) fn owed_wake_item(wake: TurnProgramWake, turn_reads: bool) -> TurnProgramOwedWakeItem {
+/// turn's landing, so it and whether it expired are withheld unless the turn
+/// reads on the caller's lane (`turn_reads`).
+pub(super) fn owed_wake_item(
+    wake: TurnProgramWake,
+    turn_reads: bool,
+    now: u64,
+) -> TurnProgramOwedWakeItem {
     let mut withheld = Vec::new();
     let held = wake.held.map(|hold| {
         if !turn_reads {
             withheld.push("held.expires_at".to_owned());
+            withheld.push("held.expired".to_owned());
         }
         OwedWakeHoldView {
             reason: hold.reason,
             held_at: hold.held_at,
             expires_at: turn_reads.then_some(hold.expires_at),
+            expired: turn_reads.then_some(now >= hold.expires_at),
         }
     });
     TurnProgramOwedWakeItem {
