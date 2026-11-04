@@ -13,9 +13,9 @@
 
 use heed::{RoTxn, RwTxn};
 
-use crate::temporal::TimeRange;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 /// One concrete occurrence of a series: the instant it is owed, the valid-time
