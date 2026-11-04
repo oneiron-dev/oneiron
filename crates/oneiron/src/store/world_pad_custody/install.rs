@@ -52,14 +52,14 @@ impl Store {
             skipped: retired,
         };
         if self.core.gate_custody_archived()
-            || crate::world_keys::world_keys_destroyed_in_txn(self, wtxn, world)?
+            || crate::store::world_pad_rows::world_keys_destroyed_in_txn(self, wtxn, world)?
         {
             installed.skipped += live.len();
             return Ok(installed);
         }
         let mut publish = Vec::new();
         for (item, pad) in live {
-            if crate::world_keys::pad_row_erased_in_txn(self, wtxn, item)? {
+            if crate::store::world_pad_rows::pad_row_erased_in_txn(self, wtxn, item)? {
                 installed.skipped += 1;
                 continue;
             }

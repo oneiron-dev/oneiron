@@ -21,4 +21,5 @@ pub mod secret_record;
 pub mod store_clock;
 pub mod vault_page_seal;
 pub mod window_key;
+pub mod world_pad_codec;
 pub mod write_envelope;
