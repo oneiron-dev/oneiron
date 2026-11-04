@@ -13800,23 +13800,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ChannelIdentityFace",
-      "RelationshipContext",
-      "SelectionRuleWriterKind"
-     ],
-     "path": "src/channel_identity_selection/selection_vocabulary.rs",
-     "purpose": "Stable token vocabulary for channel-identity selection law",
-     "surface": {
-      "const": 3,
-      "crate-vis": 1,
-      "enum": 3,
-      "fn": 6
-     }
-    },
-    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -32765,16 +32748,6 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc.rs",
-     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
-     "surface": {
-      "crate-vis": 14
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
      "notable": [
       "AnchorEffect",
       "CellValue",
@@ -33026,16 +32999,6 @@
      "path": "src/edit_roundtrip/tests.rs",
      "purpose": "ARTL-3 pipeline tests",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/xml.rs",
-     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
-     "surface": {
-      "crate-vis": 12
-     }
     },
     {
      "bucket": "XL",
@@ -54483,51 +54446,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "LinkedInEscalationConfig",
-      "LinkedInLoginHandoff",
-      "LinkedInManagedTransport",
-      "LinkedInMcpServerHarness",
-      "LinkedInNetworkRoute",
-      "LinkedInPasswordCustody",
-      "LinkedInSandboxHostConfig",
-      "LinkedInSandboxRuntime",
-      "LinkedInSelectorDriver"
-     ],
-     "path": "src/outbound/linkedin_policy/mod.rs",
-     "purpose": "LinkedIn seat policy values consumed by outbound admission",
-     "surface": {
-      "const": 7,
-      "crate-vis": 5,
-      "enum": 5,
-      "fn": 5,
-      "re-export": 1,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "LinkedInAccountRiskLimits",
-      "LinkedInKillSwitchState",
-      "LinkedInSeatDispatchState",
-      "LinkedInSeatPolicyAction",
-      "LinkedInSeatPolicyDecision",
-      "LinkedInSeatSandboxPolicy"
-     ],
-     "path": "src/outbound/linkedin_policy/seat.rs",
-     "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 20,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/outbound/manifests.rs",
      "purpose": "Built-in outbound capability manifests",
@@ -54554,8 +54472,8 @@
      "surface": {
       "crate-vis": 15,
       "fn": 1,
-      "mod": 2,
-      "re-export": 15
+      "mod": 1,
+      "re-export": 16
      }
     },
     {
@@ -88658,7 +88576,7 @@
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
     },
     "channel_identity_selection": {
-     "files": 8,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89015,7 +88933,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 39,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89400,7 +89318,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 64,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90046,7 +89964,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6233,
+   "source_files": 6228,
    "test_files": 898
   },
   "oneiron-android": {
@@ -90823,6 +90741,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChannelIdentityFace",
+      "RelationshipContext",
+      "SelectionRuleWriterKind"
+     ],
+     "path": "src/channel_selection_vocabulary.rs",
+     "purpose": "Stable token vocabulary for channel-identity selection law",
+     "surface": {
+      "const": 3,
+      "enum": 3,
+      "fn": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -90983,7 +90917,7 @@
      "path": "src/lib.rs",
      "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
      "surface": {
-      "mod": 8
+      "mod": 9
      }
     },
     {
@@ -91041,6 +90975,13 @@
      "layout": "file",
      "purpose": "ChannelIdentity addressability shapes with wire serde"
     },
+    "channel_selection_vocabulary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Stable token vocabulary for channel-identity selection law"
+    },
     "claim_history_handoff": {
      "files": 1,
      "impl_vault": false,
@@ -91072,7 +91013,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 57,
+   "source_files": 58,
    "test_files": 1
   },
   "oneiron-base": {
@@ -98362,7 +98303,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 15,
-      "mod": 17,
+      "mod": 19,
       "re-export": 5,
       "struct": 1
      }
@@ -99219,6 +99160,37 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpcPackage",
+      "OpcPart",
+      "PartClass"
+     ],
+     "path": "src/opc_package.rs",
+     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Element",
+      "ExternalRelationship"
+     ],
+     "path": "src/opc_xml.rs",
+     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
+     "surface": {
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -99850,6 +99822,20 @@
      "layout": "file",
      "purpose": "Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks"
     },
+    "opc_package": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline"
+    },
+    "opc_xml": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate"
+    },
     "pptx_comments": {
      "files": 9,
      "impl_vault": false,
@@ -99909,7 +99895,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 164,
+   "source_files": 166,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -101893,6 +101879,66 @@
    "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
    "source_files": 8,
    "test_files": 1
+  },
+  "oneiron-linkedin-policy": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinkedInEscalationConfig",
+      "LinkedInLoginHandoff",
+      "LinkedInManagedTransport",
+      "LinkedInMcpServerHarness",
+      "LinkedInNetworkRoute",
+      "LinkedInPasswordCustody",
+      "LinkedInSandboxHostConfig",
+      "LinkedInSandboxRuntime",
+      "LinkedInSelectorDriver"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "LinkedIn seat policy values consumed by outbound admission",
+     "surface": {
+      "const": 9,
+      "enum": 5,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInAccountRiskLimits",
+      "LinkedInKillSwitchState",
+      "LinkedInSeatDispatchState",
+      "LinkedInSeatPolicyAction",
+      "LinkedInSeatPolicyDecision",
+      "LinkedInSeatSandboxPolicy"
+     ],
+     "path": "src/seat.rs",
+     "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
+     "surface": {
+      "enum": 1,
+      "fn": 21,
+      "struct": 5
+     }
+    }
+   ],
+   "modules": {
+    "seat": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "LinkedIn seat policy values consumed by outbound admission",
+   "source_files": 2,
+   "test_files": 0
   },
   "oneiron-llm-anthropic": {
    "files": [
