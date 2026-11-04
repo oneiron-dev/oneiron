@@ -385,8 +385,9 @@ side_tables! {
     /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
     /// deletion receipt completes (OF-470 C4). Key: id16 (record).
     LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named;
-    /// The owner-visible legal-hold log: ids, times and reason codes only (OF-470 C3). Key: id16
-    /// (hold) + u64be (sequence).
+    /// Customer holds' legal-hold log: ids, times and reason codes only (OF-470 C3). A host
+    /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
+    /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
     /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
     /// no checkpoint image carries it. Key: id16 (record).
@@ -452,9 +453,11 @@ side_tables! {
     /// byte (1 delivery key's digest, 2 body digest) + 32-byte digest.
     LINEAR_WEBHOOK_BINDING: VaultMeta b"linear.webhook_binding.v1/" Raw Engine;
     /// An owner press one actor's admission of a Linear mirror operation spent, kept for that
-    /// operation's retry once the admission committed (FIX 6424 part 2a): the actor's role. Key:
-    /// 32-byte operation id + the press's 32-byte approve-once digest.
-    LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw;
+    /// operation's retry once the admission committed (FIX 6424 part 2a): the actor's role tag,
+    /// the pressing actor and the mirrored TASK (FIX 6835). Key: 32-byte operation id + the
+    /// press's 32-byte approve-once digest.
+    LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw
+        => crate::linear_sync::erase_effect_approval_actor_in_txn;
     /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
     /// operation id.
     LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;

@@ -183,11 +183,13 @@ impl BrokerSite {
 }
 
 /// One `key_secret` provider's backend, over the broker at `site` and the
-/// key door `keys`.
+/// key door `keys`. `solo` says the provider's server reads the host's
+/// solo marker, which only EXL3's does (FIX 6976).
 pub(super) fn broker_backend(
     provider: &ProviderConfig,
     catalog: Vec<LlmCatalogEntry>,
     cap: OutputCap,
+    solo: bool,
     site: &BrokerSite,
     keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<BrokerBackend> {
@@ -211,8 +213,6 @@ pub(super) fn broker_backend(
         })
         .collect();
     let rows = catalog.values().cloned();
-    // Only an own server reads the host's solo marker (INF 1).
-    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
     let wire = match provider.kind {
         ProviderKind::AnthropicCompat => {
             Wire::Anthropic(AnthropicMessagesConfig::from_catalog(rows))
