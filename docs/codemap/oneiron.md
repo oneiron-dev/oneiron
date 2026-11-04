@@ -5402,7 +5402,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/archive.rs` | src | s | 1 crate-vis | — | Offline archive import is another Candidate birth, never an activation ticket |
 | `src/skill_hub/bootstrap.rs` | src | m | 8 crate-vis | — | Build-embedded bootstrap skills; import and activation commit together on first open |
 | `src/skill_hub/bootstrap/tests.rs` | test | m | — | — | — |
-| `src/skill_hub/claim_refinement.rs` | src | m | 3 struct · 1 enum · 10 fn · 2 crate-vis | ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt, LocalClaimRefinement | Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission |
+| `src/skill_hub/claim_refinement.rs` | src | m | 3 struct · 1 enum · 10 fn | ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt, LocalClaimRefinement | Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission |
 | `src/skill_hub/claim_refinement_tests.rs` | test | m | — | — | Claim refinements use the same typed question and independent held-out rule |
 | `src/skill_hub/decisions.rs` | src | s | 2 struct · 1 fn · 4 crate-vis | ClaimReplayDecisions, UsefulUpstreamDecisions | The merge doors' typed questions (OF-493) on the host's ladder: the one useful-upstream yes/no both doors… |
 | `src/skill_hub/default_hub.rs` | src | m | 2 struct · 12 fn · 2 const · 1 re-export · 2 crate-vis | DefaultSkillHub, ModelCatalogSync | First-party library source: offline seeding, immutable Git ref, explicit import |
@@ -5419,7 +5419,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/import_receipt/rule_fit.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn · 2 crate-vis | CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting | The deterministic skill fit and the owner's setting that picks it (FIX 9752, owner law ARCH-0053 "Everything… |
 | `src/skill_hub/index.rs` | src | m | 1 re-export · 15 crate-vis | — | Skill provenance and capability indexes |
 | `src/skill_hub/install_transition.rs` | src | m | 3 enum · 4 fn · 11 crate-vis | InstallDisposition, InstallHoldReason, InstallLifecycle | One transaction-local skill install plan and its finalized, loadable result |
-| `src/skill_hub/mod.rs` | src | s | 2 mod · 21 re-export · 22 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `src/skill_hub/mod.rs` | src | s | 2 mod · 21 re-export · 21 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 3 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/pack_catalog/admission.rs` | src | m | 7 fn · 11 crate-vis | — | Post-fit installation of pinned pack source; requested powers stay inert |
@@ -5475,10 +5475,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | s | 1 re-export | — | Hub references, defined in the write vocabulary |
 | `src/skill_hub/ref_sync.rs` | src | s | 2 fn · 6 crate-vis | — | Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub) |
-| `src/skill_hub/refinement_admission.rs` | src | m | 16 crate-vis | — | Content-free refinement identity and the transaction-local exact-admission capability |
+| `src/skill_hub/refinement_admission.rs` | src | m | 8 crate-vis | — | Content-free refinement identity and the transaction-local exact-admission capability |
 | `src/skill_hub/refinement_custody.rs` | src | m | 11 crate-vis | — | Candidate-owned custody for inert refinement rulings |
 | `src/skill_hub/refinement_custody/tests.rs` | test | m | — | — | The same source custody laws for claim and skill refinement receipts |
-| `src/skill_hub/shared_delta.rs` | src | m | 1 struct · 1 enum · 4 fn · 3 crate-vis | SharedSkillDelta, SharedSkillLane | Submitted-byte federation merge-back and company PR staging |
+| `src/skill_hub/shared_delta.rs` | src | m | 4 fn · 1 re-export · 3 crate-vis | — | Submitted-byte federation merge-back and company PR staging |
 | `src/skill_hub/shared_gate.rs` | src | m | 2 struct · 2 enum · 8 fn · 1 crate-vis | SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback | Useful-upstream and held-out merge gate for submitted shared-skill deltas |
 | `src/skill_hub/shared_merge_queue.rs` | src | s | 1 struct · 1 enum · 3 fn | SharedSkillMergeEntry, SharedSkillMergeState | The owner's reads of offered shared-skill deltas, and the owner's discard of one no merge has admitted |
 | `src/skill_hub/site.rs` | src | m | 2 fn · 1 const | — | Site skills for the run's browser (CUA E10): the loadable skills whose `site.json` origin matches a page… |
@@ -5643,6 +5643,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/checkpoint_payload/rows/restore.rs` | src | s | 7 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
 | `src/store/checkpoint_payload/rows/typed.rs` | src | s | 11 crate-vis | — | Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's… |
 | `src/store/claim_descriptors.rs` | src | m | 2 struct · 3 enum · 13 fn · 1 const · 15 crate-vis | ClaimClassDescriptor, ClaimSubjectKind, ClaimValidatorKind, ClaimWriteClass, EnforcementStamp | Claim-class descriptor values, schema checks and MessagePack codec |
+| `src/store/claim_refinement_control.rs` | src | s | 1 struct · 1 enum · 16 crate-vis | SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
 | `src/store/claim_vad_owed.rs` | src | s | 5 crate-vis | — | Owed claim VAD consolidation (FIX 9598) |
 | `src/store/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 6 fn · 4 const · 6 crate-vis | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
 | `src/store/code_commit_metadata.rs` | src | s | 1 struct · 3 fn | CodeCommitMetadata | Canonical commit authorship, message and file modes |
@@ -5809,7 +5810,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 84 mod · 31 re-export · 90 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 85 mod · 31 re-export · 90 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 1 struct · 1 crate-vis | MeasuredDescription | The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`) |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
