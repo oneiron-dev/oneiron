@@ -81,7 +81,7 @@ pub fn list_unsubscribe_headers(
 /// # Errors
 ///
 /// Propagates [`list_unsubscribe_headers`].
-pub(crate) fn inject_campaign_email_hygiene_headers(
+pub fn inject_campaign_email_hygiene_headers(
     channel: &str,
     headers: &mut BTreeMap<String, String>,
     unsubscribe: Option<&ListUnsubscribeTarget>,
@@ -108,7 +108,7 @@ pub(crate) fn inject_campaign_email_hygiene_headers(
 ///
 /// [`Error::InvalidConfig`] when the field is present but is not a flat map of
 /// strings.
-pub(crate) fn frozen_payload_hygiene_headers(payload: &[u8]) -> Result<BTreeMap<String, String>> {
+pub fn frozen_payload_hygiene_headers(payload: &[u8]) -> Result<BTreeMap<String, String>> {
     let Ok(serde_json::Value::Object(fields)) =
         serde_json::from_slice::<serde_json::Value>(payload)
     else {
@@ -153,6 +153,6 @@ fn validate_unsubscribe_uri(uri: &str, scheme: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn invalid_payload(reason: &str) -> Error {
+pub fn invalid_payload(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }

@@ -1,7 +1,10 @@
 //! Retirement of copied agent source when a captured input is erased.
-use super::birth_custody::{birth_carriers_for_holder_in_txn, retire_birth_source_holder_in_txn};
+use super::birth_custody::retire_birth_source_holder_in_txn;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::agent_birth_custody::{
+    INPUT, birth_carriers_for_holder_in_txn, children_for_input,
+};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
@@ -9,10 +12,6 @@ use crate::{
 };
 use std::collections::BTreeSet;
 
-/// Empty-marker index from a captured dependency input to a birthed-agent
-/// child. Key: the input's id, then the child's id.
-const INPUT: SideTable<(EntityId, EntityId), (), Raw> =
-    SideTable::new(&side_table::AGENT_DEF_BIRTH_INPUT);
 /// Empty marker: a captured dependency input has been retired.
 const RETIRED_INPUT: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::AGENT_DEF_BIRTH_INPUT_RETIRED);
@@ -46,43 +45,6 @@ pub(super) fn bind_inputs(
         INPUT.put(store, txn, &(input, child), &())?;
     }
     Ok(())
-}
-fn children_for_input(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    input: &EntityId,
-) -> Result<Vec<EntityId>> {
-    Ok(INPUT
-        .scan_from(store, txn, input.as_bytes())?
-        .into_iter()
-        .map(|((_, child), ())| child)
-        .collect())
-}
-/// Includes direct ownership and copies of this input. Index entries grant no
-/// authority over the child rows: only their captured ASSET payloads are scoped.
-pub(crate) fn birth_carriers_for_erased_entity_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    input: &EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut carriers = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    let mut pending = vec![*input];
-    while let Some(input) = pending.pop() {
-        if !visited.insert(input) {
-            continue;
-        }
-        let mut children = children_for_input(store, txn, &input)?;
-        children.push(input);
-        for child in children {
-            for carrier in birth_carriers_for_holder_in_txn(store, txn, &child)? {
-                if carriers.insert(carrier) {
-                    pending.push(carrier);
-                }
-            }
-        }
-    }
-    Ok(carriers.into_iter().collect())
 }
 pub(super) fn retire_input(
     store: &Store,

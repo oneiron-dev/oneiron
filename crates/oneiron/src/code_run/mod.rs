@@ -157,8 +157,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
-    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,

@@ -88,7 +88,7 @@ impl BatchBuilder<'_> {
         // A batch inside an actor-bound transaction cannot silently choose the
         // trusted/raw apply path. The in-flight writer is transaction-local,
         // never a process-global flag or a reusable preflight token.
-        let active_actor = crate::federation::actor_for_txn(vault, wtxn)?;
+        let active_actor = vault.store.record_hooks.actor_for_txn(vault, wtxn)?;
         let actor = match (actor.copied(), active_actor) {
             (Some(requested), Some(active)) if requested != active => {
                 return Err(Error::InvalidClaimBody(

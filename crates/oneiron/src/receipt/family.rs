@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use super::brief_share::brief_share_receipts;
 use super::dispatch_observation::dispatch_observations;
 use super::grant::{
-    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
-    federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
-    scan_entities_by_type, standing_outbound_grants_lens,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_owner_act_receipts,
+    access_grant_receipts, federation_share_receipts, outbound_grant_receipts,
+    persona_snapshot_export_receipts, scan_entities_by_type, standing_outbound_grants_lens,
 };
 use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
 use super::kernel::{
@@ -375,6 +375,7 @@ pub(super) fn collect_receipt_records(
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
+        records.extend(access_grant_owner_act_receipts(vault, &rtxn, query)?);
         records.extend(outbound_grant_receipts(vault, &rtxn, query)?);
         // ED-09 (ONE-1765): the reservoir export. Same kind, own store, own
         // field class — an export IS a scoped read that left the vault, so it

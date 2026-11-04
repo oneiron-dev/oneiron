@@ -222,11 +222,14 @@ impl Vault {
     /// admission and the write share one write transaction, as a revoke's
     /// do. The write passes every check [`Vault::put_access_grant`] runs and
     /// lands at `learned_at`. A deleted grant is no grant to write over.
+    /// Every changed write records its caller's act after apply and before
+    /// commit in the same transaction; a no-op records nothing.
     pub(crate) fn put_admitted_access_grant(
         &self,
         id: &EntityId,
         learned_at: u64,
         admit: impl FnOnce(&heed::RoTxn<'_>, Option<AccessGrant>) -> Result<(AccessGrant, bool)>,
+        record: impl FnOnce(&mut heed::RwTxn<'_>, &AccessGrant) -> Result<()>,
     ) -> Result<(AccessGrant, bool)> {
         use crate::vault::LiveEntityRow;
         let mut wtxn = self.store.env.write_txn()?;
@@ -254,6 +257,7 @@ impl Vault {
             self.check_companion_profile_target(&wtxn, &grant)?;
             crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
             self.apply_access_grant_body(&mut wtxn, id, learned_at, data)?;
+            record(&mut wtxn, &grant)?;
             wtxn.commit()?;
         }
         Ok((grant, write))

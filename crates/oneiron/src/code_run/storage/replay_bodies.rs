@@ -22,7 +22,7 @@ use crate::code_run::wait_rows::keep_erased_answer_rows;
 use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
-use crate::error::{CodeError, Error, Result};
+use crate::error::Result;
 use crate::side_table::{ErasedForm, SideTableDbs};
 use crate::store::{ResponseCarriage, ResponseScan};
 use crate::task_verb::TaskAskStatus;
@@ -30,13 +30,7 @@ use crate::task_verb::TaskAskStatus;
 /// The error a call whose outcome an erase took replays with.
 pub(crate) const RESPONSE_ERASED: &str = "response_erased";
 
-/// The typed unavailable a run's read of reply content an erase of its actor
-/// took answers with (FIX 5718; `ErrorKind::ResponseErased`): a replayed
-/// call's, a wait's delivered or settled reply, a consent wait's resume.
-/// `what` names the read. Nothing is sent again.
-pub(crate) fn response_erased_error(what: &'static str) -> Error {
-    Error::Code(CodeError::ResponseErased(what))
-}
+pub(crate) use crate::store::result_body_erasure::response_erased_error;
 
 /// The preview text of a result whose record an erase retired.
 pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =

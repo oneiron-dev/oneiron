@@ -83,7 +83,10 @@ fn scrub_actor_fields_in_txn(
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
     ACTOR_STAMP_TOKENS(vault, wtxn, actor)?;
-    crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)?;
+    vault
+        .store
+        .record_hooks
+        .erase_audience_actor_in_txn(vault, wtxn, actor)?;
     // A fitted section install's receipt names its actor outside `fields()`,
     // so the install and skill erasers above never reach it: the erase-only
     // sweep scrubs it here instead of the derived-rows hook, which also runs

@@ -112,14 +112,9 @@ pub(super) fn stage_put_projections(
     } else {
         crate::batch::row_put::RowPut::Birth
     };
-    crate::federation::record_scope::stamp_put(
-        store,
-        wtxn,
-        fixed.id,
-        fixed.entity_type,
-        data,
-        row_put,
-    )?;
+    store
+        .scope_stamps
+        .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(
             store,
@@ -150,7 +145,7 @@ pub(super) fn stage_put_projections(
     // A workflow's `[limits]` rows ask only once every fallible step of its
     // put is staged (Rule 5).
     if let Some(definition) = dispatch.new_workflow.as_ref() {
-        crate::agent_def::workflow::measure_workflow_limits(&store.limit_watch, definition);
+        crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
         portable_agent_source,
