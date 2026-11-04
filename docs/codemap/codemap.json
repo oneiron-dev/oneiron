@@ -2838,7 +2838,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -69332,6 +69332,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/attempt_payload_retire.rs",
+     "purpose": "Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/attempt_payload_route.rs",
      "purpose": "The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record…",
      "surface": {
@@ -69568,7 +69578,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/response.rs",
@@ -72124,7 +72134,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 113,
+      "crate-vis": 114,
       "mod": 108,
       "re-export": 31
      }
@@ -90471,7 +90481,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 421,
+     "files": 422,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90709,9 +90719,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 142,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6303,
+   "source_files": 6304,
    "test_files": 895
   },
   "oneiron-android": {
