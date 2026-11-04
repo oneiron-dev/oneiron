@@ -120,7 +120,7 @@ pub(crate) fn birth_summary_in_txn(
         born.as_ref().map(|birth| &birth.made_by),
     )?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
-    crate::federation::record_scope::restamp_document_pointer(
+    vault.store.scope_stamps.restamp_document_pointer(
         &vault.store,
         txn,
         entity,
@@ -215,7 +215,8 @@ pub(crate) fn summary_read_in_txn(
             .map(EntityId::to_hex)
             .collect(),
         anchors,
-        birth: doc.birth().clone(),
+        // The birth's stamp token reads as its actor (FIX 11964).
+        birth: doc.birth().resolved_in(&vault.store, txn)?,
     })
 }
 

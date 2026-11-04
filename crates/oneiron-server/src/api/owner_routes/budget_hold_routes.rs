@@ -14,7 +14,7 @@ use axum::routing::{get, post};
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldState, PartialResultHold};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::api::run_tree::parse_attempt_id_param;
@@ -30,6 +30,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/runs/hold",
                 summary: "The run's hold, with whether its spend scope has spend left read again now.",
                 row: None,
+                shape: None,
             },
             get(hold),
         ),
@@ -39,6 +40,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/runs/hold/resume",
                 summary: "Resume one held run (`run`, 32 hex) as the owner and answer its hold. Each attempt it still parks is queued again and resumes from its checkpoint; one someone else paused or settled since is left as it is.",
                 row: None,
+                shape: Some(RestShape::json(held_run_body_schema, held_run_view_schema)),
             },
             post(resume),
         ),

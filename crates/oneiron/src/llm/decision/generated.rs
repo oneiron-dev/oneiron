@@ -225,6 +225,7 @@ impl DecisionLadder<'_> {
                 audio: &[],
                 state,
                 deadline,
+                run: None,
             };
             // A read the work time cannot start never goes out.
             if !deadline.decision_may_start() {

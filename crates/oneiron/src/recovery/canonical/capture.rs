@@ -72,6 +72,7 @@ pub(crate) fn capture_canonical_window_within(
             "room_facts",
             "document_pins",
             "message_docs",
+            "repo_manifests",
             "withdrawn_cutoffs",
             "peer_origins",
             "asset_body_refs",
@@ -142,13 +143,19 @@ pub(crate) fn capture_canonical_window_within(
         }
         snapshot.base_edges.push(edge);
     }
-    for (key, row) in binary_rows_within(doc, "room_turns", budget)? {
+    let turns = binary_rows_within(doc, "room_turns", budget)?;
+    for (key, row) in
+        crate::room_codec::room_parts::capture_rows(&turns, &mut |bytes| budget.take(bytes))?
+    {
         snapshot.room_turns.push(CanonicalRoomTurn {
             id: parse_id(&key)?,
             row,
         });
     }
-    for (key, row) in binary_rows_within(doc, "room_facts", budget)? {
+    let facts = binary_rows_within(doc, "room_facts", budget)?;
+    for (key, row) in
+        crate::room_codec::room_parts::capture_rows(&facts, &mut |bytes| budget.take(bytes))?
+    {
         snapshot.room_facts.push(CanonicalRoomFact { key, row });
     }
     for (key, carrier) in binary_rows_within(doc, "custody", budget)? {

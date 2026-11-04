@@ -77,11 +77,9 @@ impl Vault {
                 return Ok(false);
             }
             // What the due run will refuse is never accepted: the ordinary
-            // delete runs instead, and refuses as it does today.
-            if self
-                .delete_admission_in_txn(txn, id, reason, false)
-                .is_err()
-            {
+            // delete runs instead, and refuses as it does today. The due run
+            // is this owner's gated delete (FIX 10402).
+            if self.delete_admission_in_txn(txn, id, reason, true).is_err() {
                 return Ok(false);
             }
             let generation = self.store.clock.entity_id()?;
@@ -92,6 +90,7 @@ impl Vault {
                 reason,
                 generation,
                 veto_act: None,
+                withdrawn: None,
             };
             let stored = hold_store::put_pending_erase_in_txn(&self.store, txn, id, request)?;
             if stored.generation != generation {

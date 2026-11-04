@@ -21,7 +21,6 @@
 //! books nothing.
 
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -33,6 +32,7 @@ use crate::llm::{LlmInputUsage, LlmOutputUsage, LlmUsage};
 
 use super::connector::ByoaConnectorSpec;
 use super::exhaust::{ByoaExhaust, decode_byoa_exhaust, parse_byoa_result_ref};
+use super::json_lines::{JsonLine, each_json_line};
 use super::provider::{CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, OPENCODE_PROGRAM};
 use super::stream::ByoaStream;
 
@@ -103,6 +103,7 @@ fn claude_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     })
 }
 
@@ -126,6 +127,7 @@ fn codex_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
             reasoning,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     })
 }
 
@@ -174,6 +176,7 @@ fn opencode_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
         input,
         output,
         raw_provider: json!({ "step_finish": steps }),
+        call_metadata: None,
     })
 }
 
@@ -205,55 +208,21 @@ fn last_event(stream: &ByoaStream, kind: &str) -> Option<JsonValue> {
 /// A line that does not parse is passed over. `None` when the stream cannot
 /// be read.
 fn each_event(stream: &ByoaStream, mut visit: impl FnMut(JsonValue)) -> Option<()> {
-    let mut reader = BufReader::new(stream.reader());
-    let mut line = Vec::new();
-    loop {
-        let buffered = reader.fill_buf().ok()?;
-        let Some(&first) = buffered.first() else {
-            return Some(());
-        };
-        if first.is_ascii_whitespace() {
-            let blanks = buffered
-                .iter()
-                .take_while(|byte| byte.is_ascii_whitespace())
-                .count();
-            reader.consume(blanks);
-        } else if first == b'{' {
-            line.clear();
-            reader.read_until(b'\n', &mut line).ok()?;
-            if let Ok(event) = serde_json::from_slice(&line) {
-                visit(event);
+    each_json_line(
+        stream.reader(),
+        |_| (),
+        |line| match line {
+            JsonLine::Bytes(raw) => {
+                if let Ok(event) = serde_json::from_slice(raw) {
+                    visit(event);
+                }
             }
-        } else if first.is_ascii() {
-            skip_line(&mut reader)?;
-        } else {
-            line.clear();
-            reader.read_until(b'\n', &mut line).ok()?;
-            let decoded = String::from_utf8_lossy(&line);
-            let trimmed = decoded.trim();
-            if trimmed.starts_with('{') {
+            JsonLine::Text(trimmed) => {
                 if let Ok(event) = serde_json::from_str(trimmed) {
                     visit(event);
                 }
             }
-        }
-    }
-}
-
-/// Passes over the rest of one line without holding it.
-fn skip_line(reader: &mut impl BufRead) -> Option<()> {
-    loop {
-        let buffered = reader.fill_buf().ok()?;
-        if buffered.is_empty() {
-            return Some(());
-        }
-        let (take, ends) = buffered
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or((buffered.len(), false), |at| (at + 1, true));
-        reader.consume(take);
-        if ends {
-            return Some(());
-        }
-    }
+        },
+    )
+    .ok()
 }

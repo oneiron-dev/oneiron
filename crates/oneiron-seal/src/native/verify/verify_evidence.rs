@@ -3,12 +3,14 @@ use super::super::pdf::RevisionBoundary;
 use super::timestamp_evidence::TimestampResult;
 use super::verify_dss_core::EmbeddedCert;
 use crate::api::{ByteRangeEvidence, Coverage, SignatureKind, SignedRangeDigest, VerifyCheck};
+use crate::memory::{Held, SealMemoryRefusal};
 
 /// A timestamp already passed token integrity, trusted TSA path, and clock
-/// bounds. Untrusted/invalid tokens are checks, never time proofs.
+/// bounds. Untrusted/invalid tokens are checks, never time proofs. Every
+/// chain copy below is held on the verification's ledger (FIX 12260).
 pub(super) struct ValidatedTimeToken {
     pub gen_time: u64,
-    pub tsa_chain_ders: Vec<Vec<u8>>,
+    pub tsa_chain_ders: Held<Vec<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +27,7 @@ pub(super) enum TimeSource {
 pub(super) struct TrustedTimeProof {
     pub source: TimeSource,
     pub gen_time: u64,
-    pub tsa_chain_ders: Vec<Vec<u8>>,
+    pub tsa_chain_ders: Held<Vec<Vec<u8>>>,
     /// For a document timestamp: last byte of its validated signed range.
     /// For a CMS timestamp: the owning signer's range end (the token itself
     /// binds that signer's signature value, not a subsequent PDF revision).
@@ -33,7 +35,7 @@ pub(super) struct TrustedTimeProof {
 }
 
 pub(super) struct CadesEvidence {
-    pub signer_chain: Option<Vec<Vec<u8>>>,
+    pub signer_chain: Option<Held<Vec<Vec<u8>>>>,
     pub timestamp: TimestampResult,
 }
 
@@ -48,7 +50,7 @@ pub(super) struct EnvelopeEvidence {
     pub digest: Option<SignedRangeDigest>,
     pub revision: Option<RevisionBoundary>,
     pub checks: Vec<VerifyCheck>,
-    pub signer_chain: Option<Vec<Vec<u8>>>,
+    pub signer_chain: Option<Held<Vec<Vec<u8>>>>,
     pub time_proof: Option<TrustedTimeProof>,
     pub untrusted_time: Option<u64>,
     pub covered: Vec<EmbeddedCert>,
@@ -56,6 +58,8 @@ pub(super) struct EnvelopeEvidence {
 
 /// Evaluate bytes and token integrity without choosing signer path time or
 /// projecting public report fields. The xref chain has already been proven.
+/// Its parses, decodes and copies are held on the ledger of the operation
+/// `ctx.limits` run under (FIX 12260); memory refused is `Err`.
 pub(super) fn evaluate_envelope(
     bytes: &[u8],
     entry: &super::verify_sig_pipeline::SigEntry,
@@ -64,10 +68,11 @@ pub(super) fn evaluate_envelope(
     ctx: &super::verify_chain_gates::VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
     is_last: bool,
-) -> EnvelopeEvidence {
+) -> Result<EnvelopeEvidence, SealMemoryRefusal> {
     use super::super::pdf;
     use super::verify_sig_pipeline::{Checks, check_byte_range, verify_cades_sig, verify_doc_ts};
     use crate::api::{DigestAlgorithm, SignedRangeDigest};
+    let memory = ctx.limits.memory.ledger()?;
     let br_ok = check_byte_range(bytes, entry);
     let end = entry.byte_range[2].checked_add(entry.byte_range[3]);
     let covers_to = end.filter(|_| br_ok);
@@ -90,10 +95,19 @@ pub(super) fn evaluate_envelope(
                 is_last,
                 &mut covered,
                 ctx.clock_ms,
-            ),
+                &memory,
+            )?,
         )
     } else {
-        let cades = verify_cades_sig(bytes, entry, ctx, anchors, &mut checks, &mut covered);
+        let cades = verify_cades_sig(
+            bytes,
+            entry,
+            ctx,
+            anchors,
+            &mut checks,
+            &mut covered,
+            &memory,
+        )?;
         (cades.signer_chain, cades.timestamp)
     };
     let untrusted_time = token.untrusted_time.filter(|_| revision.is_some());
@@ -132,7 +146,7 @@ pub(super) fn evaluate_envelope(
     } else {
         None
     };
-    EnvelopeEvidence {
+    Ok(EnvelopeEvidence {
         index,
         id: format!("{}:{index}", entry.field_name),
         kind,
@@ -150,5 +164,5 @@ pub(super) fn evaluate_envelope(
         time_proof,
         untrusted_time,
         covered,
-    }
+    })
 }
