@@ -89,7 +89,7 @@ pub(super) use self::hold::{
 };
 use self::hold::{launch_role_is_held_in, require_holder_launch_choice};
 pub(super) use self::scrub::{
-    FanoutRecipientScrub, erase_launch_recipient_in_txn, scrub_statement_for,
+    FanoutRecipientScrub, erase_launch_recipient_in_txn, scrub_pathology_for, scrub_statement_for,
     verify_scrubbed_launch,
 };
 
