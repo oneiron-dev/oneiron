@@ -473,6 +473,9 @@ pub(super) async fn open_with_whole(
     body: &[u8],
     whole: &[u8],
 ) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
     let secret = secret.to_owned();
