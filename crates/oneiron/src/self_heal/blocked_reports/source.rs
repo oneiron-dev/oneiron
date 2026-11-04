@@ -566,14 +566,20 @@ fn bind_claim_in_txn(
         STEPS.delete(&vault.store, wtxn, key)?;
         ownership::remove_capture_owners_in_txn(&vault.store, wtxn, key)?;
     }
-    for (key, _) in &bound {
+    let mut history = Vec::new();
+    for key in bound.iter().map(|(key, _)| key).chain(opaque.iter()) {
         ownership::replace_claim_in_txn(&vault.store, wtxn, key, claim)?;
-    }
-    for key in &opaque {
-        ownership::replace_claim_in_txn(&vault.store, wtxn, key, claim)?;
+        // An older image may already carry these bytes. Its instance owes the
+        // new claim now, before an erase can run without another checkpoint.
+        history.extend(response::bind_capture_claim_in_txn(
+            vault, wtxn, key, claim,
+        )?);
     }
     for (key, source) in &bound {
         STEPS.put(vault, wtxn, key, source)?;
+    }
+    if !history.is_empty() {
+        vault.store.key_custody().journal_body_history(history)?;
     }
     Ok(())
 }

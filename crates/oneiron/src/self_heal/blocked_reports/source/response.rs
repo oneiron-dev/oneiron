@@ -15,7 +15,10 @@
 use super::{SOURCE, STEPS, StepSourceKey};
 use crate::side_table::SideKey;
 use crate::store::{ResponseCarriage, ResponseScan, Store};
-use crate::{EntityId, Result};
+use crate::store::{
+    ResponseDb, bind_missing_response_owners_in_txn, response_binding_in_txn, response_carrier,
+};
+use crate::{EntityId, Result, Vault};
 
 /// Which kind of replay-source row the full key `key` names: a step row
 /// (`true`) or a receipt row (`false`); `None` for neither.
@@ -78,4 +81,24 @@ pub(crate) fn blocked_capture_owners_in_txn(
         owners.dedup();
     }
     Ok(owners)
+}
+
+/// An existing image's instance owes a newly bound terminal claim immediately,
+/// even when its capture is opaque and no subsequent checkpoint is made.
+pub(super) fn bind_capture_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &StepSourceKey,
+    claim: EntityId,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let Some(value) = STEPS.get_bytes(&vault.store, txn, key)? else {
+        return Ok(Vec::new());
+    };
+    let carrier = response_carrier(ResponseDb::VaultMeta, &STEPS.key_bytes(key));
+    let Some(binding) = response_binding_in_txn(&vault.store, txn, &carrier)?
+        .filter(|binding| binding.digest == *blake3::hash(&value).as_bytes())
+    else {
+        return Ok(Vec::new());
+    };
+    bind_missing_response_owners_in_txn(&vault.store, txn, &carrier, binding, &[claim])
 }
