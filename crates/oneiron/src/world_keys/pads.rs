@@ -135,7 +135,9 @@ pub(crate) fn pad_in_txn(
     if world_keys_destroyed_in_txn(store, txn, key.world)? {
         return Ok(None);
     }
-    Ok(store.world_pad_in_custody(&pad_item(key))?.map(WorldKeyPad))
+    Ok(store
+        .world_pad_in_custody(&pad_item(key))?
+        .map(WorldKeyPad::from_bytes))
 }
 
 /// [`pad_in_txn`] with the time its row was learned, which files it in its
