@@ -1179,9 +1179,16 @@ impl Vault {
             let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
                 return Ok(proposed);
             };
-            // A replay marks the wake alone: no unit is marked woken without
-            // the evaluation this ref's first ask already covered (FIX 9826).
-            if asked {
+            // A replay under a ref this wake already evaluated marks nothing:
+            // its first ask already covered the evaluation. A first
+            // evaluation under a new ref — including a terminal no-target ask
+            // that logs nothing — marks the wake so it retires instead of
+            // pumping its expired deadline forever (FIX 9826).
+            let known = row
+                .reask_refs
+                .iter()
+                .any(|known| known.as_str() == reask_ref);
+            if asked || !known {
                 for answer in &mut row.answers {
                     if answer.woken_at.is_none() && units.contains(&&answer.unit) {
                         answer.woken_at = Some(now);
