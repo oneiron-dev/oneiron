@@ -119,6 +119,8 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
+pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cleanup;
 pub mod attempt_inputs;
@@ -217,6 +219,7 @@ pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;
@@ -275,6 +278,7 @@ mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
 pub(crate) mod skill_content_index;
+pub mod skill_hub_predicates;
 pub mod skill_package;
 pub(crate) mod skill_source_carrier;
 mod structural_kind_registry;
