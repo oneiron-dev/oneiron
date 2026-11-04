@@ -50,7 +50,7 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
     MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
