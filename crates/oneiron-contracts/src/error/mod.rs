@@ -176,6 +176,9 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    /// The Gate allowed a share creation but a full budget window paces
+    /// it; the error names the instant to bring it back.
+    ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
     GateConsentStale,

@@ -303,8 +303,12 @@ impl Nonces {
                 if self.journal_len > 0
                     && let Ok(bytes) = std::fs::read(root.join(SPEND_JOURNAL_FILE))
                 {
-                    for record in bytes.chunks_exact(JOURNAL_RECORD_LEN).filter_map(parse_journal_record) {
-                        self.journal_high = self.journal_high.max(record.proof_now).max(record.high);
+                    for record in bytes
+                        .chunks_exact(JOURNAL_RECORD_LEN)
+                        .filter_map(parse_journal_record)
+                    {
+                        self.journal_high =
+                            self.journal_high.max(record.proof_now).max(record.high);
                     }
                 }
                 self.journal = Some(file);
@@ -707,7 +711,8 @@ impl SpentNonces {
                 let now = floor.max(vault.store.clock.wall_now()).max(live_high);
                 if floor > clock.now
                     || now < clock.now
-                    || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0) > clock.not_before
+                    || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0)
+                        > clock.not_before
                 {
                     return Ok(true);
                 }
@@ -927,8 +932,14 @@ impl SpentNonces {
         // it back makes the slip live again (review #4484 Astra P1, 11-04
         // 16:2x). The retention rule lets the extra rows go later.
         if let Ok(now) = vault.capability_slip_now() {
-            let ended = records.iter().filter(|record| record.window_end < now).count();
-            tracing::debug!(ended, "slip-spend journal records whose replay window ended land too");
+            let ended = records
+                .iter()
+                .filter(|record| record.window_end < now)
+                .count();
+            tracing::debug!(
+                ended,
+                "slip-spend journal records whose replay window ended land too"
+            );
             if records
                 .iter()
                 .any(|record| record.proof_now > now.saturating_add(WINDOW_SECS))

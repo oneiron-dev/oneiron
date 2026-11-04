@@ -10,8 +10,9 @@ use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     self, ConnectorCredentialBindingView, ConnectorIssuerReaskRequest, ConnectorRevisionSnoozeView,
     ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorSlateRevisionAcceptRequest,
-    ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionDeferRequest,
-    ConnectorSlateRevisionOffersRequest, ConnectorSlateRevisionOffersView,
+    ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionCauseView,
+    ConnectorSlateRevisionDeferRequest, ConnectorSlateRevisionOffersRequest,
+    ConnectorSlateRevisionOffersView,
 };
 use oneiron::{EntityId, Vault};
 
@@ -94,7 +95,10 @@ pub(crate) async fn vault_connectors_slates_defer_revision(
 }
 
 /// `vault.connectors.slates.accept_revision`: its recheck reads keys and
-/// grants by cause, so its rows are not known.
+/// grants by cause, so its rows are not known. An accepted issuer revision
+/// with dependent rows starts the re-run of their discovery and
+/// qualification on a blocking worker (FIX 9304); the answer, its shape and
+/// the hold's lift do not wait on it.
 pub(crate) async fn vault_connectors_slates_accept_revision(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -107,6 +111,23 @@ pub(crate) async fn vault_connectors_slates_accept_revision(
         move |vault, owner| sdk::accept_connector_slate_revision(vault, owner, input),
     )
     .await;
+    if let Ok(ConnectorSlateRevisionAcceptedView {
+        cause:
+            ConnectorSlateRevisionCauseView::CredentialIssuerChanged {
+                binding_ref,
+                dependent_rows,
+                ..
+            },
+        ..
+    }) = &answer
+        && !dependent_rows.is_empty()
+        && let Ok(binding_ref) = EntityId::from_hex(binding_ref)
+    {
+        let server = Arc::clone(server);
+        drop(tokio::task::spawn_blocking(move || {
+            crate::connector_admission_host::rerun_issuer_dependents(&server, binding_ref);
+        }));
+    }
     (answer, None)
 }
 
