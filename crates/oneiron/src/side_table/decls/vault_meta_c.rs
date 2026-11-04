@@ -502,10 +502,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_baseline_accepts_masked];
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_baseline_accepts_masked];
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_verdict_accepts_masked];
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_verdict_accepts_masked];
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;

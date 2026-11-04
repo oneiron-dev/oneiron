@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use super::MergeFile;
-use crate::contract_oracle::{invalid, safe_entry_path};
+use crate::store::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
 use crate::repo_mutation::{BundleTreeEdit, stage_bundle_tree_edits};
 use crate::store::code_document_values::CodeFileMetadataEdit;
