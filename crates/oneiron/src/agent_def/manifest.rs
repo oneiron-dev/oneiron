@@ -1,10 +1,9 @@
 //! Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation.
 
-use super::codec::{decode_agent_definition, encode_agent_definition, legacy_logical_id_row};
-use super::decode::validate_text_field;
+use super::codec::{decode_agent_definition, encode_agent_definition};
 use super::types::{
-    AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AgentCeiling, AgentDefinition,
-    AgentScope, DreamingMode, McpRef, SYSTEM_AGENT_DEFINITIONS_V1_JSON, SYSTEM_LOGICAL_ID_PREFIX,
+    AgentCeiling, AgentDefinition, AgentScope, DreamingMode, McpRef,
+    SYSTEM_AGENT_DEFINITIONS_V1_JSON,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
@@ -17,7 +16,13 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::skill::SkillDependency;
 use crate::temporal::TimeRange;
 use rmpv::Value;
-use std::collections::HashSet;
+
+pub(crate) use crate::store::agent_manifest::validate_reserved_logical_id;
+use crate::store::agent_manifest::{AgentDefinitionManifestFields, ManifestScope};
+pub(super) use crate::store::agent_manifest::{
+    SystemAgentDefinitionManifest, SystemAgentDefinitionSeed,
+    parse_system_agent_definition_manifest, system_agent_manifest,
+};
 
 /// Legacy per-vault system-agent toggle in `vault_meta` (key = logical id).
 /// Pre-ONE-1890 state, consumed ONCE into the seeded row's `enabled` field and
@@ -38,99 +43,6 @@ const DEFAULT_RESERVED_ACTOR_CENSUS_V1: SideTable<(), (), Raw> =
 /// `occurred`/`learned_at` for every seeded row, pinned so the six baseline
 /// rows are byte-identical across vaults (idiom: `DEFAULT_POLICY_MANIFEST_TIMESTAMP`).
 pub(crate) const SEEDED_AGENT_DEFINITION_TIMESTAMP: u64 = 0;
-
-/// A 32-character lower-case hex `EntityId`, the manifest's only id spelling.
-#[derive(Debug)]
-pub(super) struct HexEntityId(pub(super) EntityId);
-
-impl<'de> serde::Deserialize<'de> for HexEntityId {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let text = <&str as serde::Deserialize>::deserialize(deserializer)?;
-        if text.len() != 32
-            || !text
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(serde::de::Error::custom(
-                "entity id must be 32 lower-case hex characters",
-            ));
-        }
-        EntityId::from_hex(text)
-            .map(HexEntityId)
-            .map_err(|_| serde::de::Error::custom("entity id must be a valid EntityId"))
-    }
-}
-
-/// The canonical seeded-roster manifest. Private: the parsed form never
-/// escapes this module, and `AgentDefinition` stays the only public model.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SystemAgentDefinitionManifest {
-    version: u8,
-    pub(super) definitions: Vec<SystemAgentDefinitionSeed>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SystemAgentDefinitionSeed {
-    pub(super) entity_id: HexEntityId,
-    pub(super) logical_id: String,
-    pub(super) actor_entity_id: HexEntityId,
-    pub(super) display_name: String,
-    pub(super) enabled: bool,
-    /// Field-for-field JSON adapter for the remaining `AgentDefinition` body
-    /// keys. Nothing is derived from `logical_id` or `display_name`.
-    definition: AgentDefinitionManifestFields,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AgentDefinitionManifestFields {
-    agent_id: String,
-    desc: String,
-    version: String,
-    instructions: Option<String>,
-    skills: Vec<ManifestSkillDependency>,
-    connectors: Vec<String>,
-    code_mode_mcps: Vec<ManifestMcpRef>,
-    model_tier: Option<String>,
-    dreaming: Option<String>,
-    dreaming_model: Option<String>,
-    scope: ManifestScope,
-    ceiling: String,
-    forked_from: Option<HexEntityId>,
-    approval_status: String,
-    lifecycle_status: String,
-    source: String,
-    confidence: f32,
-    generated: bool,
-    human_authored: bool,
-    provenance: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestSkillDependency {
-    skill_id: String,
-    min_version: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestMcpRef {
-    key: String,
-    min_version: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
-enum ManifestScope {
-    All,
-    Base,
-    World { world: HexEntityId },
-}
 
 impl AgentDefinitionManifestFields {
     fn to_definition(
@@ -236,83 +148,6 @@ fn json_to_msgpack(value: &serde_json::Value) -> Value {
     }
 }
 
-/// Parses and fully validates a seeded-roster manifest. MALFORMED IS NOT
-/// MISSING: every rejection here aborts open before any row is staged.
-pub(super) fn parse_system_agent_definition_manifest(
-    json: &str,
-) -> Result<SystemAgentDefinitionManifest> {
-    let manifest: SystemAgentDefinitionManifest = serde_json::from_str(json).map_err(|_| {
-        Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "system agent manifest is not valid schema-v1 JSON",
-        ))
-    })?;
-    if manifest.version != 1 {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "system agent manifest schema version must be 1",
-        )));
-    }
-    let mut logical_ids = HashSet::new();
-    let mut row_ids = HashSet::new();
-    let mut actor_ids = HashSet::new();
-    for seed in &manifest.definitions {
-        validate_text_field(
-            &seed.logical_id,
-            AGENT_LOGICAL_ID_MAX_BYTES,
-            "manifest logical id must be a non-empty string",
-        )?;
-        if !seed.logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "manifest logical id must use the reserved sys. prefix",
-            )));
-        }
-        validate_text_field(
-            &seed.display_name,
-            AGENT_DISPLAY_NAME_MAX_BYTES,
-            "manifest display name must be a non-empty string",
-        )?;
-        // Schema v1: the gate classifier derives authority by reading the
-        // entity stored AT the actor id, so a divergent actor id could never
-        // resolve to the seeded definition.
-        if seed.actor_entity_id.0 != seed.entity_id.0 {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "manifest schema v1 requires actor_entity_id to equal entity_id",
-            )));
-        }
-        if !logical_ids.insert(seed.logical_id.as_str()) {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "manifest logical ids must be unique",
-            )));
-        }
-        if !row_ids.insert(seed.entity_id.0) {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "manifest row ids must be unique",
-            )));
-        }
-        if !actor_ids.insert(seed.actor_entity_id.0) {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "manifest actor ids must be unique",
-            )));
-        }
-    }
-    Ok(manifest)
-}
-
-/// The parsed embedded manifest. Parsed once: decode-path consumers (the
-/// legacy `forkedFrom` and dispatch-target compat arms) must not re-parse JSON
-/// per row.
-pub(super) fn system_agent_manifest() -> Result<&'static SystemAgentDefinitionManifest> {
-    static MANIFEST: std::sync::OnceLock<Option<SystemAgentDefinitionManifest>> =
-        std::sync::OnceLock::new();
-    MANIFEST
-        .get_or_init(|| {
-            parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON).ok()
-        })
-        .as_ref()
-        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "embedded system agent manifest is malformed",
-        )))
-}
-
 /// Canonical export-safe identity from the compiled seeded roster, never from
 /// user-editable AGENT_DEF display names or version text.
 pub(crate) fn system_export_identity(
@@ -323,24 +158,6 @@ pub(crate) fn system_export_identity(
         .iter()
         .find(|seed| seed.entity_id.0 == *id)
         .map(|seed| (seed.logical_id.as_str(), seed.definition.version.as_str())))
-}
-
-/// The `sys.*` logical-id reservation, enforced at the AGENT_DEF put-decode
-/// chokepoint where both the body and its destination row id are in hand: a
-/// `sys.`-prefixed logical id is admissible only at its own pinned row id.
-pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition) -> Result<()> {
-    let Some(logical_id) = def.logical_id.as_deref() else {
-        return Ok(());
-    };
-    if !logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
-        return Ok(());
-    }
-    if legacy_logical_id_row(logical_id)? == Some(*id) {
-        return Ok(());
-    }
-    Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-        "sys.* logical ids are reserved for seeded rows",
-    )))
 }
 
 /// The ceiling and lineage the seed manifest gives the row at `id`, when `id`
