@@ -195,7 +195,8 @@ pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Ca
     let header = read_call_header(reader).await?;
     skip_body(reader).await.map_err(|_| Refusal::Frame)?;
     if header.shape == crate::Shape::OpenAiResponses {
-        skip_sized(reader, MAX_STREAM)
+        let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
+        skip_sized(reader, len, MAX_STREAM)
             .await
             .map_err(|_| Refusal::Frame)?;
     }

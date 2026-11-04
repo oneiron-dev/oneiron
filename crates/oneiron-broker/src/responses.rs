@@ -287,7 +287,7 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                 }
                 if terminal {
                     let _ = within(deadline, async {
-                        socket.close().await.map_err(io::Error::other)
+                        socket.close(None).await.map_err(io::Error::other)
                     })
                     .await;
                     return within(deadline, write_stream_end(writer, None)).await;
