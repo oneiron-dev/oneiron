@@ -120,7 +120,10 @@ impl Vault {
                     else {
                         continue;
                     };
-                    if seed.contains(&(entity_type, id)) || root == Some((entity_type, id)) {
+                    let seeded = seed.contains(&(entity_type, id))
+                        && (entity_type != ENTITY_TYPE_AGENT_DEF
+                            || crate::agent_def::seeded_row_matches_manifest(&id, &body));
+                    if seeded || root == Some((entity_type, id)) {
                         continue;
                     }
                     if entity_type == ENTITY_TYPE_CLAIM && seeded_claim(&body, &skills, &anchors) {
