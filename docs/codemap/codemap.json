@@ -28039,8 +28039,8 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 25,
-      "fn": 2
+      "crate-vis": 12,
+      "re-export": 1
      }
     },
     {
@@ -28081,7 +28081,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 1,
-      "crate-vis": 35,
+      "crate-vis": 32,
       "re-export": 25
      }
     },
@@ -30369,7 +30369,6 @@
       "CompleteDreamerAttemptOutcome",
       "DreamerAdmissionOutcome",
       "DreamerAdmittedAttempt",
-      "DreamerAttemptPayload",
       "DreamerAttemptProgressState",
       "DreamerAttemptStatus",
       "DreamerBudgetRecord",
@@ -30406,8 +30405,8 @@
       "crate-vis": 4,
       "enum": 12,
       "fn": 17,
-      "re-export": 2,
-      "struct": 25
+      "re-export": 3,
+      "struct": 24
      }
     },
     {
@@ -70799,6 +70798,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DreamerAttemptPayload"
+     ],
+     "path": "src/store/dreamer_attempt_payload.rs",
+     "purpose": "Dreamer attempt payload envelope and its MessagePack codec",
+     "surface": {
+      "crate-vis": 18,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentWakePolicy",
       "AgentWakeRole",
       "AgentWakeSignals",
@@ -72176,7 +72189,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 115,
+      "crate-vis": 116,
       "mod": 108,
       "re-export": 31
      }
@@ -90523,7 +90536,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 426,
+     "files": 427,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90763,7 +90776,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6308,
+   "source_files": 6309,
    "test_files": 895
   },
   "oneiron-android": {
