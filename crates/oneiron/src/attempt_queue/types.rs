@@ -128,11 +128,4 @@ pub use crate::store::attempt_inputs::RetryAttempt;
 
 pub use crate::store::attempt_inputs::AttemptInterventionEffect;
 
-pub(crate) fn attempt_record_order(
-    left: &AttemptRecord,
-    right: &AttemptRecord,
-) -> std::cmp::Ordering {
-    left.created_at
-        .cmp(&right.created_at)
-        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-}
+pub(crate) use crate::store::attempt_record::attempt_record_order;
