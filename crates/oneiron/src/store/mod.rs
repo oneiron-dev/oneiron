@@ -130,6 +130,7 @@ pub mod attempt_manifest;
 pub mod attempt_read_producer;
 pub(crate) mod attempt_retention;
 pub mod attempt_result;
+pub mod attempt_run_signal;
 pub mod attempt_state;
 pub mod canonical_document;
 pub mod checkout_task;
