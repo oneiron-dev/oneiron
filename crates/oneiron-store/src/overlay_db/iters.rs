@@ -4,7 +4,7 @@ use heed::iteration_method::{MoveBetweenKeys, MoveOnCurrentKeyDuplicates};
 use heed::types::{Bytes, Str};
 use heed::{DefaultComparator, RoIter, RoPrefix, RoRange, RoRevRange};
 
-use crate::error::Result;
+use oneiron_contracts::error::Result;
 
 use super::accessors::{KvPair, StrKvPair};
 use super::merge::{
@@ -12,7 +12,7 @@ use super::merge::{
     convert_str_pair,
 };
 
-pub(crate) enum OverlayIter<'txn> {
+pub enum OverlayIter<'txn> {
     Base(RoIter<'txn, Bytes, Bytes>),
     Merged(Box<MergedRows<'txn, RoIter<'txn, Bytes, Bytes>>>),
 }
@@ -28,7 +28,7 @@ impl<'txn> Iterator for OverlayIter<'txn> {
     }
 }
 
-pub(crate) enum OverlayRange<'txn> {
+pub enum OverlayRange<'txn> {
     Base(RoRange<'txn, Bytes, Bytes>),
     Merged(Box<MergedRows<'txn, RoRange<'txn, Bytes, Bytes>>>),
 }
@@ -44,7 +44,7 @@ impl<'txn> Iterator for OverlayRange<'txn> {
     }
 }
 
-pub(crate) enum OverlayRevRange<'txn> {
+pub enum OverlayRevRange<'txn> {
     Base(RoRevRange<'txn, Bytes, Bytes>),
     Merged(Box<MergedRows<'txn, RoRevRange<'txn, Bytes, Bytes>>>),
 }
@@ -60,14 +60,14 @@ impl<'txn> Iterator for OverlayRevRange<'txn> {
     }
 }
 
-pub(crate) enum OverlayPrefix<'txn> {
+pub enum OverlayPrefix<'txn> {
     Base(RoPrefix<'txn, Bytes, Bytes, DefaultComparator>),
     BaseBetweenKeys(RoPrefix<'txn, Bytes, Bytes, DefaultComparator, MoveBetweenKeys>),
     Merged(Box<MergedPrefixRows<'txn>>),
 }
 
 impl OverlayPrefix<'_> {
-    pub(crate) fn move_between_keys(self) -> Self {
+    pub fn move_between_keys(self) -> Self {
         match self {
             Self::Base(inner) => Self::BaseBetweenKeys(inner.move_between_keys()),
             Self::BaseBetweenKeys(inner) => Self::BaseBetweenKeys(inner),
@@ -88,7 +88,7 @@ impl<'txn> Iterator for OverlayPrefix<'txn> {
     }
 }
 
-pub(crate) enum OverlayDupValues<'txn> {
+pub enum OverlayDupValues<'txn> {
     Base(RoIter<'txn, Bytes, Bytes, MoveOnCurrentKeyDuplicates>),
     Merged(Box<PrefetchedMergedRows<'txn, RoIter<'txn, Bytes, Bytes, MoveOnCurrentKeyDuplicates>>>),
 }
@@ -108,7 +108,7 @@ impl<'txn> Iterator for OverlayDupValues<'txn> {
     dead_code,
     reason = "returned by the completed OverlayStrDb::iter accessor; first session sync-state scan lands after ONE-1727"
 )]
-pub(crate) enum OverlayStrIter<'txn> {
+pub enum OverlayStrIter<'txn> {
     Base(RoIter<'txn, Str, Bytes>),
     Merged(Box<StrMergedRows<'txn, RoIter<'txn, Str, Bytes>>>),
 }
@@ -124,7 +124,7 @@ impl<'txn> Iterator for OverlayStrIter<'txn> {
     }
 }
 
-pub(crate) enum OverlayStrPrefix<'txn> {
+pub enum OverlayStrPrefix<'txn> {
     Base(RoPrefix<'txn, Str, Bytes, DefaultComparator>),
     Merged(Box<StrMergedRows<'txn, RoPrefix<'txn, Str, Bytes, DefaultComparator>>>),
 }

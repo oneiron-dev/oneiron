@@ -7919,6 +7919,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gix",
+ "gix-quote",
  "half",
  "heed",
  "icalendar",
@@ -8795,6 +8796,7 @@ dependencies = [
 name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "blake3",
  "getrandom 0.4.3",
  "heed",
@@ -8811,6 +8813,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "uuid",

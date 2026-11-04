@@ -507,17 +507,14 @@ pub(super) async fn chat_turn(
         }
         _ => None,
     };
-    // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written. FIX 8133: the reply's newcomer barrier is
-    // marked before that read, so an attendee who entered once the board was
-    // read stops the reply as one who entered later does.
+    // FIX 8133: the reply's newcomer barrier is marked before the turn's
+    // reads, so an attendee who entered once the board below was read stops
+    // the reply as one who entered later does. FIX 6794: the turn reads the
+    // vault's memory through the context board inside `start_turn`, after
+    // its funding/hook/keepalive refusals (FIX 6924), so those refusals
+    // consume no board.
     let mark = server.vault().container_output_mark();
-    let board = match &payload {
-        Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => Ok(None),
-    };
-    let read = recall::TurnRead { mark, board };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, mark).await {
         Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,

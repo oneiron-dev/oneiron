@@ -1,11 +1,11 @@
 use zeroize::Zeroize;
 
 use super::overlay::PlanCharge;
-use crate::batch::BatchOp;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::skill_attribution::RunWriteToken;
-use crate::temporal::TimeRange;
+use crate::batch_op::BatchOp;
+use crate::run_write_token::RunWriteToken;
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::temporal::TimeRange;
 
 /// Semantic ownership tag on a typed journal entry (ARCH-0052 D4, K3).
 ///
@@ -25,7 +25,7 @@ use crate::temporal::TimeRange;
 /// | [`Self::AttributionEdge`] | the `AuthoredBy` and `BelongsTo` edges |
 /// | [`Self::TurnOwnedArtifact`] | every other turn-scoped op (BM25 `content` text ops, vector/HNSW rows) |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JournalRole {
+pub enum JournalRole {
     TurnPut,
     MessagePartOf,
     SummaryDerivedFrom,
@@ -40,19 +40,19 @@ pub(crate) enum JournalRole {
 /// are preserved from the witnessing write and never restamped, so promote
 /// replays into the correct month window (ARCH-0052 D4).
 #[derive(Clone)]
-pub(crate) struct JournalEntry {
+pub struct JournalEntry {
     /// Read by [`OverlaySnapshot::plan_promotion`] to cut ONE turn's closure
     /// out of the journal — the whole reason the scope is recorded at staging
     /// time rather than reconstructed from index keys later.
-    pub(crate) scope: JournalScope,
-    pub(crate) role: JournalRole,
-    pub(crate) learned_at: u64,
-    pub(crate) occurred: TimeRange,
-    pub(crate) op: BatchOp,
+    pub scope: JournalScope,
+    pub role: JournalRole,
+    pub learned_at: u64,
+    pub occurred: TimeRange,
+    pub op: BatchOp,
     /// The leased run whose envelope was open as the op was journaled: an
     /// authorized promotion that replays the op witnesses its edges for that
     /// run, never for the promoter (FIX 3103). `None` is unknown.
-    pub(crate) source_run: Option<RunWriteToken>,
+    pub source_run: Option<RunWriteToken>,
 }
 
 impl JournalEntry {
@@ -68,7 +68,7 @@ impl JournalEntry {
         if matches!(
             self.op,
             BatchOp::Edge {
-                kind: crate::edge::EdgeKind::FacetOf,
+                kind: oneiron_base::edge::EdgeKind::FacetOf,
                 ..
             } | BatchOp::MediaVector { .. }
         ) {
@@ -94,7 +94,7 @@ impl Drop for JournalEntry {
 /// these, so retiring it leaves an entry published after its snapshot where
 /// it is (ARCH-0052 D4: only promoted content drops, and only after commit).
 #[derive(Clone)]
-pub(crate) struct PublishedEntry {
+pub struct PublishedEntry {
     pub(super) seq: u64,
     entry: JournalEntry,
 }
@@ -113,7 +113,7 @@ impl std::ops::Deref for PublishedEntry {
     }
 }
 
-pub(crate) fn zeroize_batch_op_payload(op: &mut BatchOp) {
+pub fn zeroize_batch_op_payload(op: &mut BatchOp) {
     match op {
         BatchOp::Put { data, .. } => data.zeroize(),
         BatchOp::Vector {
@@ -153,24 +153,24 @@ pub(crate) fn zeroize_batch_op_payload(op: &mut BatchOp) {
 
 /// Turn/conversation scope carried by each typed journal operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JournalScope {
+pub struct JournalScope {
     conversation: EntityId,
     turn: EntityId,
 }
 
 impl JournalScope {
-    pub(crate) const fn new(conversation: EntityId, turn: EntityId) -> Self {
+    pub const fn new(conversation: EntityId, turn: EntityId) -> Self {
         Self { conversation, turn }
     }
 
     /// The turn this op belongs to. Promotion moves ONE turn at a time, so
     /// this is how the closure is cut out of the journal.
-    pub(crate) const fn turn(&self) -> EntityId {
+    pub const fn turn(&self) -> EntityId {
         self.turn
     }
 
     /// The conversation shell owning this op.
-    pub(crate) const fn conversation(&self) -> EntityId {
+    pub const fn conversation(&self) -> EntityId {
         self.conversation
     }
 }
@@ -182,21 +182,21 @@ impl JournalScope {
 /// and the promote transaction decides how. Selection and durable commit are
 /// separate so the caller can hold the per-session state lock across both and
 /// a failed commit leaves the journal it was cut from untouched.
-pub(crate) struct PromotePlan {
+pub struct PromotePlan {
     /// The replay program, in journal-staging order — the shell put leads, so
     /// every later op refers to a row the base apply already materialized.
-    pub(crate) ops: Vec<BatchOp>,
+    pub ops: Vec<BatchOp>,
     /// Entity ids the replay materializes, in the same order.
-    pub(crate) replayed: Vec<EntityId>,
+    pub replayed: Vec<EntityId>,
     /// `(id, in-room alias)` for every promoted entity that carries one. The
     /// canonical half is read back from base after the replay.
-    pub(crate) temporary_short_ids: Vec<(EntityId, String)>,
+    pub temporary_short_ids: Vec<(EntityId, String)>,
     /// Distinct journal `learned_at` values, ascending. These are the SOURCE
     /// windows the pickup markers are derived from — never a promote-time
     /// clock. Only the sync pickup-marker writer reads them, but the field is
     /// accumulated unconditionally so the plan shape stays feature-independent.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) source_learned_at: Vec<u64>,
+    pub source_learned_at: Vec<u64>,
     /// The published identity of the journal entry each op was cut from, in
     /// the same order as `ops`. Retirement removes these entries and no
     /// other: never one published after the snapshot this plan was cut from,
@@ -230,26 +230,24 @@ impl Drop for PromotePlan {
 
 impl PromotePlan {
     /// The promoted turn — the receipt key and the pickup marker's id.
-    pub(crate) const fn turn(&self) -> EntityId {
+    pub const fn turn(&self) -> EntityId {
         self.turn
     }
 
     /// The room's conversation the turn belongs to.
-    pub(crate) const fn conversation(&self) -> EntityId {
+    pub const fn conversation(&self) -> EntityId {
         self.conversation
     }
 
     /// Whether this plan adds messages to a turn this stretch already saved,
     /// rather than promoting the turn itself (a later save of a room's talk
     /// after the run spoke on into a saved turn).
-    pub(crate) const fn appends(&self) -> bool {
+    pub const fn appends(&self) -> bool {
         self.appends
     }
 
     /// Each op with the source run its journal entry kept, in plan order.
-    pub(crate) fn ops_with_source_runs(
-        &self,
-    ) -> impl Iterator<Item = (&BatchOp, Option<&RunWriteToken>)> {
+    pub fn ops_with_source_runs(&self) -> impl Iterator<Item = (&BatchOp, Option<&RunWriteToken>)> {
         self.ops
             .iter()
             .zip(self.source_runs.iter().map(Option::as_ref))
@@ -260,7 +258,7 @@ impl PromotePlan {
 /// source of an edge. Every op a plan carries belongs to the entity it
 /// writes, so a promotion that kept an entity kept each op whose subject it
 /// is.
-pub(crate) fn replayed_subject(op: &BatchOp) -> Option<EntityId> {
+pub fn replayed_subject(op: &BatchOp) -> Option<EntityId> {
     match op {
         BatchOp::Put { id, .. }
         | BatchOp::Text { id, .. }

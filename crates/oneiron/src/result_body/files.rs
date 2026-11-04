@@ -150,6 +150,34 @@ pub(super) fn remove_unnamed(
     now: SystemTime,
     pins: &ResultBodyPins,
 ) -> Result<RemoveOutcome> {
+    remove_unnamed_with_floor(dir, entry, now, Some(BODY_GRACE), pins)
+}
+
+/// Removes the body of `entry`, which nothing names, with its line index,
+/// or the line index alone once its body is gone (FIX 588): the import's
+/// post-error cleanup, with no [`BODY_GRACE`] age floor — a just-staged
+/// body is still debris once its writer aborted. The body/index and pin
+/// rules are [`remove_unnamed`]'s: an index whose body exists stays for
+/// the body's own entry, a missing or non-regular file stays, and a body
+/// a reader in `pins` holds stays for a later pass.
+pub(super) fn remove_unnamed_entry_now(
+    dir: &BodyDir,
+    entry: &BodyEntry,
+    pins: &ResultBodyPins,
+) -> Result<RemoveOutcome> {
+    remove_unnamed_with_floor(dir, entry, SystemTime::now(), None, pins)
+}
+
+/// Shared removal for [`remove_unnamed`] and [`remove_unnamed_entry_now`]: past
+/// `floor`, when one is set, and while no reader in `pins` holds the
+/// entry.
+fn remove_unnamed_with_floor(
+    dir: &BodyDir,
+    entry: &BodyEntry,
+    now: SystemTime,
+    floor: Option<Duration>,
+    pins: &ResultBodyPins,
+) -> Result<RemoveOutcome> {
     let body = entry.body_name();
     if entry.index && file_age(dir, &body, now)?.is_some() {
         // Its body is there: the body's own entry decides for both.
@@ -160,8 +188,10 @@ pub(super) fn remove_unnamed(
     } else {
         body.clone()
     };
-    if file_age(dir, &name, now)?.is_none_or(|age| age < BODY_GRACE) {
-        return Ok(RemoveOutcome::Skipped);
+    match (file_age(dir, &name, now)?, floor) {
+        (None, _) => return Ok(RemoveOutcome::Skipped),
+        (Some(age), Some(floor)) if age < floor => return Ok(RemoveOutcome::Skipped),
+        (Some(_), _) => {}
     }
     let remove = || {
         if entry.index {

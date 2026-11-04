@@ -5,8 +5,8 @@ use zeroize::Zeroizing;
 
 use xxhash_rust::xxh32::xxh32;
 
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 use super::keyspace::{OverlayKeyspace, OverlayMutation};
 use super::overlay::SessionOverlay;
@@ -62,7 +62,7 @@ impl SessionOverlay {
     ///
     /// The ordinal, the stale forward row's removal and both alias rows stage
     /// as one preflighted group: a refused group stages none of them.
-    pub(crate) fn alloc_session_short_id(
+    pub fn alloc_session_short_id(
         self: &Arc<Self>,
         id: &EntityId,
         data: &[u8],

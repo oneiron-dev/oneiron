@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 use super::overlay::SessionOverlay;
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 /// Which store a session write lands in for the session's CURRENT mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RouteTarget {
+pub enum RouteTarget {
     /// `OffRecord` — rows stage into the overlay and evaporate at close.
     Overlay,
     /// `OnRecord` (post-flip) — rows take the ordinary base apply under the
@@ -21,7 +21,7 @@ impl RouteTarget {
     /// Retaining a write is incompatible with anonymous sessions. Callers
     /// that promise stored rows or mandatory audit evidence must refuse the
     /// operation, not silently discard that evidence and execute anyway.
-    pub(crate) fn require_recording(self, session_ref: &str) -> Result<()> {
+    pub fn require_recording(self, session_ref: &str) -> Result<()> {
         if self == Self::Discard {
             return Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                 session_ref: session_ref.to_owned(),
@@ -44,7 +44,7 @@ impl RouteTarget {
 /// A clone is the same route: a room's hook pause keeps one in RAM to
 /// revalidate on resume (FIX 5524).
 #[derive(Clone)]
-pub(crate) struct SessionWriteRoute {
+pub struct SessionWriteRoute {
     overlay: Arc<SessionOverlay>,
     target: RouteTarget,
     mode_generation: u64,
@@ -54,7 +54,7 @@ impl SessionWriteRoute {
     /// Mints a route recording the overlay's currently published mode
     /// generation. Callers hold the session state lock across mint + the mode
     /// read so target and generation cannot disagree.
-    pub(crate) fn mint(overlay: &Arc<SessionOverlay>, target: RouteTarget) -> Result<Self> {
+    pub fn mint(overlay: &Arc<SessionOverlay>, target: RouteTarget) -> Result<Self> {
         Ok(Self {
             overlay: overlay.clone(),
             target,
@@ -68,11 +68,11 @@ impl SessionWriteRoute {
     /// freshly published state, so a route that survives this check is the
     /// route the current mode authorizes.
     ///
-    /// The refusal reuses [`OffRecordError::OffRecordOverlayLeaseClosed`](crate::error::OffRecordError::OffRecordOverlayLeaseClosed), carrying the
+    /// The refusal reuses [`OffRecordError::OffRecordOverlayLeaseClosed`](oneiron_contracts::error::OffRecordError::OffRecordOverlayLeaseClosed), carrying the
     /// route's recorded mode generation: a stale route names a mode epoch that
     /// no longer accepts writes, exactly as a stale lease names a closed
     /// overlay generation.
-    pub(crate) fn revalidate(&self) -> Result<()> {
+    pub fn revalidate(&self) -> Result<()> {
         if self.overlay.mode_generation()? == self.mode_generation {
             return Ok(());
         }
@@ -84,21 +84,21 @@ impl SessionWriteRoute {
     }
 
     /// Refuses an operation that requires retained content or audit evidence.
-    pub(crate) fn require_recording(&self, session_ref: &str) -> Result<()> {
+    pub fn require_recording(&self, session_ref: &str) -> Result<()> {
         self.revalidate()?;
         self.target.require_recording(session_ref)
     }
 
     /// Narrow query arm: which store this route resolves to. `batch.rs` may
     /// branch through this method, never through a field read.
-    pub(crate) const fn target(&self) -> RouteTarget {
+    pub const fn target(&self) -> RouteTarget {
         self.target
     }
 
     /// The overlay this route stages into. Crate-private and used only by the
     /// session apply entry, which must stage through the same overlay the
     /// route was minted against.
-    pub(crate) const fn overlay(&self) -> &Arc<SessionOverlay> {
+    pub const fn overlay(&self) -> &Arc<SessionOverlay> {
         &self.overlay
     }
 }

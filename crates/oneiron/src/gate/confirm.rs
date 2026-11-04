@@ -221,13 +221,14 @@ impl Vault {
         }
         // An answer to a parked decay or stale mark settles a restriction,
         // so it reads a held machine history; every other answer waits.
-        let mut body =
-            if self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)? {
-                self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
-            } else {
-                self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
-            }
-            .ok_or(Error::EntityNotFound)?;
+        let in_place_demotion =
+            self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)?;
+        let mut body = if in_place_demotion {
+            self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
+        } else {
+            self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
+        }
+        .ok_or(Error::EntityNotFound)?;
         let raw = self
             .store
             .port_entity_record(&*wtxn, &binding.claim_id)?
@@ -311,19 +312,11 @@ impl Vault {
         };
         match state.action.disposition {
             CriticalWriteConfirmDisposition::Clear => {
-                // A lapse that reached this replica before the owner's Clear
-                // left the claim Proposed. Fold the Clear first so the answer
-                // is not lost behind that lapse (FIX 12290). The resolved row
-                // is the put's expected body, never a held restriction view.
-                //
-                // FIX 12709 seam, L06-A 15:09 ruling (b) scoped: the
-                // repair is decided from a fresh resolved read also for an
-                // in-place demotion (the restriction projection carries held
-                // machine history, which the full-equality put would refuse
-                // with InvariantViolation; the resolved row is the truth the
-                // put expects). This supersedes the REVIEW-4462 P2 skip.
+                // Repair a lapse from the resolved row, never a held view.
+                // In-place demotions use their restriction read and completion
+                // path; a repair-only read must not wait on held history.
                 let mut repaired = false;
-                {
+                if !in_place_demotion {
                     let resolved = self
                         .get_claim_in_txn(&*wtxn, &binding.claim_id)?
                         .ok_or(Error::EntityNotFound)?;
