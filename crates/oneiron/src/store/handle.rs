@@ -261,10 +261,16 @@ pub struct StoreCore {
     /// The engine's side-table actor scrubs, supplied by the open door with
     /// the delete guards.
     pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
+    /// The engine's gate hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) gate_hooks: &'static dyn crate::store::StoreGateHooks,
     /// The engine's sync hooks, supplied by the open door with the delete
     /// guards.
     #[cfg(feature = "sync")]
     pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
+    /// The engine's attempt queue operations, supplied by the open door with
+    /// the delete guards.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -318,7 +324,9 @@ pub struct StoreCore {
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
-    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
+    pub(in crate::store) ppr_cache_invalidation:
+        &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
@@ -844,6 +852,7 @@ impl Drop for StoreOwner {
 }
 
 pub(super) fn seed_default_policy_manifest_in_txn(
+    gate_hooks: &dyn crate::store::StoreGateHooks,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -858,7 +867,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
     let timestamp = crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest()?;
+    let body = gate_hooks.default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());
@@ -868,12 +877,12 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     entities.put(wtxn, id.as_bytes(), &payload)?;
     sync_state.put(
         wtxn,
-        &crate::gate::trusted_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     sync_state.put(
         wtxn,
-        &crate::gate::seeded_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::seeded_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     type_index.put(

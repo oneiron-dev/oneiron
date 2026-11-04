@@ -64,7 +64,7 @@ impl Vault {
         // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         self.store
             .delete_guards
@@ -255,7 +255,7 @@ impl Vault {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         self.store
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;

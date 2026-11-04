@@ -369,7 +369,7 @@ impl ResponseFamily {
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::store::query_memos::memo_carriage(value),
-            Self::CentroidEvidence => crate::self_heal::centroid_evidence_carriage(value),
+            Self::CentroidEvidence => crate::store::centroid_evidence::centroid_evidence_carriage(value),
             Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
             Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
@@ -467,7 +467,7 @@ impl ResponseFamily {
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::store::query_memos::memo_owners(value)),
-            Self::CentroidEvidence => Ok(crate::self_heal::centroid_evidence_owners(value)),
+            Self::CentroidEvidence => Ok(crate::store::centroid_evidence::centroid_evidence_owners(value)),
             Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
             Self::ReportCluster => Ok(crate::feedback::intake::report_cluster_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
@@ -594,7 +594,12 @@ impl ResponseFamily {
                 Ok(())
             }
             Self::AttemptPayload => {
-                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
+                crate::store::attempt_payload_retire::retire_attempt_payload_in_txn(
+                    store,
+                    wtxn,
+                    key,
+                    &kept()?,
+                )
             }
             Self::Http | Self::InvocationClaim | Self::MediaJob => {
                 store
