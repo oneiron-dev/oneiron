@@ -8471,7 +8471,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "struct": 1
      }
@@ -8489,7 +8489,7 @@
      "purpose": "One public signing executor: turn, access, viewed, terminal, then action",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 2,
       "struct": 1
@@ -8631,7 +8631,7 @@
      "purpose": "The sign act the dial does not open goes up its role chain (ARCH-0064 D6, ARCH-0064a, ARCH-0076…",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -8717,7 +8717,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 2,
       "re-export": 22
      }
@@ -8731,12 +8731,15 @@
       "DocumentKind",
       "DocumentStatus",
       "EsignAuditActor",
+      "EsignAuthenticationMethod",
       "EsignDocument",
       "EsignEvent",
       "EsignEventRow",
       "EsignField",
       "EsignItem",
       "EsignRecipient",
+      "EsignSigningEvidence",
+      "EsignSigningIntent",
       "EsignState",
       "FieldGeometry",
       "FieldMeta",
@@ -8750,8 +8753,8 @@
      "purpose": "Typed document, recipient, field and event vocabulary for ARCH-0064",
      "surface": {
       "crate-vis": 6,
-      "enum": 9,
-      "struct": 10
+      "enum": 11,
+      "struct": 11
      }
     },
     {
@@ -8861,11 +8864,11 @@
      "purpose": "Capability-scoped PDF bytes",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignRateCheck",
@@ -9084,7 +9087,7 @@
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -37658,6 +37661,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/esign_rate_policy.rs",
+     "purpose": "Advisory e-sign ceremony detection thresholds as vault policy values",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SelectionPolicy",
       "SelectionPolicyRow",
@@ -37808,7 +37821,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 82,
+      "crate-vis": 83,
       "mod": 1,
       "re-export": 8
      }
@@ -38013,7 +38026,17 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_values/value.rs",
+     "purpose": "Typed policy values and their composition; see the parent module for row selection",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -90776,7 +90799,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 191,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91744,7 +91767,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6319,
+   "source_files": 6321,
    "test_files": 900
   },
   "oneiron-android": {
@@ -127896,6 +127919,7 @@
       "EscalationRule",
       "EscalationTrigger",
       "EsignAuditActor",
+      "EsignAuthenticationMethod",
       "EsignCreateRequest",
       "EsignDeliveryEndReason",
       "EsignDeliveryReceipt",
@@ -127927,8 +127951,10 @@
       "EsignSealView",
       "EsignSealedItemView",
       "EsignSealedView",
+      "EsignSigningEvidence",
       "EsignSigningImageRequest",
       "EsignSigningImageView",
+      "EsignSigningIntent",
       "EsignSigningPdfRequest",
       "EsignSigningPdfView",
       "EsignSigningRequest",
@@ -130990,8 +131016,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1097,
-      "struct": 3337
+      "enum": 1099,
+      "struct": 3338
      }
     },
     {
