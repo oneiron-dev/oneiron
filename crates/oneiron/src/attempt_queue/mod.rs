@@ -80,8 +80,8 @@ pub use types::{
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
 pub(crate) use payload_erase::{
-    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
+    attempt_row_opaque, dispatch_payload_actor, erase_attempt_payload_actor_in_txn,
+    erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
     erase_model_step_failure_reasons_in_txn,
 };
 #[cfg(test)]
