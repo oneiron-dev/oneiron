@@ -38,6 +38,8 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     gate_hooks: &EngineGateHooks,
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
+    attempt_operations: &EngineAttemptOperations,
+    core_write_operations: &EngineCoreWriteOperations,
 };
 
 /// The engine's delete guards.
@@ -457,6 +459,15 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<()> {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn read_secret_custody_meta_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
+        crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -712,6 +723,87 @@ impl StoreActorScrubs for EngineActorScrubs {
     }
 }
 
+/// The engine's attempt queue operations.
+pub(crate) struct EngineAttemptOperations;
+
+impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
+    fn erase_attempt_payload_actor_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, actor)
+    }
+
+    fn erase_attempt_payload_actors_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actors: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(store, txn, actors)
+    }
+
+    fn erase_model_step_failure_reasons_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_model_step_failure_reasons_in_txn(store, wtxn, owner)
+    }
+
+    fn claim_kind(
+        &self,
+        vault: &crate::Vault,
+        kind: &str,
+        input: crate::store::attempt_inputs::ClaimAttempt,
+    ) -> Result<crate::store::attempt_outcomes::ClaimOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).claim_kind(kind, input)
+    }
+
+    fn fail(
+        &self,
+        vault: &crate::Vault,
+        input: crate::store::attempt_inputs::FailAttempt,
+    ) -> Result<crate::store::attempt_outcomes::FailOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).fail(input)
+    }
+
+    fn retry_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        input: crate::store::attempt_inputs::RetryAttempt,
+    ) -> Result<crate::store::attempt_outcomes::RetryOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).retry_in_txn(wtxn, input)
+    }
+
+    fn erase_dispatch_payload_text_target(
+        &self,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) -> Result<bool> {
+        crate::attempt_queue::erase_dispatch_payload_text_target(record)
+    }
+
+    fn dispatch_payload_actor(
+        &self,
+        record: &crate::store::attempt_record::AttemptRecord,
+    ) -> Option<EntityId> {
+        crate::attempt_queue::dispatch_payload_actor(record)
+    }
+
+    fn scrub_hard_erased_payload_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) {
+        crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
+    }
+}
+
 impl StoreGateHooks for EngineGateHooks {
     fn default_policy_manifest(&self) -> Result<Vec<u8>> {
         crate::gate::default_policy_manifest()
@@ -944,5 +1036,34 @@ impl StoreGateHooks for EngineGateHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
+    }
+}
+
+/// The engine's core write operations.
+pub(crate) struct EngineCoreWriteOperations;
+
+impl crate::store::StoreCoreWriteOperations for EngineCoreWriteOperations {
+    fn create_conversation_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        body: &crate::store::conversation_body::ConversationBody,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        text: &[(&str, &str)],
+    ) -> Result<()> {
+        crate::conversation::create_in_txn(vault, txn, id, body, actor, occurred, learned_at, text)
+    }
+
+    fn actor_is_vault_owner_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        actor: EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+    ) -> oneiron_contracts::memory::MemoryResult<bool> {
+        crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, actor_class)
     }
 }

@@ -7,7 +7,9 @@ mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
+pub(crate) mod entity_refs;
 pub(crate) mod entity_revision;
+pub(crate) mod entity_view;
 pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
@@ -159,7 +161,7 @@ pub struct Vault {
     pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
     /// The claim VAD payment worker's wake and the claims the write door
     /// handed it (FIX 11702). In memory only: the debt rows are the debt.
-    pub(crate) claim_vad_payment: crate::housekeeping::ClaimVadPayment,
+    pub(crate) claim_vad_payment: crate::store::claim_vad_payment::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
