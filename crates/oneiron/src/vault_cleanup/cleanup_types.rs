@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
 
 // ---------------------------------------------------------------------------
