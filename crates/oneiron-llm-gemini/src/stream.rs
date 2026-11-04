@@ -50,6 +50,7 @@ impl GeminiAccumulator {
                     reasoning,
                 },
                 raw_provider: usage.clone(),
+                call_metadata: None,
             });
         }
         // Candidates or a candidate of a shape this decoder cannot walk could

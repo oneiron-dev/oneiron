@@ -302,6 +302,7 @@ pub(crate) fn record_raw_response(
     } else {
         Vec::new()
     };
+    let call_metadata = response.usage.call_metadata.as_ref();
     let record = ModelCallRecord {
         schema: MODEL_CALL_SCHEMA,
         attempt: run.instance(),
@@ -318,10 +319,12 @@ pub(crate) fn record_raw_response(
         organization: None,
         project: None,
         credential_id: None,
-        response_id: None,
+        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
         thread_id: None,
-        previous_response_id: None,
-        store: None,
+        previous_response_id: call_metadata
+            .and_then(|metadata| metadata.previous_response_id.clone()),
+        store: call_metadata.and_then(|metadata| metadata.store),
+        endpoint: call_metadata.map(|metadata| metadata.endpoint),
         captured_at: vault.now_recorded_at(),
         receipt_ref: None,
         actor: run.principal(),
