@@ -2520,10 +2520,9 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     )?);
     let next = memory.tasks_ask_option_link(handle, friend)?;
     vault.void_ask_option_link(&next.token)?;
-    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) =
-        dispatcher
-            .dispatch_for_executor_run(executor_site(run), call)?
-            .0
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) = dispatcher
+        .dispatch_for_executor_run(executor_site(run), call)?
+        .0
     else {
         panic!("later void wakes again")
     };

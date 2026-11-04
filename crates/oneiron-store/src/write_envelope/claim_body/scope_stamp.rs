@@ -1,7 +1,7 @@
 //! Stable CLAIM scope identifiers and their MessagePack representation.
 use super::ClaimSubject;
-use oneiron_contracts::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
 use oneiron_contracts::error::{Error, Result};
 use rmpv::Value;
 
