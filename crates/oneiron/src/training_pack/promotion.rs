@@ -513,10 +513,12 @@ impl Vault {
                 "a trained checkpoint cannot move its role to another slot",
             ));
         }
-        // A refused manifest write must leave no Promotion exposure behind:
-        // the ask settles these errors as NeedsSetup in the same commit, so
-        // the manifest is validated and written before any exposure is
-        // counted. The staged embedder path writes no manifest here.
+        // A refused manifest write must leave no Promotion exposure behind,
+        // and a retired cohort must refuse before the manifest moves: the ask
+        // settles these errors as NeedsSetup in the same commit, so the cohort
+        // is preflighted and the manifest is validated and written before any
+        // exposure is counted. The staged embedder path writes no manifest here.
+        self.eval_cohort_serves_in_txn(txn, &run.corpus.cohort.id)?;
         if role != ModelRole::RetrievalEmbedder {
             manifest.roles.insert(role, binding.clone());
             self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
