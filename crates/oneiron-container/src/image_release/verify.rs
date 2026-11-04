@@ -113,6 +113,14 @@ pub struct ArtifactCheck {
     pub outcome: CheckOutcome,
 }
 
+/// The launch form the checks run for. A container shares the host
+/// kernel; a microVM guest runs its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchBackend {
+    Container,
+    MicroVm,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostRequirement {
@@ -154,8 +162,10 @@ pub struct ReleaseVerification {
 
 /// Parses `manifest_bytes`, compares each observed digest with it, checks
 /// the host against its needs and reads the signature over the same bytes.
-/// An image without an envelope is [`SignatureOutcome::Unavailable`] with the
-/// fact `image_signature_unavailable`, never a pass. Nothing here refuses:
+/// `backend` is the launch form the checks run for; `None` is an import
+/// with the backend not selected, never an inferred container. An image
+/// without an envelope is [`SignatureOutcome::Unavailable`] with the fact
+/// `image_signature_unavailable`, never a pass. Nothing here refuses:
 /// [`super::release_admission`] maps the result under a policy.
 #[must_use]
 pub fn verify_release(
@@ -164,14 +174,15 @@ pub fn verify_release(
     observed: &ObservedArtifacts,
     host: &HostCapabilities,
     verifier: &dyn ReleaseSignatureVerifier,
+    backend: Option<LaunchBackend>,
 ) -> ReleaseVerification {
     let mut facts = BTreeSet::new();
     let manifest = ImageReleaseManifest::parse(manifest_bytes);
     let (artifacts, checks) = match &manifest {
         Ok(manifest) => {
             let artifacts = artifact_checks(manifest, observed);
-            let checks = host_checks(manifest, host);
-            binding_facts(manifest, &artifacts, &checks, &mut facts);
+            let checks = host_checks(manifest, host, backend);
+            binding_facts(manifest, &artifacts, &checks, backend, &mut facts);
             (artifacts, checks)
         }
         Err(_) => {
@@ -298,27 +309,36 @@ fn met(observed: Option<bool>) -> HostOutcome {
     }
 }
 
-fn host_checks(m: &ImageReleaseManifest, h: &HostCapabilities) -> Vec<HostCheck> {
-    let need = &m.host;
+fn host_checks(
+    m: &ImageReleaseManifest,
+    h: &HostCapabilities,
+    backend: Option<LaunchBackend>,
+) -> Vec<HostCheck> {
     let mut checks = vec![(HostRequirement::Arch, met(h.arch.map(|a| a == m.arch)))];
-    if need.kvm {
+    // A microVM always needs host KVM, whatever the manifest says.
+    if m.host.kvm || backend == Some(LaunchBackend::MicroVm) {
         checks.push((HostRequirement::Kvm, met(h.kvm)));
     }
-    if let Some(floor) = need.kernel_floor {
-        checks.push((
-            HostRequirement::KernelFloor,
-            met(h.kernel.map(|k| k >= floor)),
-        ));
-    }
-    if let Some(floor) = need.landlock_abi_floor {
-        let abi = h.landlock_abi.map(|abi| abi >= floor);
-        checks.push((HostRequirement::LandlockAbi, met(abi)));
-    }
-    if need.seccomp_user_notify {
-        checks.push((
-            HostRequirement::SeccompUserNotify,
-            met(h.seccomp_user_notify),
-        ));
+    // A container shares the host kernel, so the guest floors are checked
+    // against the host probe; any other form never evaluates them there.
+    if backend == Some(LaunchBackend::Container) {
+        let need = &m.guest;
+        if let Some(floor) = need.kernel_floor {
+            checks.push((
+                HostRequirement::KernelFloor,
+                met(h.kernel.map(|k| k >= floor)),
+            ));
+        }
+        if let Some(floor) = need.landlock_abi_floor {
+            let abi = h.landlock_abi.map(|abi| abi >= floor);
+            checks.push((HostRequirement::LandlockAbi, met(abi)));
+        }
+        if need.seccomp_user_notify {
+            checks.push((
+                HostRequirement::SeccompUserNotify,
+                met(h.seccomp_user_notify),
+            ));
+        }
     }
     if let Some(storage) = m.contracts.storage {
         // An engine older than the data it would open is a downgrade.
@@ -338,6 +358,7 @@ fn binding_facts(
     manifest: &ImageReleaseManifest,
     artifacts: &[ArtifactCheck],
     host: &[HostCheck],
+    backend: Option<LaunchBackend>,
     facts: &mut BTreeSet<ImageReleaseFact>,
 ) {
     let identity = |role: ArtifactRole| matches!(role, ArtifactRole::Variant | ArtifactRole::Arch);
@@ -368,6 +389,20 @@ fn binding_facts(
             (_, HostOutcome::Unobserved) => {
                 facts.insert(ImageReleaseFact::HostCapabilityUnobserved);
             }
+        }
+    }
+    if backend.is_none() {
+        facts.insert(ImageReleaseFact::LaunchBackendUnobserved);
+    }
+    // The guest floors stay named needs on a parsed manifest: without a
+    // container's shared kernel no host probe observes them.
+    if backend != Some(LaunchBackend::Container) {
+        let guest = &manifest.guest;
+        if guest.kernel_floor.is_some()
+            || guest.landlock_abi_floor.is_some()
+            || guest.seccomp_user_notify
+        {
+            facts.insert(ImageReleaseFact::GuestCapabilityUnobserved);
         }
     }
     if manifest.facts.contains(&ManifestFact::Blake3Unmeasured) {
