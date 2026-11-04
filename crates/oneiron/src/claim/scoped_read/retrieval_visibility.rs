@@ -117,7 +117,16 @@ impl<'vault> ScopedRead<'vault> {
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, authority)? {
+            // The row just read is the one the by-id check would read again,
+            // in this snapshot: judge those bytes (L15 recall speed).
+            if !self.is_entity_raw_readable_held_in(
+                txn,
+                policy,
+                &message,
+                &row.encode(),
+                &floor,
+                authority,
+            )? {
                 return Ok(false);
             }
         }
