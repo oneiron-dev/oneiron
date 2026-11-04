@@ -21,7 +21,6 @@ use super::super::type_diagnostics::{
     ProgramStepFeedback, ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TypeCheckFacts,
     TypeDiagnostic, TypeDiagnostics, check_incarnation,
 };
-use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::routing::ExecutorStorage;
 use crate::off_record::OffRecordSession;
 use crate::provenance::body::release_body_in_txn;
@@ -421,8 +420,7 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
         if let Some(body) = row.body() {
             let occurrence = ResultOccurrence::of(Some(run), &body)?;
             let marks = occurrence.mark_key(&body.handle);
-            RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
-            RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
+            crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
             release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
         }
         // FIX 12085: the deleted row's lifted custody goes with it.

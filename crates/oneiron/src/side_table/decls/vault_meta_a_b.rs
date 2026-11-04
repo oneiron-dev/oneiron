@@ -106,6 +106,14 @@ side_tables! {
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
         => crate::learning::erase_receipt_scope_in_txn;
+    /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
+    /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
+    /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
+    /// Key: u64be (the sequence). Value: id16.
+    AUTHLOG_STORE_ORDER: VaultMeta b"authlog:store_order:v1:" Raw;
+    /// The store-order index's state: whether every row stored before the index existed has
+    /// been sequenced, and the next free sequence (9 raw bytes: the flag, then u64be). Key: ().
+    AUTHLOG_STORE_ORDER_STATE: VaultMeta b"authlog:store_order_state:v1" Raw;
     /// One-shot consumption marker and promotion receipt for a specific authoring strategy's sealed
     /// BEAM measurement. Two shapes share this key over its lifetime (a non-JSON consumption
     /// sentinel, then a JSON receipt) and no reader ever decodes it — every access is a raw
@@ -322,7 +330,7 @@ side_tables! {
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
     BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
-        => crate::llm::erase_resident_share_actor_in_txn;
+        => crate::store::resident_budget_rows::erase_resident_share_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
