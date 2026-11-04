@@ -211,7 +211,7 @@ impl HttpGmailReadWire<'_> {
         if let Some(cursor) = cursor {
             list = list.query(&[("pageToken", cursor.as_str())]);
         }
-        let listed = gmail_json(list, "list")?.ok_or_else(|| gmail_error("list", 404))?;
+        let listed = gmail_json(list, "list", false)?.ok_or_else(|| gmail_error("list", 404))?;
         let ids = listed
             .get("messages")
             .and_then(Value::as_array)
@@ -266,7 +266,7 @@ impl HttpGmailReadWire<'_> {
             .get(messages_url(mailbox, Some(id))?)
             .header(AUTHORIZATION, auth.clone())
             .query(&query);
-        let Some(message) = gmail_json(request, "get")? else {
+        let Some(message) = gmail_json(request, "get", false)? else {
             return Ok(None);
         };
         project_message(mailbox, id, &message).map(Some)
@@ -285,7 +285,7 @@ impl HttpGmailReadWire<'_> {
             .get(messages_url(mailbox, Some(id))?)
             .header(AUTHORIZATION, auth.clone())
             .query(&[("format", "full"), ("fields", "payload")]);
-        let Some(message) = gmail_json(request, "get body")? else {
+        let Some(message) = gmail_json(request, "get body", true)? else {
             return Ok(None);
         };
         let Some(part) = message.get("payload").and_then(plain_text_part) else {
@@ -297,7 +297,9 @@ impl HttpGmailReadWire<'_> {
             .and_then(Value::as_str)
             .filter(|data| !data.is_empty())
         {
-            return GmailMessageMetadata::decode_plain_text(data, charset).map(Some);
+            // These are sender-controlled bytes, not a transport failure.
+            // Preserve the admitted metadata when this body cannot be decoded.
+            return Ok(GmailMessageMetadata::decode_plain_text(data, charset).ok());
         }
         let Some(attachment) = part.pointer("/body/attachmentId").and_then(Value::as_str) else {
             return Ok(None);
@@ -310,13 +312,13 @@ impl HttpGmailReadWire<'_> {
             .push("attachments")
             .push(attachment);
         let request = self.client.get(url).header(AUTHORIZATION, auth.clone());
-        let Some(body) = gmail_json(request, "get body bytes")? else {
+        let Some(body) = gmail_json(request, "get body bytes", true)? else {
             return Ok(None);
         };
-        body.get("data")
+        Ok(body
+            .get("data")
             .and_then(Value::as_str)
-            .map(|data| GmailMessageMetadata::decode_plain_text(data, charset))
-            .transpose()
+            .and_then(|data| GmailMessageMetadata::decode_plain_text(data, charset).ok()))
     }
 }
 
@@ -557,11 +559,14 @@ fn messages_url(mailbox: &str, message: Option<&str>) -> oneiron::Result<reqwest
 }
 
 /// One Gmail call's JSON reply; `None` when Gmail answers 404. Any other
-/// refusal fails the page, which the next poll reads again. The URL names
-/// the mailbox, so an error drops it.
+/// refusal fails the page, which the next poll reads again. An oversized
+/// optional body leaves the already-read metadata intact instead of blocking
+/// the page. Network, authentication and unreadable-response errors still
+/// propagate. The URL names the mailbox, so an error drops it.
 fn gmail_json(
     request: reqwest::blocking::RequestBuilder,
     call: &str,
+    optional_body: bool,
 ) -> oneiron::Result<Option<Value>> {
     let response = request.send().map_err(|error| {
         oneiron::Error::InvalidConfig(format!(
@@ -582,6 +587,9 @@ fn gmail_json(
         .read_to_end(&mut body)
         .map_err(|_| oneiron::Error::InvalidConfig(format!("gmail {call} reply unreadable")))?;
     if body.len() as u64 > MAX_GMAIL_REPLY_BYTES {
+        if optional_body {
+            return Ok(None);
+        }
         return Err(oneiron::Error::InvalidConfig(format!(
             "gmail {call} reply exceeds its bound"
         )));

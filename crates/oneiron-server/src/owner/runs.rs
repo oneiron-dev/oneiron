@@ -56,12 +56,12 @@ pub(crate) struct RunProposal {
     pub(crate) value: serde_json::Value,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) created_at: u64,
-    /// The reminder wording filed for this proposal now, when it is a
-    /// commitment reminder with one filed (FIX 12319).
+    /// The reminder wording filed for this proposal now, through release
+    /// redaction, when it is a commitment reminder with one filed (FIX 12319).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reminder_wording: Option<String>,
-    /// BLAKE3 of `reminder_wording`, 64 lowercase hex, as `reminder_wordings`
-    /// names it.
+    /// BLAKE3 of the stored, unredacted wording, 64 lowercase hex, as
+    /// `reminder_wordings` names it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reminder_wording_hash: Option<String>,
 }
@@ -257,7 +257,7 @@ fn review_of(
             // proposal reads none.
             let filed = vault.filed_commitment_reminder_wording_for_proposal(&member.claim_id)?;
             let (reminder_wording, reminder_wording_hash) = match filed {
-                Some((wording, hash)) => (Some(wording), Some(hex(&hash))),
+                Some((wording, hash)) => (Some(redacted(wording)), Some(hex(&hash))),
                 None => (None, None),
             };
             Ok(RunProposal {
