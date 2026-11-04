@@ -7,6 +7,7 @@ use super::*;
 pub(super) fn observe_authority_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
+    id: &crate::EntityId,
     key: &str,
     entry: Option<&oneiron_authority::authority::AuthorityLogEntry>,
     hash: Option<&oneiron_contracts::authority::AuthorityEntryHash>,
@@ -17,6 +18,8 @@ pub(super) fn observe_authority_put(
     let sidecar_key = key.to_owned();
     if !crate::authority::AUTHORITY_FIRST_SEEN.contains(store, wtxn, &sidecar_key)? {
         crate::authority::AUTHORITY_FIRST_SEEN.put(store, wtxn, &sidecar_key, &observed_secs)?;
+        // The row takes its store-order sequence with its sidecar (FIX 12369).
+        crate::authority::store_order::note_first_stored_in_txn(store, wtxn, id)?;
     }
     // H213: the transaction's owner sweeps stale stamps after it commits.
     store.record_hooks.note_authority_row();

@@ -43,9 +43,9 @@ use super::AiHandle;
 use super::payer_funding::room_launch_funding;
 use super::resident_craft::{craft_withdrawn, place_craft, snapshot_craft_scoped};
 use crate::api::ai::chat::{
-    Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential, after_turn,
-    begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint, text_message,
-    turn_generate_pre,
+    Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, RetrySession, TurnCredential,
+    after_turn, begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
+    text_message, turn_generate_pre,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
@@ -201,7 +201,7 @@ async fn act(
     let lead = messages.len();
     let at = vault.now_recorded_at();
     let craft = blocking(|| {
-        craft_reader(vault, &action)
+        action_reader(vault, &action)
             .and_then(|reader| snapshot_craft_scoped(vault, &reader, &context.agent, at, layout))
     });
     let (shown, mut today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
@@ -265,29 +265,38 @@ async fn act(
     // captured craft names a note erased, revised or no longer supported
     // since is never sent again (FIX 8985): the action runs as it always
     // did, on today's craft, stamped before it is sent.
-    let (admitted, today, breakpoint) = match reuse {
+    let (admitted, today, breakpoint, retry_session) = match reuse {
         ChatReuse::Reused(reused) => {
             let captured = &reused.craft;
             match blocking(|| craft_withdrawn(vault, captured)) {
                 None => {
-                    let reused = *reused;
+                    let mut reused = *reused;
                     stamp_craft(vault, attempt, context.agent, &reused.craft);
-                    (reused.live, Some(admitted), Some(reused.breakpoint))
+                    let retry_session = blocking(|| RetrySession::of(ai, vault, &action, &reused));
+                    if let Some(session) = &retry_session {
+                        reused.live.request.host_segments = Some(session.manifest());
+                    }
+                    (
+                        reused.live,
+                        Some(admitted),
+                        Some(reused.breakpoint),
+                        retry_session,
+                    )
                 }
                 Some(reason) => {
                     live_fork_unavailable(reason);
                     if let Some(entries) = today_craft.take() {
                         stamp_craft(vault, attempt, context.agent, &entries);
                     }
-                    (admitted, None, None)
+                    (admitted, None, None, None)
                 }
             }
         }
         ChatReuse::Unavailable(reason) => {
             live_fork_unavailable(reason);
-            (admitted, None, None)
+            (admitted, None, None, None)
         }
-        ChatReuse::Today => (admitted, None, None),
+        ChatReuse::Today => (admitted, None, None, None),
     };
     let prefix_reused = breakpoint.is_some();
     let keepalive = keepalive_every(
@@ -358,6 +367,10 @@ async fn act(
         ),
         None => answering,
     };
+    let answering = match retry_session {
+        Some(session) => session.commit_on_answer(answering),
+        None => answering,
+    };
     drop(answering.subscription);
     let outcome = answering
         .outcome
@@ -378,7 +391,8 @@ async fn act(
     Ok(())
 }
 
-/// The reader a queued `action`'s craft is read through (FIX 9464), built
+/// The reader a queued `action`'s craft and session metadata use (FIX 9464,
+/// 10368), built
 /// as its context's is: the requester's own handle, where it asked from,
 /// under the slip its request was admitted on, verified again now. A native
 /// action, and an attested owner's, stand on the actor binding alone and
@@ -386,7 +400,10 @@ async fn act(
 /// no longer stands (its slip revoked, or taken by its requester's erase,
 /// or its owner no longer the vault's) or whose slip does not verify now:
 /// its call is shown no craft.
-fn craft_reader<'v>(vault: &'v Vault, action: &TurnActionAttempt) -> Option<Memory<'v>> {
+pub(crate) fn action_reader<'v>(
+    vault: &'v Vault,
+    action: &TurnActionAttempt,
+) -> Option<Memory<'v>> {
     let (actor, class) = action.requester().ok()?;
     if !action.requester_live(vault) {
         tracing::info!(
