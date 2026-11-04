@@ -119,6 +119,8 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
+pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cleanup;
 pub mod attempt_inputs;
@@ -130,7 +132,7 @@ pub mod checkout_task;
 pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
-pub mod conversation_record;
+pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
 mod delete_guards;
 pub use delete_guards::StoreDeleteGuards;
@@ -148,8 +150,12 @@ pub(crate) mod loro_document;
 pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub(crate) mod project_kind;
@@ -204,17 +210,28 @@ pub mod body_descriptor;
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
 mod gate_decision;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
 pub(crate) mod graph_version;
+pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
+pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
+pub(crate) mod pending_custody_revoke;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
@@ -228,6 +245,7 @@ mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub mod world_registration_keys;
+pub(crate) mod world_pad_rows;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -242,12 +260,11 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
+pub(crate) mod linear_pull_cursor;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
-#[cfg(feature = "sync")]
-pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
@@ -258,6 +275,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
@@ -268,6 +287,7 @@ mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
 pub(crate) mod skill_content_index;
+pub mod skill_hub_predicates;
 pub mod skill_package;
 pub(crate) mod skill_source_carrier;
 mod structural_kind_registry;

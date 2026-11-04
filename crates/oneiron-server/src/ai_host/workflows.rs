@@ -338,9 +338,9 @@ fn pump_once(
                         Ok(output) => {
                             // The try completed: no retry follows it, and no
                             // later parent may use its ticket (FIX 11960).
-                            if let Ok(entity) = oneiron::EntityId::from_bytes(
-                                *step.attempt.id.as_bytes(),
-                            ) {
+                            if let Ok(entity) =
+                                oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())
+                            {
                                 forget_work_parent(&entity);
                             }
                             // The seal measures the agent that ran, on the
