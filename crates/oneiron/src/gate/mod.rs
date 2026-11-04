@@ -49,6 +49,7 @@ mod dreamer_precommit;
 mod dreamer_retry_policy;
 pub(crate) mod edit_distance_thresholds;
 mod effect;
+pub(crate) mod esign_rate_policy;
 pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
@@ -104,6 +105,7 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 mod tests;
 
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
+pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
@@ -198,6 +200,7 @@ pub(crate) use self::effect::{
     native_mail_cold_approval_digest, record_external_effect_policy,
     record_held_external_effect_policy,
 };
+pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::grants::{
     ClaimReadPolicy, ClaimReadView, PolicyScopedGrant, claim_read_policy_allows,
     companion_profile_access_grant, scoped_read_claim_allowed,

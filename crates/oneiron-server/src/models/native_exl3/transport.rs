@@ -412,7 +412,9 @@ fn release_failed(body: &JsonValue) -> bool {
 }
 
 /// Holds `lease` until its incarnation ends, on a task of its own: the
-/// worker still charges a call it could not release.
+/// worker still charges a call it could not release. With no runtime on the
+/// caller, a thread of its own with a current-thread runtime waits instead
+/// of dropping the lease (FIX 11328).
 fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
     if lease.is_none() && grant.is_none() {
         return;
@@ -426,6 +428,25 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
                 lease.revocation().await;
             }
             drop((lease, grant));
+        });
+    } else {
+        // A failed spawn drops the closure, and the lease and grant with it.
+        let _ = std::thread::Builder::new()
+        .name("exl3-keep-lease".to_owned())
+        .spawn(move || {
+            let wait = async move {
+                if let Some(lease) = &lease {
+                    lease.revocation().await;
+                }
+                drop((lease, grant));
+            };
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(wait),
+                Err(_) => drop(wait),
+            }
         });
     }
 }

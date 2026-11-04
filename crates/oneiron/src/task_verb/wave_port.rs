@@ -216,6 +216,13 @@ struct WaveFingerprintTask {
     spec: serde_json::Value,
     assignee: Option<String>,
     blocked_by: Vec<String>,
+    /// Hex of the assignee nulled by an actor erase (FIX 12732, REVIEW-4521
+    /// round-2 P1): proves this null is a scrubbed erasure, never a
+    /// never-assigned task. Absent on fresh fingerprints and on seals stored
+    /// before the marker existed; those never tolerantly match a supplied
+    /// assignee (fail closed).
+    #[serde(default)]
+    erased_assignee: Option<String>,
 }
 
 /// See `WaveFingerprintTask`.
@@ -223,6 +230,74 @@ struct WaveFingerprintTask {
 struct WaveFingerprint {
     epic: String,
     tasks: Vec<WaveFingerprintTask>,
+}
+
+/// FIX 12732: erasure nulls a sealed assignee while the supplied cut still
+/// names the erased actor. The seal still matches when every task agrees
+/// except that a sealed null accepts the supplied assignee only with erasure
+/// evidence (REVIEW-4521 P1, round 2): the sealed task must carry the
+/// scrub-recorded `erased_assignee` hex equal to the supplied assignee, and
+/// that id must name no live actor. A never-assigned null carries no marker,
+/// so it never tolerantly matches (round-1 gap). The stored scrubbed seal is
+/// retained, never rewritten here.
+fn seal_matches_erased_assignees(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seal: &[u8],
+    plan: &ValidatedWavePlan,
+) -> bool {
+    let Ok(sealed) = serde_json::from_slice::<WaveFingerprint>(seal) else {
+        return false;
+    };
+    let Ok(supplied) = serde_json::from_slice::<WaveFingerprint>(&fingerprint(plan)) else {
+        return false;
+    };
+    if sealed.epic != supplied.epic || sealed.tasks.len() != supplied.tasks.len() {
+        return false;
+    }
+    sealed
+        .tasks
+        .iter()
+        .zip(supplied.tasks.iter())
+        .all(|(old, new)| {
+            old.key == new.key
+                && old.label == new.label
+                && old.spec == new.spec
+                && old.blocked_by == new.blocked_by
+                && (old.assignee == new.assignee
+                    || (old.assignee.is_none()
+                        && old.erased_assignee.as_ref() == new.assignee.as_ref()
+                        && new
+                            .assignee
+                            .as_ref()
+                            .is_some_and(|hex| assignee_names_no_live_actor(vault, txn, hex))))
+        })
+}
+
+/// Erasure evidence for the seal's tolerant assignee arm: `hex` names no live
+/// actor when its entity is gone (an erased actor's row is destroyed with the
+/// erase) or is not a person, machine or agent-def row. A live id, an
+/// unparseable hex, an unreadable header and a storage error all fail closed
+/// (false), refusing the substitution.
+fn assignee_names_no_live_actor(vault: &Vault, txn: &heed::RoTxn<'_>, hex: &str) -> bool {
+    let Ok(id) = EntityId::from_hex(hex) else {
+        return false;
+    };
+    let Ok(raw) = vault.get_raw_in(txn, &id) else {
+        return false;
+    };
+    let Some(raw) = raw else {
+        return true;
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return false;
+    };
+    !matches!(
+        header.entity_type,
+        crate::registry::ENTITY_TYPE_PERSON
+            | crate::registry::ENTITY_TYPE_MACHINE
+            | crate::registry::ENTITY_TYPE_AGENT_DEF
+    )
 }
 
 /// Scrubs an erased recipient from the wave-plan index copies (FIX 4699):
@@ -250,6 +325,7 @@ pub(super) fn scrub_wave_index_copies_in_txn(
             for task in &mut sealed.tasks {
                 if task.assignee.as_ref() == Some(&hex) {
                     task.assignee = None;
+                    task.erased_assignee = Some(hex.clone());
                     touched = true;
                 }
             }
@@ -673,7 +749,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        if seal != fingerprint(plan) {
+        if seal != fingerprint(plan) && !seal_matches_erased_assignees(self, &txn, &seal, plan) {
             return Err(Error::InvalidConfig(
                 "wave plan seal does not match the cut".into(),
             ));
