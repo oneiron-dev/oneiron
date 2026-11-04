@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::pipeline::WorldScope;
 use crate::serialize::{SerializeConfig, serialize_pack_with_telemetry};
 use crate::store::retrieval_values::RetrievalWithTelemetry;
@@ -262,6 +263,20 @@ impl<'a> ContextPackBuilder<'a> {
             )
         });
         let selected_edge_budget = retrieval_budget.selected_edges;
+        // FIX 62/63/64: past its [limits] row each asks whether everything is
+        // okay; the pack is served whole either way. One measure each, on the
+        // final values, after the skip that serves no retrieval.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::ContextEdgeHops, u64::from(self.edge_hop));
+        let _ = self.vault.measure_limit(
+            EngineLimit::ContextNeighbors,
+            self.selected_edge_budget as u64,
+        );
+        let _ = self.vault.measure_limit(
+            EngineLimit::ContextSelectedEdges,
+            selected_edge_budget as u64,
+        );
         // OF-365: a clamped assembly persists NO retrieval stage trace. The
         // pipeline records per_channel/fused/blended/reranked stages BEFORE
         // the clamp's candidate sweep runs, so a captured trace would retain

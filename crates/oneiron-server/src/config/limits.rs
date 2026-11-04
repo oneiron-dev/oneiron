@@ -398,6 +398,9 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            context_edge_hops,
+            context_neighbors,
+            context_selected_edges,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -646,6 +649,9 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::ContextEdgeHops, context_edge_hops),
+            (EngineLimit::ContextNeighbors, context_neighbors),
+            (EngineLimit::ContextSelectedEdges, context_selected_edges),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 139] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -142,6 +142,9 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::ContextEdgeHops,
+        Self::ContextNeighbors,
+        Self::ContextSelectedEdges,
     ];
 
     /// The config key that sets the row.
@@ -283,6 +286,9 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::ContextEdgeHops => "limits.context_edge_hops",
+            Self::ContextNeighbors => "limits.context_neighbors",
+            Self::ContextSelectedEdges => "limits.context_selected_edges",
         }
     }
 
@@ -492,6 +498,12 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Owner-ruled ABC row 11 (FIX 62).
+            Self::ContextEdgeHops => 1_024,
+            // Owner-ruled ABC row 12 (FIX 63).
+            Self::ContextNeighbors => 1_048_576,
+            // Owner-ruled ABC row 13 (FIX 64).
+            Self::ContextSelectedEdges => 1_048_576,
         }
     }
 }

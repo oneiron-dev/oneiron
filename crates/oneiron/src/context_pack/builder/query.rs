@@ -15,7 +15,7 @@ use oneiron_model::llm::ModelId;
 use super::super::types::{
     ContextPackRetrievalBudget, DEFAULT_CONTEXT_FRACTION, DEFAULT_MAX_FIELD_CHARS,
     DEFAULT_MAX_NEIGHBORS, DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET,
-    FieldProfile, MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat, TokenAllocation,
+    FieldProfile, PackFormat, TokenAllocation,
 };
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -572,7 +572,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn edge_hop(mut self, depth: u32) -> Self {
-        self.edge_hop = depth.min(MAX_EDGE_HOP);
+        self.edge_hop = depth;
         self
     }
 
@@ -582,7 +582,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn selected_edge_budget(mut self, n: usize) -> Self {
-        self.selected_edge_budget = n.min(MAX_CONTEXT_NEIGHBORS);
+        self.selected_edge_budget = n;
         if let Some(budget) = self.retrieval_budget.as_mut() {
             budget.selected_edges = self.selected_edge_budget;
         }
@@ -745,7 +745,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn retrieval_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
-        let selected_edges = budget.selected_edges.min(MAX_CONTEXT_NEIGHBORS);
+        let selected_edges = budget.selected_edges;
         self.selected_edge_budget = selected_edges;
         self.retrieval_budget = Some(ContextPackRetrievalBudget {
             selected_edges,
