@@ -67,14 +67,14 @@ impl AssetBlobRef {
 /// effect of the row, never a write of its own. The reference is the ASSET's
 /// id. A fence an earlier release left on the same bytes is lifted, as a new
 /// artifact holding them lifts it.
-pub(super) fn land_asset_blob_in_txn(
+pub(crate) fn land_asset_blob_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     asset: &EntityId,
     bytes: &[u8],
     occurred: TimeRange,
     learned_at: u64,
-) -> MemoryResult<[u8; 32]> {
+) -> crate::error::Result<[u8; 32]> {
     let hash = vault.port_blob_put(txn, asset, bytes, occurred, learned_at)?;
     crate::blob_artifact::hold_asset_reference_in_txn(&vault.store, txn, &hash)?;
     Ok(hash)
