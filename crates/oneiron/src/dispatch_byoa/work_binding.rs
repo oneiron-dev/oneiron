@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState};
 use crate::checkout::CheckoutId;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
