@@ -1,7 +1,7 @@
 //! Base-apply Delete arm: tears rows and graph state.
 
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_delete_arm(

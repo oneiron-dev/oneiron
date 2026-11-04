@@ -122,7 +122,7 @@ pub(super) fn audit_and_stage_body(
         dispatch.decoded_claim_body.as_ref(),
     )?;
     if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
+        crate::store::pending_comm_stop::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still

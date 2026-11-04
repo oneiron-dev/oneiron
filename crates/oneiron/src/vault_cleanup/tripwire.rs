@@ -346,14 +346,14 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 candidates: live_slots(candidates),
             };
             put_proposal_in_txn(vault, wtxn, &proposal)?;
-            crate::failure_ladder::oversight::proposed_in_txn(
+            crate::store::healer_oversight::proposed_in_txn(
                 vault,
                 wtxn,
                 &proposal.id.to_hex(),
                 now,
             )?;
             // A ProposeFirst proposal waits in the owner's tray (FIX 9853).
-            crate::failure_ladder::oversight::routed_in_txn(
+            crate::store::healer_oversight::routed_in_txn(
                 vault,
                 wtxn,
                 &proposal.id.to_hex(),

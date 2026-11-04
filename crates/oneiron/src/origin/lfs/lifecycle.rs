@@ -198,7 +198,7 @@ impl Vault {
                         crate::batch::deindex_entity(&self.store, txn, &id)?;
                     graph |= had_graph;
                     vector |= had_vector;
-                    crate::ppr::invalidate_ppr_for_delete(&self.store, txn, &id, &neighbors)?;
+                    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(&self.store, txn, &id, &neighbors)?;
                     // Keep the small internal-byte marker: stale sync imports must
                     // not promote a retired chunk into the generic metadata plane.
                 }

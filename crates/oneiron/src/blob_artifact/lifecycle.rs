@@ -7,7 +7,7 @@ use heed::{RoTxn, RwTxn};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM};
 use crate::store::Store;
 

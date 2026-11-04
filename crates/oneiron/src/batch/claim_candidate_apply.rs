@@ -5,7 +5,7 @@ use heed::RwTxn;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 use oneiron_contracts::affect::Vad;

@@ -418,9 +418,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/affect/annotation.rs",
-     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
+     "purpose": "Turn and message VAD annotation persistence",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 1
      }
     },
     {
@@ -15578,7 +15578,7 @@
      "path": "src/code_document/mod.rs",
      "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
      }
     },
@@ -15680,9 +15680,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CodeEditReceipt",
       "CodeOpAttribution",
-      "CodeOpProvenance",
       "CodeRangeChange",
       "CodeSpanBlame",
       "CodeSpanResolution"
@@ -15693,8 +15691,8 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2,
-      "re-export": 2,
-      "struct": 5
+      "re-export": 3,
+      "struct": 3
      }
     },
     {
@@ -15752,14 +15750,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CodeMemoryPullResult"
-     ],
+     "notable": [],
      "path": "src/code_memory/parts/pull.rs",
      "purpose": "—",
      "surface": {
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -19433,7 +19429,7 @@
      "path": "src/comm/stop_hold.rs",
      "purpose": "The send hold of an inbound STOP (F06): the external-effect gate's read of a STOP's standing opt-out, the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 4
      }
     },
     {
@@ -22271,9 +22267,10 @@
      "path": "src/context_board/plugin/claim.rs",
      "purpose": "Install claim payload and the pre-consent proposal path",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
       "fn": 4,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -23147,17 +23144,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SourceRankingPolicy"
-     ],
+     "notable": [],
      "path": "src/context_pack/source_ranking.rs",
-     "purpose": "PACK data for provenance-aware claim ordering",
+     "purpose": "Claim-source ranking over stored claim vocabulary",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1,
-      "struct": 1
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -23434,15 +23428,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OutputMark"
-     ],
+     "notable": [],
      "path": "src/conversation/output_guard.rs",
      "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 1,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -24087,7 +24079,8 @@
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
       "crate-vis": 16,
-      "fn": 2
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -25995,7 +25988,8 @@
      "purpose": "Conflict and bucket identities for consolidation candidates and swarm returns",
      "surface": {
       "crate-vis": 10,
-      "fn": 9,
+      "fn": 8,
+      "re-export": 1,
       "struct": 9
      }
     },
@@ -27215,7 +27209,7 @@
      "path": "src/dreamer_consolidation/stage_log.rs",
      "purpose": "The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
      }
     },
     {
@@ -27250,9 +27244,9 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "Consolidation constants, hash domains and shared codec helpers",
      "surface": {
-      "const": 11,
+      "const": 10,
       "crate-vis": 30,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -27483,7 +27477,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 25
      }
     },
     {
@@ -27940,7 +27934,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 1,
       "struct": 2
@@ -34741,20 +34735,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OversightCounts",
-      "OversightKind",
-      "OversightReceipt"
-     ],
+     "notable": [],
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 5,
-      "struct": 2
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -39779,15 +39767,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ClaimVadPaymentWorker"
-     ],
+     "notable": [],
      "path": "src/housekeeping/claim_vad_payment.rs",
      "purpose": "The claim VAD payment worker's wake (FIX 11702, Engine 10-31 04:1x)",
      "surface": {
       "crate-vis": 4,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -39857,9 +39843,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/wake.rs",
-     "purpose": "Wake deadlines: when a retirement sweep next has work, read without a scan",
+     "purpose": "Retirement wake rows are owned by the store layer",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -39947,13 +39933,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 8
      }
     },
     {
@@ -39963,7 +39949,7 @@
      "path": "src/identity_redirect.rs",
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 1
      }
@@ -42138,26 +42124,25 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinkedText",
       "ProseSpan",
       "RecordLinks",
       "RecordLinksRequest",
-      "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
      ],
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7,
-      "re-export": 1,
-      "struct": 6
+      "fn": 4,
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -57730,10 +57715,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ppr/invalidation.rs",
+     "purpose": "PPR's implementation of the store's transaction-local invalidation contract",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ppr/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -63978,7 +63973,7 @@
      "path": "src/self_heal/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -64101,9 +64096,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/centroid_evidence/erase.rs",
-     "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
+     "purpose": "Centroid evidence custody is owned by the store layer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 3
      }
     },
     {
@@ -64544,7 +64539,7 @@
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 10,
       "re-export": 1,
       "struct": 6
@@ -65863,9 +65858,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill/resident.rs",
-     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "purpose": "Resident ownership storage and loaded-skill erasure",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 2
      }
     },
     {
@@ -69576,6 +69571,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/base_agent.rs",
+     "purpose": "Fixed base-agent principal rows and their immutable write guards",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/birth_record/mod.rs",
      "purpose": "Immutable row birth records and their trigger index",
      "surface": {
@@ -69811,6 +69816,36 @@
       "enum": 2,
       "fn": 2,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/centroid_evidence/erase.rs",
+     "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/centroid_evidence/mod.rs",
+     "purpose": "Immutable centroid evidence rows and source-erasure custody",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/channel_class.rs",
+     "purpose": "Canonical recipient-facing channel classes",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -70055,6 +70090,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SourceRankingPolicy"
+     ],
+     "path": "src/store/claim_source_ranking/mod.rs",
+     "purpose": "PACK data for provenance-aware claim ordering",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -70062,6 +70111,19 @@
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimVadPaymentWorker"
+     ],
+     "path": "src/store/claim_vad_payment.rs",
+     "purpose": "Per-handle claim VAD payment wake state and attached-worker lifetime",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -70092,6 +70154,19 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeEditReceipt",
+      "CodeOpProvenance"
+     ],
+     "path": "src/store/code_document_receipt.rs",
+     "purpose": "Stored code-operation provenance and exact edit receipts",
+     "surface": {
+      "struct": 2
      }
     },
     {
@@ -70167,7 +70242,20 @@
       "crate-vis": 11,
       "enum": 5,
       "fn": 8,
+      "re-export": 1,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeMemoryPullResult"
+     ],
+     "path": "src/store/code_memory_values/pull_result.rs",
+     "purpose": "Provenance-labelled code-memory pull values",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -70434,6 +70522,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/consolidation_evidence.rs",
+     "purpose": "Domain-separated content hashes of consolidation source bytes",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DreamerConsolidationScope"
      ],
@@ -70442,6 +70541,19 @@
      "surface": {
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputMark"
+     ],
+     "path": "src/store/container_output.rs",
+     "purpose": "Per-container output invalidation marks",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
      }
     },
     {
@@ -70551,8 +70663,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/conversation_residency.rs",
+     "purpose": "The exact refusal of a turn whose witnessed message is not resident",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/conversation_span.rs",
      "purpose": "Result vocabulary for a fingerprint-pinned conversation span read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/conversation_summary.rs",
+     "purpose": "Coverage references encoded in stored conversation summaries",
      "surface": {
       "crate-vis": 1
      }
@@ -70751,7 +70883,7 @@
      "path": "src/store/diagnostic_record/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70807,8 +70939,18 @@
      "path": "src/store/diagnostic_record/mod.rs",
      "purpose": "Diagnostic record vocabulary, canonical body codecs and content addresses",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/diagnostic_record/normal_baseline.rs",
+     "purpose": "Normal-baseline predicate tokens retained by gate receipts",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71411,6 +71553,23 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "OversightCounts",
+      "OversightKind",
+      "OversightReceipt"
+     ],
+     "path": "src/store/healer_oversight.rs",
+     "purpose": "Per-vault signed oversight over healer proposals and review decisions",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/store/home_handoff_custody.rs",
      "purpose": "The home handoff's custody contract (FIX 8875, L04's half): each actor's content a home handoff carries is…",
@@ -71500,6 +71659,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/housekeeping_wake.rs",
+     "purpose": "Wake deadlines: when a retirement sweep next has work, read without a scan",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "IdempotencyIntent"
      ],
@@ -71527,6 +71696,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/identity_redirect_rows.rs",
+     "purpose": "Redirect projection row encoding, deletion maintenance and inbound traversal",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/inference_snapshot_custody.rs",
      "purpose": "The inference snapshot custody client: one erasable wrapped data key per snapshot, on the one typed custody…",
      "surface": {
@@ -71534,13 +71713,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/install_identity.rs",
      "purpose": "Install identity rows, attestation values, and transaction-bound signing accessors",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -72213,6 +72392,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/live_speaker_calls.rs",
+     "purpose": "Per-room live voice-call registration index",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -72284,8 +72473,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 126,
-      "mod": 108,
+      "crate-vis": 142,
+      "mod": 115,
       "re-export": 31
      }
     },
@@ -72660,6 +72849,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/pending_comm_stop.rs",
+     "purpose": "Pending inbound STOP markers and transactional put/delete maintenance",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/pending_custody_revoke.rs",
      "purpose": "The custody revokes this install still owes the owner's other machines (CALLS CUSTODY_REVOKE_PENDING_CARRY)…",
      "surface": {
@@ -72780,6 +72979,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/plugin_section_predicate.rs",
+     "purpose": "Stored plugin-section install claim predicate",
+     "surface": {
+      "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/policy_record.rs",
      "purpose": "Stored policy metadata and pure decision input vocabulary",
      "surface": {
@@ -72799,6 +73008,16 @@
       "crate-vis": 2,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/ppr_cache_invalidation.rs",
+     "purpose": "Transaction-local invalidation of a retrieval cache after stored graph writes",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -72983,6 +73202,21 @@
      "purpose": "Pure parsing of record links in Markdown text",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordRef"
+     ],
+     "path": "src/store/record_ref.rs",
+     "purpose": "Typed record references and bounded record display labels",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -73936,6 +74170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/skill_resident.rs",
+     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/skill_source_carrier.rs",
      "purpose": "Holder-bound exact skill source carrier framing",
      "surface": {
@@ -74036,6 +74280,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/task_authority_guard.rs",
+     "purpose": "Immutable task-authority fact row and edge deletion guards",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74166,6 +74420,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/vad_annotation.rs",
+     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/vector_index/keys.rs",
      "purpose": "HNSW metadata key/counter literals, error strings, and the one-way prefix",
      "surface": {
@@ -74179,7 +74443,27 @@
      "path": "src/store/vector_index/mod.rs",
      "purpose": "Persisted vector-index metadata and admission vocabulary",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/vector_index/rebuild.rs",
+     "purpose": "Validation of the stored key and vector bytes admitted by a rebuild",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/vector_insert_plan.rs",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74330,6 +74614,16 @@
      "purpose": "Storage keys for foreign-world registration and stale markers",
      "surface": {
       "const": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/writer_hold.rs",
+     "purpose": "Writer closure timing and the Dreamer writer-hold trace",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -78896,7 +79190,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 24,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -90017,7 +90311,7 @@
     "identity": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…"
     },
@@ -90108,7 +90402,7 @@
     "lens": {
      "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -90316,7 +90610,7 @@
      "purpose": "Transaction-composable storage ports"
     },
     "ppr": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90631,7 +90925,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 436,
+     "files": 463,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90869,9 +91163,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 143,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6318,
+   "source_files": 6346,
    "test_files": 895
   },
   "oneiron-android": {
