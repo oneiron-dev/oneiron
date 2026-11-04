@@ -450,8 +450,10 @@ impl Vault {
     /// admitted: any other, refusals included, comes back `None` and is
     /// judged on the writer's path, as today.
     ///
-    /// It takes only a slip issued and first seen since this handle opened,
-    /// so no earlier process spent its nonces; with no support delegation,
+    /// It takes any slip once this handle's open has replayed the spend
+    /// journal (review #4484 P1-C): every nonce an earlier process spent is
+    /// then a committed row this step reads, or one the replay landed, or
+    /// below the floor a failed replay raised; with no support delegation,
     /// whose use receipt commits before the reply; on a vault this process
     /// serves under its writer lease; once an admission has committed the
     /// proof clock's floor.
@@ -470,9 +472,6 @@ impl Vault {
             let clock = super::slip_replay::committed_request_now_in_txn(self, &txn).ok()??;
             let fold = self.authority_view_readonly_in_txn(&txn).ok()?;
             let mint = fold.slips.mints.get(&slip.claims.slip_id)?;
-            if !door.minted_since_open(&txn, mint).ok()? {
-                return None;
-            }
             let now = self.instant_in_txn(&txn).ok()?.secs();
             let challenge = super::slip_replay::request_challenge(timestamp, nonce, clock).ok()?;
             let verified = slip
