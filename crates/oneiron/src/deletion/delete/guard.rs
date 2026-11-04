@@ -62,10 +62,19 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
-            crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            self.store
+                .delete_guards
+                .reject_ruling_delete(&self.store, &txn, id)?;
             crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
-            crate::workspace_roster::reject_audience_edit_delete(&self.store, &txn, id)?;
-            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
+            self.store
+                .delete_guards
+                .reject_audience_edit_delete(&self.store, &txn, id)?;
+            self.store.delete_guards.precheck_goal_delete(
+                &self.store,
+                &txn,
+                *id,
+                gate.is_some(),
+            )?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
         signal_delete_rendezvous(
@@ -106,7 +115,7 @@ impl Vault {
                 .map(DeleteGuard::Done);
         };
         if crate::batch::delete_door_protected(header.entity_type)
-            || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
+            || crate::store::project_kind::is_project_revision_type(&self.store, header.entity_type)
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,
