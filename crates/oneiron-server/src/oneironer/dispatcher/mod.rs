@@ -60,7 +60,6 @@ mod policy;
 mod worker;
 
 use policy::LIVE_BATCH_CAP;
-use worker::WorkerState;
 
 pub(crate) use capacity::{Completion, DispatchClaim, pending_cap};
 pub(crate) use lifecycle::{DispatcherHandle, Fault, Lifeline, Restart};
