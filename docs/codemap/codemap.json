@@ -82,7 +82,7 @@
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 2,
       "re-export": 1
      }
@@ -148,7 +148,7 @@
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -205,6 +205,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/witness_history.rs",
+     "purpose": "Unsigned witness-read lifecycle metadata, stored with its grant body",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -1423,7 +1433,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -1474,7 +1484,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_lease/late_spend.rs",
+     "purpose": "Corrections when already-consumed units land after a scope closed",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
+      "SpendCalibrationSample",
       "SpendPayer",
       "SpendRead",
       "SpendRefused",
@@ -1485,11 +1506,11 @@
      "path": "src/agent_dispatch/spend_record.rs",
      "purpose": "Durable spend scopes and their typed reads (OF-532)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 1,
       "re-export": 2,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -2775,6 +2796,16 @@
      "purpose": "Which agent dispatch rows carry an erased asker's ask (FIX 9181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/connector_reply.rs",
+     "purpose": "Event-scoped kept-body reach for a participant's hard erase",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7617,7 +7648,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 47,
       "enum": 1,
       "re-export": 1
      }
@@ -7867,7 +7898,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -8382,7 +8413,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -8526,6 +8557,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/erase.rs",
+     "purpose": "Actor erasure for the made_by receipt a blob artifact version carries",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -9298,7 +9339,7 @@
      "path": "src/blob_artifact/made_by.rs",
      "purpose": "The made_by receipt every blob version carries (ARCH-0078 \"The provenance receipt\", ARCH-0035 Rule A): what…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -9308,7 +9349,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "mod": 3,
       "re-export": 11
      }
@@ -9446,7 +9487,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 9,
       "re-export": 1,
@@ -9462,7 +9503,7 @@
      "path": "src/blob_artifact/versions/reads.rs",
      "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "struct": 1
      }
@@ -14252,7 +14293,7 @@
      "path": "src/claim/history_projection/pin.rs",
      "purpose": "The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -30820,7 +30861,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 17,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -30835,7 +30876,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 2,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 1
      }
@@ -34381,6 +34422,16 @@
      "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_store_hooks.rs",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -40058,7 +40109,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/hnsw/tests.rs",
@@ -42661,7 +42712,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "mod": 206,
       "re-export": 98
      }
@@ -54803,6 +54854,7 @@
      "purpose": "The body of an agent's reply to a connector event (OF-519)",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -54819,7 +54871,7 @@
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -61840,6 +61892,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/room_codec.rs",
+     "purpose": "Room row part codecs without the sync feature (FIX 12405)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/run_tree/a2a.rs",
      "purpose": "Attempt-record to A2A task projection with cancel/landing extensions",
      "surface": {
@@ -63461,7 +63523,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "re-export": 4,
       "struct": 2
@@ -67981,7 +68043,7 @@
      "path": "src/skill_hub/pack_catalog/setup_actor.rs",
      "purpose": "Who works a pack's guided setup (OF-378): the owner on their own proof, or an authenticated agent acting for…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1
      }
     },
@@ -68727,7 +68789,7 @@
      "path": "src/skill_optimize/exploration_trial.rs",
      "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -70825,6 +70887,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "StoreDeleteGuards"
+     ],
+     "path": "src/store/delete_guards.rs",
+     "purpose": "The delete guards the store layer's delete paths run, supplied by the engine when a store opens",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DerivationBindError",
       "DerivationKey",
       "DerivationKind",
@@ -71420,6 +71494,18 @@
      "purpose": "The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreHooks"
+     ],
+     "path": "src/store/hooks.rs",
+     "purpose": "The engine hooks every store opens with",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -72197,7 +72283,7 @@
      "surface": {
       "crate-vis": 64,
       "mod": 74,
-      "re-export": 24
+      "re-export": 27
      }
     },
     {
@@ -73238,6 +73324,18 @@
       "const": 2,
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreScopeStamps"
+     ],
+     "path": "src/store/scope_stamps.rs",
+     "purpose": "The record-scope stamp hooks the store layer's write and erase paths run, supplied by the engine when a…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -74615,7 +74713,7 @@
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "re-export": 1
      }
     },
@@ -75086,7 +75184,7 @@
      "path": "src/sync/connection/batch_admission.rs",
      "purpose": "The host's admission for each batch a sync connection applies or sends (FIX 12036), and the pause that keeps…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 1,
       "trait": 1,
@@ -75122,6 +75220,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/handshake/acks.rs",
+     "purpose": "Residence queue acknowledgments during the initial exchange",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76954,7 +77062,7 @@
      "path": "src/sync/room_parts.rs",
      "purpose": "FIX 11790: a room row too large for one window value",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -77190,7 +77298,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 8
      }
     },
@@ -77285,13 +77393,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection/history.rs",
      "purpose": "A window's history as a peer gets it, and a peer's history as the canonical window takes it (CHANGED…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -78730,7 +78838,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TaskWorkflowAttempt",
@@ -87496,19 +87604,16 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "VaultPageSeal"
-     ],
+     "notable": [],
      "path": "src/world_keys/page_seal.rs",
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
-      "fn": 13,
-      "re-export": 2,
-      "struct": 1
+      "crate-vis": 18,
+      "fn": 10,
+      "re-export": 3
      }
     },
     {
@@ -87731,7 +87836,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 17,
       "re-export": 3
      }
     },
@@ -89654,7 +89759,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89682,7 +89787,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89717,7 +89822,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89745,7 +89850,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90226,6 +90331,13 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
+    },
+    "engine_store_hooks": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
      "files": 41,
@@ -90787,6 +90899,13 @@
      "layout": "file+dir",
      "purpose": "ONE-207: the retrieval half of the effort dial"
     },
+    "room_codec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Room row part codecs without the sync feature (FIX 12405)"
+    },
     "run_tree": {
      "files": 11,
      "impl_vault": false,
@@ -90984,7 +91103,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 324,
+     "files": 327,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91012,7 +91131,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 333,
+     "files": 334,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91238,7 +91357,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6307,
+   "source_files": 6317,
    "test_files": 898
   },
   "oneiron-android": {
@@ -101156,7 +101275,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AdmissionSnapshot",
@@ -101176,7 +101295,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 22,
+      "fn": 23,
       "re-export": 1,
       "struct": 8,
       "type": 2
@@ -101228,7 +101347,7 @@
      "path": "src/supervisor/inference_admission/ticket.rs",
      "purpose": "Ticket waits and cancellation for the parent device queue",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -101613,7 +101732,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 34,
    "test_files": 10
@@ -104646,6 +104765,8 @@
       "FinishReason",
       "ImageContent",
       "IncompleteReason",
+      "LlmCallMetadata",
+      "LlmEndpointFlavor",
       "LlmInputUsage",
       "LlmMessage",
       "LlmMessageRole",
@@ -104661,9 +104782,9 @@
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
       "const": 1,
-      "enum": 7,
+      "enum": 8,
       "fn": 7,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -104727,7 +104848,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 9,
+      "fn": 13,
       "struct": 9,
       "type": 1
      }
@@ -108677,7 +108798,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer_thing/profile.rs",
@@ -119253,7 +119374,7 @@
      "path": "src/files_intake/confined.rs",
      "purpose": "Reading under one folder without leaving it",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -126771,7 +126892,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 13
+      "mod": 14
      }
     },
     {
@@ -127106,6 +127227,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SealOrigin",
+      "VaultDataKey",
+      "VaultPageSeal",
+      "WrapDigest"
+     ],
+     "path": "src/vault_page_seal.rs",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 17,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "WindowKey"
      ],
      "path": "src/window_key.rs",
@@ -127202,6 +127341,13 @@
      "layout": "file+dir",
      "purpose": "Per-store clock and id source"
     },
+    "vault_page_seal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -127212,7 +127358,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 27,
+   "source_files": 28,
    "test_files": 1
   },
   "oneiron-uniffi": {
@@ -127454,6 +127600,7 @@
       "AgentSpawnInput",
       "AgentSpawnKind",
       "AgentSpawnOutput",
+      "AgentSpendCalibration",
       "AgentWakePolicy",
       "AgentWakeRole",
       "AgentWakeTriggers",
@@ -131260,6 +131407,7 @@
       "SpeakerTrack",
       "SpeechSpan",
       "SpendBasis",
+      "SpendCalibrationSample",
       "SpendCapView",
       "SpendConsent",
       "SpendLeaseView",
@@ -131829,7 +131977,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1105,
-      "struct": 3349
+      "struct": 3351
      }
     },
     {
