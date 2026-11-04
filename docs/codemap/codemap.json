@@ -4981,10 +4981,20 @@
      "path": "src/authority/slip_replay.rs",
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_replay/spent_nonces.rs",
+     "purpose": "Holder-proof nonces an admission spent in memory (FIX 12023 W0; Engine ruling 10-31 with L02's five…",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -58193,10 +58203,20 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 8,
       "struct": 1,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/time/lease_journal.rs",
+     "purpose": "The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -60412,7 +60432,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HomeTableNote",
@@ -71416,7 +71436,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "struct": 1
      }
     },
@@ -71427,7 +71447,7 @@
      "path": "src/store/group_commit/detached.rs",
      "purpose": "Detached writes (FIX 12023; Engine ruling 10-30 23:09, extended to the light recall's own writes)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 27
      }
     },
     {
@@ -71450,7 +71470,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "struct": 4
      }
     },
@@ -73737,7 +73757,7 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
      }
@@ -89726,7 +89746,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 245,
+     "files": 246,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90678,7 +90698,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91266,9 +91286,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 125,
+   "over_bar": 127,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6282,
+   "source_files": 6284,
    "test_files": 900
   },
   "oneiron-android": {
